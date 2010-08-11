@@ -1,0 +1,57 @@
+{
+  if (protocol == null) {
+    protocol="TCP";
+  }
+  Long ruleId=null;
+  Transaction txn=Transaction.currentTxn();
+  try {
+    List<NetworkRuleConfigVO> existingRules=_networkRuleConfigDao.listBySecurityGroupId(securityGroupId);
+    for (    NetworkRuleConfigVO existingRule : existingRules) {
+      if (existingRule.getPublicPort().equals(port) && existingRule.getProtocol().equals(protocol)) {
+        throw new NetworkRuleConflictException("port conflict, port forwarding service contains a rule on public port " + port + " for protocol "+ protocol);
+      }
+    }
+    txn.start();
+    NetworkRuleConfigVO netRule=new NetworkRuleConfigVO(securityGroupId,port,privatePort,protocol);
+    netRule.setCreateStatus(AsyncInstanceCreateStatus.Creating);
+    netRule=_networkRuleConfigDao.persist(netRule);
+    ruleId=netRule.getId();
+    txn.commit();
+    AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+    if (asyncExecutor != null) {
+      AsyncJobVO job=asyncExecutor.getJob();
+      if (s_logger.isInfoEnabled())       s_logger.info("Created a new port forwarding service rule instance " + ruleId + ", update async job-"+ job.getId()+ " progress status");
+      _asyncMgr.updateAsyncJobAttachment(job.getId(),"network_rule_config",ruleId);
+      _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,ruleId);
+    }
+    txn.start();
+    if (ruleId != null) {
+      List<SecurityGroupVMMapVO> sgMappings=_securityGroupVMMapDao.listBySecurityGroup(securityGroupId);
+      if ((sgMappings != null) && !sgMappings.isEmpty()) {
+        for (        SecurityGroupVMMapVO sgMapping : sgMappings) {
+          UserVm userVm=_userVmDao.findById(sgMapping.getInstanceId());
+          createFirewallRule(userId,sgMapping.getIpAddress(),userVm,netRule.getPublicPort(),netRule.getPrivatePort(),netRule.getProtocol(),Long.valueOf(securityGroupId));
+        }
+      }
+      NetworkRuleConfigVO rule=_networkRuleConfigDao.findById(ruleId);
+      rule.setCreateStatus(AsyncInstanceCreateStatus.Created);
+      _networkRuleConfigDao.update(ruleId,rule);
+    }
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    if (ruleId != null) {
+      txn.start();
+      NetworkRuleConfigVO rule=_networkRuleConfigDao.findById(ruleId);
+      rule.setCreateStatus(AsyncInstanceCreateStatus.Corrupted);
+      _networkRuleConfigDao.update(ruleId,rule);
+      txn.commit();
+    }
+    if (ex instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)ex;
+    }
+    s_logger.error("Unexpected exception creating port forwarding service rule (pfServiceId:" + securityGroupId + ",port:"+ port+ ",privatePort:"+ privatePort+ ",protocol:"+ protocol+ ")",ex);
+  }
+  return _networkRuleConfigDao.findById(ruleId);
+}

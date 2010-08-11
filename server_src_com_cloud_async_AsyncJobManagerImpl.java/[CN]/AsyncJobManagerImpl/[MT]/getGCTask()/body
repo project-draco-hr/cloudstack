@@ -1,0 +1,40 @@
+{
+  return new Runnable(){
+    public void run(){
+      GlobalLock scanLock=GlobalLock.getInternLock("AsyncJobManagerGC");
+      try {
+        if (scanLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+          try {
+            reallyRun();
+          }
+  finally {
+            scanLock.unlock();
+          }
+        }
+      }
+  finally {
+        scanLock.releaseRef();
+      }
+    }
+    private void reallyRun(){
+      try {
+        s_logger.trace("Begin cleanup expired async-jobs");
+        Date cutTime=new Date(DateUtil.currentGMTTime().getTime() - _jobExpireSeconds * 1000);
+        List<AsyncJobVO> l=_jobDao.getExpiredJobs(cutTime,100);
+        if (l != null && l.size() > 0) {
+          for (          AsyncJobVO job : l) {
+            _jobDao.delete(job.getId());
+          }
+        }
+        s_logger.trace("End cleanup expired async-jobs");
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception when trying to execute queue item, ",e);
+      }
+ finally {
+        StackMaid.current().exitCleanup();
+      }
+    }
+  }
+;
+}

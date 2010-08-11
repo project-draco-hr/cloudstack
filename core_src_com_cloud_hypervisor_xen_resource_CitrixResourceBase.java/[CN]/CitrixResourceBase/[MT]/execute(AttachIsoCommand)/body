@@ -1,0 +1,68 @@
+{
+  boolean attach=cmd.isAttach();
+  String vmName=cmd.getVmName();
+  String isoURL=cmd.getIsoPath();
+  String errorMsg;
+  if (attach) {
+    errorMsg="Failed to attach ISO";
+  }
+ else {
+    errorMsg="Failed to detach ISO";
+  }
+  Connection conn=getConnection();
+  try {
+    if (attach) {
+      VBD isoVBD=null;
+      VM vm=getVM(conn,vmName);
+      VDI isoVDI=getIsoVDIByURL(conn,vmName,isoURL);
+      Set<VBD> vbds=vm.getVBDs(conn);
+      for (      VBD vbd : vbds) {
+        String userDevice=vbd.getUserdevice(conn);
+        Types.VbdType type=vbd.getType(conn);
+        if (userDevice.equals("3") && type == Types.VbdType.CD) {
+          isoVBD=vbd;
+          break;
+        }
+      }
+      if (isoVBD == null) {
+        throw new CloudRuntimeException("Unable to find CD-ROM VBD for VM: " + vmName);
+      }
+ else {
+        if (isoVBD.getEmpty(conn) == false) {
+          isoVBD.eject(conn);
+        }
+        isoVBD.insert(conn,isoVDI);
+      }
+      return new Answer(cmd);
+    }
+ else {
+      VM vm=getVM(conn,vmName);
+      String vmUUID=vm.getUuid(conn);
+      VDI isoVDI=getIsoVDIByURL(conn,vmName,isoURL);
+      SR sr=isoVDI.getSR(conn);
+      Set<VBD> vbds=isoVDI.getVBDs(conn);
+      for (      VBD vbd : vbds) {
+        VM vbdVM=vbd.getVM(conn);
+        String vbdVmUUID=vbdVM.getUuid(conn);
+        if (vbdVmUUID.equals(vmUUID)) {
+          if (!vbd.getEmpty(conn)) {
+            vbd.eject(conn);
+          }
+          break;
+        }
+      }
+      if (!sr.getNameLabel(conn).startsWith("XenServer Tools")) {
+        removeSR(sr);
+      }
+      return new Answer(cmd);
+    }
+  }
+ catch (  XenAPIException e) {
+    s_logger.warn(errorMsg + ": " + e.toString(),e);
+    return new Answer(cmd,false,e.toString());
+  }
+catch (  Exception e) {
+    s_logger.warn(errorMsg + ": " + e.toString(),e);
+    return new Answer(cmd,false,e.getMessage());
+  }
+}

@@ -1,0 +1,79 @@
+{
+  Connection conn=getConnection();
+  Connection poolConn=null;
+  try {
+    _host.pool=getPoolUuid();
+    poolConn=_connPool.connect(address,username,password,_wait);
+    Map<Pool,Pool.Record> pools=Pool.getAllRecords(poolConn);
+    Pool.Record pr=pools.values().iterator().next();
+    String masterAddr=pr.master.getAddress(poolConn);
+    Pool.join(conn,masterAddr,username,password);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Joined the pool at " + masterAddr);
+    }
+    disconnected();
+    try {
+      Thread.sleep(10000);
+    }
+ catch (    InterruptedException e) {
+    }
+    _host.pool=pr.uuid;
+    URL url;
+    try {
+      url=new URL("http://" + _host.ip);
+    }
+ catch (    MalformedURLException e1) {
+      throw new CloudRuntimeException("Problem with url " + _host.ip);
+    }
+    Connection c=null;
+    for (int i=0; i < 15; i++) {
+      c=new Connection(url,_wait);
+      try {
+        Session.loginWithPassword(c,_username,_password,APIVersion.latest().toString());
+        s_logger.debug("Still waiting for the conversion to the master");
+        Session.logout(c);
+        c.dispose();
+      }
+ catch (      Types.HostIsSlave e) {
+        try {
+          Session.logout(c);
+          c.dispose();
+        }
+ catch (        XmlRpcException e1) {
+          s_logger.debug("Unable to logout of test connection due to " + e1.getMessage());
+        }
+catch (        XenAPIException e1) {
+          s_logger.debug("Unable to logout of test connection due to " + e1.getMessage());
+        }
+        break;
+      }
+catch (      XmlRpcException e) {
+        s_logger.debug("XmlRpcException: Still waiting for the conversion to the master");
+      }
+catch (      Exception e) {
+        s_logger.debug("Exception: Still waiting for the conversion to the master");
+      }
+      try {
+        Thread.sleep(2000);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+    return true;
+  }
+ catch (  XenAPIException e) {
+    String msg="Unable to allow host " + _host.uuid + " to join pool "+ address+ " due to "+ e.toString();
+    s_logger.warn(msg,e);
+    throw new RuntimeException(msg);
+  }
+catch (  XmlRpcException e) {
+    String msg="Unable to allow host " + _host.uuid + " to join pool "+ address+ " due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    throw new RuntimeException(msg);
+  }
+ finally {
+    if (poolConn != null) {
+      XenServerConnectionPool.logout(poolConn);
+    }
+  }
+}

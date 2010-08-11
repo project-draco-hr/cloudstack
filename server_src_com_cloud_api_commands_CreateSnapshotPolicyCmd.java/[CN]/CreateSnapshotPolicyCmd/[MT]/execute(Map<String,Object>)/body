@@ -1,0 +1,48 @@
+{
+  Long userId=(Long)params.get(BaseCmd.Properties.USER_ID.getName());
+  long volumeId=(Long)params.get(BaseCmd.Properties.VOLUME_ID.getName());
+  String schedule=(String)params.get(BaseCmd.Properties.SCHEDULE.getName());
+  String timezone=(String)params.get(BaseCmd.Properties.TIMEZONE.getName());
+  String intervalType=(String)params.get(BaseCmd.Properties.INTERVAL_TYPE.getName());
+  int maxSnaps=(Integer)params.get(BaseCmd.Properties.MAX_SNAPS.getName());
+  ManagementServer managementServer=getManagementServer();
+  VolumeVO volume=managementServer.findVolumeById(volumeId);
+  if (volume == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find a volume with id " + volumeId);
+  }
+  checkAccountPermissions(params,volume.getAccountId(),volume.getDomainId(),"volume",volumeId);
+  StoragePoolVO storagePoolVO=managementServer.findPoolById(volume.getPoolId());
+  if (storagePoolVO == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"volumeId: " + volumeId + " does not have a valid storage pool. Is it destroyed?");
+  }
+  if (storagePoolVO.isLocal()) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Cannot create a snapshot from a volume residing on a local storage pool, poolId: " + volume.getPoolId());
+  }
+  Long instanceId=volume.getInstanceId();
+  if (instanceId != null) {
+    if (managementServer.findUserVMInstanceById(instanceId) == null) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Snapshots of volumes attached to System or router VM are not allowed");
+    }
+  }
+  Long accountId=volume.getAccountId();
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
+  SnapshotPolicyVO snapshotPolicy=null;
+  try {
+    snapshotPolicy=managementServer.createSnapshotPolicy(accountId,userId,volumeId,schedule,intervalType,maxSnaps,timezone);
+  }
+ catch (  InvalidParameterValueException ex) {
+    throw new ServerApiException(BaseCmd.VM_INVALID_PARAM_ERROR,ex.getMessage());
+  }
+  if (snapshotPolicy == null) {
+    throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Failed to create Snapshot Policy");
+  }
+  List<Pair<String,Object>> returnValues=new ArrayList<Pair<String,Object>>();
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.ID.getName(),snapshotPolicy.getId().toString()));
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.VOLUME_ID.getName(),snapshotPolicy.getVolumeId()));
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.SCHEDULE.getName(),snapshotPolicy.getSchedule()));
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.INTERVAL_TYPE.getName(),snapshotPolicy.getInterval()));
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.MAX_SNAPS.getName(),snapshotPolicy.getMaxSnaps()));
+  return returnValues;
+}

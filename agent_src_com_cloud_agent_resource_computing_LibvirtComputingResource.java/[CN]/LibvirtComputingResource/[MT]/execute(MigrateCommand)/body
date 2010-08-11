@@ -1,0 +1,39 @@
+{
+  String vmName=cmd.getVmName();
+  State state=null;
+  String result=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  Domain dm=null;
+  Connect dconn=null;
+  Domain destDomain=null;
+  try {
+    dm=_conn.domainLookupByUUID(UUID.nameUUIDFromBytes(vmName.getBytes()));
+    dconn=new Connect("qemu+tcp://" + cmd.getDestinationIp() + "/system");
+    destDomain=dm.migrate(dconn,(1 << 0) | (1 << 3),vmName,"tcp:" + cmd.getDestinationIp(),0);
+  }
+ catch (  LibvirtException e) {
+    s_logger.debug("Can't migrate domain: " + e.getMessage());
+    result=e.getMessage();
+  }
+ finally {
+    try {
+      if (dm != null)       dm.free();
+      if (dconn != null)       dconn.close();
+      if (destDomain != null)       destDomain.free();
+    }
+ catch (    final LibvirtException e) {
+    }
+  }
+  if (result != null) {
+synchronized (_vms) {
+      _vms.put(vmName,state);
+    }
+  }
+ else {
+    cleanupVM(vmName,getVnetId(VirtualMachineName.getVnet(vmName)));
+  }
+  return new MigrateAnswer(cmd,result == null,result,null);
+}

@@ -1,0 +1,56 @@
+{
+  if (!validZone(zoneId)) {
+    throw new InvalidParameterValueException("A zone with ID: " + zoneId + " does not exist.");
+  }
+  if (dns1 != null || dns2 != null || internalDns1 != null || internalDns2 != null) {
+    if (zoneHasVMs(zoneId)) {
+      throw new InternalErrorException("The zone is not editable because there are VMs in the zone.");
+    }
+  }
+  if (vnetRange != null) {
+    if (zoneHasAllocatedVnets(zoneId)) {
+      throw new InternalErrorException("The vlan range is not editable because there are allocated vlans.");
+    }
+  }
+  List<DomainRouterVO> allDomainRoutersAvailable=_domrDao.listAll();
+  for (  DomainRouterVO domR : allDomainRoutersAvailable) {
+    if (domR.getDataCenterId() == zoneId) {
+      throw new InternalErrorException("The zone is not editable because there are domR's associated with the zone.");
+    }
+  }
+  DataCenterVO zone=_zoneDao.findById(zoneId);
+  String oldZoneName=zone.getName();
+  if (newZoneName == null) {
+    newZoneName=oldZoneName;
+  }
+  if (dns1 == null) {
+    dns1=zone.getDns1();
+  }
+  if (internalDns1 == null) {
+    internalDns1=zone.getInternalDns1();
+  }
+  if (guestCidr == null)   guestCidr=zone.getGuestNetworkCidr();
+  boolean checkForDuplicates=!newZoneName.equals(oldZoneName);
+  checkZoneParameters(newZoneName,dns1,dns2,internalDns1,internalDns2,checkForDuplicates);
+  zone.setName(newZoneName);
+  zone.setDns1(dns1);
+  zone.setDns2(dns2);
+  zone.setInternalDns1(internalDns1);
+  zone.setInternalDns2(internalDns2);
+  zone.setGuestNetworkCidr(guestCidr);
+  if (vnetRange != null) {
+    zone.setVnet(vnetRange);
+  }
+  if (!_zoneDao.update(zoneId,zone)) {
+    throw new InternalErrorException("Failed to edit zone. Please contact Cloud Support.");
+  }
+  if (vnetRange != null) {
+    String[] tokens=vnetRange.split("-");
+    int begin=Integer.parseInt(tokens[0]);
+    int end=tokens.length == 1 ? (begin + 1) : Integer.parseInt(tokens[1]);
+    _zoneDao.deleteVnet(zoneId);
+    _zoneDao.addVnet(zone.getId(),begin,end);
+  }
+  saveConfigurationEvent(userId,null,EventTypes.EVENT_ZONE_EDIT,"Successfully edited zone with name: " + zone.getName() + ".","dcId=" + zone.getId(),"dns1=" + dns1,"dns2=" + dns2,"internalDns1=" + internalDns1,"internalDns2=" + internalDns2,"vnetRange=" + vnetRange,"guestCidr=" + guestCidr);
+  return zone;
+}

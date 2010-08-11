@@ -1,0 +1,40 @@
+{
+  if (name == null) {
+    return null;
+  }
+  Set<Network> networks=Network.getByNameLabel(conn,name);
+  for (  Network network : networks) {
+    Network.Record nr=network.getRecord(conn);
+    for (    PIF pif : nr.PIFs) {
+      PIF.Record pr=pif.getRecord(conn);
+      if (_host.uuid.equals(pr.host.getUuid(conn))) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Found a network called " + name + " on host="+ _host.ip+ ";  Network="+ nr.uuid+ "; pif="+ pr.uuid);
+        }
+        if (pr.bondMasterOf != null && pr.bondMasterOf.size() > 0) {
+          if (pr.bondMasterOf.size() > 1) {
+            String msg=new StringBuilder("Unsupported configuration.  Network " + name + " has more than one bond.  Network=").append(nr.uuid).append("; pif=").append(pr.uuid).toString();
+            s_logger.warn(msg);
+            return null;
+          }
+          Bond bond=pr.bondMasterOf.iterator().next();
+          Set<PIF> slaves=bond.getSlaves(conn);
+          for (          PIF slave : slaves) {
+            PIF.Record spr=slave.getRecord(conn);
+            if (spr.management) {
+              Host host=Host.getByUuid(conn,_host.uuid);
+              if (!transferManagementNetwork(conn,host,slave,spr,pif)) {
+                String msg=new StringBuilder("Unable to transfer management network.  slave=" + spr.uuid + "; master="+ pr.uuid+ "; host="+ _host.uuid).toString();
+                s_logger.warn(msg);
+                return null;
+              }
+              break;
+            }
+          }
+        }
+        return new Nic(network,nr,pif,pr);
+      }
+    }
+  }
+  return null;
+}

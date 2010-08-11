@@ -1,0 +1,52 @@
+{
+  if (isCentosHost()) {
+    return "disk hotplug is not supported by hypervisor";
+  }
+  String diskDev=null;
+  SortedMap<String,String> diskMaps=null;
+  Domain dm=null;
+  try {
+    dm=_conn.domainLookupByUUID(UUID.nameUUIDFromBytes(vmName.getBytes()));
+    LibvirtDomainXMLParser parser=new LibvirtDomainXMLParser();
+    String xml=dm.getXMLDesc(0);
+    parser.parseDomainXML(xml);
+    diskMaps=parser.getDiskMaps();
+  }
+ catch (  LibvirtException e) {
+    throw e;
+  }
+ finally {
+    if (dm != null) {
+      dm.free();
+    }
+  }
+  if (attach) {
+    diskDev=diskMaps.lastKey();
+    diskDev=diskDev.substring(0,diskDev.length() - 1) + (char)(diskDev.charAt(diskDev.length() - 1) + 1);
+  }
+ else {
+    Set<Map.Entry<String,String>> entrySet=diskMaps.entrySet();
+    Iterator<Map.Entry<String,String>> itr=entrySet.iterator();
+    while (itr.hasNext()) {
+      Map.Entry<String,String> entry=itr.next();
+      if (entry.getValue().equalsIgnoreCase(sourceFile)) {
+        diskDev=entry.getKey();
+        break;
+      }
+    }
+  }
+  if (diskDev == null) {
+    s_logger.warn("Can't get disk dev");
+    return "Can't get disk dev";
+  }
+  diskDef disk=new diskDef();
+  String guestOSType=getGuestType(vmName);
+  if (isGuestPVEnabled(guestOSType)) {
+    disk.defFileBasedDisk(sourceFile,diskDev,diskDef.diskBus.VIRTIO,diskDef.diskFmtType.QCOW2);
+  }
+ else {
+    disk.defFileBasedDisk(sourceFile,diskDev,diskDef.diskBus.SCSI,diskDef.diskFmtType.QCOW2);
+  }
+  String xml=disk.toString();
+  return attachOrDetachDevice(attach,vmName,xml);
+}

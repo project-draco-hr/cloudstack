@@ -1,0 +1,61 @@
+{
+  _name=name;
+  String value=null;
+  _storage=(StorageLayer)params.get(StorageLayer.InstanceConfigKey);
+  if (_storage == null) {
+    value=(String)params.get(StorageLayer.ClassConfigKey);
+    if (value == null) {
+      throw new ConfigurationException("Unable to find the storage layer");
+    }
+    Class<StorageLayer> clazz;
+    try {
+      clazz=(Class<StorageLayer>)Class.forName(value);
+    }
+ catch (    ClassNotFoundException e) {
+      throw new ConfigurationException("Unable to instantiate " + value);
+    }
+    _storage=ComponentLocator.inject(clazz);
+  }
+  String useSsl=(String)params.get("sslcopy");
+  if (useSsl != null) {
+    _sslCopy=Boolean.parseBoolean(useSsl);
+  }
+  configureFolders(name,params);
+  String inSystemVM=(String)params.get("secondary.storage.vm");
+  if (inSystemVM != null && "true".equalsIgnoreCase(inSystemVM)) {
+    s_logger.info("DownloadManager: starting additional services since we are inside system vm");
+    startAdditionalServices();
+    blockOutgoingOnPrivate();
+  }
+  value=(String)params.get("install.timeout.pergig");
+  this.installTimeoutPerGig=NumbersUtil.parseInt(value,15 * 60) * 1000;
+  value=(String)params.get("install.numthreads");
+  final int numInstallThreads=NumbersUtil.parseInt(value,10);
+  String scriptsDir=(String)params.get("template.scripts.dir");
+  if (scriptsDir == null) {
+    scriptsDir="scripts/storage/secondary";
+  }
+  listTmpltScr=Script.findScript(scriptsDir,"listvmtmplt.sh");
+  if (listTmpltScr == null) {
+    throw new ConfigurationException("Unable to find the listvmtmplt.sh");
+  }
+  s_logger.info("listvmtmplt.sh found in " + listTmpltScr);
+  createTmpltScr=Script.findScript(scriptsDir,"createtmplt.sh");
+  if (createTmpltScr == null) {
+    throw new ConfigurationException("Unable to find createtmplt.sh");
+  }
+  s_logger.info("createtmplt.sh found in " + createTmpltScr);
+  List<Processor> processors=new ArrayList<Processor>();
+  _processors=new Adapters<Processor>("processors",processors);
+  Processor processor=new VhdProcessor();
+  processor.configure("VHD Processor",params);
+  processors.add(processor);
+  processor=new IsoProcessor();
+  processor.configure("ISO Processor",params);
+  processors.add(processor);
+  processor=new QCOW2Processor();
+  processor.configure("QCOW2 Processor",params);
+  processors.add(processor);
+  threadPool=Executors.newFixedThreadPool(numInstallThreads);
+  return true;
+}

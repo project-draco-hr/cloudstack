@@ -1,0 +1,55 @@
+{
+  ServiceOfferingVO offering=_offeringsDao.findById(userVm.getServiceOfferingId());
+  if ((offering == null) || !GuestIpType.Virtualized.equals(offering.getGuestIpType())) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Unable to create port forwarding rule (" + protocol + ":"+ publicPort+ "->"+ privatePort+ ") for virtual machine "+ userVm.toString()+ ", bad network type ("+ ((offering == null) ? "null" : offering.getGuestIpType())+ ")");
+    }
+    throw new IllegalArgumentException("Unable to create port forwarding rule (" + protocol + ":"+ publicPort+ "->"+ privatePort+ ") for virtual machine "+ userVm.toString()+ ", bad network type ("+ ((offering == null) ? "null" : offering.getGuestIpType())+ ")");
+  }
+  List<FirewallRuleVO> existingRulesOnPubIp=_firewallRulesDao.listIPForwarding(ipAddress);
+  Map<String,Pair<String,String>> mappedPublicPorts=new HashMap<String,Pair<String,String>>();
+  if (existingRulesOnPubIp != null) {
+    for (    FirewallRuleVO fwRule : existingRulesOnPubIp) {
+      mappedPublicPorts.put(fwRule.getPublicPort(),new Pair<String,String>(fwRule.getPrivateIpAddress(),fwRule.getPrivatePort()));
+    }
+  }
+  if (userVm != null) {
+    Pair<String,String> privateIpPort=mappedPublicPorts.get(publicPort);
+    if (privateIpPort != null) {
+      if (privateIpPort.first().equals(userVm.getGuestIpAddress()) && privateIpPort.second().equals(privatePort)) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("skipping the creating of firewall rule " + ipAddress + ":"+ publicPort+ " to "+ userVm.getGuestIpAddress()+ ":"+ privatePort+ "; rule already exists.");
+        }
+        return null;
+      }
+ else {
+        throw new NetworkRuleConflictException("An existing port forwarding service rule for " + ipAddress + ":"+ publicPort+ " already exists, found while trying to create mapping to "+ userVm.getGuestIpAddress()+ ":"+ privatePort+ ((securityGroupId == null) ? "." : " from port forwarding service " + securityGroupId.toString() + "."));
+      }
+    }
+    FirewallRuleVO newFwRule=new FirewallRuleVO();
+    newFwRule.setEnabled(true);
+    newFwRule.setForwarding(true);
+    newFwRule.setPrivatePort(privatePort);
+    newFwRule.setProtocol(protocol);
+    newFwRule.setPublicPort(publicPort);
+    newFwRule.setPublicIpAddress(ipAddress);
+    newFwRule.setPrivateIpAddress(userVm.getGuestIpAddress());
+    newFwRule.setGroupId(securityGroupId);
+    _firewallRulesDao.persist(newFwRule);
+    boolean success=_networkMgr.updateFirewallRule(newFwRule,null,null);
+    String description;
+    String ruleName="ip forwarding";
+    String level=EventVO.LEVEL_INFO;
+    Account account=_accountDao.findById(userVm.getAccountId());
+    if (success == true) {
+      description="created new " + ruleName + " rule ["+ newFwRule.getPublicIpAddress()+ ":"+ newFwRule.getPublicPort()+ "]->["+ newFwRule.getPrivateIpAddress()+ ":"+ newFwRule.getPrivatePort()+ "]"+ " "+ newFwRule.getProtocol();
+    }
+ else {
+      level=EventVO.LEVEL_ERROR;
+      description="failed to create new " + ruleName + " rule ["+ newFwRule.getPublicIpAddress()+ ":"+ newFwRule.getPublicPort()+ "]->["+ newFwRule.getPrivateIpAddress()+ ":"+ newFwRule.getPrivatePort()+ "]"+ " "+ newFwRule.getProtocol();
+    }
+    saveEvent(Long.valueOf(userId),account.getId(),level,EventTypes.EVENT_NET_RULE_ADD,description);
+    return newFwRule;
+  }
+  return null;
+}

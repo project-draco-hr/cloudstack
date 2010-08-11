@@ -1,0 +1,73 @@
+{
+  Map<String,Long> totalCapacityMap=new HashMap<String,Long>();
+  Map<String,Long> usedCapacityMap=new HashMap<String,Long>();
+  Set<Long> poolIdsToIgnore=new HashSet<Long>();
+  Criteria c=new Criteria();
+  List<? extends StoragePoolVO> allStoragePools=getManagementServer().searchForStoragePools(c);
+  for (  StoragePoolVO pool : allStoragePools) {
+    StoragePoolType poolType=pool.getPoolType();
+    if (!(poolType.equals(StoragePoolType.NetworkFilesystem) || poolType.equals(StoragePoolType.IscsiLUN))) {
+      poolIdsToIgnore.add(pool.getId());
+    }
+  }
+  for (  CapacityVO capacity : hostCapacities) {
+    if (poolIdsToIgnore.contains(capacity.getHostOrPoolId())) {
+      continue;
+    }
+    String key=capacity.getCapacityType() + "_" + capacity.getDataCenterId();
+    String keyForPodTotal=key + "_-1";
+    boolean sumPodCapacity=false;
+    if (capacity.getPodId() != null) {
+      key+="_" + capacity.getPodId();
+      sumPodCapacity=true;
+    }
+    Long totalCapacity=totalCapacityMap.get(key);
+    Long usedCapacity=usedCapacityMap.get(key);
+    if (totalCapacity == null) {
+      totalCapacity=new Long(capacity.getTotalCapacity());
+    }
+ else {
+      totalCapacity=new Long(capacity.getTotalCapacity() + totalCapacity.longValue());
+    }
+    if (usedCapacity == null) {
+      usedCapacity=new Long(capacity.getUsedCapacity());
+    }
+ else {
+      usedCapacity=new Long(capacity.getUsedCapacity() + usedCapacity.longValue());
+    }
+    totalCapacityMap.put(key,totalCapacity);
+    usedCapacityMap.put(key,usedCapacity);
+    if (sumPodCapacity) {
+      totalCapacity=totalCapacityMap.get(keyForPodTotal);
+      usedCapacity=usedCapacityMap.get(keyForPodTotal);
+      if (totalCapacity == null) {
+        totalCapacity=new Long(capacity.getTotalCapacity());
+      }
+ else {
+        totalCapacity=new Long(capacity.getTotalCapacity() + totalCapacity.longValue());
+      }
+      if (usedCapacity == null) {
+        usedCapacity=new Long(capacity.getUsedCapacity());
+      }
+ else {
+        usedCapacity=new Long(capacity.getUsedCapacity() + usedCapacity.longValue());
+      }
+      totalCapacityMap.put(keyForPodTotal,totalCapacity);
+      usedCapacityMap.put(keyForPodTotal,usedCapacity);
+    }
+  }
+  List<CapacityVO> summedCapacities=new ArrayList<CapacityVO>();
+  for (  String key : totalCapacityMap.keySet()) {
+    CapacityVO summedCapacity=new CapacityVO();
+    StringTokenizer st=new StringTokenizer(key,"_");
+    summedCapacity.setCapacityType(Short.parseShort(st.nextToken()));
+    summedCapacity.setDataCenterId(Long.parseLong(st.nextToken()));
+    if (st.hasMoreTokens()) {
+      summedCapacity.setPodId(Long.parseLong(st.nextToken()));
+    }
+    summedCapacity.setTotalCapacity(totalCapacityMap.get(key));
+    summedCapacity.setUsedCapacity(usedCapacityMap.get(key));
+    summedCapacities.add(summedCapacity);
+  }
+  return summedCapacities;
+}

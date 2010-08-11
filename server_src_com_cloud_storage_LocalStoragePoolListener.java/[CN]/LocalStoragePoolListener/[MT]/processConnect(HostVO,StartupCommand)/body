@@ -1,0 +1,49 @@
+{
+  if (!(cmd instanceof StartupStorageCommand)) {
+    return true;
+  }
+  StartupStorageCommand ssCmd=(StartupStorageCommand)cmd;
+  if (ssCmd.getResourceType() != StorageResourceType.STORAGE_POOL) {
+    return true;
+  }
+  StoragePoolInfo pInfo=ssCmd.getPoolInfo();
+  if (pInfo == null) {
+    return true;
+  }
+  try {
+    StoragePoolVO pool=_storagePoolDao.findPoolByHostPath(host.getDataCenterId(),host.getPodId(),pInfo.getHost(),pInfo.getHostPath());
+    if (pool == null) {
+      long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
+      String name=cmd.getName() == null ? (host.getName() + " Local Storage") : cmd.getName();
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      pool=new StoragePoolVO(poolId,name,pInfo.getUuid(),pInfo.getPoolType(),host.getDataCenterId(),host.getPodId(),pInfo.getAvailableBytes(),pInfo.getCapacityBytes(),pInfo.getHost(),0,pInfo.getHostPath());
+      pool.setClusterId(host.getClusterId());
+      _storagePoolDao.persist(pool,pInfo.getDetails());
+      StoragePoolHostVO poolHost=new StoragePoolHostVO(pool.getId(),host.getId(),pInfo.getLocalPath());
+      _storagePoolHostDao.persist(poolHost);
+      txn.commit();
+    }
+ else {
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      pool.setAvailableBytes(pInfo.getAvailableBytes());
+      pool.setCapacityBytes(pInfo.getCapacityBytes());
+      _storagePoolDao.update(pool.getId(),pool);
+      if (pInfo.getDetails() != null) {
+        _storagePoolDao.updateDetails(pool.getId(),pInfo.getDetails());
+      }
+      StoragePoolHostVO poolHost=_storagePoolHostDao.findByPoolHost(pool.getId(),host.getId());
+      if (poolHost == null) {
+        poolHost=new StoragePoolHostVO(pool.getId(),host.getId(),pInfo.getLocalPath());
+        _storagePoolHostDao.persist(poolHost);
+      }
+      txn.commit();
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to setup the local storage pool for " + host,e);
+    return false;
+  }
+  return true;
+}

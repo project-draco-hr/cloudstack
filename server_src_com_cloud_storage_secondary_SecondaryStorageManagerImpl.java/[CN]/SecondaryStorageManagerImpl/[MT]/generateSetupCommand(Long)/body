@@ -1,0 +1,44 @@
+{
+  List<SecondaryStorageVmVO> zoneSsvms=_secStorageVmDao.listByZoneId(zoneId);
+  if (zoneSsvms.size() == 0) {
+    return true;
+  }
+  SecondaryStorageVmVO secStorageVm=zoneSsvms.get(0);
+  if (secStorageVm.getState() != State.Running && secStorageVm.getState() != State.Starting) {
+    s_logger.warn("No running secondary storage vms found in zone " + zoneId + " , skip programming http auth");
+    return true;
+  }
+  Host storageHost=_hostDao.findSecondaryStorageHost(zoneId);
+  if (storageHost == null) {
+    s_logger.warn("No storage hosts found in zone " + zoneId + " , skip programming http auth");
+    return true;
+  }
+  SecStorageSetupCommand setupCmd=new SecStorageSetupCommand(zoneId);
+  if (_allowedInternalSites != null) {
+    List<String> allowedCidrs=new ArrayList<String>();
+    String[] cidrs=_allowedInternalSites.split(",");
+    for (    String cidr : cidrs) {
+      if (NetUtils.isValidCIDR(cidr) || NetUtils.isValidIp(cidr)) {
+        allowedCidrs.add(cidr);
+      }
+    }
+    String privateCidr=NetUtils.ipAndNetMaskToCidr(secStorageVm.getPrivateIpAddress(),secStorageVm.getPrivateNetmask());
+    String publicCidr=NetUtils.ipAndNetMaskToCidr(secStorageVm.getPublicIpAddress(),secStorageVm.getPublicNetmask());
+    if (NetUtils.isNetworkAWithinNetworkB(privateCidr,publicCidr) || NetUtils.isNetworkAWithinNetworkB(publicCidr,privateCidr)) {
+      allowedCidrs.add("0.0.0.0/0");
+    }
+    setupCmd.setAllowedInternalSites(allowedCidrs.toArray(new String[allowedCidrs.size()]));
+  }
+  String copyPasswd=_configDao.getValue("secstorage.copy.password");
+  setupCmd.setCopyPassword(copyPasswd);
+  setupCmd.setCopyUserName(TemplateConstants.DEFAULT_HTTP_AUTH_USER);
+  Answer answer=_agentMgr.easySend(storageHost.getId(),setupCmd);
+  if (answer != null) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Successfully programmed http auth into " + secStorageVm.getName());
+    return true;
+  }
+ else {
+    if (s_logger.isDebugEnabled())     s_logger.debug("failed to program http auth into secondary storage vm : " + secStorageVm.getName());
+    return false;
+  }
+}

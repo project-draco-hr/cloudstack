@@ -1,0 +1,58 @@
+{
+  StoragePoolTO pool=cmd.getPool();
+  DiskCharacteristicsTO dskch=cmd.getDiskCharacteristics();
+  StorageVol tmplVol=null;
+  StoragePool primaryPool=null;
+  StorageVol vol=null;
+  long disksize;
+  try {
+    primaryPool=_conn.storagePoolLookupByUUIDString(pool.getUuid());
+    if (primaryPool == null) {
+      String result="Failed to get primary pool";
+      s_logger.debug(result);
+      return new CreateAnswer(cmd,result);
+    }
+    if (cmd.getTemplateUrl() != null) {
+      tmplVol=getVolume(primaryPool,cmd.getTemplateUrl());
+      if (tmplVol == null) {
+        String result="Failed to get tmpl vol";
+        s_logger.debug(result);
+        return new CreateAnswer(cmd,result);
+      }
+      LibvirtStorageVolumeDef volDef=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),tmplVol.getInfo().capacity,volFormat.QCOW2,tmplVol.getPath(),volFormat.QCOW2);
+      s_logger.debug(volDef.toString());
+      vol=primaryPool.storageVolCreateXML(volDef.toString(),0);
+      if (vol == null) {
+        return new Answer(cmd,false," Can't create storage volume on storage pool");
+      }
+      disksize=tmplVol.getInfo().capacity;
+    }
+ else {
+      disksize=dskch.getSize();
+      LibvirtStorageVolumeDef volDef=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),disksize,volFormat.QCOW2,null,null);
+      s_logger.debug(volDef.toString());
+      vol=primaryPool.storageVolCreateXML(volDef.toString(),0);
+    }
+    VolumeTO volume=new VolumeTO(cmd.getVolumeId(),dskch.getType(),getStorageResourceType(),pool.getType(),pool.getPath(),vol.getName(),vol.getKey(),disksize);
+    return new CreateAnswer(cmd,volume);
+  }
+ catch (  LibvirtException e) {
+    s_logger.debug("Failed to create volume: " + e.toString());
+    return new CreateAnswer(cmd,e);
+  }
+ finally {
+    try {
+      if (vol != null) {
+        vol.free();
+      }
+      if (tmplVol != null) {
+        tmplVol.free();
+      }
+      if (primaryPool != null) {
+        primaryPool.free();
+      }
+    }
+ catch (    LibvirtException e) {
+    }
+  }
+}

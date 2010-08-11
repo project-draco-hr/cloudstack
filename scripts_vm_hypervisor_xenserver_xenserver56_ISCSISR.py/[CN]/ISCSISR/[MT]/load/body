@@ -1,0 +1,57 @@
+@util.transformpasswords
+def load(self, sr_uuid):
+    self.sr_vditype = 'phy'
+    self.discoverentry = 0
+    self.default_vdi_visibility = False
+    if ((not self.dconf.has_key('target')) or (not self.dconf['target'])):
+        raise xs_errors.XenError('ConfigTargetMissing')
+    try:
+        if (not self.dconf.has_key('localIQN')):
+            self.localIQN = self.session.xenapi.host.get_other_config(self.host_ref)['iscsi_iqn']
+        else:
+            self.localIQN = self.dconf['localIQN']
+    except:
+        raise xs_errors.XenError('ConfigISCSIIQNMissing')
+    if (not self.localIQN):
+        raise xs_errors.XenError('ConfigISCSIIQNMissing')
+    try:
+        self.target = util._convertDNS(self.dconf['target'].split(',')[0])
+    except:
+        raise xs_errors.XenError('DNSError')
+    self.targetlist = self.target
+    if self.dconf.has_key('targetlist'):
+        self.targetlist = self.dconf['targetlist']
+    self.chapuser = ''
+    self.chappassword = ''
+    if (self.dconf.has_key('chapuser') and (self.dconf.has_key('chappassword') or self.dconf.has_key('chappassword_secret'))):
+        self.chapuser = self.dconf['chapuser']
+        if self.dconf.has_key('chappassword_secret'):
+            self.chappassword = util.get_secret(self.session, self.dconf['chappassword_secret'])
+        else:
+            self.chappassword = self.dconf['chappassword']
+    self.port = DEFAULT_PORT
+    if (self.dconf.has_key('port') and self.dconf['port']):
+        try:
+            self.port = long(self.dconf['port'])
+        except:
+            raise xs_errors.XenError('ISCSIPort')
+    if ((self.port > MAXPORT) or (self.port < 1)):
+        raise xs_errors.XenError('ISCSIPort')
+    if self.dconf.has_key('usediscoverynumber'):
+        self.discoverentry = self.dconf['usediscoverynumber']
+    self.multihomed = False
+    if self.dconf.has_key('multihomed'):
+        if (self.dconf['multihomed'] == 'true'):
+            self.multihomed = True
+    elif (self.mpath == 'true'):
+        self.multihomed = True
+    if ((not self.dconf.has_key('targetIQN')) or (not self.dconf['targetIQN'])):
+        self._scan_IQNs()
+        raise xs_errors.XenError('ConfigTargetIQNMissing')
+    self.targetIQN = self.dconf['targetIQN']
+    self.attached = False
+    try:
+        self.attached = iscsilib._checkTGT(self.targetIQN)
+    except:
+        pass
+    self._initPaths()

@@ -1,0 +1,32 @@
+{
+  AsyncJobManager asyncMgr=getAsyncJobMgr();
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobVO job=getJob();
+  if (getSyncSource() == null) {
+    Long param=gson.fromJson(job.getCmdInfo(),Long.class);
+    asyncMgr.syncAsyncJobExecution(job.getId(),"host",param.longValue());
+    return true;
+  }
+ else {
+    ManagementServer managementServer=asyncMgr.getExecutorContext().getManagementServer();
+    Long param=gson.fromJson(job.getCmdInfo(),Long.class);
+    try {
+      boolean success=managementServer.reconnect(param.longValue());
+      if (success) {
+        HostVO host=managementServer.getHostBy(param);
+        final StateMachine<Status,Event> sm=new StateMachine<Status,Event>();
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,composeResultObject(host,sm,managementServer));
+      }
+ else {
+        HostVO host=managementServer.getHostBy(param);
+        final StateMachine<Status,Event> sm=new StateMachine<Status,Event>();
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,composeResultObject(host,sm,managementServer));
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn("Unable to reconnect host " + param + ": "+ e.getMessage(),e);
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+    }
+  }
+  return true;
+}

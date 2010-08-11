@@ -1,0 +1,73 @@
+{
+  SR tmpltsr=null;
+  String tmplturl=cmd.getUrl();
+  int index=tmplturl.lastIndexOf("/");
+  String mountpoint=tmplturl.substring(0,index);
+  String tmpltname=null;
+  if (index < tmplturl.length() - 1)   tmpltname=tmplturl.substring(index + 1).replace(".vhd","");
+  try {
+    Connection conn=getConnection();
+    String pUuid=cmd.getPoolUuid();
+    SR poolsr=null;
+    Set<SR> srs=SR.getByNameLabel(conn,pUuid);
+    if (srs.size() != 1) {
+      String msg="There are " + srs.size() + " SRs with same name: "+ pUuid;
+      s_logger.warn(msg);
+      return new DownloadAnswer(null,0,msg,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR,"","",0);
+    }
+ else {
+      poolsr=srs.iterator().next();
+    }
+    VDI vmtmpltvdi=null;
+    Set<VDI> vdis=VDI.getByNameLabel(conn,"Template " + cmd.getName());
+    for (    VDI vdi : vdis) {
+      VDI.Record vdir=vdi.getRecord(conn);
+      if (vdir.SR.equals(poolsr)) {
+        vmtmpltvdi=vdi;
+        break;
+      }
+    }
+    String uuid;
+    if (vmtmpltvdi == null) {
+      tmpltsr=createNfsSRbyURI(new URI(mountpoint),false);
+      tmpltsr.scan(conn);
+      VDI tmpltvdi=null;
+      if (tmpltname != null) {
+        tmpltvdi=getVDIbyUuid(tmpltname);
+      }
+      if (tmpltvdi == null) {
+        vdis=tmpltsr.getVDIs(conn);
+        for (        VDI vdi : vdis) {
+          tmpltvdi=vdi;
+          break;
+        }
+      }
+      if (tmpltvdi == null) {
+        String msg="Unable to find template vdi on secondary storage" + "host:" + _host.uuid + "pool: "+ tmplturl;
+        s_logger.warn(msg);
+        return new DownloadAnswer(null,0,msg,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR,"","",0);
+      }
+      vmtmpltvdi=tmpltvdi.copy(conn,poolsr);
+      vmtmpltvdi.setNameLabel(conn,"Template " + cmd.getName());
+      uuid=vmtmpltvdi.getUuid(conn);
+    }
+ else     uuid=vmtmpltvdi.getUuid(conn);
+    long createdSize=vmtmpltvdi.getVirtualSize(conn);
+    DownloadAnswer answer=new DownloadAnswer(null,100,cmd,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED,uuid,uuid);
+    answer.setTemplateSize(createdSize);
+    return answer;
+  }
+ catch (  XenAPIException e) {
+    String msg="XenAPIException:" + e.toString() + "host:"+ _host.uuid+ "pool: "+ tmplturl;
+    s_logger.warn(msg,e);
+    return new DownloadAnswer(null,0,msg,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR,"","",0);
+  }
+catch (  Exception e) {
+    String msg="XenAPIException:" + e.getMessage() + "host:"+ _host.uuid+ "pool: "+ tmplturl;
+    s_logger.warn(msg,e);
+    return new DownloadAnswer(null,0,msg,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR,"","",0);
+  }
+ finally {
+    removeSR(tmpltsr);
+  }
+}

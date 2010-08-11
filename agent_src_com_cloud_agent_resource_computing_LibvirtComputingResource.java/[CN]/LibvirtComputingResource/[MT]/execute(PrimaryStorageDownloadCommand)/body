@@ -1,0 +1,64 @@
+{
+  String tmplturl=cmd.getUrl();
+  int index=tmplturl.lastIndexOf("/");
+  String mountpoint=tmplturl.substring(0,index);
+  String tmpltname=null;
+  if (index < tmplturl.length() - 1)   tmpltname=tmplturl.substring(index + 1);
+  StoragePool secondaryPool=null;
+  StoragePool primaryPool=null;
+  StorageVol tmplVol=null;
+  StorageVol primaryVol=null;
+  String result;
+  try {
+    secondaryPool=getNfsSPbyURI(_conn,new URI(mountpoint));
+    if (secondaryPool == null) {
+      return new Answer(cmd,false," Failed to create storage pool");
+    }
+    tmplVol=getVolume(secondaryPool,getPathOfStoragePool(secondaryPool) + tmpltname);
+    if (tmplVol == null) {
+      return new Answer(cmd,false," Can't find volume");
+    }
+    primaryPool=_conn.storagePoolLookupByUUIDString(cmd.getPoolUuid());
+    if (primaryPool == null) {
+      return new Answer(cmd,false," Can't find primary storage pool");
+    }
+    LibvirtStorageVolumeDef vol=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),tmplVol.getInfo().capacity,volFormat.QCOW2,null,null);
+    s_logger.debug(vol.toString());
+    primaryVol=copyVolume(primaryPool,vol,tmplVol);
+    if (primaryVol == null) {
+      return new Answer(cmd,false," Can't create storage volume on storage pool");
+    }
+    StorageVolInfo priVolInfo=primaryVol.getInfo();
+    DownloadAnswer answer=new DownloadAnswer(null,100,cmd,com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED,primaryVol.getKey(),primaryVol.getKey());
+    answer.setTemplateSize(priVolInfo.allocation);
+    return answer;
+  }
+ catch (  LibvirtException e) {
+    result="Failed to download template: " + e.toString();
+    s_logger.debug(result);
+    return new Answer(cmd,false,result);
+  }
+catch (  URISyntaxException e) {
+    return new Answer(cmd,false,e.toString());
+  }
+ finally {
+    try {
+      if (primaryVol != null) {
+        primaryVol.free();
+      }
+      if (primaryPool != null) {
+        primaryPool.free();
+      }
+      if (tmplVol != null) {
+        tmplVol.free();
+      }
+      if (secondaryPool != null) {
+        secondaryPool.destroy();
+        secondaryPool.undefine();
+        secondaryPool.free();
+      }
+    }
+ catch (    LibvirtException l) {
+    }
+  }
+}

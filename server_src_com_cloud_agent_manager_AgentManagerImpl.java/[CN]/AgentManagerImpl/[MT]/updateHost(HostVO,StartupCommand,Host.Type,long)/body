@@ -1,0 +1,122 @@
+{
+  s_logger.debug("updateHost() called");
+  String dataCenter=startup.getDataCenter();
+  String pod=startup.getPod();
+  String cluster=startup.getCluster();
+  if (pod != null && dataCenter != null && pod.equalsIgnoreCase("default") && dataCenter.equalsIgnoreCase("default")) {
+    List<HostPodVO> pods=_podDao.listAll();
+    for (    HostPodVO hpv : pods) {
+      if (checkCIDR(type,hpv,startup.getPrivateIpAddress(),startup.getPrivateNetmask())) {
+        pod=hpv.getName();
+        dataCenter=_dcDao.findById(hpv.getDataCenterId()).getName();
+        break;
+      }
+    }
+  }
+  long dcId=-1;
+  DataCenterVO dc=_dcDao.findByName(dataCenter);
+  if (dc == null) {
+    try {
+      dcId=Long.parseLong(dataCenter);
+      dc=_dcDao.findById(dcId);
+    }
+ catch (    final NumberFormatException e) {
+    }
+  }
+  if (dc == null) {
+    throw new IllegalArgumentException("Host " + startup.getPrivateIpAddress() + " sent incorrect data center: "+ dataCenter);
+  }
+  dcId=dc.getId();
+  HostPodVO p=_podDao.findByName(pod,dcId);
+  if (p == null) {
+    try {
+      final long podId=Long.parseLong(pod);
+      p=_podDao.findById(podId);
+    }
+ catch (    final NumberFormatException e) {
+    }
+  }
+  Long podId=null;
+  if (p == null) {
+    if (type != Host.Type.SecondaryStorage) {
+      s_logger.error("Host " + startup.getPrivateIpAddress() + " sent incorrect pod: "+ pod+ " in "+ dataCenter);
+      throw new IllegalArgumentException("Host " + startup.getPrivateIpAddress() + " sent incorrect pod: "+ pod+ " in "+ dataCenter);
+    }
+  }
+ else {
+    podId=p.getId();
+  }
+  Long clusterId=null;
+  if (cluster != null) {
+    try {
+      clusterId=Long.valueOf(cluster);
+    }
+ catch (    NumberFormatException e) {
+      ClusterVO c=_clusterDao.findBy(cluster,podId);
+      if (c == null) {
+        c=new ClusterVO(dcId,podId,cluster);
+        c=_clusterDao.persist(c);
+      }
+      clusterId=c.getId();
+    }
+  }
+  if (type == Host.Type.Routing) {
+    StartupRoutingCommand scc=(StartupRoutingCommand)startup;
+    Hypervisor.Type hypervisorType=scc.getHypervisorType();
+    boolean doCidrCheck=true;
+    if (scc.getAgentTag() != null && startup.getAgentTag().equalsIgnoreCase("vmops-simulator"))     doCidrCheck=false;
+    if (hypervisorType == null || hypervisorType == Hypervisor.Type.KVM)     doCidrCheck=false;
+    if (doCidrCheck)     s_logger.info("Host: " + host.getName() + " connected with hypervisor type: "+ hypervisorType+ ". Checking CIDR...");
+ else     s_logger.info("Host: " + host.getName() + " connected with hypervisor type: "+ hypervisorType+ ". Skipping CIDR check...");
+    if (doCidrCheck) {
+      checkCIDR(type,p,dc,scc.getPrivateIpAddress(),scc.getPrivateNetmask());
+    }
+    checkIPConflicts(type,p,dc,scc.getPrivateIpAddress(),scc.getPublicIpAddress(),scc.getPublicIpAddress(),scc.getPublicNetmask());
+  }
+  host.setDataCenterId(dc.getId());
+  host.setPodId(podId);
+  host.setClusterId(clusterId);
+  host.setPrivateIpAddress(startup.getPrivateIpAddress());
+  host.setPrivateNetmask(startup.getPrivateNetmask());
+  host.setPrivateMacAddress(startup.getPrivateMacAddress());
+  host.setPublicIpAddress(startup.getPublicIpAddress());
+  host.setPublicMacAddress(startup.getPublicMacAddress());
+  host.setPublicNetmask(startup.getPublicNetmask());
+  host.setStorageIpAddress(startup.getStorageIpAddress());
+  host.setStorageMacAddress(startup.getStorageMacAddress());
+  host.setStorageNetmask(startup.getStorageNetmask());
+  host.setVersion(startup.getVersion());
+  host.setName(startup.getName());
+  host.setType(type);
+  host.setManagementServerId(msId);
+  host.setStorageUrl(startup.getIqn());
+  host.setLastPinged(System.currentTimeMillis() >> 10);
+  if (startup instanceof StartupRoutingCommand) {
+    final StartupRoutingCommand scc=(StartupRoutingCommand)startup;
+    host.setCaps(scc.getCapabilities());
+    host.setCpus(scc.getCpus());
+    host.setTotalMemory(scc.getMemory());
+    host.setSpeed(scc.getSpeed());
+    Hypervisor.Type hyType=scc.getHypervisorType();
+    if (hyType == null) {
+      host.setHypervisorType(Hypervisor.Type.Xen);
+    }
+ else {
+      host.setHypervisorType(hyType);
+    }
+  }
+ else   if (startup instanceof StartupStorageCommand) {
+    final StartupStorageCommand ssc=(StartupStorageCommand)startup;
+    host.setParent(ssc.getParent());
+    host.setTotalSize(ssc.getTotalSize());
+    host.setHypervisorType(Hypervisor.Type.None);
+    if (ssc.getNfsShare() != null) {
+      host.setStorageUrl(ssc.getNfsShare());
+    }
+  }
+  if (startup.getStorageIpAddressDeux() != null) {
+    host.setStorageIpAddressDeux(startup.getStorageIpAddressDeux());
+    host.setStorageMacAddressDeux(startup.getStorageMacAddressDeux());
+    host.setStorageNetmaskDeux(startup.getStorageNetmaskDeux());
+  }
+}

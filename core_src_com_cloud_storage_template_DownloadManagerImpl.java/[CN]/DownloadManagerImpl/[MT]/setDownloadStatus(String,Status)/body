@@ -1,0 +1,43 @@
+{
+  DownloadJob dj=jobs.get(jobId);
+  if (dj == null) {
+    s_logger.warn("setDownloadStatus for jobId: " + jobId + ", status="+ status+ " no job found");
+    return;
+  }
+  TemplateDownloader td=dj.getTemplateDownloader();
+  s_logger.info("Download Completion for jobId: " + jobId + ", status="+ status);
+  s_logger.info("local: " + td.getDownloadLocalPath() + ", bytes="+ td.getDownloadedBytes()+ ", error="+ td.getDownloadError()+ ", pct="+ td.getDownloadPercent());
+switch (status) {
+case ABORTED:
+case NOT_STARTED:
+case UNRECOVERABLE_ERROR:
+    dj.cleanup();
+  break;
+case UNKNOWN:
+return;
+case IN_PROGRESS:
+s_logger.info("Resuming jobId: " + jobId + ", status="+ status);
+td.setResume(true);
+threadPool.execute(td);
+break;
+case RECOVERABLE_ERROR:
+threadPool.execute(td);
+break;
+case DOWNLOAD_FINISHED:
+td.setDownloadError("Download success, starting install ");
+String result=postDownload(jobId);
+if (result != null) {
+s_logger.error("Failed post download script: " + result);
+td.setStatus(Status.UNRECOVERABLE_ERROR);
+td.setDownloadError("Failed post download script: " + result);
+}
+ else {
+td.setStatus(Status.POST_DOWNLOAD_FINISHED);
+td.setDownloadError("Install completed successfully at " + new SimpleDateFormat().format(new Date()));
+}
+dj.cleanup();
+break;
+default :
+break;
+}
+}

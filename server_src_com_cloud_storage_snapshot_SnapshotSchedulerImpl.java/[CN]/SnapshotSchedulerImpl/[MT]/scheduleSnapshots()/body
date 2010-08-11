@@ -1,0 +1,52 @@
+{
+  String displayTime=DateUtil.displayDateInTimezone(DateUtil.GMT_TIMEZONE,_currentTimestamp);
+  s_logger.debug("Snapshot scheduler.poll is being called at " + displayTime);
+  List<SnapshotScheduleVO> snapshotsToBeExecuted=_snapshotScheduleDao.getSchedulesToExecute(_currentTimestamp);
+  s_logger.debug("Got " + snapshotsToBeExecuted.size() + " snapshots to be executed at "+ displayTime);
+  long userId=1;
+  Map<Long,List<Long>> listOfVolumesSnapshotted=new HashMap<Long,List<Long>>();
+  Calendar cal=Calendar.getInstance(DateUtil.GMT_TIMEZONE);
+  cal.add(Calendar.MINUTE,-15);
+  Date graceTime=cal.getTime();
+  for (  SnapshotScheduleVO snapshotToBeExecuted : snapshotsToBeExecuted) {
+    Date scheduleTime=snapshotToBeExecuted.getScheduledTimestamp();
+    if (scheduleTime.before(graceTime)) {
+      s_logger.info("Snapshot schedule older than 15mins. Skipping snapshot for volume: " + snapshotToBeExecuted.getVolumeId());
+      scheduleNextSnapshotJob(snapshotToBeExecuted);
+      continue;
+    }
+    long policyId=snapshotToBeExecuted.getPolicyId();
+    long volumeId=snapshotToBeExecuted.getVolumeId();
+    List<Long> coincidingPolicies=listOfVolumesSnapshotted.get(volumeId);
+    if (coincidingPolicies != null) {
+      s_logger.debug("The snapshot for this volume " + volumeId + " and policy "+ policyId+ " has already been sent for execution along with "+ coincidingPolicies.size()+ " policies in total");
+      if (coincidingPolicies.contains(snapshotToBeExecuted.getPolicyId())) {
+        s_logger.debug("coincidingPolicies contains snapshotToBeExecuted id: " + snapshotToBeExecuted.getId() + ". Don't need to do anything now. The snapshot is already scheduled for execution.");
+      }
+ else {
+        s_logger.warn("Snapshot Schedule " + snapshotToBeExecuted.getId() + " is ready for execution now at timestamp "+ _currentTimestamp+ " but is not coincident with one being executed for volume "+ volumeId);
+        coincidingPolicies.add(snapshotToBeExecuted.getPolicyId());
+        listOfVolumesSnapshotted.put(volumeId,coincidingPolicies);
+      }
+    }
+ else {
+      coincidingPolicies=new ArrayList<Long>();
+      List<SnapshotScheduleVO> coincidingSchedules=_snapshotScheduleDao.getCoincidingSnapshotSchedules(volumeId,_currentTimestamp);
+      if (s_logger.isDebugEnabled()) {
+        Date scheduledTimestamp=snapshotToBeExecuted.getScheduledTimestamp();
+        displayTime=DateUtil.displayDateInTimezone(DateUtil.GMT_TIMEZONE,scheduledTimestamp);
+      }
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      StringBuilder coincidentSchedules=new StringBuilder();
+      for (      SnapshotScheduleVO coincidingSchedule : coincidingSchedules) {
+        coincidingPolicies.add(coincidingSchedule.getPolicyId());
+        coincidentSchedules.append(coincidingSchedule.getId() + ", ");
+      }
+      txn.commit();
+      s_logger.debug("Scheduling 1 snapshot for volume " + volumeId + " for schedule ids: "+ coincidentSchedules+ " at "+ displayTime);
+      long jobId=_snapshotManager.createSnapshotAsync(userId,volumeId,coincidingPolicies);
+      listOfVolumesSnapshotted.put(volumeId,coincidingPolicies);
+    }
+  }
+}

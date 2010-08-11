@@ -1,0 +1,34 @@
+{
+  Long volumeId=volume.getId();
+  String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
+  String volumeUuid=volume.getPath();
+  Long poolId=volume.getPoolId();
+  String firstSnapshotBackupUuid=volume.getFirstSnapshotBackupUuid();
+  String templateUuid=null;
+  String details=null;
+  if (firstSnapshotBackupUuid == null && volume.getVolumeType() == VolumeType.ROOT) {
+    Long templateId=volume.getTemplateId();
+    VMTemplateVO template=_templateDao.findById(templateId);
+    if (template == null) {
+      details="Unable find template id: " + templateId + " for root disk volumeId: "+ volumeId;
+      s_logger.error(details);
+    }
+ else     if (template.getFormat() == ImageFormat.VHD || template.getFormat() == ImageFormat.QCOW2) {
+      VMTemplateStoragePoolVO templateStoragePoolVO=_templatePoolDao.findByPoolTemplate(volume.getPoolId(),templateId);
+      if (templateStoragePoolVO != null) {
+        templateUuid=templateStoragePoolVO.getInstallPath();
+      }
+ else {
+        details="Template id: " + templateId + " is not present in on the primary storage pool id: "+ volume.getPoolId()+ " according to the template_spool_ref table";
+        s_logger.error(details);
+      }
+    }
+  }
+  ValidateSnapshotAnswer answer=null;
+  if (details == null) {
+    ValidateSnapshotCommand cmd=new ValidateSnapshotCommand(primaryStoragePoolNameLabel,volumeUuid,firstSnapshotBackupUuid,previousSnapshotUuid,templateUuid);
+    String basicErrMsg="Failed to validate VDI structure for volumeId: " + volume.getId() + " with UUID: "+ volumeUuid;
+    answer=(ValidateSnapshotAnswer)_storageMgr.sendToHostsOnStoragePool(poolId,cmd,basicErrMsg,_totalRetries,_pauseInterval,_shouldBeSnapshotCapable,volume.getInstanceId());
+  }
+  return answer;
+}

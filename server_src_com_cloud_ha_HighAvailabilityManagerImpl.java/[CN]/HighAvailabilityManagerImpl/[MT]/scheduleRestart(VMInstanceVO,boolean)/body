@@ -1,0 +1,38 @@
+{
+  Long hostId=vm.getHostId();
+  VirtualMachineManager<VMInstanceVO> mgr=findManager(vm.getType());
+  vm=mgr.get(vm.getId());
+  if (!investigate) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM does not require investigation so I'm marking it as Stopped: " + vm.toString());
+    }
+    short alertType=AlertManager.ALERT_TYPE_USERVM;
+    if (VirtualMachine.Type.DomainRouter.equals(vm.getType())) {
+      alertType=AlertManager.ALERT_TYPE_DOMAIN_ROUTER;
+    }
+ else     if (VirtualMachine.Type.ConsoleProxy.equals(vm.getType())) {
+      alertType=AlertManager.ALERT_TYPE_CONSOLE_PROXY;
+    }
+    if (!(_forceHA || vm.isHaEnabled())) {
+      _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"VM (name: " + vm.getName() + ", id: "+ vm.getId()+ ") stopped unexpectedly on host "+ vm.getHostId(),"Virtual Machine " + vm.getName() + " (id: "+ vm.getId()+ ") running on host ["+ vm.getHostId()+ "] stopped unexpectedly.");
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("VM is not HA enabled so we're done.");
+      }
+    }
+    mgr.completeStopCommand(vm);
+  }
+  final List<WorkVO> items=_haDao.findPreviousHA(vm.getId());
+  int maxRetries=0;
+  for (  final WorkVO item : items) {
+    if (maxRetries < item.getTimesTried() && !item.canScheduleNew(_timeBetweenFailures)) {
+      maxRetries=item.getTimesTried();
+      break;
+    }
+  }
+  final WorkVO work=new WorkVO(vm.getId(),vm.getType(),WorkType.HA,investigate ? Step.Investigating : Step.Scheduled,hostId,vm.getState(),maxRetries + 1,vm.getUpdated());
+  _haDao.persist(work);
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Schedule vm for HA:  " + vm.toString());
+  }
+  wakeupWorkers();
+}

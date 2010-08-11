@@ -1,0 +1,93 @@
+{
+  saveUser();
+  String init=_configDao.getValue("init");
+  if (init.equals("false")) {
+    s_logger.debug("ConfigurationServer is saving default values to the database.");
+    List<String> categories=Config.getCategories();
+    for (    String category : categories) {
+      if (!_configMgr.isPremium() && category.equals("Premium")) {
+        continue;
+      }
+      List<Config> configs=Config.getConfigs(category);
+      for (      Config c : configs) {
+        String name=c.key();
+        if (_configDao.getValue(name) != null) {
+          continue;
+        }
+        String instance="DEFAULT";
+        String component=c.getComponent();
+        String value=c.getDefaultValue();
+        String description=c.getDescription();
+        ConfigurationVO configVO=new ConfigurationVO(category,instance,component,name,value,description);
+        _configDao.persist(configVO);
+      }
+    }
+    if (_configMgr.isPremium()) {
+      _configDao.update("network.type","vlan");
+      s_logger.debug("ConfigurationServer changed the network type to \"vlan\".");
+      _configDao.update("hypervisor.type","xenserver");
+      s_logger.debug("ConfigurationServer changed the hypervisor type to \"xenserver\".");
+      _configDao.update("secondary.storage.vm","true");
+      s_logger.debug("ConfigurationServer made secondary storage vm required.");
+      _configDao.update("secstorage.encrypt.copy","true");
+      s_logger.debug("ConfigurationServer made secondary storage copy encrypted.");
+      _configDao.update("secstorage.secure.copy.cert","realhostip");
+      s_logger.debug("ConfigurationServer made secondary storage copy use realhostip.");
+    }
+    boolean externalIpAlloator=Boolean.parseBoolean(_configDao.getValue("direct.attach.network.externalIpAllocator.enabled"));
+    String hyperVisor=_configDao.getValue("hypervisor.type");
+    if (hyperVisor.equalsIgnoreCase("KVM") && !externalIpAlloator) {
+      _configDao.update("direct.attach.network.externalIpAllocator.enabled","true");
+    }
+    _configMgr.createServiceOffering(User.UID_SYSTEM,"Small Instance, Direct Networking",1,512,500,"Small Instance, Direct Networking, $0.05 per hour",false,false,false,null);
+    _configMgr.createServiceOffering(User.UID_SYSTEM,"Medium Instance, Direct Networking",1,1024,1000,"Medium Instance, Direct Networking, $0.10 per hour",false,false,false,null);
+    _configMgr.createServiceOffering(User.UID_SYSTEM,"Small Instance, Virtual Networking",1,512,500,"Small Instance, Virtual Networking, $0.05 per hour",false,false,true,null);
+    _configMgr.createServiceOffering(User.UID_SYSTEM,"Medium Instance, Virtual Networking",1,1024,1000,"Medium Instance, Virtual Networking, $0.10 per hour",false,false,true,null);
+    _configMgr.createDiskOffering(DomainVO.ROOT_DOMAIN,"Small","Small Disk, 5 GB",5,null);
+    _configMgr.createDiskOffering(DomainVO.ROOT_DOMAIN,"Medium","Medium Disk, 20 GB",20,null);
+    _configMgr.createDiskOffering(DomainVO.ROOT_DOMAIN,"Large","Large Disk, 100 GB",100,null);
+    _configMgr.createDiskOffering(DomainVO.ROOT_DOMAIN,"Private","Private Disk",0,null);
+    SnapshotPolicyVO snapPolicy=new SnapshotPolicyVO(0L,"00","GMT",(short)4,0);
+    _snapPolicyDao.persist(snapPolicy);
+    String mountParent=getMountParent();
+    if (mountParent != null) {
+      _configMgr.updateConfiguration(User.UID_SYSTEM,"mount.parent",mountParent);
+      s_logger.debug("ConfigurationServer saved \"" + mountParent + "\" as mount.parent.");
+    }
+ else {
+      s_logger.debug("ConfigurationServer could not detect mount.parent.");
+    }
+    String hostIpAdr=getHost();
+    if (hostIpAdr != null) {
+      _configMgr.updateConfiguration(User.UID_SYSTEM,"host",hostIpAdr);
+      s_logger.debug("ConfigurationServer saved \"" + hostIpAdr + "\" as host.");
+    }
+    String[] gatewayAndNetmask=getGatewayAndNetmask();
+    if (gatewayAndNetmask != null) {
+      String gateway=gatewayAndNetmask[0];
+      String netmask=gatewayAndNetmask[1];
+      long cidrSize=NetUtils.getCidrSize(netmask);
+      String dns=getDNS();
+      if (dns == null) {
+        dns="4.2.2.2";
+      }
+      DataCenterVO zone=_configMgr.createZone(User.UID_SYSTEM,"Default",dns,null,dns,null,"1000-2000","10.1.1.0/24");
+      String networkType=_configDao.getValue("network.type");
+      if (networkType != null && networkType.equals("vnet")) {
+        _configMgr.createPod(User.UID_SYSTEM,"Default",zone.getId(),"169.254.1.1","169.254.1.0/24","169.254.1.2","169.254.1.254");
+      }
+ else {
+        _configMgr.createPod(User.UID_SYSTEM,"Default",zone.getId(),gateway,gateway + "/" + cidrSize,null,null);
+      }
+      s_logger.debug("ConfigurationServer saved a default pod and zone, with gateway: " + gateway + " and netmask: "+ netmask);
+    }
+ else {
+      s_logger.debug("ConfigurationServer could not detect the gateway and netmask of the management server.");
+    }
+    updateSSOKey();
+  }
+  updateKeyPairs();
+  generateSecStorageVmCopyPassword();
+  updateCloudIdentifier();
+  _configDao.update("init","true");
+}

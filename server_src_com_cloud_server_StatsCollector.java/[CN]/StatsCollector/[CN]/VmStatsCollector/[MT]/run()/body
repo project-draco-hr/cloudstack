@@ -1,0 +1,46 @@
+{
+  try {
+    s_logger.debug("VmStatsCollector is running...");
+    SearchCriteria<HostVO> sc=_hostDao.createSearchCriteria();
+    sc.addAnd("status",SearchCriteria.Op.EQ,Status.Up.toString());
+    sc.addAnd("type",SearchCriteria.Op.NEQ,Host.Type.Storage.toString());
+    sc.addAnd("type",SearchCriteria.Op.NEQ,Host.Type.ConsoleProxy.toString());
+    sc.addAnd("type",SearchCriteria.Op.NEQ,Host.Type.SecondaryStorage.toString());
+    List<HostVO> hosts=_hostDao.search(sc,null);
+    for (    HostVO host : hosts) {
+      List<UserVmVO> vms=_userVmDao.listRunningByHostId(host.getId());
+      List<Long> vmIds=new ArrayList<Long>();
+      for (      UserVmVO vm : vms) {
+        vmIds.add(vm.getId());
+      }
+      try {
+        HashMap<Long,VmStatsEntry> vmStatsById=_userVmMgr.getVirtualMachineStatistics(host.getId(),host.getName(),vmIds);
+        if (vmStatsById != null) {
+          VmStatsEntry statsInMemory=null;
+          Set<Long> vmIdSet=vmStatsById.keySet();
+          for (          Long vmId : vmIdSet) {
+            VmStatsEntry statsForCurrentIteration=vmStatsById.get(vmId);
+            statsInMemory=(VmStatsEntry)_VmStats.get(vmId);
+            if (statsInMemory == null) {
+              _VmStats.put(vmId,statsForCurrentIteration);
+            }
+ else {
+              statsInMemory.setCPUUtilization(statsForCurrentIteration.getCPUUtilization());
+              statsInMemory.setNumCPUs(statsForCurrentIteration.getNumCPUs());
+              statsInMemory.setNetworkReadKBs(statsInMemory.getNetworkReadKBs() + statsForCurrentIteration.getNetworkReadKBs());
+              statsInMemory.setNetworkWriteKBs(statsInMemory.getNetworkWriteKBs() + statsForCurrentIteration.getNetworkWriteKBs());
+              _VmStats.put(vmId,statsInMemory);
+            }
+          }
+        }
+      }
+ catch (      InternalErrorException e) {
+        s_logger.debug("Failed to get VM stats for host with ID: " + host.getId());
+        continue;
+      }
+    }
+  }
+ catch (  Throwable t) {
+    s_logger.error("Error trying to retrieve VM stats",t);
+  }
+}

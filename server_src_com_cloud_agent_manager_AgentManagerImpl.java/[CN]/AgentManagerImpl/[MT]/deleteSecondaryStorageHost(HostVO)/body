@@ -1,0 +1,37 @@
+{
+  long zoneId=secStorageHost.getDataCenterId();
+  long hostId=secStorageHost.getId();
+  Transaction txn=Transaction.currentTxn();
+  try {
+    List<VMInstanceVO> allVmsInZone=_vmDao.listByZoneId(zoneId);
+    if (!allVmsInZone.isEmpty()) {
+      s_logger.warn("Cannot delete secondary storage host when there are  " + allVmsInZone.size() + " vms in zone "+ zoneId);
+      return false;
+    }
+    txn.start();
+    if (!_hostDao.updateStatus(secStorageHost,Event.MaintenanceRequested,_nodeId)) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to take host " + hostId + " into maintenance mode.  Delete call is ignored");
+      }
+      return false;
+    }
+    if (!_hostDao.updateStatus(secStorageHost,Event.PreparationComplete,_nodeId)) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to take host " + hostId + " into maintenance mode.  Delete call is ignored");
+      }
+      return false;
+    }
+    AgentAttache attache=_agents.get(hostId);
+    handleDisconnect(attache,Status.Event.Remove,false);
+    _hostDao.remove(secStorageHost.getId());
+    SearchCriteria<VMTemplateHostVO> templateHostSC=_vmTemplateHostDao.createSearchCriteria();
+    templateHostSC.addAnd("hostId",SearchCriteria.Op.EQ,secStorageHost.getId());
+    _vmTemplateHostDao.remove(templateHostSC);
+    txn.commit();
+    return true;
+  }
+ catch (  Throwable t) {
+    s_logger.error("Unable to delete sec storage host: " + secStorageHost.getId(),t);
+    return false;
+  }
+}

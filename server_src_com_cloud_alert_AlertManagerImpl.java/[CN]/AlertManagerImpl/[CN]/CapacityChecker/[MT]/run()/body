@@ -1,0 +1,95 @@
+{
+  recalculateCapacity();
+  if (_emailAlert == null) {
+    return;
+  }
+  try {
+    List<CapacityVO> capacityList=_capacityDao.listAll();
+    Map<String,List<CapacityVO>> capacityDcTypeMap=new HashMap<String,List<CapacityVO>>();
+    for (    CapacityVO capacity : capacityList) {
+      long dataCenterId=capacity.getDataCenterId();
+      short type=capacity.getCapacityType();
+      String key="dc" + dataCenterId + "t"+ type;
+      List<CapacityVO> list=capacityDcTypeMap.get(key);
+      if (list == null) {
+        list=new ArrayList<CapacityVO>();
+      }
+      list.add(capacity);
+      capacityDcTypeMap.put(key,list);
+    }
+    for (    String keyValue : capacityDcTypeMap.keySet()) {
+      List<CapacityVO> capacities=capacityDcTypeMap.get(keyValue);
+      double totalCapacity=0d;
+      double usedCapacity=0d;
+      CapacityVO cap=capacities.get(0);
+      short capacityType=cap.getCapacityType();
+      long dataCenterId=cap.getDataCenterId();
+      for (      CapacityVO capacity : capacities) {
+        totalCapacity+=capacity.getTotalCapacity();
+        usedCapacity+=capacity.getUsedCapacity();
+      }
+      double capacityPct=(usedCapacity / totalCapacity);
+      double thresholdLimit=1.0;
+      DataCenterVO dcVO=_dcDao.findById(dataCenterId);
+      String dcName=((dcVO == null) ? "unknown" : dcVO.getName());
+      String msgSubject="";
+      String msgContent="";
+      String totalStr="";
+      String usedStr="";
+      String pctStr=formatPercent(capacityPct);
+switch (capacityType) {
+case CapacityVO.CAPACITY_TYPE_MEMORY:
+        thresholdLimit=_memoryCapacityThreshold;
+      msgSubject="System Alert: Low Available Memory in availablity zone " + dcName;
+    totalStr=formatBytesToMegabytes(totalCapacity);
+  usedStr=formatBytesToMegabytes(usedCapacity);
+msgContent="System memory is low, total: " + totalStr + " MB, used: "+ usedStr+ " MB ("+ pctStr+ "%)";
+break;
+case CapacityVO.CAPACITY_TYPE_CPU:
+thresholdLimit=_cpuCapacityThreshold;
+msgSubject="System Alert: Low Unallocated CPU in availablity zone " + dcName;
+totalStr=_dfWhole.format(totalCapacity);
+usedStr=_dfWhole.format(usedCapacity);
+msgContent="Unallocated CPU is low, total: " + totalStr + " Mhz, used: "+ usedStr+ " Mhz ("+ pctStr+ "%)";
+break;
+case CapacityVO.CAPACITY_TYPE_STORAGE:
+thresholdLimit=_storageCapacityThreshold;
+msgSubject="System Alert: Low Available Storage in availablity zone " + dcName;
+totalStr=formatBytesToMegabytes(totalCapacity);
+usedStr=formatBytesToMegabytes(usedCapacity);
+msgContent="Available storage space is low, total: " + totalStr + " MB, used: "+ usedStr+ " MB ("+ pctStr+ "%)";
+break;
+case CapacityVO.CAPACITY_TYPE_STORAGE_ALLOCATED:
+thresholdLimit=_storageAllocCapacityThreshold;
+msgSubject="System Alert: Remaining unallocated Storage is low in availablity zone " + dcName;
+totalStr=formatBytesToMegabytes(totalCapacity);
+usedStr=formatBytesToMegabytes(usedCapacity);
+msgContent="Unallocated storage space is low, total: " + totalStr + " MB, allocated: "+ usedStr+ " MB ("+ pctStr+ "%)";
+break;
+case CapacityVO.CAPACITY_TYPE_PUBLIC_IP:
+thresholdLimit=_publicIPCapacityThreshold;
+msgSubject="System Alert: Number of unallocated public IPs is low in availablity zone " + dcName;
+totalStr=Double.toString(totalCapacity);
+usedStr=Double.toString(usedCapacity);
+msgContent="Number of unallocated public IPs is low, total: " + totalStr + ", allocated: "+ usedStr+ " ("+ pctStr+ "%)";
+break;
+case CapacityVO.CAPACITY_TYPE_PRIVATE_IP:
+thresholdLimit=_privateIPCapacityThreshold;
+msgSubject="System Alert: Number of unallocated private IPs is low in availablity zone " + dcName;
+totalStr=Double.toString(totalCapacity);
+usedStr=Double.toString(usedCapacity);
+msgContent="Number of unallocated private IPs is low, total: " + totalStr + ", allocated: "+ usedStr+ " ("+ pctStr+ "%)";
+break;
+}
+if (capacityPct > thresholdLimit) {
+_emailAlert.sendAlert(capacityType,dataCenterId,null,msgSubject,msgContent);
+}
+ else {
+_emailAlert.clearAlert(capacityType,dataCenterId,null);
+}
+}
+}
+ catch (Exception ex) {
+s_logger.error("Exception in CapacityChecker",ex);
+}
+}

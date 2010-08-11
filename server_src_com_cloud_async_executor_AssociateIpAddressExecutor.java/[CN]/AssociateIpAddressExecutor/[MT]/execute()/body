@@ -1,0 +1,45 @@
+{
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobManager asyncMgr=getAsyncJobMgr();
+  AsyncJobVO job=getJob();
+  ManagementServer managementServer=asyncMgr.getExecutorContext().getManagementServer();
+  AssociateIpAddressParam param=gson.fromJson(job.getCmdInfo(),AssociateIpAddressParam.class);
+  if (getSyncSource() == null) {
+    DomainRouterVO router=asyncMgr.getExecutorContext().getRouterDao().findBy(param.getAccountId(),param.getZoneId());
+    if (router == null) {
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.NET_INVALID_PARAM_ERROR,"Unable to find router with given zone " + param.getZoneId() + " and account "+ param.getAccountId());
+    }
+ else {
+      asyncMgr.syncAsyncJobExecution(job.getId(),"Router",router.getId());
+    }
+    return true;
+  }
+ else {
+    try {
+      String ipAddress=managementServer.associateIpAddress(param.getUserId(),param.getAccountId(),param.getDomainId(),param.getZoneId());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,composeResultObject(managementServer,param,ipAddress));
+    }
+ catch (    ResourceAllocationException e) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to associate ip address : " + e.getMessage());
+      if (e.getResourceType().equals("vm"))       asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.VM_ALLOCATION_ERROR,e.getMessage());
+ else       if (e.getResourceType().equals("ip"))       asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.IP_ALLOCATION_ERROR,e.getMessage());
+    }
+catch (    InsufficientAddressCapacityException e) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to associate ip address : " + e.getMessage());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.NET_IP_ASSOC_ERROR,e.getMessage());
+    }
+catch (    InvalidParameterValueException e) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to associate ip address : " + e.getMessage());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.NET_INVALID_PARAM_ERROR,e.getMessage());
+    }
+catch (    InternalErrorException e) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to associate ip address : " + e.getMessage());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+    }
+catch (    Exception e) {
+      s_logger.warn("Unable to associate ip address : " + e.getMessage(),e);
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+    }
+  }
+  return true;
+}

@@ -1,0 +1,27 @@
+{
+  final long routerId=router.getId();
+  final Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    if (_vmDao.listBy(routerId,State.Starting,State.Running).size() == 0) {
+      _dcDao.releaseVnet(router.getVnet(),router.getDataCenterId(),router.getAccountId());
+    }
+    router.setVnet(null);
+    String privateIpAddress=router.getPrivateIpAddress();
+    if (privateIpAddress != null) {
+      _dcDao.releaseLinkLocalPrivateIpAddress(privateIpAddress,router.getDataCenterId(),router.getId());
+    }
+    router.setPrivateIpAddress(null);
+    if (!_routerDao.updateIf(router,ev,null)) {
+      s_logger.debug("Router is not updated");
+      return;
+    }
+    txn.commit();
+  }
+ catch (  final Exception e) {
+    throw new CloudRuntimeException("Unable to complete stop",e);
+  }
+  if (_storageMgr.unshare(router,null) == null) {
+    s_logger.warn("Unable to set share to false for " + router.getId() + " on host ");
+  }
+}

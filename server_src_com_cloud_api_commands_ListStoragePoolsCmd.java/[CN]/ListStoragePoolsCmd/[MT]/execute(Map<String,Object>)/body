@@ -1,0 +1,84 @@
+{
+  String name=(String)params.get(BaseCmd.Properties.NAME.getName());
+  Long zoneId=(Long)params.get(BaseCmd.Properties.ZONE_ID.getName());
+  Long podId=(Long)params.get(BaseCmd.Properties.POD_ID.getName());
+  Long clusterId=(Long)params.get(BaseCmd.Properties.CLUSTER_ID.getName());
+  String ipAddress=(String)params.get(BaseCmd.Properties.IP_ADDRESS.getName());
+  String path=(String)params.get(BaseCmd.Properties.PATH.getName());
+  String keyword=(String)params.get(BaseCmd.Properties.KEYWORD.getName());
+  Integer page=(Integer)params.get(BaseCmd.Properties.PAGE.getName());
+  Integer pageSize=(Integer)params.get(BaseCmd.Properties.PAGESIZE.getName());
+  Long startIndex=Long.valueOf(0);
+  int pageSizeNum=50;
+  if (pageSize != null) {
+    pageSizeNum=pageSize.intValue();
+  }
+  if (page != null) {
+    int pageNum=page.intValue();
+    if (pageNum > 0) {
+      startIndex=Long.valueOf(pageSizeNum * (pageNum - 1));
+    }
+  }
+  Criteria c=new Criteria("id",Boolean.TRUE,startIndex,Long.valueOf(pageSizeNum));
+  if (keyword != null) {
+    c.addCriteria(Criteria.KEYWORD,keyword);
+  }
+ else {
+    c.addCriteria(Criteria.NAME,name);
+    c.addCriteria(Criteria.DATACENTERID,zoneId);
+    c.addCriteria(Criteria.PODID,podId);
+    c.addCriteria(Criteria.CLUSTERID,clusterId);
+    c.addCriteria(Criteria.ADDRESS,ipAddress);
+    c.addCriteria(Criteria.PATH,path);
+  }
+  List<? extends StoragePoolVO> pools=getManagementServer().searchForStoragePools(c);
+  if (pools == null) {
+    throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"unable to find pools");
+  }
+  ComponentLocator locator=ComponentLocator.getLocator(ManagementServer.Name);
+  VolumeDao volDao=locator.getDao(VolumeDao.class);
+  List<Pair<String,Object>> poolTags=new ArrayList<Pair<String,Object>>();
+  Object[] sTag=new Object[pools.size()];
+  int i=0;
+  for (  StoragePoolVO pool : pools) {
+    StoragePoolVO netfsPool=pool;
+    List<Pair<String,Object>> poolData=new ArrayList<Pair<String,Object>>();
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.ID.getName(),Long.toString(pool.getId())));
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.NAME.getName(),pool.getName()));
+    if (pool.getPoolType() != null) {
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.TYPE.getName(),pool.getPoolType().toString()));
+    }
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.IP_ADDRESS.getName(),netfsPool.getHostAddress()));
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.ZONE_ID.getName(),Long.valueOf(pool.getDataCenterId()).toString()));
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.ZONE_NAME.getName(),getManagementServer().getDataCenterBy(pool.getDataCenterId()).getName()));
+    if (pool.getPodId() != null) {
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.POD_ID.getName(),Long.valueOf(pool.getPodId()).toString()));
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.POD_NAME.getName(),getManagementServer().getPodBy(pool.getPodId()).getName()));
+    }
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.PATH.getName(),netfsPool.getPath().toString()));
+    StorageStats stats=getManagementServer().getStoragePoolStatistics(pool.getId());
+    long capacity=pool.getCapacityBytes();
+    long available=pool.getAvailableBytes();
+    long used=capacity - available;
+    if (stats != null) {
+      used=stats.getByteUsed();
+      available=capacity - used;
+    }
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.DISK_SIZE_TOTAL.getName(),Long.valueOf(pool.getCapacityBytes()).toString()));
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.DISK_SIZE_ALLOCATED.getName(),Long.valueOf(used).toString()));
+    if (pool.getCreated() != null) {
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.CREATED.getName(),getDateString(pool.getCreated())));
+    }
+    if (pool.getClusterId() != null) {
+      ClusterVO cluster=getManagementServer().findClusterById(pool.getClusterId());
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.CLUSTER_ID.getName(),cluster.getId()));
+      poolData.add(new Pair<String,Object>(BaseCmd.Properties.CLUSTER_NAME.getName(),cluster.getName()));
+    }
+    poolData.add(new Pair<String,Object>(BaseCmd.Properties.TAGS.getName(),getManagementServer().getStoragePoolTags(pool.getId())));
+    sTag[i++]=poolData;
+    volDao.getCountAndTotalByPool(pool.getId());
+  }
+  Pair<String,Object> poolTag=new Pair<String,Object>("storagepool",sTag);
+  poolTags.add(poolTag);
+  return poolTags;
+}

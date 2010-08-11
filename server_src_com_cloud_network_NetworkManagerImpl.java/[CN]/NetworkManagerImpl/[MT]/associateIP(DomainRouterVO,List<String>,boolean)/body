@@ -1,0 +1,44 @@
+{
+  final Command[] cmds=new Command[ipAddrList.size()];
+  int i=0;
+  boolean sourceNat=false;
+  for (  final String ipAddress : ipAddrList) {
+    if (ipAddress.equalsIgnoreCase(router.getPublicIpAddress()))     sourceNat=true;
+    IPAddressVO ip=_ipAddressDao.findById(ipAddress);
+    VlanVO vlan=_vlanDao.findById(ip.getVlanDbId());
+    String vlanId=vlan.getVlanId();
+    String vlanGateway=vlan.getVlanGateway();
+    String vlanNetmask=vlan.getVlanNetmask();
+    boolean firstIP=(!sourceNat && (_ipAddressDao.countIPs(vlan.getDataCenterId(),vlan.getVlanId(),vlan.getVlanGateway(),vlan.getVlanNetmask(),true) == 1));
+    String vifMacAddress=null;
+    if (firstIP) {
+      String[] macAddresses=_dcDao.getNextAvailableMacAddressPair(ip.getDataCenterId());
+      vifMacAddress=macAddresses[1];
+    }
+    cmds[i++]=new IPAssocCommand(router.getInstanceName(),router.getPrivateIpAddress(),ipAddress,add,firstIP,sourceNat,vlanId,vlanGateway,vlanNetmask,vifMacAddress);
+    sourceNat=false;
+  }
+  Answer[] answers=null;
+  try {
+    answers=_agentMgr.send(router.getHostId(),cmds,false);
+  }
+ catch (  final AgentUnavailableException e) {
+    s_logger.warn("Agent unavailable",e);
+    return false;
+  }
+catch (  final OperationTimedoutException e) {
+    s_logger.warn("Timed Out",e);
+    return false;
+  }
+  if (answers == null) {
+    return false;
+  }
+  if (answers.length != ipAddrList.size()) {
+    return false;
+  }
+  for (int i1=0; i1 < answers.length; i1++) {
+    Answer ans=answers[i1];
+    return ans.getResult();
+  }
+  return true;
+}

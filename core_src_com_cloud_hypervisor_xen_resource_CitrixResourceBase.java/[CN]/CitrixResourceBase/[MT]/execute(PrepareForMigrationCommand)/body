@@ -1,0 +1,87 @@
+{
+  final String vmName=cmd.getVmName();
+  try {
+    Connection conn=getConnection();
+    Set<Host> hosts=Host.getAll(conn);
+    if (hosts.size() <= 1) {
+      return new PrepareForMigrationAnswer(cmd,false,"not in a same xenserver pool");
+    }
+    SR sr=getISOSRbyVmName(cmd.getVmName());
+    if (sr != null) {
+      Set<PBD> pbds=sr.getPBDs(conn);
+      boolean found=false;
+      for (      PBD pbd : pbds) {
+        if (Host.getByUuid(conn,_host.uuid).equals(pbd.getHost(conn))) {
+          found=true;
+          break;
+        }
+      }
+      if (!found) {
+        sr.setShared(conn,true);
+        PBD pbd=pbds.iterator().next();
+        PBD.Record pbdr=new PBD.Record();
+        pbdr.deviceConfig=pbd.getDeviceConfig(conn);
+        pbdr.host=Host.getByUuid(conn,_host.uuid);
+        pbdr.SR=sr;
+        PBD newpbd=PBD.create(conn,pbdr);
+        newpbd.plug(conn);
+      }
+    }
+    Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    if (vms.size() != 1) {
+      String msg="There are " + vms.size() + " "+ vmName;
+      s_logger.warn(msg);
+      return new PrepareForMigrationAnswer(cmd,false,msg);
+    }
+    VM vm=vms.iterator().next();
+    Set<VIF> vifs=vm.getVIFs(conn);
+    for (    VIF vif : vifs) {
+      Network network=vif.getNetwork(conn);
+      Set<PIF> pifs=network.getPIFs(conn);
+      Long vlan=null;
+      PIF npif=null;
+      for (      PIF pif : pifs) {
+        try {
+          vlan=pif.getVLAN(conn);
+          if (vlan != null) {
+            VLAN vland=pif.getVLANMasterOf(conn);
+            npif=vland.getTaggedPIF(conn);
+            break;
+          }
+        }
+ catch (        Exception e) {
+          vlan=null;
+          continue;
+        }
+      }
+      if (vlan == null) {
+        continue;
+      }
+      network=npif.getNetwork(conn);
+      String nwuuid=network.getUuid(conn);
+      String pifuuid=null;
+      if (nwuuid.equalsIgnoreCase(_host.privateNetwork)) {
+        pifuuid=_host.privatePif;
+      }
+ else       if (nwuuid.equalsIgnoreCase(_host.publicNetwork)) {
+        pifuuid=_host.publicPif;
+      }
+ else {
+        continue;
+      }
+      Network vlanNetwork=enableVlanNetwork(vlan,nwuuid,pifuuid);
+      if (vlanNetwork == null) {
+        throw new InternalErrorException("Failed to enable VLAN network with tag: " + vlan);
+      }
+    }
+synchronized (_vms) {
+      _vms.put(cmd.getVmName(),State.Migrating);
+    }
+    return new PrepareForMigrationAnswer(cmd,true,null);
+  }
+ catch (  Exception e) {
+    String msg="catch exception " + e.getMessage();
+    s_logger.warn(msg,e);
+    return new PrepareForMigrationAnswer(cmd,false,msg);
+  }
+}

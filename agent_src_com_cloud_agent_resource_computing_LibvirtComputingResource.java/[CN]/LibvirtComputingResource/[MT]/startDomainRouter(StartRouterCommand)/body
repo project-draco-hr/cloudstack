@@ -1,0 +1,40 @@
+{
+  DomainRouter router=cmd.getRouter();
+  List<interfaceDef> nics=null;
+  try {
+    nics=createRouterVMNetworks(cmd);
+    List<diskDef> disks=createSystemVMDisk(cmd.getVolumes());
+    String dataDiskPath=null;
+    for (    diskDef disk : disks) {
+      if (disk.getDiskLabel().equalsIgnoreCase("hdb")) {
+        dataDiskPath=disk.getDiskPath();
+      }
+    }
+    String vmName=cmd.getVmName();
+    patchSystemVm(cmd.getBootArgs(),dataDiskPath,vmName);
+    String uuid=UUID.nameUUIDFromBytes(vmName.getBytes()).toString();
+    String domXML=defineVMXML(cmd.getVmName(),uuid,router.getRamSize(),1,_domrArch,nics,disks,router.getVncPassword(),"Fedora 12");
+    s_logger.debug(domXML);
+    startDomain(vmName,domXML);
+    for (    interfaceDef nic : nics) {
+      if (nic.getHostNetType() == hostNicType.VNET) {
+        disableBridgeForwardding(nic.getBrName());
+      }
+    }
+  }
+ catch (  LibvirtException e) {
+    if (nics != null) {
+      cleanupVMNetworks(nics);
+    }
+    s_logger.debug("Failed to start domr: " + e.toString());
+    return e.toString();
+  }
+catch (  InternalErrorException e) {
+    if (nics != null) {
+      cleanupVMNetworks(nics);
+    }
+    s_logger.debug("Failed to start domr: " + e.toString());
+    return e.toString();
+  }
+  return null;
+}

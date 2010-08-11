@@ -1,0 +1,40 @@
+{
+  LoadBalancerVO loadBalancer=null;
+  try {
+    loadBalancer=_loadBalancerDao.acquire(loadBalancerId);
+    if (loadBalancer == null) {
+      throw new CloudRuntimeException("Failed to assign instances to load balancer, unable to lock load balancer " + loadBalancerId);
+    }
+    IPAddressVO ipAddress=_publicIpAddressDao.findById(loadBalancer.getIpAddress());
+    DomainRouterVO router=_routerDao.findBy(loadBalancer.getAccountId(),ipAddress.getDataCenterId());
+    List<LoadBalancerVMMapVO> mappedVMs=_loadBalancerVMMapDao.listByLoadBalancerId(loadBalancerId);
+    for (    LoadBalancerVMMapVO mappedVM : mappedVMs) {
+      if (instanceIds.contains(mappedVM.getInstanceId())) {
+        instanceIds.remove(mappedVM.getInstanceId());
+      }
+    }
+    if (instanceIds.isEmpty()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("assignToLoadBalancerAsync:  all given instance ids are already mapped, no work to do...skipping async job");
+      }
+      return 0L;
+    }
+    for (    Long instanceId : instanceIds) {
+      LoadBalancerVMMapVO loadBalancerMapping=new LoadBalancerVMMapVO(loadBalancerId,instanceId.longValue(),true);
+      _loadBalancerVMMapDao.persist(loadBalancerMapping);
+    }
+    LoadBalancerParam param=new LoadBalancerParam(userId,router.getId(),loadBalancerId,instanceIds);
+    Gson gson=GsonHelper.getBuilder().create();
+    AsyncJobVO job=new AsyncJobVO();
+    job.setUserId(UserContext.current().getUserId());
+    job.setAccountId(loadBalancer.getAccountId());
+    job.setCmd("AssignToLoadBalancer");
+    job.setCmdInfo(gson.toJson(param));
+    return _asyncMgr.submitAsyncJob(job,true);
+  }
+  finally {
+    if (loadBalancer != null) {
+      _loadBalancerDao.release(loadBalancer.getId());
+    }
+  }
+}

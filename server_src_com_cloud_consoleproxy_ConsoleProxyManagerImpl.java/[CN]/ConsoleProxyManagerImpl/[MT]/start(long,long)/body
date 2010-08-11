@@ -1,0 +1,178 @@
+{
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled())     s_logger.info("Start console proxy " + proxyId + ", update async job-"+ job.getId());
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"console_proxy",proxyId);
+  }
+  ConsoleProxyVO proxy=_consoleProxyDao.findById(proxyId);
+  if (proxy == null || proxy.getRemoved() != null) {
+    s_logger.debug("proxy is not found: " + proxyId);
+    return null;
+  }
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Starting console proxy if it is not started, proxy vm id : " + proxyId);
+  }
+  for (int i=0; i < 2; i++) {
+    State state=proxy.getState();
+    if (state == State.Starting) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Waiting console proxy to be ready, proxy vm id : " + proxyId + " proxy VM state : "+ state.toString());
+      if (proxy.getPrivateIpAddress() == null || connect(proxy.getPrivateIpAddress(),_proxyCmdPort) != null) {
+        if (proxy.getPrivateIpAddress() == null)         s_logger.warn("Retruning a proxy that is being started but private IP has not been allocated yet, proxy vm id : " + proxyId);
+ else         s_logger.warn("Waiting console proxy to be ready timed out, proxy vm id : " + proxyId);
+      }
+      return proxy;
+    }
+    if (state == State.Running) {
+      if (s_logger.isTraceEnabled())       s_logger.trace("Console proxy is already started: " + proxy.getName());
+      return proxy;
+    }
+    DataCenterVO dc=_dcDao.findById(proxy.getDataCenterId());
+    HostPodVO pod=_podDao.findById(proxy.getPodId());
+    List<StoragePoolVO> sps=_storageMgr.getStoragePoolsForVm(proxy.getId());
+    StoragePoolVO sp=sps.get(0);
+    HashSet<Host> avoid=new HashSet<Host>();
+    HostVO routingHost=(HostVO)_agentMgr.findHost(Host.Type.Routing,dc,pod,sp,_serviceOffering,_template,proxy,null,avoid);
+    if (routingHost == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to find a routing host for " + proxy.toString());
+        continue;
+      }
+    }
+    if (!_consoleProxyDao.updateIf(proxy,Event.StartRequested,routingHost.getId())) {
+      if (s_logger.isDebugEnabled()) {
+        ConsoleProxyVO temp=_consoleProxyDao.findById(proxyId);
+        s_logger.debug("Unable to start console proxy " + proxy.getName() + " because it is not in a startable state : "+ ((temp != null) ? temp.getState().toString() : "null"));
+      }
+      continue;
+    }
+    try {
+      Answer answer=null;
+      int retry=_find_host_retry;
+      do {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Trying to start console proxy on host " + routingHost.getName());
+        }
+        String privateIpAddress=allocPrivateIpAddress(proxy.getDataCenterId(),routingHost.getPodId(),proxy.getId(),proxy.getPrivateMacAddress());
+        if (privateIpAddress == null && (_IpAllocator != null && !_IpAllocator.exteralIpAddressAllocatorEnabled())) {
+          s_logger.debug("Not enough ip addresses in " + routingHost.getPodId());
+          avoid.add(routingHost);
+          continue;
+        }
+        proxy.setPrivateIpAddress(privateIpAddress);
+        String guestIpAddress=_dcDao.allocateLinkLocalPrivateIpAddress(proxy.getDataCenterId(),routingHost.getPodId(),proxy.getId());
+        proxy.setGuestIpAddress(guestIpAddress);
+        _consoleProxyDao.updateIf(proxy,Event.OperationRetry,routingHost.getId());
+        proxy=_consoleProxyDao.findById(proxy.getId());
+        List<VolumeVO> vols=_storageMgr.prepare(proxy,routingHost);
+        if (vols == null) {
+          s_logger.debug("Unable to prepare storage for " + routingHost);
+          avoid.add(routingHost);
+          continue;
+        }
+        StartConsoleProxyCommand cmdStart=new StartConsoleProxyCommand(_proxyCmdPort,proxy,proxy.getName(),"",vols,Integer.toString(_consoleProxyPort),Integer.toString(_consoleProxyUrlPort),_mgmt_host,_mgmt_port,_sslEnabled);
+        if (s_logger.isDebugEnabled())         s_logger.debug("Sending start command for console proxy " + proxy.getName() + " to "+ routingHost.getName());
+        try {
+          answer=_agentMgr.send(routingHost.getId(),cmdStart);
+          s_logger.debug("StartConsoleProxy Answer: " + (answer != null ? answer : "null"));
+          if (s_logger.isDebugEnabled())           s_logger.debug("Received answer on starting console proxy " + proxy.getName() + " on "+ routingHost.getName());
+          if (answer != null && answer.getResult()) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Console proxy " + proxy.getName() + " started on "+ routingHost.getName());
+            }
+            if (answer instanceof StartConsoleProxyAnswer) {
+              StartConsoleProxyAnswer rAnswer=(StartConsoleProxyAnswer)answer;
+              if (rAnswer.getPrivateIpAddress() != null) {
+                proxy.setPrivateIpAddress(rAnswer.getPrivateIpAddress());
+              }
+              if (rAnswer.getPrivateMacAddress() != null) {
+                proxy.setPrivateMacAddress(rAnswer.getPrivateMacAddress());
+              }
+            }
+            final EventVO event=new EventVO();
+            event.setUserId(User.UID_SYSTEM);
+            event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+            event.setType(EventTypes.EVENT_PROXY_START);
+            event.setLevel(EventVO.LEVEL_INFO);
+            event.setStartId(startEventId);
+            event.setDescription("Console proxy started - " + proxy.getName());
+            _eventDao.persist(event);
+            break;
+          }
+          s_logger.debug("Unable to start " + proxy.toString() + " on host "+ routingHost.toString()+ " due to "+ answer.getDetails());
+        }
+ catch (        OperationTimedoutException e) {
+          if (e.isActive()) {
+            s_logger.debug("Unable to start vm " + proxy.getName() + " due to operation timed out and it is active so scheduling a restart.");
+            _haMgr.scheduleRestart(proxy,true);
+            return null;
+          }
+        }
+catch (        AgentUnavailableException e) {
+          s_logger.debug("Agent " + routingHost.toString() + " was unavailable to start VM "+ proxy.getName());
+        }
+        avoid.add(routingHost);
+        proxy.setPrivateIpAddress(null);
+        freePrivateIpAddress(privateIpAddress,proxy.getDataCenterId(),proxy.getId());
+        proxy.setGuestIpAddress(null);
+        _dcDao.releaseLinkLocalPrivateIpAddress(guestIpAddress,proxy.getDataCenterId(),proxy.getId());
+        _storageMgr.unshare(proxy,vols,routingHost);
+      }
+ while (--retry > 0 && (routingHost=(HostVO)_agentMgr.findHost(Host.Type.Routing,dc,pod,sp,_serviceOffering,_template,proxy,null,avoid)) != null);
+      if (routingHost == null || retry <= 0) {
+        SubscriptionMgr.getInstance().notifySubscribers(ConsoleProxyManager.ALERT_SUBJECT,this,new ConsoleProxyAlertEventArgs(ConsoleProxyAlertEventArgs.PROXY_START_FAILURE,proxy.getDataCenterId(),proxy.getId(),proxy,"Unable to find a routing host to run"));
+        final EventVO event=new EventVO();
+        event.setUserId(User.UID_SYSTEM);
+        event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+        event.setType(EventTypes.EVENT_PROXY_START);
+        event.setLevel(EventVO.LEVEL_ERROR);
+        event.setStartId(startEventId);
+        event.setDescription("Starting console proxy failed due to unable to find a host - " + proxy.getName());
+        _eventDao.persist(event);
+        throw new ExecutionException("Couldn't find a routingHost to run console proxy");
+      }
+      _consoleProxyDao.updateIf(proxy,Event.OperationSucceeded,routingHost.getId());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Console proxy is now started, vm id : " + proxy.getId());
+      }
+      if (answer != null && answer.getDetails() != null && answer.getDetails().equals("firewall")) {
+        SubscriptionMgr.getInstance().notifySubscribers(ConsoleProxyManager.ALERT_SUBJECT,this,new ConsoleProxyAlertEventArgs(ConsoleProxyAlertEventArgs.PROXY_FIREWALL_ALERT,proxy.getDataCenterId(),proxy.getId(),proxy,null));
+      }
+      SubscriptionMgr.getInstance().notifySubscribers(ConsoleProxyManager.ALERT_SUBJECT,this,new ConsoleProxyAlertEventArgs(ConsoleProxyAlertEventArgs.PROXY_UP,proxy.getDataCenterId(),proxy.getId(),proxy,null));
+      return proxy;
+    }
+ catch (    Throwable thr) {
+      s_logger.warn("Unexpected exception: ",thr);
+      SubscriptionMgr.getInstance().notifySubscribers(ConsoleProxyManager.ALERT_SUBJECT,this,new ConsoleProxyAlertEventArgs(ConsoleProxyAlertEventArgs.PROXY_START_FAILURE,proxy.getDataCenterId(),proxy.getId(),proxy,"Unexpected exception: " + thr.getMessage()));
+      Transaction txn=Transaction.currentTxn();
+      try {
+        txn.start();
+        String privateIpAddress=proxy.getPrivateIpAddress();
+        if (privateIpAddress != null) {
+          proxy.setPrivateIpAddress(null);
+          freePrivateIpAddress(privateIpAddress,proxy.getDataCenterId(),proxy.getId());
+        }
+        _consoleProxyDao.updateIf(proxy,Event.OperationFailed,null);
+        txn.commit();
+      }
+ catch (      Exception e) {
+        s_logger.error("Caught exception during error recovery");
+      }
+      if (thr instanceof StorageUnavailableException) {
+        throw (StorageUnavailableException)thr;
+      }
+ else       if (thr instanceof ConcurrentOperationException) {
+        throw (ConcurrentOperationException)thr;
+      }
+ else       if (thr instanceof ExecutionException) {
+        s_logger.error("Error while starting console proxy due to " + thr.getMessage());
+      }
+ else {
+        s_logger.error("Error while starting console proxy ",thr);
+      }
+      return null;
+    }
+  }
+  s_logger.warn("Starting console proxy encounters non-startable situation");
+  return null;
+}

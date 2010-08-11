@@ -1,0 +1,102 @@
+{
+  long accountId=account.getId();
+  long userId=1L;
+  boolean accountCleanupNeeded=false;
+  try {
+    boolean success=_snapMgr.deleteSnapshotDirsForAccount(accountId);
+    if (success) {
+      s_logger.debug("Successfully deleted snapshots directories for all volumes under account " + accountId + " across all zones");
+    }
+    List<UserVmVO> vms=_userVmDao.listByAccountId(accountId);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Destroying # of vms (accountId=" + accountId + "): "+ vms.size());
+    }
+    for (    UserVmVO vm : vms) {
+      if (!_vmMgr.destroyVirtualMachine(userId,vm.getId())) {
+        s_logger.error("Unable to destroy vm: " + vm.getId());
+        accountCleanupNeeded=true;
+      }
+    }
+    List<VolumeVO> volumes=_volumeDao.findDetachedByAccount(accountId);
+    for (    VolumeVO volume : volumes) {
+      _storageMgr.destroyVolume(volume);
+    }
+    List<DomainRouterVO> routers=_routerDao.listBy(accountId);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Destroying # of routers (accountId=" + accountId + "): "+ routers.size());
+    }
+    boolean routersCleanedUp=true;
+    for (    DomainRouterVO router : routers) {
+      if (!_networkMgr.destroyRouter(router.getId())) {
+        s_logger.error("Unable to destroy router: " + router.getId());
+        routersCleanedUp=false;
+      }
+    }
+    if (routersCleanedUp) {
+      List<IPAddressVO> ips=_publicIpAddressDao.listByAccount(accountId);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Found " + ips.size() + " public IP addresses for account with ID "+ accountId);
+      }
+      for (      IPAddressVO ip : ips) {
+        Long podId=getPodIdForVlan(ip.getVlanDbId());
+        if (podId != null) {
+          continue;
+        }
+        if (!_networkMgr.releasePublicIpAddress(User.UID_SYSTEM,ip.getAddress())) {
+          s_logger.error("Unable to release IP: " + ip.getAddress());
+          accountCleanupNeeded=true;
+        }
+ else {
+          _accountMgr.decrementResourceCount(accountId,ResourceType.public_ip);
+        }
+      }
+    }
+ else {
+      accountCleanupNeeded=true;
+    }
+    List<SecurityGroupVO> securityGroups=_securityGroupDao.listByAccountId(accountId);
+    if (securityGroups != null) {
+      for (      SecurityGroupVO securityGroup : securityGroups) {
+        SearchCriteria<SecurityGroupVMMapVO> sc=_securityGroupVMMapDao.createSearchCriteria();
+        sc.addAnd("securityGroupId",SearchCriteria.Op.EQ,securityGroup.getId());
+        _securityGroupVMMapDao.delete(sc);
+        _networkRuleConfigDao.deleteBySecurityGroup(securityGroup.getId().longValue());
+        _securityGroupDao.remove(securityGroup.getId());
+      }
+    }
+    List<VlanVO> accountVlans=_vlanDao.listVlansForAccountByType(null,accountId,VlanType.DirectAttached);
+    boolean allVlansDeleted=true;
+    for (    VlanVO vlan : accountVlans) {
+      try {
+        allVlansDeleted=_configMgr.deleteVlanAndPublicIpRange(User.UID_SYSTEM,vlan.getId());
+      }
+ catch (      InvalidParameterValueException e) {
+        allVlansDeleted=false;
+      }
+    }
+    if (!allVlansDeleted) {
+      accountCleanupNeeded=true;
+    }
+    List<VMTemplateVO> userTemplates=_templateDao.listByAccountId(accountId);
+    boolean allTemplatesDeleted=true;
+    for (    VMTemplateVO template : userTemplates) {
+      try {
+        allTemplatesDeleted=_tmpltMgr.delete(userId,template.getId(),null,0);
+      }
+ catch (      InternalErrorException e) {
+        s_logger.warn("Failed to delete template while removing account: " + template.getName() + " due to: "+ e.getMessage());
+        allTemplatesDeleted=false;
+      }
+    }
+    if (!allTemplatesDeleted) {
+      accountCleanupNeeded=true;
+    }
+    return true;
+  }
+  finally {
+    s_logger.info("Cleanup for account " + account.getId() + (accountCleanupNeeded ? " is needed." : " is not needed."));
+    if (accountCleanupNeeded) {
+      _accountDao.markForCleanup(accountId);
+    }
+  }
+}

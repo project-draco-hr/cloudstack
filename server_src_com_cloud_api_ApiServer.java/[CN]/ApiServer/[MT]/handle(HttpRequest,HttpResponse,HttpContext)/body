@@ -1,0 +1,65 @@
+{
+  StringBuffer sb=new StringBuffer();
+  HttpServerConnection connObj=(HttpServerConnection)context.getAttribute("http.connection");
+  if (connObj instanceof SocketHttpServerConnection) {
+    InetAddress remoteAddr=((SocketHttpServerConnection)connObj).getRemoteAddress();
+    sb.append(remoteAddr.toString() + " -- ");
+  }
+  sb.append(request.getRequestLine());
+  try {
+    String uri=request.getRequestLine().getUri();
+    int requestParamsStartIndex=uri.indexOf('?');
+    if (requestParamsStartIndex >= 0) {
+      uri=uri.substring(requestParamsStartIndex + 1);
+    }
+    String[] paramArray=uri.split("&");
+    if (paramArray.length < 1) {
+      s_logger.info("no parameters received for request: " + uri + ", aborting...");
+      return;
+    }
+    Map parameterMap=new HashMap<String,String[]>();
+    String responseType=BaseCmd.RESPONSE_TYPE_XML;
+    for (    String paramEntry : paramArray) {
+      String[] paramValue=paramEntry.split("=");
+      if (paramValue.length != 2) {
+        s_logger.info("malformed parameter: " + paramEntry + ", skipping");
+        continue;
+      }
+      if ("response".equalsIgnoreCase(paramValue[0])) {
+        responseType=paramValue[1];
+      }
+ else {
+        parameterMap.put(paramValue[0],new String[]{paramValue[1]});
+      }
+    }
+    try {
+      UserContext.registerContext(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,null,true);
+      String responseText=handleRequest(parameterMap,true,responseType);
+      sb.append(" 200 " + ((responseText == null) ? 0 : responseText.length()));
+      writeResponse(response,responseText,false,responseType);
+    }
+ catch (    ServerApiException se) {
+      try {
+        response.setStatusCode(se.getErrorCode());
+        response.setReasonPhrase(se.getDescription());
+        BasicHttpEntity body=new BasicHttpEntity();
+        body.setContentType("text/xml; charset=UTF-8");
+        String responseStr="<error>" + se.getErrorCode() + " : "+ se.getDescription()+ "</error>";
+        body.setContent(new ByteArrayInputStream(responseStr.getBytes()));
+        response.setEntity(body);
+        sb.append(" " + se.getErrorCode() + " "+ responseStr.length());
+      }
+ catch (      Exception e) {
+        s_logger.error("IO Exception responding to http request",e);
+      }
+    }
+catch (    RuntimeException e) {
+      s_logger.error("Unhandled exception, ",e);
+      throw e;
+    }
+  }
+  finally {
+    s_accessLogger.info(sb.toString());
+    UserContext.unregisterContext();
+  }
+}

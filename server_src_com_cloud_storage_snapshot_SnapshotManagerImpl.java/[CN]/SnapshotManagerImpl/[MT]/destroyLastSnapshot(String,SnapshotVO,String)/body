@@ -1,0 +1,39 @@
+{
+  boolean success=false;
+  long snapshotId=snapshot.getId();
+  if (snapshot != null) {
+    String backupOfSnapshot=snapshot.getBackupSnapshotId();
+    if (backupOfSnapshot != null) {
+      if (backupOfNextSnapshot != null && backupOfSnapshot.equals(backupOfNextSnapshot)) {
+        success=true;
+        s_logger.debug("Removed snapshot " + snapshotId + " is not being destroyed from secondary as "+ "it is the same as the current snapshot uuid: "+ backupOfNextSnapshot);
+      }
+ else       if (backupOfPreviousSnapshot != null && backupOfSnapshot.equals(backupOfPreviousSnapshot)) {
+        success=true;
+        s_logger.debug("Removed snapshot " + snapshotId + " is not being destroyed from secondary as "+ "it is the same as it's previous snapshot with uuid: "+ backupOfPreviousSnapshot);
+      }
+ else {
+        VolumeVO volume=_volsDao.findById(snapshot.getVolumeId());
+        String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
+        String secondaryStoragePoolUrl=_storageMgr.getSecondaryStorageURL(volume.getDataCenterId());
+        Long dcId=volume.getDataCenterId();
+        Long accountId=volume.getAccountId();
+        Long volumeId=volume.getId();
+        DeleteSnapshotBackupCommand cmd=new DeleteSnapshotBackupCommand(primaryStoragePoolNameLabel,secondaryStoragePoolUrl,dcId,accountId,volumeId,backupOfSnapshot,snapshot.getName(),backupOfNextSnapshot);
+        String basicErrMsg="Failed to destroy snapshot id: " + snapshotId + " for volume id: "+ volumeId;
+        Answer answer=_storageMgr.sendToHostsOnStoragePool(volume.getPoolId(),cmd,basicErrMsg,_totalRetries,_pauseInterval,_shouldBeSnapshotCapable,volume.getInstanceId());
+        if ((answer != null) && answer.getResult()) {
+          success=true;
+          s_logger.debug("Successfully deleted last snapshot: " + snapshotId + " for volume id: "+ volumeId);
+        }
+ else         if (answer != null) {
+          s_logger.error(answer.getDetails());
+        }
+      }
+    }
+  }
+  if (success) {
+    _snapshotDao.delete(snapshot.getId());
+  }
+  return success;
+}

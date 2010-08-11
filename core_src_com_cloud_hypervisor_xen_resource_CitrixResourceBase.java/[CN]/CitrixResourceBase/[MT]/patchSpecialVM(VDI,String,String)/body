@@ -1,0 +1,60 @@
+{
+  VBD vbd=null;
+  Connection conn=getConnection();
+  try {
+    Host host=Host.getByUuid(conn,_host.uuid);
+    Set<VM> vms=host.getResidentVMs(conn);
+    for (    VM vm : vms) {
+      VM.Record vmrec=null;
+      try {
+        vmrec=vm.getRecord(conn);
+      }
+ catch (      Exception e) {
+        String msg="VM.getRecord failed due to " + e.toString() + " "+ e.getMessage();
+        s_logger.warn(msg);
+        continue;
+      }
+      if (vmrec.isControlDomain) {
+        VBD.Record vbdr=new VBD.Record();
+        vbdr.VM=vm;
+        vbdr.VDI=vdi;
+        vbdr.bootable=false;
+        vbdr.userdevice=getUnusedDeviceNum(vm);
+        vbdr.unpluggable=true;
+        vbdr.mode=Types.VbdMode.RW;
+        vbdr.type=Types.VbdType.DISK;
+        vbd=VBD.create(conn,vbdr);
+        vbd.plug(conn);
+        String device=vbd.getDevice(conn);
+        return patchspecialvm(vmname,device,vmtype);
+      }
+    }
+  }
+ catch (  XenAPIException e) {
+    String msg="patchSpecialVM faile on " + _host.uuid + " due to "+ e.toString();
+    s_logger.warn(msg,e);
+  }
+catch (  Exception e) {
+    String msg="patchSpecialVM faile on " + _host.uuid + " due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+  }
+ finally {
+    if (vbd != null) {
+      try {
+        if (vbd.getCurrentlyAttached(conn)) {
+          vbd.unplug(conn);
+        }
+        vbd.destroy(conn);
+      }
+ catch (      XmlRpcException e) {
+        String msg="Catch XmlRpcException due to " + e.getMessage();
+        s_logger.warn(msg,e);
+      }
+catch (      XenAPIException e) {
+        String msg="Catch XenAPIException due to " + e.toString();
+        s_logger.warn(msg,e);
+      }
+    }
+  }
+  return false;
+}

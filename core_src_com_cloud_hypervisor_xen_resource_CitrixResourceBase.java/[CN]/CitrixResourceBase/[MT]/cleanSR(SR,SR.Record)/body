@@ -1,0 +1,82 @@
+{
+  Connection conn=getConnection();
+  if (rec.VDIs != null) {
+    for (    VDI vdi : rec.VDIs) {
+      VDI.Record vdir;
+      try {
+        vdir=vdi.getRecord(conn);
+      }
+ catch (      XenAPIException e) {
+        s_logger.debug("Unable to get VDI: " + e.toString());
+        continue;
+      }
+catch (      XmlRpcException e) {
+        s_logger.debug("Unable to get VDI: " + e.getMessage());
+        continue;
+      }
+      if (vdir.VBDs == null)       continue;
+      for (      VBD vbd : vdir.VBDs) {
+        try {
+          VBD.Record vbdr=vbd.getRecord(conn);
+          VM.Record vmr=vbdr.VM.getRecord(conn);
+          if ((!isRefNull(vmr.residentOn) && vmr.residentOn.getUuid(conn).equals(_host.uuid)) || (isRefNull(vmr.residentOn) && !isRefNull(vmr.affinity) && vmr.affinity.getUuid(conn).equals(_host.uuid))) {
+            if (vmr.powerState != VmPowerState.HALTED && vmr.powerState != VmPowerState.UNKNOWN && vmr.powerState != VmPowerState.UNRECOGNIZED) {
+              try {
+                vbdr.VM.hardShutdown(conn);
+              }
+ catch (              XenAPIException e) {
+                s_logger.debug("Shutdown hit error " + vmr.nameLabel + ": "+ e.toString());
+              }
+            }
+            try {
+              vbdr.VM.destroy(conn);
+            }
+ catch (            XenAPIException e) {
+              s_logger.debug("Destroy hit error " + vmr.nameLabel + ": "+ e.toString());
+            }
+catch (            XmlRpcException e) {
+              s_logger.debug("Destroy hit error " + vmr.nameLabel + ": "+ e.getMessage());
+            }
+            vbd.destroy(conn);
+            break;
+          }
+        }
+ catch (        XenAPIException e) {
+          s_logger.debug("Unable to get VBD: " + e.toString());
+          continue;
+        }
+catch (        XmlRpcException e) {
+          s_logger.debug("Uanbel to get VBD: " + e.getMessage());
+          continue;
+        }
+      }
+    }
+  }
+  for (  PBD pbd : rec.PBDs) {
+    PBD.Record pbdr=null;
+    try {
+      pbdr=pbd.getRecord(conn);
+      pbd.unplug(conn);
+      pbd.destroy(conn);
+    }
+ catch (    XenAPIException e) {
+      s_logger.warn("PBD " + ((pbdr != null) ? "(uuid:" + pbdr.uuid + ")" : "") + "destroy failed due to "+ e.toString());
+    }
+catch (    XmlRpcException e) {
+      s_logger.warn("PBD " + ((pbdr != null) ? "(uuid:" + pbdr.uuid + ")" : "") + "destroy failed due to "+ e.getMessage());
+    }
+  }
+  try {
+    rec=sr.getRecord(conn);
+    if (rec.PBDs == null || rec.PBDs.size() == 0) {
+      sr.forget(conn);
+      return;
+    }
+  }
+ catch (  XenAPIException e) {
+    s_logger.warn("Unable to retrieve sr again: " + e.toString(),e);
+  }
+catch (  XmlRpcException e) {
+    s_logger.warn("Unable to retrieve sr again: " + e.getMessage(),e);
+  }
+}

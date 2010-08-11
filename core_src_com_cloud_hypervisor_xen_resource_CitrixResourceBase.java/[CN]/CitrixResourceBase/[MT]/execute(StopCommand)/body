@@ -1,0 +1,139 @@
+{
+  String vmName=cmd.getVmName();
+  try {
+    Connection conn=getConnection();
+    Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    for (    VM vm : vms) {
+      VM.Record vmr=vm.getRecord(conn);
+      if (vmr.powerState != VmPowerState.RUNNING)       continue;
+      if (isRefNull(vmr.residentOn))       continue;
+      if (vmr.residentOn.getUuid(conn).equals(_host.uuid))       continue;
+      vms.remove(vm);
+    }
+    if (vms.size() == 0) {
+      s_logger.warn("VM does not exist on XenServer" + _host.uuid);
+synchronized (_vms) {
+        _vms.remove(vmName);
+      }
+      return new StopAnswer(cmd,"VM does not exist",0,0L,0L);
+    }
+    Long bytesSent=0L;
+    Long bytesRcvd=0L;
+    for (    VM vm : vms) {
+      VM.Record vmr=vm.getRecord(conn);
+      if (vmr.isControlDomain) {
+        String msg="Tring to Shutdown control domain";
+        s_logger.warn(msg);
+        return new StopAnswer(cmd,msg);
+      }
+      if (vmr.powerState == VmPowerState.RUNNING && !isRefNull(vmr.residentOn) && !vmr.residentOn.getUuid(conn).equals(_host.uuid)) {
+        String msg="Stop Vm " + vmName + " failed due to this vm is not running on this host: "+ _host.uuid+ " but host:"+ vmr.residentOn.getUuid(conn);
+        s_logger.warn(msg);
+        return new StopAnswer(cmd,msg);
+      }
+      State state=null;
+synchronized (_vms) {
+        state=_vms.get(vmName);
+        _vms.put(vmName,State.Stopping);
+      }
+      try {
+        if (vmr.powerState == VmPowerState.RUNNING) {
+          vm.setAffinity(conn,vm.getResidentOn(conn));
+          try {
+            if (VirtualMachineName.isValidRouterName(vmName)) {
+              if (cmd.getPrivateRouterIpAddress() != null) {
+                long[] stats=getNetworkStats(cmd.getPrivateRouterIpAddress());
+                bytesSent=stats[0];
+                bytesRcvd=stats[1];
+              }
+            }
+            if (_canBridgeFirewall) {
+              String result=callHostPlugin("vmops","destroy_network_rules_for_vm","vmName",cmd.getVmName());
+              if (result == null || result.isEmpty() || !Boolean.parseBoolean(result)) {
+                s_logger.warn("Failed to remove  network rules for vm " + cmd.getVmName());
+              }
+ else {
+                s_logger.info("Removed  network rules for vm " + cmd.getVmName());
+              }
+            }
+            vm.cleanShutdown(conn);
+          }
+ catch (          XenAPIException e) {
+            s_logger.debug("Do Not support Clean Shutdown, fall back to hard Shutdown: " + e.toString());
+            try {
+              vm.hardShutdown(conn);
+            }
+ catch (            XenAPIException e1) {
+              String msg="Hard Shutdown failed due to " + e1.toString();
+              s_logger.warn(msg,e1);
+              return new StopAnswer(cmd,msg);
+            }
+catch (            XmlRpcException e1) {
+              String msg="Hard Shutdown failed due to " + e1.getMessage();
+              s_logger.warn(msg,e1);
+              return new StopAnswer(cmd,msg);
+            }
+          }
+catch (          XmlRpcException e) {
+            String msg="Clean Shutdown failed due to " + e.getMessage();
+            s_logger.warn(msg,e);
+            return new StopAnswer(cmd,msg);
+          }
+        }
+      }
+ catch (      Exception e) {
+        String msg="Catch exception " + e.getClass().toString() + " when stop VM:"+ cmd.getVmName();
+        s_logger.debug(msg);
+        return new StopAnswer(cmd,msg);
+      }
+ finally {
+        try {
+          if (vm.getPowerState(conn) == VmPowerState.HALTED) {
+            Set<VIF> vifs=vm.getVIFs(conn);
+            List<Network> networks=new ArrayList<Network>();
+            for (            VIF vif : vifs) {
+              networks.add(vif.getNetwork(conn));
+            }
+            List<VDI> vdis=getVdis(vm);
+            vm.destroy(conn);
+            for (            VDI vdi : vdis) {
+              umount(vdi);
+            }
+            state=State.Stopped;
+            SR sr=getISOSRbyVmName(cmd.getVmName());
+            removeSR(sr);
+            for (            Network network : networks) {
+              if (network.getNameLabel(conn).startsWith("VLAN")) {
+                disableVlanNetwork(network);
+              }
+            }
+          }
+        }
+ catch (        XenAPIException e) {
+          String msg="VM destroy failed in Stop " + vmName + " Command due to "+ e.toString();
+          s_logger.warn(msg,e);
+        }
+catch (        Exception e) {
+          String msg="VM destroy failed in Stop " + vmName + " Command due to "+ e.getMessage();
+          s_logger.warn(msg,e);
+        }
+ finally {
+synchronized (_vms) {
+            _vms.put(vmName,state);
+          }
+        }
+      }
+    }
+    return new StopAnswer(cmd,"Stop VM " + vmName + " Succeed",0,bytesSent,bytesRcvd);
+  }
+ catch (  XenAPIException e) {
+    String msg="Stop Vm " + vmName + " fail due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new StopAnswer(cmd,msg);
+  }
+catch (  XmlRpcException e) {
+    String msg="Stop Vm " + vmName + " fail due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    return new StopAnswer(cmd,msg);
+  }
+}

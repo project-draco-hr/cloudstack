@@ -1,0 +1,50 @@
+{
+  List<VolumeVO> vols=_volsDao.findCreatedByInstance(vm.getId());
+  List<VolumeVO> recreateVols=new ArrayList<VolumeVO>(vols.size());
+  for (  VolumeVO vol : vols) {
+    if (!vol.isRecreatable()) {
+      return vols;
+    }
+    StoragePoolHostVO ph=_storagePoolHostDao.findByPoolHost(vol.getPoolId(),host.getId());
+    if (ph == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Must recreate " + vol + " since "+ vol.getPoolId()+ " has is not hooked up with host "+ host.getId());
+      }
+      recreateVols.add(vol);
+    }
+  }
+  if (recreateVols.size() == 0) {
+    s_logger.debug("No need to recreate the volumes");
+    return vols;
+  }
+  List<VolumeVO> createds=new ArrayList<VolumeVO>(recreateVols.size());
+  for (  VolumeVO vol : recreateVols) {
+    VolumeVO create=new VolumeVO(vol.getVolumeType(),vol.getInstanceId(),vol.getTemplateId(),vol.getName(),vol.getDataCenterId(),host.getPodId(),vol.getAccountId(),vol.getDomainId(),vol.isRecreatable());
+    create.setDiskOfferingId(vol.getDiskOfferingId());
+    create.setDeviceId(vol.getDeviceId());
+    create=_volsDao.persist(create);
+    VMTemplateVO template=_templateDao.findById(create.getTemplateId());
+    DataCenterVO dc=_dcDao.findById(create.getDataCenterId());
+    HostPodVO pod=_podDao.findById(host.getPodId());
+    DiskOfferingVO diskOffering=null;
+    if (vol.getDiskOfferingId() != null) {
+      diskOffering=_diskOfferingDao.findById(vol.getDiskOfferingId());
+    }
+    ServiceOfferingVO offering;
+    if (vm instanceof UserVmVO) {
+      offering=_offeringDao.findById(((UserVmVO)vm).getServiceOfferingId());
+    }
+ else {
+      offering=_offeringDao.findById(vol.getDiskOfferingId());
+    }
+    VolumeVO created=createVolume(create,vm,template,dc,pod,host.getClusterId(),offering,diskOffering,new ArrayList<StoragePoolVO>(),0);
+    if (created == null) {
+      break;
+    }
+    createds.add(created);
+  }
+  for (  VolumeVO vol : recreateVols) {
+    _volsDao.remove(vol.getId());
+  }
+  return createds;
+}

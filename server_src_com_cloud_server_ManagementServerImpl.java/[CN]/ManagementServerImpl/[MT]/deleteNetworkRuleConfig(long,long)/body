@@ -1,0 +1,37 @@
+{
+  try {
+    NetworkRuleConfigVO netRule=_networkRuleConfigDao.findById(networkRuleId);
+    if (netRule != null) {
+      List<SecurityGroupVMMapVO> sgMappings=_securityGroupVMMapDao.listBySecurityGroup(netRule.getSecurityGroupId());
+      if ((sgMappings != null) && !sgMappings.isEmpty()) {
+        for (        SecurityGroupVMMapVO sgMapping : sgMappings) {
+          UserVm userVm=_userVmDao.findById(sgMapping.getInstanceId());
+          if (userVm != null) {
+            List<FirewallRuleVO> fwRules=_firewallRulesDao.listIPForwarding(sgMapping.getIpAddress(),netRule.getPublicPort(),true);
+            FirewallRuleVO rule=null;
+            for (            FirewallRuleVO fwRule : fwRules) {
+              if (fwRule.getPrivatePort().equals(netRule.getPrivatePort()) && fwRule.getPrivateIpAddress().equals(userVm.getGuestIpAddress())) {
+                rule=fwRule;
+                break;
+              }
+            }
+            if (rule != null) {
+              rule.setEnabled(false);
+              _networkMgr.updateFirewallRule(rule,null,null);
+              Account account=_accountDao.findById(userVm.getAccountId());
+              _firewallRulesDao.remove(rule.getId());
+              String description="deleted ip forwarding rule [" + rule.getPublicIpAddress() + ":"+ rule.getPublicPort()+ "]->["+ rule.getPrivateIpAddress()+ ":"+ rule.getPrivatePort()+ "]"+ " "+ rule.getProtocol();
+              saveEvent(Long.valueOf(userId),account.getId(),EventVO.LEVEL_INFO,EventTypes.EVENT_NET_RULE_DELETE,description);
+            }
+          }
+        }
+      }
+      _networkRuleConfigDao.remove(netRule.getId());
+    }
+  }
+ catch (  Exception ex) {
+    s_logger.error("Unexpected exception deleting port forwarding service rule " + networkRuleId,ex);
+    return false;
+  }
+  return true;
+}

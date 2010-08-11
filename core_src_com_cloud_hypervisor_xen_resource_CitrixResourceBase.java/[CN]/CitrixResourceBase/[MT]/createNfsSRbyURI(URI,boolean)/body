@@ -1,0 +1,43 @@
+{
+  try {
+    Connection conn=getConnection();
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Creating a " + (shared ? "shared SR for " : "not shared SR for ") + uri);
+    }
+    Map<String,String> deviceConfig=new HashMap<String,String>();
+    String path=uri.getPath();
+    path=path.replace("//","/");
+    deviceConfig.put("server",uri.getHost());
+    deviceConfig.put("serverpath",path);
+    String name=UUID.nameUUIDFromBytes(new String(uri.getHost() + path).getBytes()).toString();
+    if (!shared) {
+      Set<SR> srs=SR.getByNameLabel(conn,name);
+      for (      SR sr : srs) {
+        SR.Record record=sr.getRecord(conn);
+        if (SRType.NFS.equals(record.type) && record.contentType.equals("user") && !record.shared) {
+          removeSRSync(sr);
+        }
+      }
+    }
+    Host host=Host.getByUuid(conn,_host.uuid);
+    SR sr=SR.create(conn,host,deviceConfig,new Long(0),name,uri.getHost() + uri.getPath(),SRType.NFS.toString(),"user",shared,new HashMap<String,String>());
+    if (!checkSR(sr)) {
+      throw new Exception("no attached PBD");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug(logX(sr,"Created a SR; UUID is " + sr.getUuid(conn)));
+    }
+    sr.scan(conn);
+    return sr;
+  }
+ catch (  XenAPIException e) {
+    String msg="Can not create second storage SR mountpoint: " + uri.getHost() + uri.getPath()+ " due to "+ e.toString();
+    s_logger.warn(msg,e);
+    throw new CloudRuntimeException(msg,e);
+  }
+catch (  Exception e) {
+    String msg="Can not create second storage SR mountpoint: " + uri.getHost() + uri.getPath()+ " due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    throw new CloudRuntimeException(msg,e);
+  }
+}

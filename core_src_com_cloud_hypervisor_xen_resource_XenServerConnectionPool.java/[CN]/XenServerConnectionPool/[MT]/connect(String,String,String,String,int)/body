@@ -1,0 +1,129 @@
+{
+  XenServerConnection masterConn=null;
+  if (hostUuid != null) {
+    masterConn=_conns.get(hostUuid);
+    if (masterConn != null) {
+      return masterConn;
+    }
+  }
+  XenServerConnection slaveConn=null;
+  URL slaveUrl=null;
+  URL masterUrl=null;
+  Session slaveSession=null;
+  Session masterSession=null;
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating connection to " + ipAddress);
+  }
+  try {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Logging on as the slave to " + ipAddress);
+    }
+    slaveUrl=new URL("http://" + ipAddress);
+    slaveConn=new XenServerConnection(slaveUrl,username,password,_retries,_interval,10);
+    slaveSession=Session.slaveLocalLoginWithPassword(slaveConn,username,password);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Slave logon successful. session= " + slaveSession);
+    }
+    try {
+      Pool.Record pr=getPoolRecord(slaveConn);
+      Host master=pr.master;
+      String ma=master.getAddress(slaveConn);
+      masterUrl=new URL("http://" + ma);
+      s_logger.debug("Logging on as the master to " + ma);
+      masterConn=new XenServerConnection(masterUrl,username,password,_retries,_interval,wait);
+      masterSession=Session.loginWithPassword(masterConn,username,password,APIVersion.latest().toString());
+      URL realMasterUrl=ensurePoolIntegrity(masterConn,master,pr,ipAddress,username,password,wait);
+      if (realMasterUrl != null) {
+        s_logger.debug("The real master url is at " + realMasterUrl);
+        masterUrl=realMasterUrl;
+        masterConn.dispose();
+        masterConn=new XenServerConnection(masterUrl,username,password,_retries,_interval,wait);
+        masterSession=Session.loginWithPassword(masterConn,username,password,APIVersion.latest().toString());
+      }
+    }
+ catch (    XmlRpcException e) {
+      Throwable c=e.getCause();
+      if (c == null || (!(c instanceof SocketException) && !(c instanceof SocketTimeoutException))) {
+        s_logger.warn("Unable to connect to " + masterUrl,e);
+        throw e;
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to connect to the " + masterUrl + ". Attempting switch to master");
+      }
+      Pool.emergencyTransitionToMaster(slaveConn);
+      Pool.recoverSlaves(slaveConn);
+      s_logger.info("Successfully converted to the master: " + ipAddress);
+      masterUrl=slaveUrl;
+      masterConn=new XenServerConnection(masterUrl,username,password,_retries,_interval,wait);
+      masterSession=Session.loginWithPassword(masterConn,username,password,APIVersion.latest().toString());
+    }
+    if (slaveSession != null) {
+      s_logger.debug("Login to the master is successful.  Signing out of the slave connection: " + slaveSession);
+      try {
+        Session.localLogout(slaveConn);
+      }
+ catch (      Exception e) {
+        s_logger.debug("Unable to logout of slave session " + slaveSession);
+      }
+      slaveConn.dispose();
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Successfully logged on to the master.  Session=" + masterConn.getSessionReference());
+    }
+    if (hostUuid == null) {
+      s_logger.debug("Returning now.  Client is responsible for logging out of " + masterConn.getSessionReference());
+      return masterConn;
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Logon is successfully.  Let's see if we have other hosts logged onto the same master at " + masterUrl);
+    }
+    Pool.Record poolr=getPoolRecord(masterConn);
+    String poolUuid=poolr.uuid;
+    ConnectionInfo info=null;
+    info=_infos.get(poolUuid);
+    if (info != null && info.conn != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("The pool already has a master connection.  Session=" + info.conn.getSessionReference());
+      }
+      try {
+        s_logger.debug("Logging out of our own session: " + masterConn.getSessionReference());
+        Session.logout(masterConn);
+        masterConn.dispose();
+      }
+ catch (      Exception e) {
+        s_logger.debug("Caught Exception while logging on but pushing on...." + e.getMessage());
+      }
+      masterConn=new XenServerConnection(info.conn);
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("This is the very first connection");
+      }
+      info=new ConnectionInfo();
+      info.conn=masterConn;
+      info.masterUrl=masterUrl;
+      info.refs=new HashMap<String,Member>();
+      _infos.put(poolUuid,info);
+      masterConn.setInfo(poolUuid,info);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Pool " + poolUuid + " is matched with session "+ info.conn.getSessionReference());
+      }
+    }
+    s_logger.debug("Added a reference for host " + hostUuid + " to session "+ masterConn.getSessionReference()+ " in pool "+ poolUuid);
+    info.refs.put(hostUuid,new Member(slaveUrl,hostUuid,username,password));
+    _conns.put(hostUuid,masterConn);
+    s_logger.info("Connection made to " + ipAddress + " for host "+ hostUuid+ ".  Pool Uuid is "+ poolUuid);
+    return masterConn;
+  }
+ catch (  XenAPIException e) {
+    s_logger.warn("Unable to make a connection to the server " + ipAddress,e);
+    throw new CloudRuntimeException("Unable to make a connection to the server " + ipAddress,e);
+  }
+catch (  XmlRpcException e) {
+    s_logger.warn("Unable to make a connection to the server " + ipAddress,e);
+    throw new CloudRuntimeException("Unable to make a connection to the server " + ipAddress,e);
+  }
+catch (  MalformedURLException e) {
+    throw new CloudRuntimeException("How can we get a malformed exception for this " + ipAddress,e);
+  }
+}

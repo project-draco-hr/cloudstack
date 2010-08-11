@@ -1,0 +1,65 @@
+{
+  final SynchronousListener sl=new SynchronousListener(null);
+  final long seq=req.getSequence();
+  send(req,sl);
+  try {
+    for (int i=0; i < 2; i++) {
+      Answer[] answers=null;
+      try {
+        answers=sl.waitFor(wait);
+      }
+ catch (      final InterruptedException e) {
+        s_logger.debug(log(seq,"Interrupted"));
+      }
+      if (answers != null) {
+        if (s_logger.isDebugEnabled()) {
+          if (req.executeInSequence()) {
+            s_logger.debug(log(seq,"Received: " + new Response(req,answers).toString()));
+          }
+ else {
+            s_logger.debug(log(seq,"Received: "));
+            if (s_logger.isTraceEnabled()) {
+              s_logger.trace(log(seq,"Received: " + new Response(req,answers).toString()));
+            }
+          }
+        }
+        return answers;
+      }
+      answers=sl.getAnswers();
+      if (answers != null) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(log(seq,"Received after timeout: " + new Response(req,answers).toString()));
+        }
+        return answers;
+      }
+      final Long current=_currentSequence;
+      if (current != null && seq != current) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(log(seq,"Waited too long."));
+        }
+        throw new OperationTimedoutException(req.getCommands(),_id,seq,wait,false);
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(log(seq,"Waiting some more time because this is the current command"));
+      }
+    }
+    throw new OperationTimedoutException(req.getCommands(),_id,seq,wait * 2,true);
+  }
+ catch (  OperationTimedoutException e) {
+    s_logger.warn(log(seq,"Timed out on " + req.toString()));
+    cancel(seq);
+    throw e;
+  }
+catch (  Exception e) {
+    s_logger.warn(log(seq,"Exception while waiting for answer"),e);
+    cancel(seq);
+    throw new OperationTimedoutException(req.getCommands(),_id,seq,wait,false);
+  }
+ finally {
+    unregisterListener(seq);
+    final Long current=_currentSequence;
+    if (req.executeInSequence() && (current != null && current == seq)) {
+      sendNext(seq);
+    }
+  }
+}

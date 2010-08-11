@@ -1,0 +1,53 @@
+{
+  String primaryStorageNameLabel=cmd.getPrimaryStoragePoolNameLabel();
+  Long dcId=cmd.getDataCenterId();
+  Long accountId=cmd.getAccountId();
+  Long volumeId=cmd.getVolumeId();
+  String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
+  String snapshotUuid=cmd.getSnapshotUuid();
+  String prevSnapshotUuid=cmd.getPrevSnapshotUuid();
+  String prevBackupUuid=cmd.getPrevBackupUuid();
+  boolean isFirstSnapshotOfRootVolume=cmd.isFirstSnapshotOfRootVolume();
+  String details=null;
+  boolean success=false;
+  String snapshotBackupUuid=null;
+  try {
+    Connection conn=getConnection();
+    SR primaryStorageSR=getSRByNameLabelandHost(primaryStorageNameLabel);
+    if (primaryStorageSR == null) {
+      throw new InternalErrorException("Could not backup snapshot because the primary Storage SR could not be created from the name label: " + primaryStorageNameLabel);
+    }
+    String primaryStorageSRUuid=primaryStorageSR.getUuid(conn);
+    Boolean isISCSI=SRType.LVMOISCSI.equals(primaryStorageSR.getType(conn));
+    URI uri=new URI(secondaryStoragePoolURL);
+    String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
+    if (secondaryStorageMountPath == null) {
+      details="Couldn't backup snapshot because the URL passed: " + secondaryStoragePoolURL + " is invalid.";
+    }
+ else {
+      boolean gcHappened=true;
+      if (gcHappened) {
+        snapshotBackupUuid=backupSnapshot(primaryStorageSRUuid,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotUuid,prevSnapshotUuid,prevBackupUuid,isFirstSnapshotOfRootVolume,isISCSI);
+        success=(snapshotBackupUuid != null);
+      }
+ else {
+        s_logger.warn("GC hasn't happened yet for previousSnapshotUuid: " + prevSnapshotUuid + ". Will retry again after 1 min");
+      }
+    }
+    if (!success) {
+    }
+ else     if (prevSnapshotUuid != null && !isFirstSnapshotOfRootVolume) {
+      details="Successfully backedUp the snapshotUuid: " + snapshotUuid + " to secondary storage.";
+      destroySnapshotOnPrimaryStorage(prevSnapshotUuid);
+    }
+  }
+ catch (  XenAPIException e) {
+    details="BackupSnapshot Failed due to " + e.toString();
+    s_logger.warn(details,e);
+  }
+catch (  Exception e) {
+    details="BackupSnapshot Failed due to " + e.getMessage();
+    s_logger.warn(details,e);
+  }
+  return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid);
+}

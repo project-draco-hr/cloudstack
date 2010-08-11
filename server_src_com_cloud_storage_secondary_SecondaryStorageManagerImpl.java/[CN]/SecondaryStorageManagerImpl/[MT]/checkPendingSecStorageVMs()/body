@@ -1,0 +1,51 @@
+{
+  List<SecondaryStorageVmVO> l=_secStorageVmDao.getSecStorageVmListInStates(State.Creating);
+  if (l != null && l.size() > 0) {
+    for (    SecondaryStorageVmVO secStorageVm : l) {
+      if (secStorageVm.getLastUpdateTime() == null || (secStorageVm.getLastUpdateTime() != null && System.currentTimeMillis() - secStorageVm.getLastUpdateTime().getTime() > 60000)) {
+        try {
+          SecondaryStorageVmVO readysecStorageVm=null;
+          if (_allocLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+            try {
+              readysecStorageVm=allocSecStorageVmStorage(secStorageVm.getDataCenterId(),secStorageVm.getId());
+            }
+  finally {
+              _allocLock.unlock();
+            }
+            if (readysecStorageVm != null) {
+              GlobalLock secStorageVmLock=GlobalLock.getInternLock(getSecStorageVmLockName(readysecStorageVm.getId()));
+              try {
+                if (secStorageVmLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+                  try {
+                    readysecStorageVm=start(readysecStorageVm.getId(),0);
+                  }
+  finally {
+                    secStorageVmLock.unlock();
+                  }
+                }
+ else {
+                  if (s_logger.isInfoEnabled())                   s_logger.info("Unable to acquire synchronization lock to start secondary storage vm : " + readysecStorageVm.getName());
+                }
+              }
+  finally {
+                secStorageVmLock.releaseRef();
+              }
+            }
+          }
+ else {
+            if (s_logger.isInfoEnabled())             s_logger.info("Unable to acquire synchronization lock to allocate secondary storage vm storage, wait for next turn");
+          }
+        }
+ catch (        StorageUnavailableException e) {
+          s_logger.warn("Storage unavailable",e);
+        }
+catch (        InsufficientCapacityException e) {
+          s_logger.warn("insuffiient capacity",e);
+        }
+catch (        ConcurrentOperationException e) {
+          s_logger.debug("Concurrent operation: " + e.getMessage());
+        }
+      }
+    }
+  }
+}

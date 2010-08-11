@@ -1,0 +1,39 @@
+{
+  UserVmVO vm=listener.getVm();
+  VMOperationParam param=listener.getParam();
+  AsyncJobManager asyncMgr=getAsyncJobMgr();
+  ManagementServer managementServer=asyncMgr.getExecutorContext().getManagementServer();
+  String params="id=" + vm.getId() + "\nvmName="+ vm.getName()+ "\nsoId="+ vm.getServiceOfferingId()+ "\ntId="+ vm.getTemplateId()+ "\ndcId="+ vm.getDataCenterId();
+  if (s_logger.isDebugEnabled())   s_logger.debug("Execute asynchronize stop VM command: received answer, " + vm.getHostId() + "-"+ seq);
+  boolean stopped=false;
+  if (answer != null && answer.getResult())   stopped=true;
+  boolean jobStatusUpdated=false;
+  try {
+    if (stopped) {
+      asyncMgr.getExecutorContext().getVmMgr().completeStopCommand(param.getUserId(),vm,Event.OperationSucceeded,param.getEventId());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,VMExecutorHelper.composeResultObject(asyncMgr.getExecutorContext().getManagementServer(),vm,null));
+      jobStatusUpdated=true;
+    }
+ else {
+      asyncMgr.getExecutorContext().getVmDao().updateIf(vm,Event.OperationFailed,vm.getHostId());
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,"Agent failed to stop VM");
+      jobStatusUpdated=true;
+      managementServer.saveEvent(param.getUserId(),param.getAccountId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_VM_STOP,"Failed to stop VM instance : " + vm.getName(),params,param.getEventId());
+    }
+  }
+ catch (  Exception e) {
+    s_logger.error("Unexpected exception " + e.getMessage(),e);
+    if (!jobStatusUpdated) {
+      if (stopped) {
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,VMExecutorHelper.composeResultObject(asyncMgr.getExecutorContext().getManagementServer(),vm,null));
+      }
+ else {
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,"Agent failed to stop VM");
+        managementServer.saveEvent(param.getUserId(),param.getAccountId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_VM_STOP,"Failed to stop VM instance : " + vm.getName(),params,param.getEventId());
+      }
+    }
+  }
+ finally {
+    asyncMgr.releaseSyncSource(this);
+  }
+}

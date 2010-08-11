@@ -1,0 +1,37 @@
+{
+  Long dcId=cmd.getDataCenterId();
+  Long accountId=cmd.getAccountId();
+  Long volumeId=cmd.getVolumeId();
+  String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
+  String snapshotName=cmd.getSnapshotName();
+  String snapshotPath=cmd.getSnapshotUuid();
+  String snapshotDestPath=null;
+  try {
+    StoragePool secondaryStoragePool=getNfsSPbyURI(_conn,new URI(secondaryStoragePoolURL));
+    String ssPmountPath=_mountPoint + File.separator + secondaryStoragePool.getUUIDString();
+    snapshotDestPath=ssPmountPath + File.separator + dcId+ File.separator+ "snapshots"+ File.separator+ accountId+ File.separator+ volumeId;
+    final Script command=new Script(_manageSnapshotPath,_timeout,s_logger);
+    command.add("-b",snapshotPath);
+    command.add("-n",snapshotName);
+    command.add("-p",snapshotDestPath);
+    String result=command.execute();
+    if (result != null) {
+      s_logger.debug("Failed to backup snaptshot: " + result);
+      return new BackupSnapshotAnswer(cmd,false,result,null);
+    }
+    Domain vm=getDomain(cmd.getVmName());
+    String vmUuid=vm.getUUIDString();
+    Object[] args=new Object[]{snapshotName,vmUuid};
+    String snapshot=SnapshotXML.format(args);
+    s_logger.debug(snapshot);
+    DomainSnapshot snap=vm.snapshotLookupByName(snapshotName);
+    snap.delete(0);
+  }
+ catch (  LibvirtException e) {
+    return new BackupSnapshotAnswer(cmd,false,e.toString(),null);
+  }
+catch (  URISyntaxException e) {
+    return new BackupSnapshotAnswer(cmd,false,e.toString(),null);
+  }
+  return new BackupSnapshotAnswer(cmd,true,null,snapshotDestPath + File.separator + snapshotName);
+}

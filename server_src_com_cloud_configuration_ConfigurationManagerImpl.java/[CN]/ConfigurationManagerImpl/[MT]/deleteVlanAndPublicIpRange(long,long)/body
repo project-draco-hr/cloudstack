@@ -1,0 +1,38 @@
+{
+  VlanVO vlan=_vlanDao.findById(vlanDbId);
+  if (vlan == null) {
+    throw new InvalidParameterValueException("Please specify a valid IP range id.");
+  }
+  if (_publicIpAddressDao.countIPs(vlan.getDataCenterId(),vlanDbId,true) > 0) {
+    throw new InvalidParameterValueException("The IP range can't be deleted because it has allocated public IP addresses.");
+  }
+  if (_domrDao.listByVlanDbId(vlanDbId).size() > 0) {
+    throw new InvalidParameterValueException("The IP range can't be deleted because it is being used by a domain router.");
+  }
+  Long accountId=null;
+  Long podId=null;
+  List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAccountVlanMapsByVlan(vlanDbId);
+  List<PodVlanMapVO> podVlanMaps=_podVlanMapDao.listPodVlanMapsByVlan(vlanDbId);
+  if (accountVlanMaps.size() > 0) {
+    accountId=accountVlanMaps.get(0).getAccountId();
+  }
+  if (podVlanMaps.size() > 0) {
+    podId=podVlanMaps.get(0).getPodId();
+  }
+  if (!deletePublicIPRange(vlanDbId)) {
+    return false;
+  }
+  boolean success=_vlanDao.delete(vlanDbId);
+  if (success) {
+    String[] ipRange=vlan.getIpRange().split("\\-");
+    String startIP=ipRange[0];
+    String endIP=(ipRange.length > 1) ? ipRange[1] : null;
+    String eventMsg="Successfully deleted IP range (tag = " + vlan.getVlanId() + ", gateway = "+ vlan.getVlanGateway()+ ", netmask = "+ vlan.getVlanNetmask()+ ", start IP = "+ startIP;
+    if (endIP != null) {
+      eventMsg+=", end IP = " + endIP;
+    }
+    eventMsg+=".";
+    saveConfigurationEvent(userId,null,EventTypes.EVENT_VLAN_IP_RANGE_DELETE,eventMsg,"vlanType=" + vlan.getVlanType(),"dcId=" + vlan.getDataCenterId(),"accountId=" + accountId,"podId=" + podId,"vlanId=" + vlan.getVlanId(),"vlanGateway=" + vlan.getVlanGateway(),"vlanNetmask=" + vlan.getVlanNetmask(),"startIP=" + startIP,"endIP=" + endIP);
+  }
+  return success;
+}

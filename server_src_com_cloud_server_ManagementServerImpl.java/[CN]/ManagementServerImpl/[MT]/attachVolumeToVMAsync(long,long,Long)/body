@@ -1,0 +1,46 @@
+{
+  VolumeVO volume=_volumeDao.findById(volumeId);
+  if (volume == null || volume.getVolumeType() != VolumeType.DATADISK) {
+    throw new InvalidParameterValueException("Please specify a valid data volume.");
+  }
+  if (!_storageMgr.volumeOnSharedStoragePool(volume)) {
+    throw new InvalidParameterValueException("Please specify a volume that has been created on a shared storage pool.");
+  }
+  UserVmVO vm=_userVmDao.findById(vmId);
+  if (vm == null || vm.getType() != VirtualMachine.Type.User) {
+    throw new InvalidParameterValueException("Please specify a valid User VM.");
+  }
+  if (vm.getState() != State.Running && vm.getState() != State.Stopped) {
+    throw new InvalidParameterValueException("Please specify a VM that is either running or stopped.");
+  }
+  if (volume.getInstanceId() != null) {
+    throw new InvalidParameterValueException("Please specify a volume that is not attached to any VM.");
+  }
+  if (volume.getDestroyed()) {
+    throw new InvalidParameterValueException("Please specify a volume that is not destroyed.");
+  }
+  List<VolumeVO> existingDataVolumes=_volumeDao.findByInstanceAndType(vmId,VolumeType.DATADISK);
+  if (existingDataVolumes.size() >= 6) {
+    throw new InvalidParameterValueException("The specified VM already has the maximum number of data disks (6). Please specify another VM.");
+  }
+  if (vm.getDataCenterId() != volume.getDataCenterId()) {
+    throw new InvalidParameterValueException("Please specify a VM that is in the same zone as the volume.");
+  }
+  long eventId=saveScheduledEvent(1L,volume.getAccountId(),EventTypes.EVENT_VOLUME_ATTACH,"attaching volume: " + volumeId + " to Vm: "+ vmId);
+  VolumeOperationParam param=new VolumeOperationParam();
+  param.setUserId(1);
+  param.setAccountId(volume.getAccountId());
+  param.setOp(VolumeOp.Attach);
+  param.setVmId(vmId);
+  param.setVolumeId(volumeId);
+  param.setEventId(eventId);
+  param.setDeviceId(deviceId);
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobVO job=new AsyncJobVO();
+  job.setUserId(UserContext.current().getUserId());
+  job.setAccountId(vm.getAccountId());
+  job.setCmd("VolumeOperation");
+  job.setCmdInfo(gson.toJson(param));
+  job.setCmdOriginator("virtualmachine");
+  return _asyncMgr.submitAsyncJob(job);
+}

@@ -1,0 +1,109 @@
+{
+switch (status) {
+case ABORTED:
+case UNRECOVERABLE_ERROR:
+case DOWNLOAD_FINISHED:
+    return 0;
+default :
+}
+int bytes=0;
+File file=new File(toFile);
+try {
+  long localFileSize=0;
+  if (file.exists() && resume) {
+    localFileSize=file.length();
+    s_logger.info("Resuming download to file (current size)=" + localFileSize);
+  }
+  Date start=new Date();
+  int responseCode=0;
+  if (localFileSize > 0) {
+    request.addRequestHeader("Range","bytes=" + localFileSize + "-");
+    if (client.executeMethod(request) != HttpStatus.SC_PARTIAL_CONTENT) {
+      errorString="HTTP Server does not support partial get";
+      status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      return 0;
+    }
+  }
+ else   if ((responseCode=client.executeMethod(request)) != HttpStatus.SC_OK) {
+    status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+    errorString=" HTTP Server returned " + responseCode + " (expected 200 OK) ";
+    return 0;
+  }
+  Header contentLengthHeader=request.getResponseHeader("Content-Length");
+  boolean chunked=false;
+  long remoteSize2=0;
+  if (contentLengthHeader == null) {
+    Header chunkedHeader=request.getResponseHeader("Transfer-Encoding");
+    if (chunkedHeader == null || !"chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      errorString=" Failed to receive length of download ";
+      return 0;
+    }
+ else     if ("chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      chunked=true;
+    }
+  }
+ else {
+    remoteSize2=Long.parseLong(contentLengthHeader.getValue());
+  }
+  if (remoteSize == 0) {
+    remoteSize=remoteSize2;
+  }
+  if (remoteSize > MAX_TEMPLATE_SIZE_IN_BYTES) {
+    s_logger.info("Remote size is too large: " + remoteSize + " , max="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+    status=Status.UNRECOVERABLE_ERROR;
+    errorString="Download file size is too large";
+    return 0;
+  }
+  if (remoteSize == 0) {
+    remoteSize=MAX_TEMPLATE_SIZE_IN_BYTES;
+  }
+  InputStream in=!chunked ? new BufferedInputStream(request.getResponseBodyAsStream()) : new ChunkedInputStream(request.getResponseBodyAsStream());
+  RandomAccessFile out=new RandomAccessFile(file,"rwd");
+  out.seek(localFileSize);
+  s_logger.info("Starting download from " + getDownloadUrl() + " to "+ toFile+ " remoteSize="+ remoteSize+ " , max size="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+  byte[] block=new byte[CHUNK_SIZE];
+  long offset=0;
+  boolean done=false;
+  status=TemplateDownloader.Status.IN_PROGRESS;
+  while (!done && status != Status.ABORTED && offset <= remoteSize) {
+    if ((bytes=in.read(block,0,CHUNK_SIZE)) > -1) {
+      out.write(block,0,bytes);
+      offset+=bytes;
+      out.seek(offset);
+      totalBytes+=bytes;
+    }
+ else {
+      done=true;
+    }
+  }
+  Date finish=new Date();
+  String downloaded="(incomplete download)";
+  if (totalBytes >= remoteSize) {
+    status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
+    downloaded="(download complete remote=" + remoteSize + "bytes)";
+  }
+  errorString="Downloaded " + totalBytes + " bytes "+ downloaded;
+  downloadTime+=finish.getTime() - start.getTime();
+  out.close();
+  return totalBytes;
+}
+ catch (HttpException hte) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=hte.getMessage();
+}
+catch (IOException ioe) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=ioe.getMessage();
+}
+ finally {
+  if (status == Status.UNRECOVERABLE_ERROR && file.exists() && !file.isDirectory()) {
+    file.delete();
+  }
+  request.releaseConnection();
+  if (callback != null) {
+    callback.downloadComplete(status);
+  }
+}
+return 0;
+}

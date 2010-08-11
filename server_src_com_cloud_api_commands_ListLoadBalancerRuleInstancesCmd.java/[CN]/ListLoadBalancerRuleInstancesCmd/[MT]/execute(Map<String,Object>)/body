@@ -1,0 +1,48 @@
+{
+  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+  Long loadBalancerId=(Long)params.get(BaseCmd.Properties.ID.getName());
+  Boolean applied=(Boolean)params.get(BaseCmd.Properties.APPLIED.getName());
+  if (applied == null) {
+    applied=Boolean.TRUE;
+  }
+  LoadBalancerVO loadBalancer=getManagementServer().findLoadBalancerById(loadBalancerId.longValue());
+  if (loadBalancer == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"no load balancer rule with id " + loadBalancerId + " exists.");
+  }
+  if (account != null) {
+    long lbAcctId=loadBalancer.getAccountId();
+    if (isAdmin(account.getType())) {
+      Account userAccount=getManagementServer().findAccountById(Long.valueOf(lbAcctId));
+      if (!getManagementServer().isChildDomain(account.getDomainId(),userAccount.getDomainId())) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid load balancer rule id (" + loadBalancerId + ") given, unable to list instances.");
+      }
+    }
+ else     if (account.getId().longValue() != lbAcctId) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"account " + account.getAccountName() + " does not own load balancer rule "+ loadBalancer.getName());
+    }
+  }
+  List<UserVmVO> instances=getManagementServer().listLoadBalancerInstances(loadBalancerId.longValue(),applied.booleanValue());
+  if (instances == null) {
+    throw new ServerApiException(BaseCmd.NET_LIST_ERROR,"unable to find instances for load balancer rule " + loadBalancerId);
+  }
+  List<Pair<String,Object>> instanceTags=new ArrayList<Pair<String,Object>>();
+  Object[] instanceTag=new Object[instances.size()];
+  int i=0;
+  for (  UserVmVO instance : instances) {
+    List<Pair<String,Object>> instanceData=new ArrayList<Pair<String,Object>>();
+    instanceData.add(new Pair<String,Object>(BaseCmd.Properties.ID.getName(),Long.toString(instance.getId())));
+    instanceData.add(new Pair<String,Object>(BaseCmd.Properties.NAME.getName(),instance.getName()));
+    instanceData.add(new Pair<String,Object>(BaseCmd.Properties.DISPLAY_NAME.getName(),instance.getDisplayName()));
+    instanceData.add(new Pair<String,Object>(BaseCmd.Properties.PRIVATE_IP.getName(),instance.getPrivateIpAddress()));
+    Account accountTemp=getManagementServer().findAccountById(instance.getAccountId());
+    if (accountTemp != null) {
+      instanceData.add(new Pair<String,Object>(BaseCmd.Properties.ACCOUNT.getName(),accountTemp.getAccountName()));
+      instanceData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN_ID.getName(),accountTemp.getDomainId()));
+      instanceData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN.getName(),getManagementServer().findDomainIdById(accountTemp.getDomainId()).getName()));
+    }
+    instanceTag[i++]=instanceData;
+  }
+  Pair<String,Object> ruleTag=new Pair<String,Object>("loadbalancerruleinstance",instanceTag);
+  instanceTags.add(ruleTag);
+  return instanceTags;
+}

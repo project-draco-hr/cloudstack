@@ -1,0 +1,94 @@
+{
+  template=_tmpltDao.findById(template.getId(),true);
+  long poolId=pool.getId();
+  long templateId=template.getId();
+  VMTemplateStoragePoolVO templateStoragePoolRef=null;
+  VMTemplateHostVO templateHostRef=null;
+  long templateStoragePoolRefId;
+  String origUrl=null;
+  templateStoragePoolRef=_tmpltPoolDao.findByPoolTemplate(poolId,templateId);
+  if (templateStoragePoolRef != null) {
+    templateStoragePoolRef.setMarkedForGC(false);
+    _tmpltPoolDao.update(templateStoragePoolRef.getId(),templateStoragePoolRef);
+    if (templateStoragePoolRef.getDownloadState() == Status.DOWNLOADED) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Template " + templateId + " has already been downloaded to pool "+ poolId);
+      }
+      return templateStoragePoolRef;
+    }
+  }
+  SearchCriteria<VMTemplateHostVO> sc=HostTemplateStatesSearch.create();
+  sc.setParameters("id",templateId);
+  sc.setParameters("state",Status.DOWNLOADED);
+  sc.setJoinParameters("host","dcId",pool.getDataCenterId());
+  List<VMTemplateHostVO> templateHostRefs=_tmpltHostDao.search(sc,null);
+  if (templateHostRefs.size() == 0) {
+    s_logger.debug("Unable to find a secondary storage host who has completely downloaded the template.");
+    return null;
+  }
+  templateHostRef=templateHostRefs.get(0);
+  HostVO sh=_hostDao.findById(templateHostRef.getHostId());
+  origUrl=sh.getStorageUrl();
+  if (origUrl == null) {
+    throw new CloudRuntimeException("Unable to find the orig.url from host " + sh.toString());
+  }
+  if (templateStoragePoolRef == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Downloading template " + templateId + " to pool "+ poolId);
+    }
+    templateStoragePoolRef=new VMTemplateStoragePoolVO(poolId,templateId);
+    try {
+      templateStoragePoolRef=_tmpltPoolDao.persist(templateStoragePoolRef);
+      templateStoragePoolRefId=templateStoragePoolRef.getId();
+    }
+ catch (    Exception e) {
+      s_logger.debug("Assuming we're in a race condition: " + e.getMessage());
+      templateStoragePoolRef=_tmpltPoolDao.findByPoolTemplate(poolId,templateId);
+      if (templateStoragePoolRef == null) {
+        throw new CloudRuntimeException("Unable to persist a reference for pool " + poolId + " and template "+ templateId);
+      }
+      templateStoragePoolRefId=templateStoragePoolRef.getId();
+    }
+  }
+ else {
+    templateStoragePoolRefId=templateStoragePoolRef.getId();
+  }
+  List<StoragePoolHostVO> vos=_poolHostDao.listByPoolId(poolId);
+  templateStoragePoolRef=_tmpltPoolDao.acquire(templateStoragePoolRefId,1200);
+  if (templateStoragePoolRef == null) {
+    throw new CloudRuntimeException("Unable to acquire lock on VMTemplateStoragePool: " + templateStoragePoolRefId);
+  }
+  try {
+    if (templateStoragePoolRef.getDownloadState() == Status.DOWNLOADED) {
+      return templateStoragePoolRef;
+    }
+    String url=origUrl + "/" + templateHostRef.getInstallPath();
+    PrimaryStorageDownloadCommand dcmd=new PrimaryStorageDownloadCommand(template.getUniqueName(),url,template.getFormat(),template.getAccountId(),pool.getId(),pool.getUuid());
+    for (    StoragePoolHostVO vo : vos) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Downloading " + templateId + " via "+ vo.getHostId());
+      }
+      dcmd.setLocalPath(vo.getLocalPath());
+      DownloadAnswer answer=(DownloadAnswer)_agentMgr.easySend(vo.getHostId(),dcmd);
+      if (answer != null) {
+        templateStoragePoolRef.setDownloadPercent(templateStoragePoolRef.getDownloadPercent());
+        templateStoragePoolRef.setDownloadState(answer.getDownloadStatus());
+        templateStoragePoolRef.setLocalDownloadPath(answer.getDownloadPath());
+        templateStoragePoolRef.setInstallPath(answer.getInstallPath());
+        templateStoragePoolRef.setTemplateSize(answer.getTemplateSize());
+        _tmpltPoolDao.update(templateStoragePoolRef.getId(),templateStoragePoolRef);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Template " + templateId + " is downloaded via "+ vo.getHostId());
+        }
+        return templateStoragePoolRef;
+      }
+    }
+  }
+  finally {
+    _tmpltPoolDao.release(templateStoragePoolRefId);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Template " + templateId + " is not found on and can not be downloaded to pool "+ poolId);
+  }
+  return null;
+}

@@ -1,0 +1,42 @@
+{
+  final ByteBuffer buff=ByteBuffer.wrap(bytes);
+  final byte ver=buff.get();
+  final Version version=Version.get(ver);
+  if (version.ordinal() < Version.v3.ordinal()) {
+    throw new UnsupportedVersionException("This version is no longer supported: " + version.toString(),UnsupportedVersionException.IncompatibleVersion);
+  }
+  final byte reserved=buff.get();
+  final Short flags=buff.getShort();
+  final boolean isRequest=(flags & FLAG_REQUEST) > 0;
+  final boolean isControl=(flags & FLAG_IN_SEQUENCE) > 0;
+  final boolean isStopOnError=(flags & FLAG_STOP_ON_ERROR) > 0;
+  final boolean isWatch=(flags & FLAG_WATCH) > 0;
+  final boolean fromServer=(flags & FLAG_FROM_SERVER) > 0;
+  final boolean needsUpdate=(flags & FLAG_UPDATE) > 0;
+  final boolean control=(flags & FLAG_CONTROL) > 0;
+  final long seq=buff.getLong();
+  final int size=buff.getInt();
+  final long mgmtId=buff.getLong();
+  final long agentId=buff.getLong();
+  byte[] command=null;
+  int offset=0;
+  if (buff.hasArray()) {
+    command=buff.array();
+    offset=buff.arrayOffset() + buff.position();
+  }
+ else {
+    command=new byte[buff.remaining()];
+    buff.get(command);
+    offset=0;
+  }
+  final String content=new String(command,offset,command.length - offset);
+  if (needsUpdate && !isRequest) {
+    return new UpgradeResponse(Version.get(ver),seq,content);
+  }
+  if (isRequest) {
+    return new Request(version,seq,agentId,mgmtId,content,isControl,isStopOnError,fromServer,control);
+  }
+ else {
+    return new Response(Version.get(ver),seq,agentId,mgmtId,content,isControl,isStopOnError,fromServer,control);
+  }
+}

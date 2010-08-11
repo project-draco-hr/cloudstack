@@ -1,0 +1,37 @@
+{
+  StringBuilder sql=null;
+  PreparedStatement pstmt=s_initStmt;
+  final Transaction txn=Transaction.currentTxn();
+  try {
+    final String searchClause=sc.getWhereClause();
+    sql=ub.toSql(_tables);
+    if (sql == null) {
+      return 0;
+    }
+    sql.append(searchClause);
+    if (rows != null) {
+      sql.append(" LIMIT ").append(rows);
+    }
+    txn.start();
+    pstmt=txn.prepareAutoCloseStatement(sql.toString());
+    Collection<Ternary<Attribute,Boolean,Object>> changes=ub.getChanges();
+    int i=1;
+    for (    final Ternary<Attribute,Boolean,Object> value : changes) {
+      prepareAttribute(i++,pstmt,value.first(),value.third());
+    }
+    for (    Pair<Attribute,Object> value : sc.getValues()) {
+      prepareAttribute(i++,pstmt,value.first(),value.second());
+    }
+    int result=pstmt.executeUpdate();
+    txn.commit();
+    ub.clear();
+    return result;
+  }
+ catch (  final SQLException e) {
+    if (e.getSQLState().equals("23000")) {
+      throw new EntityExistsException("Entity already exists ",e);
+    }
+    final String sqlStr=pstmt.toString();
+    throw new CloudRuntimeException("DB Exception on: " + sqlStr,e);
+  }
+}

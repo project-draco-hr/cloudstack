@@ -1,0 +1,28 @@
+{
+  List<UserVmVO> vms=_vmDao.findDestroyedVms(new Date(System.currentTimeMillis() - ((long)_expungeDelay << 10)));
+  s_logger.info("Found " + vms.size() + " vms to expunge.");
+  for (  UserVmVO vm : vms) {
+    long vmId=vm.getId();
+    releaseGuestIpAddress(vm);
+    vm.setGuestNetmask(null);
+    vm.setGuestMacAddress(null);
+    if (!_vmDao.updateIf(vm,Event.ExpungeOperation,null)) {
+      s_logger.info("vm " + vmId + " is skipped because it is no longer in Destroyed state");
+      continue;
+    }
+    List<VolumeVO> vols=null;
+    try {
+      vols=_volsDao.findByInstanceIdDestroyed(vmId);
+      _storageMgr.destroy(vm,vols);
+      _vmDao.remove(vm.getId());
+      _networkGroupManager.removeInstanceFromGroups(vm.getId());
+      s_logger.debug("vm is destroyed");
+    }
+ catch (    Exception e) {
+      s_logger.info("VM " + vmId + " expunge failed due to "+ e.getMessage());
+    }
+  }
+  List<VolumeVO> destroyedVolumes=_volsDao.findByDetachedDestroyed();
+  s_logger.info("Found " + destroyedVolumes.size() + " detached volumes to expunge.");
+  _storageMgr.destroy(null,destroyedVolumes);
+}

@@ -1,0 +1,78 @@
+{
+  DownloadJob dnld=jobs.get(jobId);
+  TemplateDownloader td=dnld.getTemplateDownloader();
+  String templatePath=null;
+  templatePath=dnld.getInstallPathPrefix() + dnld.getAccountId() + File.separator+ dnld.getId()+ File.separator;
+  _storage.mkdirs(templatePath);
+  String finalTemplatePath=templatePath.substring(parentDir.length());
+  dnld.setTmpltPath(finalTemplatePath);
+  int imgSizeGigs=(int)Math.ceil(_storage.getSize(td.getDownloadLocalPath()) * 1.0d / (1024 * 1024 * 1024));
+  imgSizeGigs++;
+  long timeout=imgSizeGigs * installTimeoutPerGig;
+  Script scr=null;
+  scr=new Script(createTmpltScr,timeout,s_logger);
+  scr.add("-s",Integer.toString(imgSizeGigs));
+  scr.add("-S",Long.toString(td.getMaxTemplateSizeInBytes()));
+  if (dnld.getDescription() != null && dnld.getDescription().length() > 1) {
+    scr.add("-d",dnld.getDescription());
+  }
+  if (dnld.isHvm()) {
+    scr.add("-h");
+  }
+  String extension=dnld.getFormat().toString().toLowerCase();
+  String templateName="";
+  if (extension.equals("iso")) {
+    templateName=jobs.get(jobId).getTmpltName().trim().replace(" ","_");
+  }
+ else {
+    templateName=java.util.UUID.nameUUIDFromBytes((jobs.get(jobId).getTmpltName() + System.currentTimeMillis()).getBytes()).toString();
+  }
+  String templateFilename=templateName + "." + extension;
+  dnld.setTmpltPath(finalTemplatePath + "/" + templateFilename);
+  scr.add("-n",templateFilename);
+  scr.add("-t",templatePath);
+  scr.add("-f",td.getDownloadLocalPath());
+  if (dnld.getChecksum() != null && dnld.getChecksum().length() > 1) {
+    scr.add("-c",dnld.getChecksum());
+  }
+  scr.add("-u");
+  String result;
+  result=scr.execute();
+  if (result != null) {
+    return result;
+  }
+  File downloadedTemplate=new File(templatePath + "/" + templateFilename);
+  _storage.setWorldReadableAndWriteable(downloadedTemplate);
+  File templateProperties=new File(templatePath + "/template.properties");
+  _storage.setWorldReadableAndWriteable(templateProperties);
+  TemplateLocation loc=new TemplateLocation(_storage,templatePath);
+  try {
+    loc.create(dnld.getId(),true,dnld.getTmpltName());
+  }
+ catch (  IOException e) {
+    s_logger.warn("Something is wrong with template location " + templatePath,e);
+    loc.purge();
+    return "Unable to download due to " + e.getMessage();
+  }
+  Enumeration<Processor> en=_processors.enumeration();
+  while (en.hasMoreElements()) {
+    Processor processor=en.nextElement();
+    FormatInfo info=null;
+    try {
+      info=processor.process(templatePath,null,templateName);
+    }
+ catch (    InternalErrorException e) {
+      return e.toString();
+    }
+    if (info != null) {
+      loc.addFormat(info);
+      dnld.setTemplatesize(info.virtualSize);
+      break;
+    }
+  }
+  if (!loc.save()) {
+    s_logger.warn("Cleaning up because we're unable to save the formats");
+    loc.purge();
+  }
+  return null;
+}

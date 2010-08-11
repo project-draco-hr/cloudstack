@@ -1,0 +1,54 @@
+{
+  Type t=getClass().getGenericSuperclass();
+  if (t instanceof ParameterizedType) {
+    _entityBeanType=(Class<T>)((ParameterizedType)t).getActualTypeArguments()[0];
+  }
+ else {
+    _entityBeanType=(Class<T>)((ParameterizedType)((Class<?>)t).getGenericSuperclass()).getActualTypeArguments()[0];
+  }
+  s_daoMaps.put(_entityBeanType,this);
+  _table=DbUtil.getTableName(_entityBeanType);
+  final SqlGenerator generator=new SqlGenerator(_entityBeanType);
+  _partialSelectSql=generator.buildSelectSql();
+  _embeddedFields=generator.getEmbeddedFields();
+  _insertSqls=generator.buildInsertSqls();
+  final Pair<StringBuilder,Map<String,Object>> dc=generator.buildDiscriminatorClause();
+  _discriminatorClause=dc.first().length() == 0 ? null : dc.first();
+  _discriminatorValues=dc.second();
+  _idAttributes=generator.getIdAttributes();
+  _idField=_idAttributes.get(_table).length > 0 ? _idAttributes.get(_table)[0].field : null;
+  _tables=generator.buildTableReferences();
+  _allAttributes=generator.getAllAttributes();
+  _allColumns=generator.getAllColumns();
+  _selectByIdSql=buildSelectByIdSql(createPartialSelectSql(null,true));
+  _removeSql=generator.buildRemoveSql();
+  _deleteSqls=generator.buildDeleteSqls();
+  _removed=generator.getRemovedAttribute();
+  _tgs=generator.getTableGenerators();
+  TableGenerator tg=this.getClass().getAnnotation(TableGenerator.class);
+  if (tg != null) {
+    _tgs.put(tg.name(),tg);
+  }
+  tg=this.getClass().getSuperclass().getAnnotation(TableGenerator.class);
+  if (tg != null) {
+    _tgs.put(tg.name(),tg);
+  }
+  _enhancer=new Enhancer();
+  _enhancer.setSuperclass(_entityBeanType);
+  _enhancer.setCallback(new UpdateBuilder(_allAttributes));
+  _factory=(Factory)_enhancer.create();
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Select SQL: " + _partialSelectSql.first().toString());
+    s_logger.trace("Remove SQL: " + (_removeSql != null ? _removeSql.first() : "No remove sql"));
+    s_logger.trace("Select by Id SQL: " + _selectByIdSql);
+    s_logger.trace("Table References: " + _tables);
+    s_logger.trace("Insert SQLs:");
+    for (    final Pair<String,Attribute[]> insertSql : _insertSqls) {
+      s_logger.trace(insertSql.first());
+    }
+    s_logger.trace("Delete SQLs");
+    for (    final Pair<String,Attribute[]> deletSql : _deleteSqls) {
+      s_logger.trace(deletSql.first());
+    }
+  }
+}

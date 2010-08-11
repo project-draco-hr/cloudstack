@@ -1,0 +1,38 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("updateIf called on " + router.toString() + " event "+ event.toString()+ " host "+ hostId);
+  }
+  State oldState=router.getState();
+  State newState=oldState.getNextState(event);
+  long oldDate=router.getUpdated();
+  Long oldHostId=router.getHostId();
+  if (newState == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("There's no way to transition from old state: " + oldState.toString() + " event: "+ event.toString());
+    }
+    return false;
+  }
+  SearchCriteria<DomainRouterVO> sc=StateChangeSearch.create();
+  sc.setParameters("id",router.getId());
+  sc.setParameters("states",oldState);
+  sc.setParameters("host",router.getHostId());
+  sc.setParameters("update",router.getUpdated());
+  router.incrUpdated();
+  UpdateBuilder ub=getUpdateBuilder(router);
+  if (newState == State.Running) {
+    ub.set(router,"lastHostId",router.getHostId());
+  }
+  ub.set(router,"state",newState);
+  ub.set(router,"hostId",hostId);
+  ub.set(router,_updateTimeAttr,new Date());
+  int result=update(router,sc);
+  if (result == 0 && s_logger.isDebugEnabled()) {
+    DomainRouterVO vo=findById(router.getId());
+    StringBuilder str=new StringBuilder("Unable to update ").append(vo.toString());
+    str.append(": DB Data={Host=").append(vo.getHostId()).append("; State=").append(vo.getState().toString()).append("; updated=").append(vo.getUpdated());
+    str.append("} New Data: {Host=").append(router.getHostId()).append("; State=").append(router.getState().toString()).append("; updated=").append(router.getUpdated());
+    str.append("} Stale Data: {Host=").append(oldHostId).append("; State=").append(oldState.toString()).append("; updated=").append(oldDate).append("}");
+    s_logger.debug(str.toString());
+  }
+  return result > 0;
+}

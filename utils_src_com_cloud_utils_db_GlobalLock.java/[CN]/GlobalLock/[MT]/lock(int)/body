@@ -1,0 +1,46 @@
+{
+  int remainingMilliSeconds=timeoutSeconds * 1000;
+  Profiler profiler=new Profiler();
+  boolean interrupted=false;
+  try {
+    while (true) {
+synchronized (this) {
+        if (ownerThread != null && ownerThread == Thread.currentThread()) {
+          s_logger.warn("Global lock re-entrance detected");
+          lockCount++;
+          if (s_logger.isTraceEnabled())           s_logger.trace("lock " + name + " is acquired, lock count :"+ lockCount);
+          return true;
+        }
+        if (ownerThread != null) {
+          profiler.start();
+          try {
+            wait(((long)timeoutSeconds) * 1000L);
+          }
+ catch (          InterruptedException e) {
+            interrupted=true;
+          }
+          profiler.stop();
+          remainingMilliSeconds-=profiler.getDuration();
+          if (remainingMilliSeconds < 0)           return false;
+          continue;
+        }
+ else {
+          if (DbUtil.getGlobalLock(name,remainingMilliSeconds / 1000)) {
+            lockCount++;
+            ownerThread=Thread.currentThread();
+            holdingStartTick=System.currentTimeMillis();
+            addRef();
+            if (s_logger.isTraceEnabled())             s_logger.trace("lock " + name + " is acquired, lock count :"+ lockCount);
+            return true;
+          }
+          return false;
+        }
+      }
+    }
+  }
+  finally {
+    if (interrupted) {
+      Thread.currentThread().interrupt();
+    }
+  }
+}

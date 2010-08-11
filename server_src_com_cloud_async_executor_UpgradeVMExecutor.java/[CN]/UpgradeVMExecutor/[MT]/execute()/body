@@ -1,0 +1,30 @@
+{
+  AsyncJobManager asyncMgr=getAsyncJobMgr();
+  AsyncJobVO job=getJob();
+  Gson gson=GsonHelper.getBuilder().create();
+  if (getSyncSource() == null) {
+    VMOperationParam param=gson.fromJson(job.getCmdInfo(),VMOperationParam.class);
+    asyncMgr.syncAsyncJobExecution(job.getId(),"UserVM",param.getVmId());
+    return true;
+  }
+ else {
+    ManagementServer managementServer=asyncMgr.getExecutorContext().getManagementServer();
+    UpgradeVMParam param=gson.fromJson(job.getCmdInfo(),UpgradeVMParam.class);
+    try {
+      asyncMgr.updateAsyncJobAttachment(job.getId(),"vm_instance",param.getVmId());
+      boolean success=managementServer.upgradeVirtualMachine(param.getUserId(),param.getVmId(),param.getServiceOfferingId(),param.getEventId());
+      if (success) {
+        UserVmVO userVm=managementServer.findUserVMInstanceById(param.getVmId());
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,composeResultObject(userVm,managementServer));
+      }
+ else {
+        asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.VM_CHANGE_SERVICE_ERROR,composeResultObject(null,managementServer));
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn("Unable to upgrade VM " + param.getVmId() + ":"+ e.getMessage(),e);
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+    }
+    return true;
+  }
+}

@@ -1,0 +1,52 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  try {
+    IPAddressVO ipVO=_publicIpAddressDao.findById(publicIPAddress);
+    if (ipVO == null) {
+      return false;
+    }
+    if (ipVO.getAllocated() == null) {
+      return true;
+    }
+    AccountVO accountVO=_accountDao.findById(accountId);
+    if (accountVO == null) {
+      return false;
+    }
+    if ((ipVO.getAccountId() == null) || (ipVO.getAccountId().longValue() != accountId)) {
+      if (!BaseCmd.isAdmin(accountVO.getType())) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("permission denied disassociating IP address " + publicIPAddress + "; acct: "+ accountId+ "; ip (acct / dc / dom / alloc): "+ ipVO.getAccountId()+ " / "+ ipVO.getDataCenterId()+ " / "+ ipVO.getDomainId()+ " / "+ ipVO.getAllocated());
+        }
+        throw new PermissionDeniedException("User/account does not own supplied address");
+      }
+    }
+    if (ipVO.getAllocated() == null) {
+      return true;
+    }
+    if (ipVO.isSourceNat()) {
+      throw new IllegalArgumentException("ip address is used for source nat purposes and can not be disassociated.");
+    }
+    VlanVO vlan=_vlanDao.findById(ipVO.getVlanDbId());
+    if (!vlan.getVlanType().equals(VlanType.VirtualNetwork)) {
+      throw new IllegalArgumentException("only ip addresses that belong to a virtual network may be disassociated.");
+    }
+    if (_accountVlanMapDao.findAccountVlanMap(accountId,ipVO.getVlanDbId()) != null) {
+      throw new PermissionDeniedException(publicIPAddress + " belongs to Account wide IP pool and cannot be disassociated");
+    }
+    txn.start();
+    boolean success=_networkMgr.releasePublicIpAddress(userId,publicIPAddress);
+    if (success)     _accountMgr.decrementResourceCount(accountId,ResourceType.public_ip);
+    txn.commit();
+    return success;
+  }
+ catch (  PermissionDeniedException pde) {
+    throw pde;
+  }
+catch (  IllegalArgumentException iae) {
+    throw iae;
+  }
+catch (  Throwable t) {
+    s_logger.error("Disassociate IP address threw an exception.");
+    throw new IllegalArgumentException("Disassociate IP address threw an exception");
+  }
+}

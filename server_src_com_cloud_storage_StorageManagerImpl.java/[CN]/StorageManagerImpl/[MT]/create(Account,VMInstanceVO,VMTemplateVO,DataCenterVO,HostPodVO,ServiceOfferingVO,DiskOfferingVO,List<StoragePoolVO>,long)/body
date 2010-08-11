@@ -1,0 +1,52 @@
+{
+  ArrayList<VolumeVO> vols=new ArrayList<VolumeVO>(2);
+  VolumeVO dataVol=null;
+  VolumeVO rootVol=null;
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  if (Storage.ImageFormat.ISO == template.getFormat()) {
+    rootVol=new VolumeVO(VolumeType.ROOT,vm.getId(),vm.getInstanceName() + "-ROOT",dc.getId(),pod.getId(),account.getId(),account.getDomainId(),(size > 0) ? size : diskOffering.getDiskSizeInBytes());
+    rootVol.setDiskOfferingId(diskOffering.getId());
+    rootVol.setDeviceId(0l);
+    rootVol=_volsDao.persist(rootVol);
+  }
+ else {
+    rootVol=new VolumeVO(VolumeType.ROOT,vm.getId(),template.getId(),vm.getInstanceName() + "-ROOT",dc.getId(),pod.getId(),account.getId(),account.getDomainId(),offering.isRecreatable());
+    rootVol.setDiskOfferingId(offering.getId());
+    rootVol.setTemplateId(template.getId());
+    rootVol.setDeviceId(0l);
+    rootVol=_volsDao.persist(rootVol);
+    if (diskOffering != null && diskOffering.getDiskSizeInBytes() > 0) {
+      dataVol=new VolumeVO(VolumeType.DATADISK,vm.getId(),vm.getInstanceName() + "-DATA",dc.getId(),pod.getId(),account.getId(),account.getDomainId(),(size > 0) ? size : diskOffering.getDiskSizeInBytes());
+      dataVol.setDiskOfferingId(diskOffering.getId());
+      dataVol.setDeviceId(1l);
+      dataVol=_volsDao.persist(dataVol);
+    }
+  }
+  txn.commit();
+  VolumeVO dataCreated=null;
+  VolumeVO rootCreated=null;
+  try {
+    rootCreated=createVolume(rootVol,vm,template,dc,pod,null,offering,diskOffering,avoids,size);
+    if (rootCreated == null) {
+      throw new CloudRuntimeException("Unable to create " + rootVol);
+    }
+    vols.add(rootCreated);
+    if (dataVol != null) {
+      StoragePoolVO pool=_storagePoolDao.findById(rootCreated.getPoolId());
+      dataCreated=createVolume(dataVol,vm,template,dc,pod,pool.getClusterId(),offering,diskOffering,avoids,size);
+      if (dataCreated == null) {
+        throw new CloudRuntimeException("Unable to create " + dataVol);
+      }
+      vols.add(dataCreated);
+    }
+    return vols;
+  }
+ catch (  Exception e) {
+    s_logger.error("Unexpected exception ",e);
+    if (rootCreated != null) {
+      destroyVolume(rootCreated);
+    }
+    throw new CloudRuntimeException("Unable to create volumes for " + vm,e);
+  }
+}

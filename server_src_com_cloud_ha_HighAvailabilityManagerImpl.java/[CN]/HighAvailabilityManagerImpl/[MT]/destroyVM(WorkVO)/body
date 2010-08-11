@@ -1,0 +1,37 @@
+{
+  final VirtualMachineManager<VMInstanceVO> mgr=findManager(work.getType());
+  final VMInstanceVO vm=mgr.get(work.getInstanceId());
+  s_logger.info("Destroying " + vm.toString());
+  try {
+    if (vm.getState() != State.Destroyed) {
+      s_logger.info("VM is no longer in Destroyed state " + vm.toString());
+      return null;
+    }
+    if (vm.getHostId() != null) {
+      Command cmd=mgr.cleanup(vm,null);
+      Answer ans=_agentMgr.send(work.getHostId(),cmd);
+      if (ans.getResult()) {
+        mgr.completeStopCommand(vm);
+        if (mgr.destroy(vm)) {
+          s_logger.info("Successfully stopped " + vm.toString());
+          return null;
+        }
+      }
+      s_logger.debug("Stop for " + vm.toString() + " was unsuccessful. Detail: "+ ans.getDetails());
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(vm.toString() + " has already been stopped");
+      }
+      return null;
+    }
+  }
+ catch (  final AgentUnavailableException e) {
+    s_logger.debug("Agnet is not available" + e.getMessage());
+  }
+catch (  OperationTimedoutException e) {
+    s_logger.debug("operation timed out: " + e.getMessage());
+  }
+  work.setTimesTried(work.getTimesTried() + 1);
+  return (System.currentTimeMillis() >> 10) + _stopRetryInterval;
+}

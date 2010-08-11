@@ -1,0 +1,123 @@
+{
+  final long vmId=work.getInstanceId();
+  final VirtualMachineManager<VMInstanceVO> mgr=findManager(work.getType());
+  VMInstanceVO vm=mgr.get(vmId);
+  if (vm == null || vm.getRemoved() != null) {
+    s_logger.debug("Unable to find the vm " + vmId);
+    return null;
+  }
+  s_logger.info("Migrating vm: " + vm.toString());
+  if (vm.getHostId() == null || vm.getHostId() != work.getHostId()) {
+    s_logger.info("VM is not longer running on the current hostId");
+    return null;
+  }
+  short alertType=AlertManager.ALERT_TYPE_USERVM_MIGRATE;
+  if (VirtualMachine.Type.DomainRouter.equals(vm.getType())) {
+    alertType=AlertManager.ALERT_TYPE_DOMAIN_ROUTER_MIGRATE;
+  }
+ else   if (VirtualMachine.Type.ConsoleProxy.equals(vm.getType())) {
+    alertType=AlertManager.ALERT_TYPE_CONSOLE_PROXY_MIGRATE;
+  }
+  HostVO fromHost=_hostDao.findById(vm.getHostId());
+  String fromHostName=((fromHost == null) ? "unknown" : fromHost.getName());
+  HostVO toHost=null;
+  if (work.getStep() == Step.Scheduled) {
+    if (vm.getState() != State.Running) {
+      s_logger.info("VM's state is not ready for migration. " + vm.toString() + " State is "+ vm.getState().toString());
+      return (System.currentTimeMillis() >> 10) + _migrateRetryInterval;
+    }
+    DataCenterVO dcVO=_dcDao.findById(fromHost.getDataCenterId());
+    HostPodVO podVO=_podDao.findById(fromHost.getPodId());
+    try {
+      toHost=mgr.prepareForMigration(vm);
+      if (toHost == null) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Unable to find a host for migrating vm " + vmId);
+        }
+        _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHostName+ " in zone "+ dcVO.getName()+ " and pod "+ podVO.getName(),"Unable to find a suitable host");
+      }
+    }
+ catch (    final InsufficientCapacityException e) {
+      s_logger.warn("Unable to mgirate due to insufficient capcity " + vm.toString());
+      _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHostName+ " in zone "+ dcVO.getName()+ " and pod "+ podVO.getName(),"Insufficient capacity");
+    }
+catch (    final StorageUnavailableException e) {
+      s_logger.warn("Storage is unavailable: " + vm.toString());
+      _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHostName+ " in zone "+ dcVO.getName()+ " and pod "+ podVO.getName(),"Storage is gone.");
+    }
+    if (toHost == null) {
+      _agentMgr.maintenanceFailed(vm.getHostId());
+      return null;
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Migrating from " + work.getHostId() + " to "+ toHost.getId());
+    }
+    work.setStep(Step.Migrating);
+    work.setHostId(toHost.getId());
+    _haDao.update(work.getId(),work);
+  }
+  if (work.getStep() == Step.Migrating) {
+    vm=mgr.get(vmId);
+    boolean migrated=false;
+    if (vm == null || vm.getRemoved() != null || vm.getHostId() == null || !_instanceDao.updateIf(vm,Event.MigrationRequested,vm.getHostId())) {
+      s_logger.info("Migration cancelled because state has changed: " + vm.toString());
+    }
+ else {
+      try {
+        boolean isWindows=_guestOSCategoryDao.findById(_guestOSDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
+        MigrateCommand cmd=new MigrateCommand(vm.getInstanceName(),toHost.getPrivateIpAddress(),isWindows);
+        Answer answer=_agentMgr.send(fromHost.getId(),cmd);
+        if (answer != null && answer.getResult()) {
+          migrated=true;
+          _storageMgr.unshare(vm,fromHost);
+          work.setStep(Step.Investigating);
+          _haDao.update(work.getId(),work);
+        }
+      }
+ catch (      final AgentUnavailableException e) {
+        s_logger.debug("host became unavailable");
+      }
+catch (      final OperationTimedoutException e) {
+        s_logger.debug("operation timed out");
+        if (e.isActive()) {
+          scheduleRestart(vm,true);
+        }
+      }
+    }
+    if (!migrated) {
+      s_logger.info("Migration was unsuccessful.  Cleaning up: " + vm.toString());
+      DataCenterVO dcVO=_dcDao.findById(vm.getDataCenterId());
+      HostPodVO podVO=_podDao.findById(vm.getPodId());
+      _alertMgr.sendAlert(alertType,fromHost.getDataCenterId(),fromHost.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHost.getName()+ " in zone "+ dcVO.getName()+ " and pod "+ podVO.getName(),"Migrate Command failed.  Please check logs.");
+      _instanceDao.updateIf(vm,Event.OperationFailed,vm.getHostId());
+      _agentMgr.maintenanceFailed(vm.getHostId());
+      Command cleanup=mgr.cleanup(vm,null);
+      _agentMgr.easySend(toHost.getId(),cleanup);
+      _storageMgr.unshare(vm,toHost);
+      return null;
+    }
+  }
+  if (toHost == null) {
+    toHost=_hostDao.findById(work.getHostId());
+  }
+  DataCenterVO dcVO=_dcDao.findById(toHost.getDataCenterId());
+  HostPodVO podVO=_podDao.findById(toHost.getPodId());
+  try {
+    if (!mgr.completeMigration(vm,toHost)) {
+      _alertMgr.sendAlert(alertType,toHost.getDataCenterId(),toHost.getPodId(),"Unable to migrate " + vmId + " to host "+ toHost.getName()+ " in zone "+ dcVO.getName()+ " and pod "+ podVO.getName(),"Migration not completed");
+      s_logger.warn("Unable to complete migration: " + vm.toString());
+    }
+ else {
+      s_logger.info("Migration is complete: " + vm.toString());
+    }
+    return null;
+  }
+ catch (  final AgentUnavailableException e) {
+    s_logger.warn("Agent is unavailable for " + vm.toString());
+  }
+catch (  final OperationTimedoutException e) {
+    s_logger.warn("Operation timed outfor " + vm.toString());
+  }
+  _instanceDao.updateIf(vm,Event.OperationFailed,toHost.getId());
+  return (System.currentTimeMillis() >> 10) + _migrateRetryInterval;
+}

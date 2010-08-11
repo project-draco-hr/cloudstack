@@ -1,0 +1,54 @@
+{
+  final Script cpuScript=new Script("/bin/bash",s_logger);
+  cpuScript.add("-c");
+  cpuScript.add("idle=$(top -b -n 1|grep Cpu\\(s\\):|cut -d% -f4|cut -d, -f2);echo $idle");
+  final OutputInterpreter.OneLineParser parser=new OutputInterpreter.OneLineParser();
+  String result=cpuScript.execute(parser);
+  if (result != null) {
+    s_logger.info("Unable to get the host CPU state: " + result);
+    return new Answer(cmd,false,result);
+  }
+  double cpuUtil=(100.0D - Double.parseDouble(parser.getLine()));
+  long freeMem=0;
+  final Script memScript=new Script("/bin/bash",s_logger);
+  memScript.add("-c");
+  memScript.add("freeMem=$(free|grep cache:|awk '{print $4}');echo $freeMem");
+  final OutputInterpreter.OneLineParser Memparser=new OutputInterpreter.OneLineParser();
+  result=memScript.execute(Memparser);
+  if (result != null) {
+    s_logger.info("Unable to get the host Mem state: " + result);
+    return new Answer(cmd,false,result);
+  }
+  freeMem=Long.parseLong(Memparser.getLine());
+  Script totalMem=new Script("/bin/bash",s_logger);
+  totalMem.add("-c");
+  totalMem.add("free|grep Mem:|awk '{print $2}'");
+  final OutputInterpreter.OneLineParser totMemparser=new OutputInterpreter.OneLineParser();
+  result=totalMem.execute(totMemparser);
+  if (result != null) {
+    s_logger.info("Unable to get the host Mem state: " + result);
+    return new Answer(cmd,false,result);
+  }
+  long totMem=Long.parseLong(totMemparser.getLine());
+  double rx=0.0;
+  OutputInterpreter.OneLineParser rxParser=new OutputInterpreter.OneLineParser();
+  result=executeBashScript("cat /sys/class/net/" + _publicBridgeName + "/statistics/rx_bytes",rxParser);
+  if (result == null && rxParser.getLine() != null) {
+    rx=Double.parseDouble(rxParser.getLine()) / 1000;
+  }
+  double tx=0.0;
+  OutputInterpreter.OneLineParser txParser=new OutputInterpreter.OneLineParser();
+  result=executeBashScript("cat /sys/class/net/" + _publicBridgeName + "/statistics/tx_bytes",txParser);
+  if (result == null && txParser.getLine() != null) {
+    tx=Double.parseDouble(txParser.getLine()) / 1000;
+  }
+  int numCpus=0;
+  try {
+    NodeInfo node=_conn.nodeInfo();
+    numCpus=node.cpus;
+  }
+ catch (  LibvirtException e) {
+  }
+  HostStatsEntry hostStats=new HostStatsEntry(cmd.getHostId(),cpuUtil,rx,tx,numCpus,"host",totMem,freeMem,0,0);
+  return new GetHostStatsAnswer(cmd,hostStats);
+}

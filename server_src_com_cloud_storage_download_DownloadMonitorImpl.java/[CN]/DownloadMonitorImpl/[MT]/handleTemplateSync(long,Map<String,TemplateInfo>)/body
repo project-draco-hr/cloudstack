@@ -1,0 +1,70 @@
+{
+  HostVO storageHost=_serverDao.findById(sserverId);
+  if (storageHost == null) {
+    s_logger.warn("Huh? Agent id " + sserverId + " does not correspond to a row in hosts table?");
+    return;
+  }
+  Set<VMTemplateVO> toBeDownloaded=new HashSet<VMTemplateVO>();
+  List<VMTemplateVO> allTemplates=_templateDao.listAllInZone(storageHost.getDataCenterId());
+  VMTemplateVO rtngTmplt=_templateDao.findRoutingTemplate();
+  VMTemplateVO defaultBuiltin=_templateDao.findDefaultBuiltinTemplate();
+  if (rtngTmplt != null && !allTemplates.contains(rtngTmplt))   allTemplates.add(rtngTmplt);
+  if (defaultBuiltin != null && !allTemplates.contains(defaultBuiltin)) {
+    allTemplates.add(defaultBuiltin);
+  }
+  for (Iterator<VMTemplateVO> i=allTemplates.iterator(); i.hasNext(); ) {
+    if (i.next().getName().startsWith("xs-tools")) {
+      i.remove();
+    }
+  }
+  toBeDownloaded.addAll(allTemplates);
+  for (  VMTemplateVO tmplt : allTemplates) {
+    String uniqueName=tmplt.getUniqueName();
+    VMTemplateHostVO tmpltHost=_vmTemplateHostDao.findByHostTemplate(sserverId,tmplt.getId());
+    if (templateInfo.containsKey(uniqueName)) {
+      toBeDownloaded.remove(tmplt);
+      if (tmpltHost != null) {
+        s_logger.info("Template Sync found " + uniqueName + " already in the template host table");
+        if (tmpltHost.getDownloadState() != Status.DOWNLOADED) {
+          tmpltHost.setErrorString("");
+        }
+        tmpltHost.setDownloadPercent(100);
+        tmpltHost.setDownloadState(Status.DOWNLOADED);
+        tmpltHost.setInstallPath(templateInfo.get(uniqueName).getInstallPath());
+        tmpltHost.setLastUpdated(new Date());
+        _vmTemplateHostDao.update(tmpltHost.getId(),tmpltHost);
+      }
+ else {
+        VMTemplateHostVO templtHost=new VMTemplateHostVO(sserverId,tmplt.getId(),new Date(),100,Status.DOWNLOADED,null,null,null,templateInfo.get(uniqueName).getInstallPath(),tmplt.getUrl());
+        templtHost.setSize(templateInfo.get(uniqueName).getSize());
+        _vmTemplateHostDao.persist(templtHost);
+      }
+      templateInfo.remove(uniqueName);
+      continue;
+    }
+    if (tmpltHost != null && tmpltHost.getDownloadState() != Status.DOWNLOADED) {
+      s_logger.info("Template Sync did not find " + uniqueName + " ready on server "+ sserverId+ ", will request download to start/resume shortly");
+    }
+ else     if (tmpltHost == null) {
+      s_logger.info("Template Sync did not find " + uniqueName + " on the server "+ sserverId+ ", will request download shortly");
+      VMTemplateHostVO templtHost=new VMTemplateHostVO(sserverId,tmplt.getId(),new Date(),0,Status.NOT_DOWNLOADED,null,null,null,null,tmplt.getUrl());
+      _vmTemplateHostDao.persist(templtHost);
+    }
+  }
+  if (toBeDownloaded.size() > 0) {
+    HostVO sserver=_serverDao.findById(sserverId);
+    if (sserver == null) {
+      throw new CloudRuntimeException("Unable to find host from id");
+    }
+    for (    VMTemplateVO tmplt : toBeDownloaded) {
+      s_logger.debug("Template " + tmplt.getName() + " needs to be downloaded to "+ sserver.getName());
+      downloadTemplateToStorage(tmplt,sserver);
+    }
+  }
+  for (  String uniqueName : templateInfo.keySet()) {
+    TemplateInfo tInfo=templateInfo.get(uniqueName);
+    DeleteTemplateCommand dtCommand=new DeleteTemplateCommand(tInfo.getInstallPath());
+    long result=send(sserverId,dtCommand,null);
+    s_logger.info("Deleted template " + tInfo.getTemplateName() + " on secondary storage "+ sserverId+ " since it isn't in the database, result="+ result);
+  }
+}

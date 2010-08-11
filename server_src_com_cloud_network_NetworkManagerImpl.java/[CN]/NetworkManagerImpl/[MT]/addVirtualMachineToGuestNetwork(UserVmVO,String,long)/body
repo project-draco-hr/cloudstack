@@ -1,0 +1,69 @@
+{
+  try {
+    DomainRouterVO router=start(vm.getDomainRouterId(),startEventId);
+    if (router == null) {
+      s_logger.error("Can't find a domain router to start VM: " + vm.getName());
+      return null;
+    }
+    if (vm.getGuestMacAddress() == null) {
+      String routerGuestMacAddress=null;
+      if (USE_POD_VLAN) {
+        if ((vm.getPodId() == router.getPodId())) {
+          routerGuestMacAddress=router.getGuestMacAddress();
+        }
+ else {
+          routerGuestMacAddress=router.getGuestZoneMacAddress();
+        }
+        String vmMacAddress=NetUtils.long2Mac((NetUtils.mac2Long(routerGuestMacAddress) & 0xffffffff0000L) | (NetUtils.ip2Long(vm.getGuestIpAddress()) & 0xffff));
+        vm.setGuestMacAddress(vmMacAddress);
+      }
+ else {
+        String vmMacAddress=NetUtils.long2Mac((NetUtils.mac2Long(router.getGuestMacAddress()) & 0xffffffff0000L) | (NetUtils.ip2Long(vm.getGuestIpAddress()) & 0xffff));
+        vm.setGuestMacAddress(vmMacAddress);
+      }
+    }
+    String userData=vm.getUserData();
+    int cmdsLength=(password == null ? 0 : 1) + 1;
+    Command[] cmds=new Command[++cmdsLength];
+    int cmdIndex=0;
+    int passwordIndex=-1;
+    int vmDataIndex=-1;
+    cmds[cmdIndex]=new DhcpEntryCommand(vm.getGuestMacAddress(),vm.getGuestIpAddress(),router.getPrivateIpAddress(),vm.getName());
+    if (password != null) {
+      final String encodedPassword=rot13(password);
+      cmds[++cmdIndex]=new SavePasswordCommand(encodedPassword,vm.getPrivateIpAddress(),router.getPrivateIpAddress(),vm.getName());
+      passwordIndex=cmdIndex;
+    }
+    String serviceOffering=_serviceOfferingDao.findById(vm.getServiceOfferingId()).getDisplayText();
+    String zoneName=_dcDao.findById(vm.getDataCenterId()).getName();
+    String routerPublicIpAddress=(router.getPublicIpAddress() != null) ? router.getPublicIpAddress() : vm.getGuestIpAddress();
+    cmds[++cmdIndex]=generateVmDataCommand(router.getPrivateIpAddress(),routerPublicIpAddress,vm.getPrivateIpAddress(),userData,serviceOffering,zoneName,vm.getGuestIpAddress(),vm.getName(),vm.getInstanceName(),vm.getId());
+    vmDataIndex=cmdIndex;
+    Answer[] answers=_agentMgr.send(router.getHostId(),cmds,true);
+    if (!answers[0].getResult()) {
+      s_logger.error("Unable to set dhcp entry for " + vm.getId() + " - "+ vm.getName()+ " on domR: "+ router.getName()+ " due to "+ answers[0].getDetails());
+      return null;
+    }
+    if (password != null && !answers[passwordIndex].getResult()) {
+      s_logger.error("Unable to set password for " + vm.getId() + " - "+ vm.getName()+ " due to "+ answers[passwordIndex].getDetails());
+      return null;
+    }
+    if (vmDataIndex > 0 && !answers[vmDataIndex].getResult()) {
+      s_logger.error("Unable to set VM data for " + vm.getId() + " - "+ vm.getName()+ " due to "+ answers[vmDataIndex].getDetails());
+      return null;
+    }
+    return router;
+  }
+ catch (  StorageUnavailableException e) {
+    s_logger.error("Unable to start router " + vm.getDomainRouterId() + " because storage is unavailable.");
+    return null;
+  }
+catch (  AgentUnavailableException e) {
+    s_logger.error("Unable to setup the router " + vm.getDomainRouterId() + " for vm "+ vm.getId()+ " - "+ vm.getName()+ " because agent is unavailable");
+    return null;
+  }
+catch (  OperationTimedoutException e) {
+    s_logger.error("Unable to setup the router " + vm.getDomainRouterId() + " for vm "+ vm.getId()+ " - "+ vm.getName()+ " because agent is too busy");
+    return null;
+  }
+}

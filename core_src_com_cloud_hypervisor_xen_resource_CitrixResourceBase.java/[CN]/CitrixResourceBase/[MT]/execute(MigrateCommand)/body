@@ -1,0 +1,68 @@
+{
+  final String vmName=cmd.getVmName();
+  State state=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  try {
+    Connection conn=getConnection();
+    Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    String ipaddr=cmd.getDestinationIp();
+    Set<Host> hosts=Host.getAll(conn);
+    Host dsthost=null;
+    for (    Host host : hosts) {
+      if (host.getAddress(conn).equals(ipaddr)) {
+        dsthost=host;
+        break;
+      }
+    }
+    for (    VM vm : vms) {
+      if (!cmd.isWindows()) {
+        String uuid=vm.getUuid(conn);
+        String result=callHostPlugin("vmops","preparemigration","uuid",uuid);
+        if (result == null || result.isEmpty()) {
+          return new MigrateAnswer(cmd,false,"migration failed",null);
+        }
+        int i=0;
+        for (; i < 20; i++) {
+          try {
+            Thread.sleep(1000);
+          }
+ catch (          final InterruptedException ex) {
+          }
+          VMGuestMetrics vmmetric=vm.getGuestMetrics(conn);
+          if (isRefNull(vmmetric))           continue;
+          Map<String,String> PVversion=vmmetric.getPVDriversVersion(conn);
+          if (PVversion != null && PVversion.containsKey("major")) {
+            break;
+          }
+        }
+        if (i >= 20) {
+          String msg="migration failed due to can not fake PV driver for " + vmName;
+          s_logger.warn(msg);
+          return new MigrateAnswer(cmd,false,msg,null);
+        }
+      }
+      final Map<String,String> options=new HashMap<String,String>();
+      vm.poolMigrate(conn,dsthost,options);
+      state=State.Stopping;
+    }
+    return new MigrateAnswer(cmd,true,"migration succeeded",null);
+  }
+ catch (  XenAPIException e) {
+    String msg="migration failed due to " + e.toString();
+    s_logger.warn(msg,e);
+    return new MigrateAnswer(cmd,false,msg,null);
+  }
+catch (  XmlRpcException e) {
+    String msg="migration failed due to " + e.getMessage();
+    s_logger.warn(msg,e);
+    return new MigrateAnswer(cmd,false,msg,null);
+  }
+ finally {
+synchronized (_vms) {
+      _vms.put(vmName,state);
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+  DiskCharacteristicsTO dskCh=new DiskCharacteristicsTO(volume.getVolumeType(),volume.getName(),diskOffering);
+  DataCenterVO destPoolDataCenter=_dcDao.findById(destPoolDcId);
+  HostPodVO destPoolPod=_podDao.findById(destPoolPodId);
+  StoragePoolVO destPool=findStoragePool(dskCh,destPoolDataCenter,destPoolPod,destPoolClusterId,null,null,null,new HashSet<StoragePool>());
+  if (destPool == null) {
+    throw new InternalErrorException("Failed to find a storage pool with enough capacity to move the volume to.");
+  }
+  StoragePoolVO srcPool=_storagePoolDao.findById(volume.getPoolId());
+  String secondaryStorageURL=getSecondaryStorageURL(volume.getDataCenterId());
+  String secondaryStorageVolumePath=null;
+  Long sourceHostId=findHostIdForStoragePool(srcPool);
+  Long destHostId=findHostIdForStoragePool(destPool);
+  if (sourceHostId == null) {
+    throw new InternalErrorException("Failed to find a host where the source storage pool is visible.");
+  }
+ else   if (destHostId == null) {
+    throw new InternalErrorException("Failed to find a host where the dest storage pool is visible.");
+  }
+  CopyVolumeCommand cvCmd=new CopyVolumeCommand(volume.getId(),volume.getPath(),srcPool,secondaryStorageURL,true);
+  CopyVolumeAnswer cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(sourceHostId,cvCmd);
+  if (cvAnswer == null || !cvAnswer.getResult()) {
+    throw new InternalErrorException("Failed to copy the volume from the source primary storage pool to secondary storage.");
+  }
+  secondaryStorageVolumePath=cvAnswer.getVolumePath();
+  cvCmd=new CopyVolumeCommand(volume.getId(),secondaryStorageVolumePath,destPool,secondaryStorageURL,false);
+  cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(destHostId,cvCmd);
+  if (cvAnswer == null || !cvAnswer.getResult()) {
+    throw new InternalErrorException("Failed to copy the volume from secondary storage to the destination primary storage pool.");
+  }
+  String destPrimaryStorageVolumePath=cvAnswer.getVolumePath();
+  String destPrimaryStorageVolumeFolder=cvAnswer.getVolumeFolder();
+  final DestroyCommand cmd=new DestroyCommand(srcPool,volume);
+  Answer destroyAnswer=_agentMgr.easySend(sourceHostId,cmd);
+  if (destroyAnswer == null || !destroyAnswer.getResult()) {
+    throw new InternalErrorException("Failed to delete the volume from the source primary storage pool.");
+  }
+  volume.setPath(destPrimaryStorageVolumePath);
+  volume.setFolder(destPrimaryStorageVolumeFolder);
+  volume.setPodId(destPool.getPodId());
+  volume.setPoolId(destPool.getId());
+  _volsDao.update(volume.getId(),volume);
+  return _volsDao.findById(volume.getId());
+}

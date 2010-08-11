@@ -1,0 +1,165 @@
+{
+  AgentAttache attache=(AgentAttache)link.attachment();
+  final Command[] cmds=request.getCommands();
+  Command cmd=cmds[0];
+  boolean logD=true;
+  Response response=null;
+  if (attache == null) {
+    s_logger.debug("Processing sequence " + request.getSequence() + ": Processing "+ request.toString());
+    if (!(cmd instanceof StartupCommand)) {
+      s_logger.warn("Throwing away a request because it came through as the first command on a connect: " + request.toString());
+      return;
+    }
+    StartupCommand startup=(StartupCommand)cmd;
+    if ((_upgradeMgr.registerForUpgrade(-1,startup.getVersion()) == UpgradeManager.State.RequiresUpdate) && (_upgradeMgr.getAgentUrl() != null)) {
+      final UpgradeCommand upgrade=new UpgradeCommand(_upgradeMgr.getAgentUrl());
+      final Request req=new Request(1,-1,-1,new Command[]{upgrade},true,true);
+      s_logger.info("Agent requires upgrade: " + req.toString());
+      try {
+        link.send(req.toBytes());
+      }
+ catch (      ClosedChannelException e) {
+        s_logger.warn("Unable to tell agent it should update.");
+      }
+      return;
+    }
+    try {
+      StartupCommand[] startups=new StartupCommand[cmds.length];
+      for (int i=0; i < cmds.length; i++)       startups[i]=(StartupCommand)cmds[i];
+      attache=handleConnect(link,startups);
+    }
+ catch (    final IllegalArgumentException e) {
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,0,new Long(0),"Agent from " + startup.getPrivateIpAddress() + " is unable to connect due to "+ e.getMessage(),"Agent from " + startup.getPrivateIpAddress() + " is unable to connect with "+ request.toString()+ " because of "+ e.getMessage());
+      s_logger.warn("Unable to create attache for agent: " + request.toString(),e);
+      response=new Response(request,new StartupAnswer((StartupCommand)cmd,e.getMessage()),_nodeId,-1);
+    }
+catch (    final CloudRuntimeException e) {
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,0,new Long(0),"Agent from " + startup.getPrivateIpAddress() + " is unable to connect due to "+ e.getMessage(),"Agent from " + startup.getPrivateIpAddress() + " is unable to connect with "+ request.toString()+ " because of "+ e.getMessage());
+      s_logger.warn("Unable to create attache for agent: " + request.toString(),e);
+    }
+    if (attache == null) {
+      if (response == null) {
+        s_logger.warn("Unable to create attache for agent: " + request.toString());
+        response=new Response(request,new StartupAnswer((StartupCommand)request.getCommand(),"Unable to register this agent"),_nodeId,-1);
+      }
+      try {
+        link.send(response.toBytes(),true);
+      }
+ catch (      final ClosedChannelException e) {
+        s_logger.warn("Response was not sent: " + response.toString());
+      }
+      return;
+    }
+  }
+  final long hostId=attache.getId();
+  if (s_logger.isDebugEnabled()) {
+    if (cmd instanceof PingRoutingCommand) {
+      final PingRoutingCommand ping=(PingRoutingCommand)cmd;
+      if (ping.getNewStates().size() > 0) {
+        s_logger.debug("SeqA " + hostId + "-"+ request.getSequence()+ ": Processing "+ request.toString());
+      }
+ else {
+        logD=false;
+        s_logger.debug("Ping from " + hostId);
+        s_logger.trace("SeqA " + hostId + "-"+ request.getSequence()+ ": Processing "+ request.toString());
+      }
+    }
+ else     if (cmd instanceof PingCommand) {
+      logD=false;
+      s_logger.debug("Ping from " + hostId);
+      s_logger.trace("SeqA " + attache.getId() + "-"+ request.getSequence()+ ": Processing "+ request.toString());
+    }
+ else {
+      s_logger.debug("SeqA " + attache.getId() + "-"+ request.getSequence()+ ": Processing "+ request.toString());
+    }
+  }
+  final Answer[] answers=new Answer[cmds.length];
+  for (int i=0; i < cmds.length; i++) {
+    cmd=cmds[i];
+    Answer answer=null;
+    try {
+      if (cmd instanceof StartupRoutingCommand) {
+        final StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+        answer=new StartupAnswer(startup,attache.getId(),getPingInterval());
+      }
+ else       if (cmd instanceof StartupProxyCommand) {
+        final StartupProxyCommand startup=(StartupProxyCommand)cmd;
+        answer=new StartupAnswer(startup,attache.getId(),getPingInterval());
+      }
+ else       if (cmd instanceof StartupStorageCommand) {
+        final StartupStorageCommand startup=(StartupStorageCommand)cmd;
+        answer=new StartupAnswer(startup,attache.getId(),getPingInterval());
+      }
+ else       if (cmd instanceof ShutdownCommand) {
+        final ShutdownCommand shutdown=(ShutdownCommand)cmd;
+        final String reason=shutdown.getReason();
+        s_logger.info("Host " + attache.getId() + " has informed us that it is shutting down with reason "+ reason+ " and detail "+ shutdown.getDetail());
+        if (reason.equals(ShutdownCommand.Update)) {
+          disconnect(attache,Event.UpdateNeeded,false);
+        }
+ else         if (reason.equals(ShutdownCommand.Requested)) {
+          disconnect(attache,Event.ShutdownRequested,false);
+        }
+        return;
+      }
+ else       if (cmd instanceof AgentControlCommand) {
+        answer=handleControlCommand(attache,(AgentControlCommand)cmd);
+      }
+ else {
+        handleCommands(attache,request.getSequence(),new Command[]{cmd});
+        if (cmd instanceof PingCommand) {
+          long cmdHostId=((PingCommand)cmd).getHostId();
+          if (cmd instanceof PingRoutingCommand) {
+            boolean gatewayAccessible=((PingRoutingCommand)cmd).isGatewayAccessible();
+            HostVO host=_hostDao.findById(Long.valueOf(cmdHostId));
+            if (!gatewayAccessible) {
+              DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+              HostPodVO podVO=_podDao.findById(host.getPodId());
+              String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+              _alertMgr.sendAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId(),"Host lost connection to gateway, " + hostDesc,"Host [" + hostDesc + "] lost connection to gateway (default route) and is possibly having network connection issues.");
+            }
+ else {
+              _alertMgr.clearAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId());
+            }
+          }
+          answer=new PingAnswer((PingCommand)cmd);
+        }
+ else         if (cmd instanceof ReadyAnswer) {
+          HostVO host=_hostDao.findById(attache.getId());
+          if (host == null) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Cant not find host " + attache.getId());
+            }
+          }
+ else {
+            s_logger.info("Host " + attache.getId() + " is now ready to processing commands.");
+            _hostDao.updateStatus(host,Event.Ready,_nodeId);
+          }
+        }
+ else {
+          answer=new Answer(cmd);
+        }
+      }
+    }
+ catch (    final Throwable th) {
+      s_logger.warn("Caught: ",th);
+      answer=new Answer(cmd,false,th.getMessage());
+    }
+    answers[i]=answer;
+  }
+  response=new Response(request,answers,_nodeId,attache.getId());
+  if (s_logger.isDebugEnabled()) {
+    if (logD) {
+      s_logger.debug("SeqA " + attache.getId() + "-"+ response.getSequence()+ ": Sending "+ response.toString());
+    }
+ else {
+      s_logger.trace("SeqA " + attache.getId() + "-"+ response.getSequence()+ ": Sending "+ response.toString());
+    }
+  }
+  try {
+    link.send(response.toBytes());
+  }
+ catch (  final ClosedChannelException e) {
+    s_logger.warn("Unable to send response because connection is closed: " + response.toString());
+  }
+}

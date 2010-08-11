@@ -1,0 +1,149 @@
+{
+  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+  String accountName=(String)params.get(BaseCmd.Properties.ACCOUNT.getName());
+  Long domainId=(Long)params.get(BaseCmd.Properties.DOMAIN_ID.getName());
+  Long id=(Long)params.get(BaseCmd.Properties.ID.getName());
+  String name=(String)params.get(BaseCmd.Properties.NAME.getName());
+  Boolean isPublic=(Boolean)params.get(BaseCmd.Properties.IS_PUBLIC.getName());
+  Boolean isReady=(Boolean)params.get(BaseCmd.Properties.IS_READY.getName());
+  String templateFilterString=(String)params.get(BaseCmd.Properties.TEMPLATE_FILTER.getName());
+  String keyword=(String)params.get(BaseCmd.Properties.KEYWORD.getName());
+  Integer page=(Integer)params.get(BaseCmd.Properties.PAGE.getName());
+  Integer pageSize=(Integer)params.get(BaseCmd.Properties.PAGESIZE.getName());
+  Long zoneId=(Long)params.get(BaseCmd.Properties.ZONE_ID.getName());
+  boolean isAdmin=false;
+  Long accountId=null;
+  if ((account == null) || account.getType() == Account.ACCOUNT_TYPE_ADMIN) {
+    isAdmin=true;
+    if (domainId != null) {
+      if ((account != null) && !getManagementServer().isChildDomain(account.getDomainId(),domainId)) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid domain id (" + domainId + ") given, unable to list templates.");
+      }
+      if (accountName != null) {
+        account=getManagementServer().findActiveAccount(accountName,domainId);
+        if (account == null) {
+          throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=account.getId();
+      }
+    }
+  }
+ else {
+    accountId=account.getId();
+    accountName=account.getAccountName();
+    domainId=account.getDomainId();
+  }
+  TemplateFilter templateFilter;
+  try {
+    templateFilter=TemplateFilter.valueOf(templateFilterString);
+  }
+ catch (  IllegalArgumentException e) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Please specify a valid template filter.");
+  }
+  Long startIndex=Long.valueOf(0);
+  int pageSizeNum=50;
+  if (pageSize != null) {
+    pageSizeNum=pageSize.intValue();
+  }
+  if (page != null) {
+    int pageNum=page.intValue();
+    if (pageNum > 0) {
+      startIndex=Long.valueOf(pageSizeNum * (pageNum - 1));
+    }
+  }
+  boolean onlyReady=(templateFilter == TemplateFilter.featured) || (templateFilter == TemplateFilter.selfexecutable) || (templateFilter == TemplateFilter.sharedexecutable)|| (templateFilter == TemplateFilter.executable && accountId != null)|| (templateFilter == TemplateFilter.community);
+  boolean showDomr=(templateFilter != TemplateFilter.selfexecutable);
+  List<VMTemplateVO> templates=null;
+  try {
+    templates=getManagementServer().listTemplates(id,name,keyword,templateFilter,false,null,accountId,pageSize,startIndex,zoneId);
+  }
+ catch (  Exception e) {
+    throw new ServerApiException(BaseCmd.INTERNAL_ERROR,e.getMessage());
+  }
+  List<Object> tTagList=new ArrayList<Object>();
+  List<Pair<String,Object>> templateTags=new ArrayList<Pair<String,Object>>();
+  for (  VMTemplateVO template : templates) {
+    if (!showDomr && template.getId() == TemplateConstants.DEFAULT_SYSTEM_VM_DB_ID) {
+      continue;
+    }
+    List<VMTemplateHostVO> templateHostRefsForTemplate=getManagementServer().listTemplateHostBy(template.getId(),zoneId);
+    for (    VMTemplateHostVO templateHostRef : templateHostRefsForTemplate) {
+      if (onlyReady && templateHostRef.getDownloadState() != Status.DOWNLOADED) {
+        continue;
+      }
+      List<Pair<String,Object>> templateData=new ArrayList<Pair<String,Object>>();
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.ID.getName(),template.getId().toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.NAME.getName(),template.getName()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.DISPLAY_TEXT.getName(),template.getDisplayText()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.IS_PUBLIC.getName(),Boolean.valueOf(template.isPublicTemplate()).toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.CREATED.getName(),getDateString(templateHostRef.getCreated())));
+      if (template.getRemoved() != null) {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.REMOVED.getName(),getDateString(template.getRemoved())));
+      }
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.IS_READY.getName(),Boolean.valueOf(templateHostRef.getDownloadState() == Status.DOWNLOADED).toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.IS_FEATURED.getName(),Boolean.valueOf(template.isFeatured()).toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.PASSWORD_ENABLED.getName(),Boolean.valueOf(template.getEnablePassword()).toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.CROSS_ZONES.getName(),Boolean.valueOf(template.isCrossZones()).toString()));
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.FORMAT.getName(),template.getFormat()));
+      GuestOS os=getManagementServer().findGuestOSById(template.getGuestOSId());
+      if (os != null) {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.OS_TYPE_ID.getName(),os.getId()));
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.OS_TYPE_NAME.getName(),os.getDisplayName()));
+      }
+ else {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.OS_TYPE_ID.getName(),-1));
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.OS_TYPE_NAME.getName(),""));
+      }
+      Account owner=getManagementServer().findAccountById(template.getAccountId());
+      if (owner != null) {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.ACCOUNT.getName(),owner.getAccountName()));
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN_ID.getName(),owner.getDomainId()));
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN.getName(),getManagementServer().findDomainIdById(owner.getDomainId()).getName()));
+      }
+      HostVO host=getManagementServer().getHostBy(templateHostRef.getHostId());
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.ZONE_ID.getName(),host.getDataCenterId()));
+      DataCenterVO datacenter=getManagementServer().getDataCenterBy(host.getDataCenterId());
+      templateData.add(new Pair<String,Object>(BaseCmd.Properties.ZONE_NAME.getName(),datacenter.getName()));
+      if (isAdmin || account.getId().longValue() == template.getAccountId()) {
+        if (templateHostRef.getDownloadState() != Status.DOWNLOADED) {
+          String templateStatus="Processing";
+          if (templateHostRef.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+            if (templateHostRef.getDownloadPercent() == 100) {
+              templateStatus="Installing Template";
+            }
+ else {
+              templateStatus=templateHostRef.getDownloadPercent() + "% Downloaded";
+            }
+          }
+ else {
+            templateStatus=templateHostRef.getErrorString();
+          }
+          templateData.add(new Pair<String,Object>(BaseCmd.Properties.TEMPLATE_STATUS.getName(),templateStatus));
+        }
+ else         if (templateHostRef.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+          templateData.add(new Pair<String,Object>(BaseCmd.Properties.TEMPLATE_STATUS.getName(),"Download Complete"));
+        }
+ else {
+          templateData.add(new Pair<String,Object>(BaseCmd.Properties.TEMPLATE_STATUS.getName(),"Successfully Installed"));
+        }
+      }
+      long templateSize=templateHostRef.getSize();
+      if (templateSize > 0) {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.SIZE.getName(),templateSize));
+      }
+      AsyncJobVO asyncJob=getManagementServer().findInstancePendingAsyncJob("vm_template",template.getId());
+      if (asyncJob != null) {
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.JOB_ID.getName(),asyncJob.getId().toString()));
+        templateData.add(new Pair<String,Object>(BaseCmd.Properties.JOB_STATUS.getName(),String.valueOf(asyncJob.getStatus())));
+      }
+      tTagList.add(templateData);
+    }
+  }
+  Object[] tTag=new Object[tTagList.size()];
+  for (int i=0; i < tTagList.size(); i++) {
+    tTag[i]=tTagList.get(i);
+  }
+  Pair<String,Object> templateTag=new Pair<String,Object>("template",tTag);
+  templateTags.add(templateTag);
+  return templateTags;
+}

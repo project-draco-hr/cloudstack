@@ -1,0 +1,53 @@
+{
+  HashMap<String,VmStatsEntry> vmResponseMap=new HashMap<String,VmStatsEntry>();
+  for (  String vmUUID : vmUUIDs) {
+    vmResponseMap.put(vmUUID,new VmStatsEntry(0,0,0,0,"vm"));
+  }
+  Object[] rrdData=getRRDData(2);
+  if (rrdData == null) {
+    return null;
+  }
+  Integer numRows=(Integer)rrdData[0];
+  Integer numColumns=(Integer)rrdData[1];
+  Node legend=(Node)rrdData[2];
+  Node dataNode=(Node)rrdData[3];
+  NodeList legendChildren=legend.getChildNodes();
+  for (int col=0; col < numColumns; col++) {
+    if (legendChildren == null || legendChildren.item(col) == null) {
+      continue;
+    }
+    String columnMetadata=getXMLNodeValue(legendChildren.item(col));
+    if (columnMetadata == null) {
+      continue;
+    }
+    String[] columnMetadataList=columnMetadata.split(":");
+    if (columnMetadataList.length != 4) {
+      continue;
+    }
+    String type=columnMetadataList[1];
+    String uuid=columnMetadataList[2];
+    String param=columnMetadataList[3];
+    if (type.equals("vm") && vmResponseMap.keySet().contains(uuid)) {
+      VmStatsEntry vmStatsAnswer=vmResponseMap.get(uuid);
+      vmStatsAnswer.setEntityType("vm");
+      if (param.contains("cpu")) {
+        vmStatsAnswer.setNumCPUs(vmStatsAnswer.getNumCPUs() + 1);
+        vmStatsAnswer.setCPUUtilization(vmStatsAnswer.getCPUUtilization() + getDataAverage(dataNode,col,numRows));
+      }
+ else       if (param.equals("vif_0_rx")) {
+        vmStatsAnswer.setNetworkReadKBs(getDataAverage(dataNode,col,numRows));
+      }
+ else       if (param.equals("vif_0_tx")) {
+        vmStatsAnswer.setNetworkWriteKBs(getDataAverage(dataNode,col,numRows));
+      }
+    }
+  }
+  for (  String vmUUID : vmResponseMap.keySet()) {
+    VmStatsEntry vmStatsAnswer=vmResponseMap.get(vmUUID);
+    if (vmStatsAnswer.getNumCPUs() != 0) {
+      vmStatsAnswer.setCPUUtilization(vmStatsAnswer.getCPUUtilization() / vmStatsAnswer.getNumCPUs());
+      s_logger.debug("Vm cpu utilization " + vmStatsAnswer.getCPUUtilization());
+    }
+  }
+  return vmResponseMap;
+}

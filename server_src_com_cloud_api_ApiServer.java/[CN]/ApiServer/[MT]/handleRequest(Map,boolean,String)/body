@@ -1,0 +1,54 @@
+{
+  String response=null;
+  try {
+    String[] command=(String[])params.get("command");
+    if (command == null) {
+      s_logger.error("invalid request, no command sent");
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("dumping request parameters");
+        for (        Object key : params.keySet()) {
+          String keyStr=(String)key;
+          String[] value=(String[])params.get(key);
+          s_logger.trace("   key: " + keyStr + ", value: "+ ((value == null) ? "'null'" : value[0]));
+        }
+      }
+      response=buildErrorResponse("invalid request, no command sent",responseType);
+    }
+ else {
+      Map<String,Object> paramMap=new HashMap<String,Object>();
+      Set keys=params.keySet();
+      Iterator keysIter=keys.iterator();
+      while (keysIter.hasNext()) {
+        String key=(String)keysIter.next();
+        if ("command".equalsIgnoreCase(key)) {
+          continue;
+        }
+        Object[] value=(Object[])params.get(key);
+        paramMap.put(key,value[0]);
+      }
+      String cmdClassName=_apiCommands.getProperty(command[0]);
+      if (cmdClassName != null) {
+        Class<?> cmdClass=Class.forName(cmdClassName);
+        BaseCmd cmdObj=(BaseCmd)cmdClass.newInstance();
+        cmdObj.setManagementServer(_ms);
+        Map<String,Object> validatedParams=cmdObj.validateParams(paramMap,decode);
+        List<Pair<String,Object>> resultValues=cmdObj.execute(validatedParams);
+        response=cmdObj.buildResponse(resultValues,responseType);
+      }
+ else {
+        s_logger.warn("unknown API command: " + ((command == null) ? "null" : command[0]));
+        response=buildErrorResponse("unknown API command: " + ((command == null) ? "null" : command[0]),responseType);
+      }
+    }
+  }
+ catch (  Exception ex) {
+    if (ex instanceof ServerApiException) {
+      throw (ServerApiException)ex;
+    }
+ else {
+      s_logger.error("error executing api command",ex);
+      throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Internal server error, unable to execute request.");
+    }
+  }
+  return response;
+}

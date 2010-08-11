@@ -1,0 +1,45 @@
+{
+  UserVmVO userVm=_userVmDao.findById(userVmId);
+  if (userVm == null) {
+    s_logger.warn("User VM " + userVmId + " no longer exists, return a null proxy for user vm:"+ userVmId);
+    return null;
+  }
+  HostVO host=findHost(userVm);
+  if (host != null) {
+    HostVO allocatedHost=null;
+    List<HostVO> hosts=_hostDao.listAll();
+    for (    HostVO hv : hosts) {
+      if (hv.getType() == Host.Type.ConsoleProxy && hv.getPublicIpAddress().equalsIgnoreCase(host.getPublicIpAddress())) {
+        allocatedHost=hv;
+        break;
+      }
+    }
+    if (allocatedHost == null) {
+      for (      HostVO hv : hosts) {
+        if (hv.getType() == Host.Type.ConsoleProxy && hv.getPodId() == host.getPodId()) {
+          allocatedHost=hv;
+          break;
+        }
+      }
+    }
+    if (allocatedHost == null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Failed to find a console proxy at host: " + host.getName() + " and in the pod: "+ host.getPodId()+ " to user vm "+ userVmId);
+      return null;
+    }
+    if (s_logger.isDebugEnabled())     s_logger.debug("Assign standalone console proxy running at " + allocatedHost.getName() + " to user vm "+ userVmId+ " with public IP "+ allocatedHost.getPublicIpAddress());
+    String publicIp=allocatedHost.getPublicIpAddress();
+    if (publicIp == null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Host " + allocatedHost.getName() + "/"+ allocatedHost.getPrivateIpAddress()+ " does not have public interface, we will return its private IP for cosole proxy.");
+      publicIp=allocatedHost.getPrivateIpAddress();
+    }
+    ConsoleProxyVO proxy=allocateProxy(allocatedHost,dataCenterId);
+    if (allocatedHost.getProxyPort() != null && allocatedHost.getProxyPort().intValue() > 0)     proxy.setPort(allocatedHost.getProxyPort().intValue());
+ else     proxy.setPort(_consoleProxyUrlPort);
+    proxy.setSslEnabled(_sslEnabled);
+    return proxy;
+  }
+ else {
+    s_logger.warn("Host that VM is running is no longer available, console access to VM " + userVmId + " will be temporarily unavailable.");
+  }
+  return null;
+}

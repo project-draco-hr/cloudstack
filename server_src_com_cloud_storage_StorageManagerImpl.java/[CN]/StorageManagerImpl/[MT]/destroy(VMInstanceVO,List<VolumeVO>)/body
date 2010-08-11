@@ -1,0 +1,36 @@
+{
+  if (s_logger.isDebugEnabled() && vm != null) {
+    s_logger.debug("Destroying volumes of " + vm.toString());
+  }
+  for (  VolumeVO vol : vols) {
+    _volsDao.detachVolume(vol.getId());
+    _volsDao.destroyVolume(vol.getId());
+    _snapshotMgr.deletePoliciesForVolume(vol.getId());
+    String volumePath=vol.getPath();
+    Long poolId=vol.getPoolId();
+    if (poolId != null && volumePath != null && !volumePath.trim().isEmpty()) {
+      Answer answer=null;
+      StoragePoolVO pool=_storagePoolDao.findById(poolId);
+      final DestroyCommand cmd=new DestroyCommand(pool,vol);
+      boolean removed=false;
+      List<StoragePoolHostVO> poolhosts=_storagePoolHostDao.listByPoolId(poolId);
+      for (      StoragePoolHostVO poolhost : poolhosts) {
+        answer=_agentMgr.easySend(poolhost.getHostId(),cmd);
+        if (answer != null && answer.getResult()) {
+          removed=true;
+          break;
+        }
+      }
+      if (removed) {
+        _volsDao.remove(vol.getId());
+      }
+ else {
+        _alertMgr.sendAlert(AlertManager.ALERT_TYPE_STORAGE_MISC,vol.getDataCenterId(),vol.getPodId(),"Storage cleanup required for storage pool: " + pool.getName(),"Volume folder: " + vol.getFolder() + ", Volume Path: "+ vol.getPath()+ ", Volume id: "+ vol.getId()+ ", Volume Name: "+ vol.getName()+ ", Storage PoolId: "+ vol.getPoolId());
+        s_logger.warn("destroy volume " + vol.getFolder() + " : "+ vol.getPath()+ " failed for Volume id : "+ vol.getId()+ " Volume Name: "+ vol.getName()+ " Storage PoolId : "+ vol.getPoolId());
+      }
+    }
+ else {
+      _volsDao.remove(vol.getId());
+    }
+  }
+}

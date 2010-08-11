@@ -1,0 +1,107 @@
+{
+  Filter searchFilter=new Filter(UserVmVO.class,c.getOrderBy(),c.getAscending(),c.getOffset(),c.getLimit());
+  SearchBuilder<UserVmVO> sb=_userVmDao.createSearchBuilder();
+  Object[] accountIds=(Object[])c.getCriteria(Criteria.ACCOUNTID);
+  Object domainId=c.getCriteria(Criteria.DOMAINID);
+  Object id=c.getCriteria(Criteria.ID);
+  Object name=c.getCriteria(Criteria.NAME);
+  Object state=c.getCriteria(Criteria.STATE);
+  Object notState=c.getCriteria(Criteria.NOTSTATE);
+  Object zone=c.getCriteria(Criteria.DATACENTERID);
+  Object pod=c.getCriteria(Criteria.PODID);
+  Object hostId=c.getCriteria(Criteria.HOSTID);
+  Object hostName=c.getCriteria(Criteria.HOSTNAME);
+  Object keyword=c.getCriteria(Criteria.KEYWORD);
+  Object isAdmin=c.getCriteria(Criteria.ISADMIN);
+  Object ipAddress=c.getCriteria(Criteria.IPADDRESS);
+  sb.and("displayName",sb.entity().getDisplayName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("accountIdEQ",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("stateEQ",sb.entity().getState(),SearchCriteria.Op.EQ);
+  sb.and("stateNEQ",sb.entity().getState(),SearchCriteria.Op.NEQ);
+  sb.and("stateNIN",sb.entity().getState(),SearchCriteria.Op.NIN);
+  sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
+  sb.and("podId",sb.entity().getPodId(),SearchCriteria.Op.EQ);
+  sb.and("hostIdEQ",sb.entity().getHostId(),SearchCriteria.Op.EQ);
+  sb.and("hostIdIN",sb.entity().getHostId(),SearchCriteria.Op.IN);
+  sb.and("guestIP",sb.entity().getGuestIpAddress(),SearchCriteria.Op.EQ);
+  if ((accountIds == null) && (domainId != null)) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId());
+  }
+  SearchCriteria<UserVmVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<UserVmVO> ssc=_userVmDao.createSearchCriteria();
+    ssc.addOr("displayName",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("group",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("instanceName",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("state",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("displayName",SearchCriteria.Op.SC,ssc);
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (accountIds != null) {
+    if (accountIds.length == 1) {
+      if (accountIds[0] != null) {
+        sc.setParameters("accountIdEQ",accountIds[0]);
+      }
+    }
+ else {
+      sc.setParameters("accountIdIN",accountIds);
+    }
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById((Long)domainId);
+    sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (state != null) {
+    if (notState != null && (Boolean)notState == true) {
+      sc.setParameters("stateNEQ",state);
+    }
+ else {
+      sc.setParameters("stateEQ",state);
+    }
+  }
+  if ((isAdmin != null) && ((Boolean)isAdmin != true)) {
+    sc.setParameters("stateNIN","Destroyed","Expunging");
+  }
+  if (zone != null) {
+    sc.setParameters("dataCenterId",zone);
+    if (state == null)     sc.setParameters("stateNEQ","Destroyed");
+  }
+  if (pod != null) {
+    sc.setParameters("podId",pod);
+    if (state == null)     sc.setParameters("stateNEQ","Destroyed");
+  }
+  if (hostId != null) {
+    sc.setParameters("hostIdEQ",hostId);
+  }
+ else {
+    if (hostName != null) {
+      List<HostVO> hosts=_hostDao.findHostsLike((String)hostName);
+      if (hosts != null & !hosts.isEmpty()) {
+        Long[] hostIds=new Long[hosts.size()];
+        for (int i=0; i < hosts.size(); i++) {
+          HostVO host=hosts.get(i);
+          hostIds[i]=host.getId();
+        }
+        sc.setParameters("hostIdIN",(Object[])hostIds);
+      }
+ else {
+        return new ArrayList<UserVmVO>();
+      }
+    }
+  }
+  if (ipAddress != null) {
+    sc.setParameters("guestIP",ipAddress);
+  }
+  return _userVmDao.search(sc,searchFilter);
+}

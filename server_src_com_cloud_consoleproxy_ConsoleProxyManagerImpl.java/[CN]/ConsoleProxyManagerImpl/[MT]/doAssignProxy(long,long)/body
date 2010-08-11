@@ -1,0 +1,56 @@
+{
+  ConsoleProxyVO proxy=null;
+  VMInstanceVO vm=_instanceDao.findById(vmId);
+  if (vm == null) {
+    s_logger.warn("VM " + vmId + " no longer exists, return a null proxy for vm:"+ vmId);
+    return null;
+  }
+  Boolean[] proxyFromStoppedPool=new Boolean[1];
+  if (_allocProxyLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+    try {
+      proxy=getOrAllocProxyResource(dataCenterId,vmId,proxyFromStoppedPool);
+    }
+  finally {
+      _allocProxyLock.unlock();
+    }
+  }
+ else {
+    s_logger.error("Unable to acquire synchronization lock to get/allocate proxy resource for vm :" + vmId + ". Previous console proxy allocation is taking too long");
+  }
+  if (proxy == null) {
+    s_logger.warn("Unable to find or allocate console proxy resource");
+    return null;
+  }
+  long proxyVmId=proxy.getId();
+  GlobalLock proxyLock=GlobalLock.getInternLock(getProxyLockName(proxyVmId));
+  try {
+    if (proxyLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+      try {
+        proxy=startProxy(proxyVmId,0);
+        if (proxy == null) {
+          if (s_logger.isInfoEnabled())           s_logger.info("Unable to start console proxy, proxy vm Id : " + proxyVmId + " will recycle it and restart a new one");
+          destroyProxy(proxyVmId,0);
+          return null;
+        }
+ else {
+          if (s_logger.isTraceEnabled())           s_logger.trace("Console proxy " + proxy.getName() + " is started");
+          if (vm.getProxyId() == null || vm.getProxyId().longValue() != proxy.getId())           _instanceDao.updateProxyId(vmId,proxy.getId(),DateUtil.currentGMTTime());
+          proxy.setSslEnabled(_sslEnabled);
+          if (_sslEnabled)           proxy.setPort(443);
+ else           proxy.setPort(80);
+          return proxy;
+        }
+      }
+  finally {
+        proxyLock.unlock();
+      }
+    }
+ else {
+      s_logger.error("Unable to acquire synchronization lock to start console proxy " + proxyVmId + " for vm: "+ vmId+ ". It takes too long to start the proxy");
+      return null;
+    }
+  }
+  finally {
+    proxyLock.releaseRef();
+  }
+}

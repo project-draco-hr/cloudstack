@@ -1,0 +1,55 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  try {
+    HostVO host=_hostDao.findById(hostId);
+    if (host == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Host: " + hostId + " does not even exist.  Delete call is ignored.");
+      }
+      return true;
+    }
+    if (host.getType() == Type.SecondaryStorage) {
+      return deleteSecondaryStorageHost(host);
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Delete Host: " + hostId + " Guid:"+ host.getGuid());
+    }
+    if (host.getType() == Type.Routing && host.getHypervisorType() == Hypervisor.Type.XenServer) {
+      if (host.getClusterId() != null) {
+        List<HostVO> hosts=_hostDao.listBy(Type.Routing,host.getClusterId(),host.getPodId(),host.getDataCenterId());
+        for (        HostVO thost : hosts) {
+          long thostId=thost.getId();
+          if (thostId == hostId)           continue;
+          PoolEjectCommand eject=new PoolEjectCommand(host.getGuid());
+          Answer answer=easySend(thostId,eject);
+          if (answer == null || !answer.getResult()) {
+            s_logger.debug("Eject Host: " + hostId + " from "+ thostId+ " failed due to "+ answer.getDetails());
+            continue;
+          }
+          break;
+        }
+      }
+    }
+    txn.start();
+    _dcDao.releasePrivateIpAddress(host.getPrivateIpAddress(),host.getDataCenterId(),null);
+    AgentAttache attache=_agents.get(hostId);
+    handleDisconnect(attache,Status.Event.Remove,false);
+    _hostDao.remove(hostId);
+    ComponentLocator locator=ComponentLocator.getLocator("management-server");
+    _storagePoolHostDao=locator.getDao(StoragePoolHostDao.class);
+    if (_storagePoolHostDao == null) {
+      throw new ConfigurationException("Unable to get storage pool host dao: " + StoragePoolHostDao.class);
+    }
+    ArrayList<Long> pool_ids=_storagePoolHostDao.getPoolIds(hostId);
+    _storagePoolHostDao.deletePrimaryRecordsForHost(hostId);
+    if (!pool_ids.isEmpty()) {
+      _storagePoolDao.deleteStoragePoolRecords(pool_ids);
+    }
+    txn.commit();
+    return true;
+  }
+ catch (  Throwable t) {
+    s_logger.error("Unable to delete host: " + hostId,t);
+    return false;
+  }
+}

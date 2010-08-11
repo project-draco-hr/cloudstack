@@ -1,0 +1,32 @@
+{
+  Host host=super.allocateTo(vm,offering,type,dc,pod,sp,template,avoid);
+  if (host != null) {
+    return host;
+  }
+  s_logger.debug("First fit was unable to find a host");
+  VirtualMachine.Type vmType=vm.getType();
+  if (vmType == VirtualMachine.Type.User) {
+    s_logger.debug("vm is not a system vm so let's just return null");
+    return null;
+  }
+  List<PodCluster> pcs=_agentMgr.listByDataCenter(dc.getId());
+  Set<Pair<Long,Long>> avoidPcs=new HashSet<Pair<Long,Long>>();
+  for (  Host h : avoid) {
+    avoidPcs.add(new Pair<Long,Long>(h.getPodId(),h.getClusterId()));
+  }
+  for (  Pair<Long,Long> pcId : avoidPcs) {
+    s_logger.debug("Removing " + pcId + " from the list of available pods");
+    pcs.remove(new PodCluster(new HostPodVO(pcId.first()),pcId.second() != null ? new ClusterVO(pcId.second()) : null));
+  }
+  for (  PodCluster p : pcs) {
+    List<StoragePoolVO> pools=_poolDao.listBy(dc.getId(),p.getPod().getId(),p.getCluster() == null ? null : p.getCluster().getId());
+    for (    StoragePoolVO pool : pools) {
+      host=super.allocateTo(vm,offering,type,dc,p.getPod(),pool,template,avoid);
+      if (host != null) {
+        return host;
+      }
+    }
+  }
+  s_logger.debug("Unable to find any available pods at all!");
+  return null;
+}

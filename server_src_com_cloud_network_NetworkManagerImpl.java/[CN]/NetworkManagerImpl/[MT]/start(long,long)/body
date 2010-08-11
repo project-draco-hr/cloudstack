@@ -1,0 +1,242 @@
+{
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled())     s_logger.info("Start router " + routerId + ", update async job-"+ job.getId());
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"domain_router",routerId);
+  }
+  DomainRouterVO router=_routerDao.acquire(routerId);
+  if (router == null) {
+    s_logger.debug("Unable to lock the router " + routerId);
+    return router;
+  }
+  if (s_logger.isDebugEnabled())   s_logger.debug("Lock on router " + routerId + " is acquired");
+  boolean started=false;
+  try {
+    final State state=router.getState();
+    if (state == State.Running) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Router is already started: " + router.toString());
+      }
+      started=true;
+      return router;
+    }
+    EventVO event=new EventVO();
+    event.setUserId(1L);
+    event.setAccountId(router.getAccountId());
+    event.setType(EventTypes.EVENT_ROUTER_START);
+    event.setState(EventState.Started);
+    event.setDescription("Starting Router with Id: " + routerId);
+    event.setStartId(startEventId);
+    event=_eventDao.persist(event);
+    if (startEventId == 0) {
+      startEventId=event.getId();
+    }
+    if (state == State.Destroyed || state == State.Expunging || router.getRemoved() != null) {
+      s_logger.debug("Starting a router that's can not be started: " + router.toString());
+      return null;
+    }
+    if (state.isTransitional()) {
+      throw new ConcurrentOperationException("Someone else is starting the router: " + router.toString());
+    }
+    final HostPodVO pod=_podDao.findById(router.getPodId());
+    final HashSet<Host> avoid=new HashSet<Host>();
+    final VMTemplateVO template=_templateDao.findById(router.getTemplateId());
+    final DataCenterVO dc=_dcDao.findById(router.getDataCenterId());
+    List<StoragePoolVO> sps=_storageMgr.getStoragePoolsForVm(router.getId());
+    StoragePoolVO sp=sps.get(0);
+    HostVO routingHost=(HostVO)_agentMgr.findHost(Host.Type.Routing,dc,pod,sp,_offering,template,router,null,avoid);
+    if (routingHost == null) {
+      s_logger.error("Unable to find a host to start " + router.toString());
+      return null;
+    }
+    if (!_routerDao.updateIf(router,Event.StartRequested,routingHost.getId())) {
+      s_logger.debug("Unable to start router " + router.toString() + " because it is not in a startable state");
+      throw new ConcurrentOperationException("Someone else is starting the router: " + router.toString());
+    }
+    String vnet=null;
+    boolean vnetAllocated=false;
+    final boolean mirroredVols=router.isMirroredVols();
+    try {
+      event=new EventVO();
+      event.setUserId(1L);
+      event.setAccountId(router.getAccountId());
+      event.setType(EventTypes.EVENT_ROUTER_START);
+      event.setStartId(startEventId);
+      final List<UserVmVO> vms=_vmDao.listBy(routerId,State.Starting,State.Running,State.Stopped,State.Stopping);
+      if (vms.size() != 0) {
+        for (        final UserVmVO vm : vms) {
+          if (vm.getVnet() != null) {
+            vnet=vm.getVnet();
+          }
+        }
+      }
+      if (vnet != null) {
+        s_logger.debug("Router: " + router.getName() + " discovered vnet: "+ vnet+ " from existing VMs.");
+      }
+ else {
+        s_logger.debug("Router: " + router.getName() + " was unable to discover vnet from existing VMs. Acquiring new vnet.");
+      }
+      String routerMacAddress=null;
+      if (vnet == null && router.getRole() == Role.DHCP_FIREWALL_LB_PASSWD_USERDATA) {
+        if (USE_POD_VLAN) {
+          vnet=_dcDao.allocatePodVlan(router.getPodId(),router.getAccountId());
+        }
+ else {
+          vnet=_dcDao.allocateVnet(router.getDataCenterId(),router.getAccountId());
+        }
+        vnetAllocated=true;
+        routerMacAddress=getRouterMacForVnet(dc,vnet);
+      }
+ else       if (router.getRole() == Role.DHCP_USERDATA) {
+        if (!Vlan.UNTAGGED.equals(router.getVlanId())) {
+          vnet=router.getVlanId().trim();
+        }
+ else {
+          vnet=Vlan.UNTAGGED;
+        }
+        routerMacAddress=router.getGuestMacAddress();
+      }
+ else       if (vnet != null && router.getRole() == Role.DHCP_FIREWALL_LB_PASSWD_USERDATA) {
+        routerMacAddress=getRouterMacForVnet(dc,vnet);
+      }
+      if (vnet == null) {
+        s_logger.error("Unable to get another vnet while starting router " + router.getName());
+        return null;
+      }
+ else {
+        s_logger.debug("Router: " + router.getName() + " is using vnet: "+ vnet);
+      }
+      Answer answer=null;
+      int retry=_retry;
+      do {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Trying to start router on host " + routingHost.getName());
+        }
+        String privateIpAddress=_dcDao.allocateLinkLocalPrivateIpAddress(router.getDataCenterId(),routingHost.getPodId(),router.getId());
+        if (privateIpAddress == null) {
+          s_logger.error("Unable to allocate a private ip address while creating router for pod " + routingHost.getPodId());
+          avoid.add(routingHost);
+          continue;
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Private Ip Address allocated: " + privateIpAddress);
+        }
+        router.setPrivateIpAddress(privateIpAddress);
+        router.setPrivateNetmask(NetUtils.getLinkLocalNetMask());
+        router.setGuestMacAddress(routerMacAddress);
+        router.setVnet(vnet);
+        final String name=VirtualMachineName.attachVnet(router.getName(),vnet);
+        router.setInstanceName(name);
+        _routerDao.updateIf(router,Event.OperationRetry,routingHost.getId());
+        List<VolumeVO> vols=_storageMgr.prepare(router,routingHost);
+        if (vols == null) {
+          s_logger.debug("Couldn't get storage working for " + routingHost);
+          continue;
+        }
+        try {
+          String[] storageIps=new String[2];
+          final StartRouterCommand cmdStartRouter=new StartRouterCommand(router,name,storageIps,vols,mirroredVols);
+          answer=_agentMgr.send(routingHost.getId(),cmdStartRouter);
+          if (answer != null && answer.getResult()) {
+            if (answer instanceof StartRouterAnswer) {
+              StartRouterAnswer rAnswer=(StartRouterAnswer)answer;
+              if (rAnswer.getPrivateIpAddress() != null) {
+                router.setPrivateIpAddress(rAnswer.getPrivateIpAddress());
+              }
+              if (rAnswer.getPrivateMacAddress() != null) {
+                router.setPrivateMacAddress(rAnswer.getPrivateMacAddress());
+              }
+            }
+            if (resendRouterState(router)) {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Router " + router.getName() + " started on "+ routingHost.getName());
+              }
+              started=true;
+              break;
+            }
+ else {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Router " + router.getName() + " started on "+ routingHost.getName()+ " but failed to program rules");
+              }
+              sendStopCommand(router);
+            }
+          }
+          s_logger.debug("Unable to start " + router.toString() + " on host "+ routingHost.toString()+ " due to "+ answer.getDetails());
+        }
+ catch (        OperationTimedoutException e) {
+          if (e.isActive()) {
+            s_logger.debug("Unable to start vm " + router.getName() + " due to operation timed out and it is active so scheduling a restart.");
+            _haMgr.scheduleRestart(router,true);
+            return null;
+          }
+        }
+catch (        AgentUnavailableException e) {
+          s_logger.debug("Agent " + routingHost.toString() + " was unavailable to start VM "+ router.getName());
+        }
+        avoid.add(routingHost);
+        router.setPrivateIpAddress(null);
+        _dcDao.releaseLinkLocalPrivateIpAddress(privateIpAddress,router.getDataCenterId(),router.getId());
+        _storageMgr.unshare(router,vols,routingHost);
+      }
+ while (--retry > 0 && (routingHost=(HostVO)_agentMgr.findHost(Host.Type.Routing,dc,pod,sp,_offering,template,router,null,avoid)) != null);
+      if (routingHost == null || retry <= 0) {
+        throw new ExecutionException("Couldn't find a routingHost");
+      }
+      _routerDao.updateIf(router,Event.OperationSucceeded,routingHost.getId());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Router " + router.toString() + " is now started on "+ routingHost.toString());
+      }
+      event.setDescription("successfully started Domain Router: " + router.getName());
+      _eventDao.persist(event);
+      return _routerDao.findById(routerId);
+    }
+ catch (    final Throwable th) {
+      Transaction txn=Transaction.currentTxn();
+      if (!started) {
+        txn.start();
+        if (vnetAllocated == true && vnet != null) {
+          _dcDao.releaseVnet(vnet,router.getDataCenterId(),router.getAccountId());
+        }
+        router.setVnet(null);
+        String privateIpAddress=router.getPrivateIpAddress();
+        router.setPrivateIpAddress(null);
+        if (privateIpAddress != null) {
+          _dcDao.releasePrivateIpAddress(privateIpAddress,router.getDataCenterId(),router.getId());
+        }
+        if (_routerDao.updateIf(router,Event.OperationFailed,null)) {
+          txn.commit();
+        }
+      }
+      if (th instanceof ExecutionException) {
+        s_logger.error("Error while starting router due to " + th.getMessage());
+      }
+ else       if (th instanceof ConcurrentOperationException) {
+        throw (ConcurrentOperationException)th;
+      }
+ else       if (th instanceof StorageUnavailableException) {
+        throw (StorageUnavailableException)th;
+      }
+ else {
+        s_logger.error("Error while starting router",th);
+      }
+      return null;
+    }
+  }
+  finally {
+    if (router != null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Releasing lock on router " + routerId);
+      _routerDao.release(routerId);
+    }
+    if (!started) {
+      EventVO event=new EventVO();
+      event.setUserId(1L);
+      event.setAccountId(router.getAccountId());
+      event.setType(EventTypes.EVENT_ROUTER_START);
+      event.setDescription("Failed to start Router with Id: " + routerId);
+      event.setLevel(EventVO.LEVEL_ERROR);
+      event.setStartId(startEventId);
+      _eventDao.persist(event);
+    }
+  }
+}

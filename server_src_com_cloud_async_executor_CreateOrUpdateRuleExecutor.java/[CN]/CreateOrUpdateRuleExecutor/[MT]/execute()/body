@@ -1,0 +1,41 @@
+{
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobManager asyncMgr=getAsyncJobMgr();
+  AsyncJobVO job=getJob();
+  ManagementServer managementServer=asyncMgr.getExecutorContext().getManagementServer();
+  CreateOrUpdateRuleParam param=gson.fromJson(job.getCmdInfo(),CreateOrUpdateRuleParam.class);
+  try {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Executing createOrUpdateRule, uid: " + job.getUserId() + ", pfservice id: "+ param.getSecurityGroupId()+ ", addr: "+ param.getAddress()+ ", port: "+ param.getPort()+ ", private IP: "+ param.getPrivateIpAddress()+ ", private port: "+ param.getPrivatePort()+ ", protocol: "+ param.getProtocol()+ ", algorithm: "+ param.getAlgorithm());
+    NetworkRuleConfigVO rule=managementServer.createOrUpdateRule(job.getUserId(),param.getSecurityGroupId(),param.getAddress(),param.getPort(),param.getPrivateIpAddress(),param.getPrivatePort(),param.getProtocol(),param.getAlgorithm());
+    if (rule != null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("createOrUpdateRule executed successfully, complete async-execution");
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_SUCCEEDED,0,composeResultObject(managementServer,param,rule));
+    }
+ else {
+      s_logger.warn("createOrUpdateRule execution failed: null rule object is returned, complete async-execution");
+      asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,"operation failed");
+    }
+  }
+ catch (  InvalidParameterValueException e) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Unable to creat or update rule: " + e.getMessage());
+    asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.PARAM_ERROR,e.getMessage());
+  }
+catch (  PermissionDeniedException e) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Unable to creat or update rule: " + e.getMessage());
+    asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.PARAM_ERROR,e.getMessage());
+  }
+catch (  NetworkRuleConflictException e) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Unable to creat or update rule: " + e.getMessage());
+    if (param.isForwarding())     asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.NET_CONFLICT_IPFW_RULE_ERROR,e.getMessage());
+ else     asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.NET_CONFLICT_LB_RULE_ERROR,e.getMessage());
+  }
+catch (  InternalErrorException e) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Unable to creat or update rule: " + e.getMessage());
+    asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+  }
+catch (  Exception e) {
+    s_logger.warn("Unable to creat or update rule: " + e.getMessage(),e);
+    asyncMgr.completeAsyncJob(getJob().getId(),AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+  }
+  return true;
+}

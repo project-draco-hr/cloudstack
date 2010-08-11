@@ -1,0 +1,75 @@
+{
+  if (_status == Status.ABORTED || _status == Status.UNRECOVERABLE_ERROR || _status == Status.DOWNLOAD_FINISHED) {
+    return 0;
+  }
+  _resume=resume;
+  _start=System.currentTimeMillis();
+  URI uri;
+  try {
+    uri=new URI(_downloadUrl);
+  }
+ catch (  URISyntaxException e1) {
+    _status=Status.UNRECOVERABLE_ERROR;
+    return 0;
+  }
+  String username=uri.getUserInfo();
+  String queries=uri.getQuery();
+  String password=null;
+  if (queries != null) {
+    String[] qs=queries.split("&");
+    for (    String q : qs) {
+      String[] tokens=q.split("=");
+      if (tokens[0].equalsIgnoreCase("password")) {
+        password=tokens[1];
+        break;
+      }
+    }
+  }
+  int port=uri.getPort();
+  if (port == -1) {
+    port=22;
+  }
+  long length=0;
+  File file=new File(_toFile);
+  com.trilead.ssh2.Connection sshConnection=new com.trilead.ssh2.Connection(uri.getHost(),port);
+  try {
+    if (_storage != null) {
+      file.createNewFile();
+      _storage.setWorldReadableAndWriteable(file);
+    }
+    sshConnection.connect(null,60000,60000);
+    if (!sshConnection.authenticateWithPassword(username,password)) {
+      throw new CloudRuntimeException("Unable to authenticate");
+    }
+    SCPClient scp=new SCPClient(sshConnection);
+    String src=uri.getPath();
+    _status=Status.IN_PROGRESS;
+    scp.get(src,_toDir);
+    if (!file.exists()) {
+      _status=Status.UNRECOVERABLE_ERROR;
+      s_logger.debug("unable to scp the file " + _downloadUrl);
+      return 0;
+    }
+    _status=Status.DOWNLOAD_FINISHED;
+    _totalBytes=file.length();
+    String downloaded="(download complete)";
+    _errorString="Downloaded " + _remoteSize + " bytes "+ downloaded;
+    _downloadTime+=System.currentTimeMillis() - _start;
+    return _totalBytes;
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to download " + _downloadUrl,e);
+    _status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+    _errorString=e.getMessage();
+    return 0;
+  }
+ finally {
+    sshConnection.close();
+    if (_status == Status.UNRECOVERABLE_ERROR && file.exists()) {
+      file.delete();
+    }
+    if (callback != null) {
+      callback.downloadComplete(_status);
+    }
+  }
+}

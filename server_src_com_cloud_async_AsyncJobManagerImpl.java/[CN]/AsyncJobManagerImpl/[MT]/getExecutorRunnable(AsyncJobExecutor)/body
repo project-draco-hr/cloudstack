@@ -1,0 +1,44 @@
+{
+  return new Runnable(){
+    public void run(){
+      long jobId=0;
+      BaseAsyncJobExecutor.setCurrentExecutor(executor);
+      Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+      try {
+        jobId=executor.getJob().getId();
+        NDC.push("job-" + jobId);
+        if (s_logger.isDebugEnabled())         s_logger.debug("Executing " + executor.getClass().getName() + " for job-"+ jobId);
+        if (executor.execute()) {
+          if (s_logger.isTraceEnabled())           s_logger.trace("Executing " + executor.getClass().getName() + " returns true for job-"+ jobId);
+          if (executor.getSyncSource() != null) {
+            _queueMgr.purgeItem(executor.getSyncSource().getId());
+            checkQueue(executor.getSyncSource().getQueueId());
+          }
+        }
+ else {
+          if (s_logger.isTraceEnabled())           s_logger.trace("Executing " + executor.getClass().getName() + " returns false for job-"+ jobId);
+        }
+        if (s_logger.isDebugEnabled())         s_logger.debug("Done executing " + executor.getClass().getName() + " for job-"+ jobId);
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception while executing " + executor.getClass().getName(),e);
+        try {
+          if (executor.getSyncSource() != null) {
+            _queueMgr.purgeItem(executor.getSyncSource().getId());
+            checkQueue(executor.getSyncSource().getQueueId());
+          }
+        }
+ catch (        Throwable ex) {
+          s_logger.fatal("Exception on exception, log it for record",ex);
+        }
+      }
+ finally {
+        StackMaid.current().exitCleanup();
+        txn.close();
+        NDC.pop();
+      }
+      BaseAsyncJobExecutor.setCurrentExecutor(null);
+    }
+  }
+;
+}

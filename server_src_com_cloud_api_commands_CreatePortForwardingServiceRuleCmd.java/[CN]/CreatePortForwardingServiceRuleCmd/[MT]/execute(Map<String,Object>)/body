@@ -1,0 +1,38 @@
+{
+  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+  Long userId=(Long)params.get(BaseCmd.Properties.USER_ID.getName());
+  String publicPort=(String)params.get(BaseCmd.Properties.PUBLIC_PORT.getName());
+  String privatePort=(String)params.get(BaseCmd.Properties.PRIVATE_PORT.getName());
+  String protocol=(String)params.get(BaseCmd.Properties.PROTOCOL.getName());
+  Long securityGroupId=(Long)params.get(BaseCmd.Properties.PORT_FORWARDING_SERVICE_ID.getName());
+  SecurityGroupVO sg=getManagementServer().findSecurityGroupById(securityGroupId);
+  if (sg == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find port forwarding service with id " + securityGroupId);
+  }
+  if (account != null) {
+    if (isAdmin(account.getType())) {
+      if (!getManagementServer().isChildDomain(account.getDomainId(),sg.getDomainId())) {
+        throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find rules for port forwarding service id = " + securityGroupId + ", permission denied.");
+      }
+    }
+ else     if (account.getId().longValue() != sg.getAccountId().longValue()) {
+      throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Invalid port forwarding service (" + securityGroupId + ") given, unable to create rule.");
+    }
+  }
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
+  long jobId=getManagementServer().createOrUpdateRuleAsync(true,userId.longValue(),sg.getAccountId().longValue(),null,securityGroupId,null,publicPort,null,privatePort,protocol,null);
+  long ruleId=0;
+  if (jobId == 0) {
+    s_logger.warn("Unable to schedule async-job for CreatePortForwardingServiceRuleCmd command");
+  }
+ else {
+    if (s_logger.isDebugEnabled())     s_logger.debug("CreatePortForwardingServiceRuleCmd command has been accepted, job id: " + jobId);
+    ruleId=waitInstanceCreation(jobId);
+  }
+  List<Pair<String,Object>> returnValues=new ArrayList<Pair<String,Object>>();
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.JOB_ID.getName(),Long.valueOf(jobId)));
+  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.RULE_ID.getName(),Long.valueOf(ruleId)));
+  return returnValues;
+}

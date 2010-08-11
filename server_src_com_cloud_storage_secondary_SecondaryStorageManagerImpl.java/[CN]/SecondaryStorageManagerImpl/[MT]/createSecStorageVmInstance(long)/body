@@ -1,0 +1,81 @@
+{
+  long startEventId=saveStartedEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_CREATE,"Creating secondary storage Vm in zone : " + dataCenterId,0);
+  Map<String,Object> context=new HashMap<String,Object>();
+  String publicIpAddress=null;
+  HostVO secHost=_hostDao.findSecondaryStorageHost(dataCenterId);
+  if (secHost == null) {
+    String msg="No secondary storage available in zone " + dataCenterId + ", cannot create secondary storage vm";
+    s_logger.warn(msg);
+    saveFailedEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_CREATE,msg,startEventId);
+    throw new CloudRuntimeException(msg);
+  }
+  boolean success=false;
+  Transaction txn=Transaction.currentTxn();
+  try {
+    DataCenterVO dc=_dcDao.findById(dataCenterId);
+    assert(dc != null);
+    context.put("dc",dc);
+    Set<Long> avoidPods=new HashSet<Long>();
+    Pair<HostPodVO,Long> pod=null;
+    networkInfo publicIpAndVlan=null;
+    String[] macAddresses=_dcDao.getNextAvailableMacAddressPair(dataCenterId,(1L << 31));
+    String privateMacAddress=macAddresses[0];
+    String publicMacAddress=macAddresses[1];
+    macAddresses=_dcDao.getNextAvailableMacAddressPair(dataCenterId,(1L << 31));
+    String guestMacAddress=macAddresses[0];
+    while ((pod=_agentMgr.findPod(_template,_serviceOffering,dc,Account.ACCOUNT_ID_SYSTEM,avoidPods)) != null) {
+      publicIpAndVlan=allocPublicIpAddress(dataCenterId,pod.first().getId(),publicMacAddress);
+      if (publicIpAndVlan == null) {
+        s_logger.warn("Unable to allocate public IP address for secondary storage vm in data center : " + dataCenterId + ", pod="+ pod.first().getId());
+        avoidPods.add(pod.first().getId());
+      }
+ else {
+        break;
+      }
+    }
+    if (pod == null || publicIpAndVlan == null) {
+      s_logger.warn("Unable to allocate pod for secondary storage vm in data center : " + dataCenterId);
+      context.put("secStorageVmId",(long)0);
+      return context;
+    }
+    long id=_secStorageVmDao.getNextInSequence(Long.class,"id");
+    context.put("publicIpAddress",publicIpAndVlan._ipAddr);
+    context.put("pod",pod);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Pod allocated " + pod.first().getName());
+    }
+    String cidrNetmask=NetUtils.getCidrNetmask(pod.first().getCidrSize());
+    publicIpAddress=publicIpAndVlan._ipAddr;
+    String vlanGateway=publicIpAndVlan._gateWay;
+    String vlanNetmask=publicIpAndVlan._netMask;
+    txn.start();
+    SecondaryStorageVmVO secStorageVm;
+    String name=VirtualMachineName.getSystemVmName(id,_instance,"s").intern();
+    secStorageVm=new SecondaryStorageVmVO(id,name,guestMacAddress,null,NetUtils.getLinkLocalNetMask(),privateMacAddress,null,cidrNetmask,_template.getId(),_template.getGuestOSId(),publicMacAddress,publicIpAddress,vlanNetmask,publicIpAndVlan._vlanDbId,publicIpAndVlan._vlanid,pod.first().getId(),dataCenterId,vlanGateway,null,dc.getInternalDns1(),dc.getInternalDns2(),_domain,_secStorageVmRamSize,secHost.getGuid(),secHost.getStorageUrl());
+    secStorageVm.setLastHostId(pod.second());
+    secStorageVm=_secStorageVmDao.persist(secStorageVm);
+    long secStorageVmId=secStorageVm.getId();
+    final EventVO event=new EventVO();
+    event.setUserId(User.UID_SYSTEM);
+    event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+    event.setType(EventTypes.EVENT_SSVM_CREATE);
+    event.setLevel(EventVO.LEVEL_INFO);
+    event.setStartId(startEventId);
+    event.setDescription("New Secondary Storage VM created - " + secStorageVm.getName());
+    _eventDao.persist(event);
+    txn.commit();
+    success=true;
+    context.put("secStorageVmId",secStorageVmId);
+    return context;
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception : ",e);
+    context.put("secStorageVmId",(long)0);
+    return context;
+  }
+ finally {
+    if (!success) {
+      saveFailedEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_CREATE,"Failed to create secondary storage Vm",startEventId);
+    }
+  }
+}

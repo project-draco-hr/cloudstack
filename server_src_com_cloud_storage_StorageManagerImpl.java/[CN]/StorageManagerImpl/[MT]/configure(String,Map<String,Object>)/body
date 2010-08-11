@@ -1,0 +1,57 @@
+{
+  _name=name;
+  ComponentLocator locator=ComponentLocator.getCurrentLocator();
+  ConfigurationDao configDao=locator.getDao(ConfigurationDao.class);
+  if (configDao == null) {
+    s_logger.error("Unable to get the configuration dao.");
+    return false;
+  }
+  _storagePoolAllocators=locator.getAdapters(StoragePoolAllocator.class);
+  if (!_storagePoolAllocators.isSet()) {
+    throw new ConfigurationException("Unable to get any storage pool allocators.");
+  }
+  _discoverers=locator.getAdapters(StoragePoolDiscoverer.class);
+  String overProvisioningFactorStr=(String)params.get("storage.overprovisioning.factor");
+  if (overProvisioningFactorStr != null) {
+    _overProvisioningFactor=Integer.parseInt(overProvisioningFactorStr);
+  }
+  Map<String,String> configs=configDao.getConfiguration("management-server",params);
+  _retry=NumbersUtil.parseInt(configs.get(Config.StartRetry.key()),2);
+  _pingInterval=NumbersUtil.parseInt(configs.get("ping.interval"),60);
+  _hostRetry=NumbersUtil.parseInt(configs.get("host.retry"),2);
+  _storagePoolAcquisitionWaitSeconds=NumbersUtil.parseInt(configs.get("pool.acquisition.wait.seconds"),1800);
+  s_logger.info("pool.acquisition.wait.seconds is configured as " + _storagePoolAcquisitionWaitSeconds + " seconds");
+  _totalRetries=NumbersUtil.parseInt(configDao.getValue("total.retries"),4);
+  _pauseInterval=2 * NumbersUtil.parseInt(configDao.getValue("ping.interval"),60);
+  String hypervisoType=configDao.getValue("hypervisor.type");
+  if (hypervisoType.equalsIgnoreCase("KVM")) {
+    _hypervisorType=Hypervisor.Type.KVM;
+  }
+  _agentMgr.registerForHostEvents(new StoragePoolMonitor(this,_hostDao,_storagePoolDao),true,false,true);
+  String storageCleanupEnabled=configs.get("storage.cleanup.enabled");
+  _storageCleanupEnabled=(storageCleanupEnabled == null) ? true : Boolean.parseBoolean(storageCleanupEnabled);
+  String time=configs.get("storage.cleanup.interval");
+  _storageCleanupInterval=NumbersUtil.parseInt(time,86400);
+  String workers=configs.get("expunge.workers");
+  int wrks=NumbersUtil.parseInt(workers,10);
+  _executor=Executors.newScheduledThreadPool(wrks,new NamedThreadFactory("StorageManager-Scavenger"));
+  boolean localStorage=Boolean.parseBoolean(configs.get(Config.UseLocalStorage.key()));
+  if (localStorage) {
+    _agentMgr.registerForHostEvents(ComponentLocator.inject(LocalStoragePoolListener.class),true,false,false);
+  }
+  PoolsUsedByVmSearch=_storagePoolDao.createSearchBuilder();
+  SearchBuilder<VolumeVO> volSearch=_volsDao.createSearchBuilder();
+  PoolsUsedByVmSearch.join("volumes",volSearch,volSearch.entity().getPoolId(),PoolsUsedByVmSearch.entity().getId());
+  volSearch.and("vm",volSearch.entity().getInstanceId(),SearchCriteria.Op.EQ);
+  volSearch.done();
+  PoolsUsedByVmSearch.done();
+  HostTemplateStatesSearch=_vmTemplateHostDao.createSearchBuilder();
+  HostTemplateStatesSearch.and("id",HostTemplateStatesSearch.entity().getTemplateId(),SearchCriteria.Op.EQ);
+  HostTemplateStatesSearch.and("state",HostTemplateStatesSearch.entity().getDownloadState(),SearchCriteria.Op.EQ);
+  SearchBuilder<HostVO> HostSearch=_hostDao.createSearchBuilder();
+  HostSearch.and("dcId",HostSearch.entity().getDataCenterId(),SearchCriteria.Op.EQ);
+  HostTemplateStatesSearch.join("host",HostSearch,HostSearch.entity().getId(),HostTemplateStatesSearch.entity().getHostId());
+  HostSearch.done();
+  HostTemplateStatesSearch.done();
+  return true;
+}

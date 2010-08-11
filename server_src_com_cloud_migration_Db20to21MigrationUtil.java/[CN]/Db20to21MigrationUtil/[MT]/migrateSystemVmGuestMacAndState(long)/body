@@ -1,0 +1,55 @@
+{
+  SearchBuilder<ConsoleProxyVO> sb=_consoleProxyDao.createSearchBuilder();
+  sb.and("zoneId",sb.entity().getDataCenterId(),Op.EQ);
+  sb.done();
+  SearchCriteria<ConsoleProxyVO> sc=sb.create();
+  sc.setParameters("zoneId",zoneId);
+  List<ConsoleProxyVO> proxies=_consoleProxyDao.searchAll(sc,null,false,false);
+  for (  ConsoleProxyVO proxy : proxies) {
+    String[] macAddresses=_dcDao.getNextAvailableMacAddressPair(zoneId,(1L << 31));
+    String guestMacAddress=macAddresses[0];
+    proxy.setGuestMacAddress(guestMacAddress);
+    if (proxy.getState() == State.Running || proxy.getState() == State.Starting) {
+      System.out.println("System VM " + proxy.getName() + " is in active state, mark it to Stopping state for migration");
+      proxy.setState(State.Stopping);
+    }
+    String guestIpAddress=_dcDao.allocateLinkLocalPrivateIpAddress(proxy.getDataCenterId(),proxy.getPodId(),proxy.getId());
+    proxy.setGuestIpAddress(guestIpAddress);
+    proxy.setGuestNetmask("255.255.0.0");
+    System.out.println("Assign link loal address to proxy " + proxy.getName() + ", link local address: "+ guestIpAddress);
+    _consoleProxyDao.update(proxy.getId(),proxy);
+  }
+  SearchBuilder<SecondaryStorageVmVO> sb2=_secStorageVmDao.createSearchBuilder();
+  sb2.and("zoneId",sb2.entity().getDataCenterId(),Op.EQ);
+  sb2.done();
+  SearchCriteria<SecondaryStorageVmVO> sc2=sb2.create();
+  sc2.setParameters("zoneId",zoneId);
+  List<SecondaryStorageVmVO> secStorageVms=_secStorageVmDao.searchAll(sc2,null,false,false);
+  for (  SecondaryStorageVmVO secStorageVm : secStorageVms) {
+    String[] macAddresses=_dcDao.getNextAvailableMacAddressPair(zoneId,(1L << 31));
+    String guestMacAddress=macAddresses[0];
+    secStorageVm.setGuestMacAddress(guestMacAddress);
+    if (secStorageVm.getState() == State.Running || secStorageVm.getState() == State.Starting) {
+      System.out.println("System VM " + secStorageVm.getName() + " is in active state, mark it to Stopping state for migration");
+      secStorageVm.setState(State.Stopping);
+    }
+    String guestIpAddress=_dcDao.allocateLinkLocalPrivateIpAddress(secStorageVm.getDataCenterId(),secStorageVm.getPodId(),secStorageVm.getId());
+    secStorageVm.setGuestIpAddress(guestIpAddress);
+    secStorageVm.setGuestNetmask("255.255.0.0");
+    System.out.println("Assign link loal address to secondary storage VM " + secStorageVm.getName() + ", link local address: "+ guestIpAddress);
+    _secStorageVmDao.update(secStorageVm.getId(),secStorageVm);
+  }
+  SearchBuilder<DomainRouterVO> sb3=_routerDao.createSearchBuilder();
+  sb3.and("zoneId",sb3.entity().getDataCenterId(),Op.EQ);
+  sb3.done();
+  SearchCriteria<DomainRouterVO> sc3=sb3.create();
+  sc3.setParameters("zoneId",zoneId);
+  List<DomainRouterVO> domRs=_routerDao.searchAll(sc3,null,false,false);
+  for (  DomainRouterVO router : domRs) {
+    if (router.getState() == State.Running || router.getState() == State.Starting) {
+      router.setState(State.Stopping);
+      System.out.println("System VM " + router.getName() + " is in active state, mark it to Stopping state for migration");
+      _routerDao.update(router.getId(),router);
+    }
+  }
+}

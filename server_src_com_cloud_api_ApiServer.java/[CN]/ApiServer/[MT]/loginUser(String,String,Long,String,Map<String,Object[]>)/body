@@ -1,0 +1,66 @@
+{
+  if (domainId == null) {
+    if (domainPath == null || domainPath.trim().length() == 0) {
+      domainId=DomainVO.ROOT_DOMAIN;
+    }
+ else {
+      DomainVO domainObj=_ms.findDomainByPath(domainPath);
+      if (domainObj != null) {
+        domainId=domainObj.getId();
+      }
+ else {
+        return null;
+      }
+    }
+  }
+  UserAccount userAcct=_ms.authenticateUser(username,password,domainId,requestParameters);
+  if (userAcct != null) {
+    String timezone=userAcct.getTimezone();
+    float offsetInHrs=0f;
+    if (timezone != null) {
+      TimeZone t=TimeZone.getTimeZone(timezone);
+      s_logger.info("Current user logged in under " + timezone + " timezone");
+      java.util.Date date=new java.util.Date();
+      long longDate=date.getTime();
+      float offsetInMs=(t.getOffset(longDate));
+      offsetInHrs=offsetInMs / (1000 * 60 * 60);
+      s_logger.info("Timezone offset from UTC is: " + offsetInHrs);
+    }
+    Account account=_ms.findAccountById(userAcct.getAccountId());
+    List<Pair<String,Object>> loginParams=new ArrayList<Pair<String,Object>>();
+    String networkType=_ms.getConfigurationValue("network.type");
+    if (networkType == null)     networkType="vnet";
+    String hypervisorType=_ms.getConfigurationValue("hypervisor.type");
+    if (hypervisorType == null)     hypervisorType="kvm";
+    String directAttachNetworkGroupsEnabled=_ms.getConfigurationValue("direct.attach.network.groups.enabled");
+    if (directAttachNetworkGroupsEnabled == null)     directAttachNetworkGroupsEnabled="false";
+    String directAttachedUntaggedEnabled=_ms.getConfigurationValue("direct.attach.untagged.vlan.enabled");
+    if (directAttachedUntaggedEnabled == null)     directAttachedUntaggedEnabled="false";
+    String systemVmUseLocalStorage=_ms.getConfigurationValue("system.vm.use.local.storage");
+    if (systemVmUseLocalStorage == null)     systemVmUseLocalStorage="false";
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.USER_ID.getName(),userAcct.getId().toString()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.USERNAME.getName(),userAcct.getUsername()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.FIRSTNAME.getName(),userAcct.getFirstname()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.LASTNAME.getName(),userAcct.getLastname()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.ACCOUNT_OBJ.getName(),account));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.ACCOUNT.getName(),account.getAccountName()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN_ID.getName(),account.getDomainId().toString()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.TYPE.getName(),Short.valueOf(account.getType()).toString()));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.NETWORK_TYPE.getName(),networkType));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.HYPERVISOR_TYPE.getName(),hypervisorType));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.DIRECT_ATTACH_NETWORK_GROUPS_ENABLED.getName(),directAttachNetworkGroupsEnabled));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.DIRECT_ATTACHED_UNTAGGED_ENABLED.getName(),directAttachedUntaggedEnabled));
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.SYSTEM_VM_USE_LOCAL_STORAGE.getName(),systemVmUseLocalStorage));
+    if (timezone != null) {
+      loginParams.add(new Pair<String,Object>(BaseCmd.Properties.TIMEZONE.getName(),timezone));
+      loginParams.add(new Pair<String,Object>(BaseCmd.Properties.TIMEZONE_OFFSET.getName(),Float.valueOf(offsetInHrs).toString()));
+    }
+    SecureRandom sesssionKeyRandom=new SecureRandom();
+    byte sessionKeyBytes[]=new byte[20];
+    sesssionKeyRandom.nextBytes(sessionKeyBytes);
+    String sessionKey=Base64.encodeBytes(sessionKeyBytes);
+    loginParams.add(new Pair<String,Object>(BaseCmd.Properties.SESSION_KEY.getName(),sessionKey));
+    return loginParams;
+  }
+  return null;
+}

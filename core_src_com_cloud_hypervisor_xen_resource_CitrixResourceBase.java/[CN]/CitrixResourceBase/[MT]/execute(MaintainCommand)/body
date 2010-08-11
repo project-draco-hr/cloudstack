@@ -1,0 +1,45 @@
+{
+  Connection conn=getConnection();
+  try {
+    Pool pool=Pool.getByUuid(conn,_host.pool);
+    Pool.Record poolr=pool.getRecord(conn);
+    Host.Record hostr=poolr.master.getRecord(conn);
+    if (!_host.uuid.equals(hostr.uuid)) {
+      s_logger.debug("Not the master node so just return ok: " + _host.ip);
+      return new MaintainAnswer(cmd);
+    }
+    Map<Host,Host.Record> hostMap=Host.getAllRecords(conn);
+    if (hostMap.size() == 1) {
+      s_logger.debug("There's no one to take over as master");
+      return new MaintainAnswer(cmd,"Only master in the pool");
+    }
+    Host newMaster=null;
+    Host.Record newMasterRecord=null;
+    for (    Map.Entry<Host,Host.Record> entry : hostMap.entrySet()) {
+      if (!_host.uuid.equals(entry.getValue().uuid)) {
+        newMaster=entry.getKey();
+        newMasterRecord=entry.getValue();
+        s_logger.debug("New master for the XenPool is " + newMasterRecord.uuid + " : "+ newMasterRecord.address);
+        try {
+          _connPool.switchMaster(_host.ip,_host.pool,conn,newMaster,_username,_password,_wait);
+          return new MaintainAnswer(cmd,"New Master is " + newMasterRecord.address);
+        }
+ catch (        XenAPIException e) {
+          s_logger.warn("Unable to switch the new master to " + newMasterRecord.uuid + ": "+ newMasterRecord.address+ " Trying again...");
+        }
+catch (        XmlRpcException e) {
+          s_logger.warn("Unable to switch the new master to " + newMasterRecord.uuid + ": "+ newMasterRecord.address+ " Trying again...");
+        }
+      }
+    }
+    return new MaintainAnswer(cmd,false,"Unable to find an appropriate host to set as the new master");
+  }
+ catch (  XenAPIException e) {
+    s_logger.warn("Unable to put server in maintainence mode",e);
+    return new MaintainAnswer(cmd,false,e.getMessage());
+  }
+catch (  XmlRpcException e) {
+    s_logger.warn("Unable to put server in maintainence mode",e);
+    return new MaintainAnswer(cmd,false,e.getMessage());
+  }
+}

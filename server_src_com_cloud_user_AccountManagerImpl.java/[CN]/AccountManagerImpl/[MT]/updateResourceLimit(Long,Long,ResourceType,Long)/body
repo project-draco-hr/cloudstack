@@ -1,0 +1,62 @@
+{
+  if ((domainId == null) && (accountId == null)) {
+    throw new InvalidParameterValueException("Either a domainId or domainId/accountId must be passed in.");
+  }
+  if (accountId != null) {
+    AccountVO account=_accountDao.findById(accountId);
+    if (account == null) {
+      throw new InvalidParameterValueException("Please specify a valid account ID.");
+    }
+ else     if (account.getRemoved() != null) {
+      throw new InvalidParameterValueException("Please specify an active account.");
+    }
+ else     if (account.getType() == Account.ACCOUNT_TYPE_ADMIN || account.getType() == Account.ACCOUNT_ID_SYSTEM) {
+      throw new InvalidParameterValueException("Please specify a non-admin account.");
+    }
+    DomainVO domain=_domainDao.findById(account.getDomainId());
+    long parentMaximum=findCorrectResourceLimit(domain,type);
+    if ((parentMaximum >= 0) && ((max.longValue() == -1) || (max.longValue() > parentMaximum))) {
+      throw new InvalidParameterValueException("Account " + account.getAccountName() + "(id: "+ accountId+ ") has maximum allowed resource limit "+ parentMaximum+ " for "+ type+ ", please specify a value less that or equal to "+ parentMaximum);
+    }
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Please specify a valid domain ID.");
+    }
+ else     if (domain.getRemoved() != null) {
+      throw new InvalidParameterValueException("Please specify an active domain.");
+    }
+    Long parentDomainId=domain.getParent();
+    if (parentDomainId != null) {
+      DomainVO parentDomain=_domainDao.findById(parentDomainId);
+      long parentMaximum=findCorrectResourceLimit(parentDomain,type);
+      if ((parentMaximum >= 0) && (max.longValue() > parentMaximum)) {
+        throw new InvalidParameterValueException("Domain " + domain.getName() + "(id: "+ domainId+ ") has maximum allowed resource limit "+ parentMaximum+ " for "+ type+ ", please specify a value less that or equal to "+ parentMaximum);
+      }
+    }
+  }
+  if (type == null) {
+    throw new InvalidParameterValueException("A valid limit type must be passed in.");
+  }
+  Filter searchFilter=new Filter(ResourceLimitVO.class,null,false,null,null);
+  SearchCriteria<ResourceLimitVO> sc=_resourceLimitDao.createSearchCriteria();
+  if (domainId != null) {
+    sc.addAnd("domainId",SearchCriteria.Op.EQ,domainId);
+  }
+  if (accountId != null) {
+    sc.addAnd("accountId",SearchCriteria.Op.EQ,accountId);
+  }
+  if (type != null) {
+    sc.addAnd("type",SearchCriteria.Op.EQ,type);
+  }
+  List<ResourceLimitVO> limits=_resourceLimitDao.search(sc,searchFilter);
+  if (limits.size() == 1) {
+    ResourceLimitVO limit=limits.get(0);
+    _resourceLimitDao.update(limit.getId(),max);
+    return _resourceLimitDao.findById(limit.getId());
+  }
+ else {
+    return _resourceLimitDao.persist(new ResourceLimitVO(domainId,accountId,type,max));
+  }
+}

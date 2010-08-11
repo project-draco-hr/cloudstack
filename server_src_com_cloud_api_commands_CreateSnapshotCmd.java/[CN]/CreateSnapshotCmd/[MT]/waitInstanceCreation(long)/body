@@ -1,0 +1,59 @@
+{
+  ManagementServer mgr=getManagementServer();
+  long snapshotId=0;
+  AsyncJobVO job=null;
+  boolean interruped=false;
+  try {
+    boolean quit=false;
+    while (!quit) {
+      job=mgr.findAsyncJobById(jobId);
+      if (job == null) {
+        s_logger.error("CreateSnapshotAsync.waitInstanceCreation error: job-" + jobId + " no longer exists");
+        break;
+      }
+switch (job.getStatus()) {
+case AsyncJobResult.STATUS_IN_PROGRESS:
+        if (job.getProcessStatus() == BaseCmd.PROGRESS_INSTANCE_CREATED) {
+          Long id=(Long)SerializerHelper.fromSerializedString(job.getResult());
+          if (id != null) {
+            snapshotId=id.longValue();
+            if (s_logger.isDebugEnabled())             s_logger.debug("CreateSnapshotAsync succeeded in taking snapshot on primary, snapshotId: " + snapshotId);
+          }
+ else {
+            s_logger.warn("CreateSnapshotAsync succeeded in taking snapshot on primary, but value as null?");
+          }
+          quit=true;
+        }
+      break;
+case AsyncJobResult.STATUS_SUCCEEDED:
+{
+      CreateSnapshotResultObject resultObject=(CreateSnapshotResultObject)SerializerHelper.fromSerializedString(job.getResult());
+      if (resultObject != null) {
+        snapshotId=resultObject.getId();
+        if (s_logger.isDebugEnabled())         s_logger.debug("CreateSnapshotAsync succeeded in backing up snapshot to secondary, snapshotId: " + snapshotId);
+      }
+ else {
+        s_logger.warn("CreateSnapshotAsync successfully completed, but result object is null?");
+      }
+    }
+  quit=true;
+break;
+case AsyncJobResult.STATUS_FAILED:
+s_logger.error("CreateSnapshotAsync job-" + jobId + " failed, result: "+ job.getResult());
+quit=true;
+break;
+}
+if (quit) break;
+try {
+Thread.sleep(1000);
+}
+ catch (InterruptedException e) {
+interruped=true;
+}
+}
+}
+  finally {
+if (interruped) Thread.currentThread().interrupt();
+}
+return snapshotId;
+}

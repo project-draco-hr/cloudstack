@@ -1,0 +1,97 @@
+{
+  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+  String accountName=(String)params.get(BaseCmd.Properties.ACCOUNT.getName());
+  Long domainId=(Long)params.get(BaseCmd.Properties.DOMAIN_ID.getName());
+  Integer type=(Integer)params.get(BaseCmd.Properties.RESOURCE_TYPE.getName());
+  Integer page=(Integer)params.get(BaseCmd.Properties.PAGE.getName());
+  Integer pageSize=(Integer)params.get(BaseCmd.Properties.PAGESIZE.getName());
+  Long accountId=null;
+  if (account == null || isAdmin(account.getType())) {
+    if (accountName != null) {
+      if (domainId == null) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"You must specify domain Id for the account: " + accountName);
+      }
+      Account userAccount=getManagementServer().findActiveAccount(accountName,domainId);
+      if (userAccount == null) {
+        throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+      }
+ else       if (account != null && (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || account.getType() == Account.ACCOUNT_TYPE_READ_ONLY_ADMIN)) {
+        if (account.getDomainId() != userAccount.getDomainId() && !getManagementServer().isChildDomain(account.getDomainId(),userAccount.getDomainId())) {
+          throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"You do not have permission to access limits for this account: " + accountName);
+        }
+      }
+      accountId=userAccount.getId();
+      domainId=null;
+    }
+ else     if (domainId != null) {
+      accountId=null;
+    }
+ else     if (account == null) {
+      domainId=DomainVO.ROOT_DOMAIN;
+    }
+ else {
+      accountId=account.getId();
+      domainId=null;
+    }
+  }
+ else {
+    accountId=account.getId();
+    domainId=null;
+  }
+  ResourceType resourceType=null;
+  try {
+    if (type != null) {
+      resourceType=ResourceType.values()[type];
+    }
+  }
+ catch (  ArrayIndexOutOfBoundsException e) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Please specify a valid resource type.");
+  }
+  Long startIndex=Long.valueOf(0);
+  int pageSizeNum=50;
+  if (pageSize != null) {
+    pageSizeNum=pageSize.intValue();
+  }
+  if (page != null) {
+    int pageNum=page.intValue();
+    if (pageNum > 0) {
+      startIndex=Long.valueOf(pageSizeNum * (pageNum - 1));
+    }
+  }
+  Criteria c=new Criteria("id",Boolean.FALSE,startIndex,Long.valueOf(pageSizeNum));
+  c.addCriteria(Criteria.ACCOUNTID,accountId);
+  c.addCriteria(Criteria.DOMAINID,domainId);
+  c.addCriteria(Criteria.TYPE,resourceType);
+  List<ResourceLimitVO> limits=null;
+  try {
+    limits=getManagementServer().searchForLimits(c);
+  }
+ catch (  Exception ex) {
+    s_logger.error("Exception listing limits",ex);
+    throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Failed to list resource limits due to exception: " + ex.getMessage());
+  }
+  List<Pair<String,Object>> limitTags=new ArrayList<Pair<String,Object>>();
+  Object[] lTag=new Object[limits.size()];
+  int i=0;
+  for (  ResourceLimitVO limit : limits) {
+    List<Pair<String,Object>> limitData=new ArrayList<Pair<String,Object>>();
+    if (limit.getDomainId() != null) {
+      limitData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN_ID.getName(),limit.getDomainId().toString()));
+      limitData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN.getName(),getManagementServer().findDomainIdById(limit.getDomainId()).getName()));
+    }
+    if (limit.getAccountId() != null) {
+      Account accountTemp=getManagementServer().findAccountById(limit.getAccountId());
+      if (accountTemp != null) {
+        limitData.add(new Pair<String,Object>(BaseCmd.Properties.ACCOUNT.getName(),accountTemp.getAccountName()));
+        limitData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN_ID.getName(),accountTemp.getDomainId()));
+        limitData.add(new Pair<String,Object>(BaseCmd.Properties.DOMAIN.getName(),getManagementServer().findDomainIdById(accountTemp.getDomainId()).getName()));
+      }
+    }
+    limitData.add(new Pair<String,Object>(BaseCmd.Properties.RESOURCE_TYPE.getName(),limit.getType().ordinal()));
+    limitData.add(new Pair<String,Object>(BaseCmd.Properties.MAX.getName(),limit.getMax()));
+    lTag[i++]=limitData;
+  }
+  Pair<String,Object> limitTag=new Pair<String,Object>("resourcelimit",lTag);
+  limitTags.add(limitTag);
+  return limitTags;
+}

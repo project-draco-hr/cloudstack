@@ -1,0 +1,32 @@
+{
+  if (host.getType() != Host.Type.Routing) {
+    return;
+  }
+  s_logger.warn("Scheduling restart for VMs on host " + host.getId());
+  final List<VMInstanceVO> vms=_instanceDao.listByHostId(host.getId());
+  final DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+  StringBuilder sb=null;
+  if ((vms != null) && !vms.isEmpty()) {
+    sb=new StringBuilder();
+    sb.append("  Starting HA on the following VMs: ");
+    VMInstanceVO vm=vms.get(0);
+    if (vm.isHaEnabled()) {
+      sb.append(" " + vm.getName());
+    }
+    for (int i=1; i < vms.size(); i++) {
+      vm=vms.get(i);
+      if (vm.isHaEnabled()) {
+        sb.append(" " + vm.getName());
+      }
+    }
+  }
+  HostPodVO podVO=_podDao.findById(host.getPodId());
+  String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+  _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,host.getDataCenterId(),host.getPodId(),"Host is down, " + hostDesc,"Host [" + hostDesc + "] is down."+ ((sb != null) ? sb.toString() : ""));
+  for (  final VMInstanceVO vm : vms) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Notifying HA Mgr of to investigate vm " + vm.getId() + "-"+ vm.getName());
+    }
+    scheduleRestart(vm,true);
+  }
+}

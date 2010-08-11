@@ -1,0 +1,91 @@
+{
+  EventVO event=new EventVO();
+  event.setUserId(userId);
+  event.setAccountId(accountId);
+  event.setType(EventTypes.EVENT_VOLUME_CREATE);
+  event.setState(EventState.Started);
+  event.setStartId(startEventId);
+  event.setDescription("Creating volume from snapshot with id: " + snapshotId);
+  _eventDao.persist(event);
+  VolumeVO createdVolume=null;
+  String details=null;
+  Long volumeId=null;
+  SnapshotVO snapshot=_snapshotDao.findById(snapshotId);
+  Long origVolumeId=snapshot.getVolumeId();
+  VolumeVO originalVolume=_volsDao.findById(origVolumeId);
+  String templatePath=null;
+  VMTemplateVO template=null;
+  if (originalVolume.getVolumeType().equals(Volume.VolumeType.ROOT)) {
+    if (originalVolume.getTemplateId() == null) {
+      details="Null Template Id for Root Volume Id: " + origVolumeId + ". Cannot create volume from snapshot of root disk.";
+      s_logger.error(details);
+    }
+ else {
+      Long templateId=originalVolume.getTemplateId();
+      template=_templateDao.findById(templateId);
+      if (template == null) {
+        details="Unable find template id: " + templateId + " to create volume from root disk";
+        s_logger.error(details);
+      }
+ else       if (template.getFormat() != ImageFormat.ISO) {
+        HostVO secondaryStorageHost=getSecondaryStorageHost(originalVolume.getDataCenterId());
+        VMTemplateHostVO templateHostVO=_templateHostDao.findByHostTemplate(secondaryStorageHost.getId(),templateId);
+        if (templateHostVO == null || templateHostVO.getDownloadState() != VMTemplateStorageResourceAssoc.Status.DOWNLOADED || (templatePath=templateHostVO.getInstallPath()) == null) {
+          details="Template id: " + templateId + " is not present on secondaryStorageHost Id: "+ secondaryStorageHost.getId()+ ". Can't create volume from ROOT DISK";
+        }
+      }
+    }
+  }
+  if (details == null) {
+    DataCenterVO dc=_dcDao.findById(originalVolume.getDataCenterId());
+    DiskOfferingVO diskOffering=null;
+    if (originalVolume.getVolumeType() == VolumeType.DATADISK || originalVolume.getVolumeType() == VolumeType.ROOT) {
+      Long diskOfferingId=originalVolume.getDiskOfferingId();
+      if (diskOfferingId != null) {
+        diskOffering=_diskOfferingDao.findById(diskOfferingId);
+      }
+    }
+ else {
+      s_logger.error("Original volume must have been a ROOT DISK or a DATA DISK");
+      return null;
+    }
+    Pair<VolumeVO,String> volumeDetails=createVolumeFromSnapshot(userId,accountId,volumeName,dc,diskOffering,snapshot,templatePath,originalVolume.getSize(),template);
+    createdVolume=volumeDetails.first();
+    if (createdVolume != null) {
+      volumeId=createdVolume.getId();
+    }
+    details=volumeDetails.second();
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  long templateId=-1;
+  long diskOfferingId=-1;
+  if (originalVolume.getTemplateId() != null) {
+    templateId=originalVolume.getTemplateId();
+  }
+  if (originalVolume.getDiskOfferingId() != null) {
+    diskOfferingId=originalVolume.getDiskOfferingId();
+  }
+  long sizeMB=createdVolume.getSize() / (1024 * 1024);
+  String poolName=_storagePoolDao.findById(createdVolume.getPoolId()).getName();
+  String eventParams="id=" + volumeId + "\ndoId="+ diskOfferingId+ "\ntId="+ templateId+ "\ndcId="+ originalVolume.getDataCenterId()+ "\nsize="+ sizeMB;
+  event=new EventVO();
+  event.setAccountId(accountId);
+  event.setUserId(userId);
+  event.setType(EventTypes.EVENT_VOLUME_CREATE);
+  event.setParameters(eventParams);
+  event.setStartId(startEventId);
+  event.setState(EventState.Completed);
+  if (createdVolume.getPath() != null) {
+    event.setDescription("Created volume: " + createdVolume.getName() + " with size: "+ sizeMB+ " MB in pool: "+ poolName+ " from snapshot id: "+ snapshotId);
+    event.setLevel(EventVO.LEVEL_INFO);
+  }
+ else {
+    details="CreateVolume From Snapshot for snapshotId: " + snapshotId + " failed at the backend, reason "+ details;
+    event.setDescription(details);
+    event.setLevel(EventVO.LEVEL_ERROR);
+  }
+  _eventDao.persist(event);
+  txn.commit();
+  return createdVolume;
+}

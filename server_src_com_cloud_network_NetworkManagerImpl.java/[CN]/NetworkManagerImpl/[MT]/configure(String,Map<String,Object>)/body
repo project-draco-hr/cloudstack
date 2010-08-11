@@ -1,0 +1,39 @@
+{
+  _name=name;
+  _executor=Executors.newScheduledThreadPool(1,new NamedThreadFactory("RouterMonitor"));
+  final ComponentLocator locator=ComponentLocator.getCurrentLocator();
+  final Map<String,String> configs=_configDao.getConfiguration("AgentManager",params);
+  _routerTemplateId=NumbersUtil.parseInt(configs.get("router.template.id"),1);
+  _routerRamSize=NumbersUtil.parseInt(configs.get("router.ram.size"),128);
+  String value=configs.get("start.retry");
+  _retry=NumbersUtil.parseInt(value,2);
+  value=configs.get("router.stats.interval");
+  _routerStatsInterval=NumbersUtil.parseInt(value,300);
+  value=configs.get("router.cleanup.interval");
+  _routerCleanupInterval=NumbersUtil.parseInt(value,3600);
+  _domain=configs.get("domain");
+  if (_domain == null) {
+    _domain="foo.com";
+  }
+  _instance=configs.get("instance.name");
+  if (_instance == null) {
+    _instance="DEFAULT";
+  }
+  s_logger.info("Router configurations: " + "ramsize=" + _routerRamSize + "; templateId="+ _routerTemplateId);
+  final UserStatisticsDao statsDao=locator.getDao(UserStatisticsDao.class);
+  if (statsDao == null) {
+    throw new ConfigurationException("Unable to get " + UserStatisticsDao.class.getName());
+  }
+  _agentMgr.registerForHostEvents(new SshKeysDistriMonitor(this,_hostDao,_configDao),true,false,false);
+  _haMgr.registerHandler(VirtualMachine.Type.DomainRouter,this);
+  boolean useLocalStorage=Boolean.parseBoolean((String)params.get(Config.SystemVMUseLocalStorage.key()));
+  _offering=new ServiceOfferingVO("Fake Offering For DomR",1,_routerRamSize,0,0,0,false,null,GuestIpType.Virtualized,useLocalStorage,true,null);
+  _offering.setUniqueName("Cloud.Com-SoftwareRouter");
+  _offering=_serviceOfferingDao.persistSystemServiceOffering(_offering);
+  _template=_templateDao.findById(_routerTemplateId);
+  if (_template == null) {
+    throw new ConfigurationException("Unable to find the template for the router: " + _routerTemplateId);
+  }
+  s_logger.info("Network Manager is configured.");
+  return true;
+}

@@ -1,0 +1,55 @@
+{
+  long zoneId=zone.getId();
+  List<HostPodVO> podsInZone=_podDao.listByDataCenterId(zoneId);
+  if (podsInZone.size() == 0) {
+    s_logger.debug("No pods found in zone " + zone.getName());
+    return null;
+  }
+  List<HostPodVO> availablePods=new ArrayList<HostPodVO>();
+  Map<Long,Long> podHostCandidates=new HashMap<Long,Long>();
+  for (  HostPodVO pod : podsInZone) {
+    long podId=pod.getId();
+    if (!avoids.contains(podId)) {
+      if (template != null && !templateAvailableInPod(template.getId(),pod.getDataCenterId(),podId)) {
+        continue;
+      }
+      if (offering != null) {
+        long[] hostCandiates=new long[1];
+        boolean enoughCapacity=dataCenterAndPodHasEnoughCapacity(zoneId,podId,(offering.getRamSize()) * 1024L * 1024L,CapacityVO.CAPACITY_TYPE_MEMORY,hostCandiates);
+        if (!enoughCapacity) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Not enough RAM available in zone/pod to allocate storage for user VM (zone: " + zoneId + ", pod: "+ podId+ ")");
+          }
+          continue;
+        }
+        enoughCapacity=dataCenterAndPodHasEnoughCapacity(zoneId,podId,(offering.getCpu() * offering.getSpeed()),CapacityVO.CAPACITY_TYPE_CPU,hostCandiates);
+        if (!enoughCapacity) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Not enough cpu available in zone/pod to allocate storage for user VM (zone: " + zoneId + ", pod: "+ podId+ ")");
+          }
+          continue;
+        }
+        podHostCandidates.put(podId,hostCandiates[0]);
+      }
+      List<UserVmVO> vmsInPod=_vmDao.listByAccountAndPod(accountId,pod.getId());
+      if (!vmsInPod.isEmpty()) {
+        return new Pair<HostPodVO,Long>(pod,podHostCandidates.get(podId));
+      }
+      List<VolumeVO> volumesInPod=_volumeDao.findByAccountAndPod(accountId,pod.getId());
+      if (!volumesInPod.isEmpty()) {
+        return new Pair<HostPodVO,Long>(pod,podHostCandidates.get(podId));
+      }
+      availablePods.add(pod);
+    }
+  }
+  if (availablePods.size() == 0) {
+    s_logger.debug("There are no pods with enough memory/CPU capacity in zone" + zone.getName());
+    return null;
+  }
+ else {
+    int next=_rand.nextInt(availablePods.size());
+    HostPodVO selectedPod=availablePods.get(next);
+    s_logger.debug("Found pod " + selectedPod.getName() + " in zone "+ zone.getName());
+    return new Pair<HostPodVO,Long>(selectedPod,podHostCandidates.get(selectedPod.getId()));
+  }
+}

@@ -1,0 +1,73 @@
+{
+  if ((dnldStatus == VMTemplateStorageResourceAssoc.Status.DOWNLOADED) || (dnldStatus == Status.ABANDONED)) {
+    VMTemplateHostVO vmTemplateHost=new VMTemplateHostVO(host.getId(),template.getId());
+    DownloadListener oldListener=_listenerMap.get(vmTemplateHost);
+    if (oldListener != null) {
+      _listenerMap.remove(vmTemplateHost);
+    }
+  }
+  if (dnldStatus == VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+    logEvent(template.getAccountId(),EventTypes.EVENT_TEMPLATE_DOWNLOAD_SUCCESS,template.getName() + " successfully downloaded to storage server " + host.getName(),EventVO.LEVEL_INFO);
+  }
+  if (dnldStatus == Status.DOWNLOAD_ERROR) {
+    logEvent(template.getAccountId(),EventTypes.EVENT_TEMPLATE_DOWNLOAD_FAILED,template.getName() + " failed to download to storage server " + host.getName(),EventVO.LEVEL_ERROR);
+  }
+  if (dnldStatus == Status.ABANDONED) {
+    logEvent(template.getAccountId(),EventTypes.EVENT_TEMPLATE_DOWNLOAD_FAILED,template.getName() + " :aborted download to storage server " + host.getName(),EventVO.LEVEL_WARN);
+  }
+  VMTemplateHostVO vmTemplateHost=_vmTemplateHostDao.findByHostTemplate(host.getId(),template.getId());
+  if (dnldStatus == Status.DOWNLOADED) {
+    long size=-1;
+    if (vmTemplateHost != null) {
+      size=vmTemplateHost.getSize();
+    }
+ else {
+      s_logger.warn("Failed to get size for template" + template.getName());
+    }
+    String eventParams="id=" + template.getId() + "\ndcId="+ host.getDataCenterId()+ "\nsize="+ size;
+    EventVO event=new EventVO();
+    event.setUserId(1L);
+    event.setAccountId(template.getAccountId());
+    if ((template.getFormat()).equals(ImageFormat.ISO)) {
+      event.setType(EventTypes.EVENT_ISO_CREATE);
+      event.setDescription("Successfully created ISO " + template.getName());
+    }
+ else {
+      event.setType(EventTypes.EVENT_TEMPLATE_CREATE);
+      event.setDescription("Successfully created template " + template.getName());
+    }
+    event.setParameters(eventParams);
+    event.setLevel(EventVO.LEVEL_INFO);
+    _eventDao.persist(event);
+  }
+  if (vmTemplateHost != null) {
+    Long poolId=vmTemplateHost.getPoolId();
+    if (poolId != null) {
+      VMTemplateStoragePoolVO vmTemplatePool=_vmTemplatePoolDao.findByPoolTemplate(poolId,template.getId());
+      StoragePoolHostVO poolHost=_poolHostDao.findByPoolHost(poolId,host.getId());
+      if (vmTemplatePool != null && poolHost != null) {
+        vmTemplatePool.setDownloadPercent(vmTemplateHost.getDownloadPercent());
+        vmTemplatePool.setDownloadState(vmTemplateHost.getDownloadState());
+        vmTemplatePool.setErrorString(vmTemplateHost.getErrorString());
+        String localPath=poolHost.getLocalPath();
+        String installPath=vmTemplateHost.getInstallPath();
+        if (installPath != null) {
+          if (!installPath.startsWith("/")) {
+            installPath="/" + installPath;
+          }
+          if (!(localPath == null) && !installPath.startsWith(localPath)) {
+            localPath=localPath.replaceAll("/\\p{Alnum}+/*$","");
+          }
+          if (!(localPath == null) && installPath.startsWith(localPath)) {
+            installPath=installPath.substring(localPath.length());
+          }
+        }
+        vmTemplatePool.setInstallPath(installPath);
+        vmTemplatePool.setLastUpdated(vmTemplateHost.getLastUpdated());
+        vmTemplatePool.setJobId(vmTemplateHost.getJobId());
+        vmTemplatePool.setLocalDownloadPath(vmTemplateHost.getLocalDownloadPath());
+        _vmTemplatePoolDao.update(vmTemplatePool.getId(),vmTemplatePool);
+      }
+    }
+  }
+}

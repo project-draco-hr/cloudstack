@@ -1,0 +1,88 @@
+{
+  boolean requestLogged=false;
+  Response response=null;
+  try {
+    final Command[] cmds=request.getCommands();
+    final Answer[] answers=new Answer[cmds.length];
+    for (int i=0; i < cmds.length; i++) {
+      final Command cmd=cmds[i];
+      Answer answer;
+      try {
+        if (s_logger.isDebugEnabled()) {
+          if ((cmd instanceof ModifySshKeysCommand)) {
+            s_logger.debug("Received the request for command: ModifySshKeysCommand");
+          }
+ else {
+            if (!requestLogged) {
+              s_logger.debug("Request:" + request.toString());
+              requestLogged=true;
+            }
+          }
+          s_logger.debug("Processing command: " + cmd.toString());
+        }
+        if (cmd instanceof CronCommand) {
+          final CronCommand watch=(CronCommand)cmd;
+          scheduleWatch(link,request,watch.getInterval() * 1000,watch.getInterval() * 1000);
+          answer=new Answer(cmd,true,null);
+        }
+ else         if (cmd instanceof UpgradeCommand) {
+          final UpgradeCommand upgrade=(UpgradeCommand)cmd;
+          answer=upgradeAgent(upgrade.getUpgradeUrl(),upgrade);
+        }
+ else         if (cmd instanceof AgentControlCommand) {
+          answer=null;
+synchronized (_controlListeners) {
+            for (            IAgentControlListener listener : _controlListeners) {
+              answer=listener.processControlRequest(request,(AgentControlCommand)cmd);
+              if (answer != null)               break;
+            }
+          }
+          if (answer == null) {
+            s_logger.warn("No handler found to process cmd: " + cmd.toString());
+            answer=new AgentControlAnswer(cmd);
+          }
+        }
+ else {
+          _inProgress.incrementAndGet();
+          try {
+            answer=_resource.executeRequest(cmd);
+          }
+  finally {
+            _inProgress.decrementAndGet();
+          }
+          if (answer == null) {
+            s_logger.debug("Response: unsupported command" + cmd.toString());
+            answer=Answer.createUnsupportedCommandAnswer(cmd);
+          }
+        }
+      }
+ catch (      final Throwable th) {
+        s_logger.warn("Caught: ",th);
+        final StringWriter writer=new StringWriter();
+        th.printStackTrace(new PrintWriter(writer));
+        answer=new Answer(cmd,false,writer.toString());
+      }
+      answers[i]=answer;
+      if (!answer.getResult() && request.stopOnError()) {
+        for (i++; i < cmds.length; i++) {
+          answers[i]=new Answer(cmds[i],false,"Stopped by previous failure");
+        }
+        break;
+      }
+    }
+    response=new Response(request,answers);
+  }
+  finally {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug(response != null ? response.toString() : "response is null");
+    }
+    if (response != null) {
+      try {
+        link.send(response.toBytes());
+      }
+ catch (      final ClosedChannelException e) {
+        s_logger.warn("Unable to send response: " + response.toString());
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  List<VolumeVO> volumes=_volsDao.findByAccount(accountId);
+  boolean success=true;
+  for (  VolumeVO volume : volumes) {
+    Long volumeId=volume.getId();
+    Long dcId=volume.getDataCenterId();
+    String secondaryStoragePoolURL=_storageMgr.getSecondaryStorageURL(dcId);
+    String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
+    long mostRecentSnapshotId=_snapshotDao.getLastSnapshot(volumeId,-1L);
+    if (mostRecentSnapshotId == 0L) {
+      continue;
+    }
+    SnapshotVO mostRecentSnapshot=_snapshotDao.findById(mostRecentSnapshotId);
+    if (mostRecentSnapshot == null) {
+      s_logger.error("Volume Id's mostRecentSnapshot with id: " + mostRecentSnapshotId + " turns out to be null");
+    }
+    String mostRecentSnapshotUuid=mostRecentSnapshot.getPath();
+    DeleteSnapshotsDirCommand cmd=new DeleteSnapshotsDirCommand(primaryStoragePoolNameLabel,secondaryStoragePoolURL,dcId,accountId,volumeId,mostRecentSnapshotUuid,mostRecentSnapshot.getName());
+    String basicErrMsg="Failed to destroy snapshotsDir for: " + volume.getId() + " under account: "+ accountId;
+    Answer answer=null;
+    Long poolId=volume.getPoolId();
+    if (poolId != null) {
+      answer=_storageMgr.sendToHostsOnStoragePool(poolId,cmd,basicErrMsg,1,_pauseInterval,_shouldBeSnapshotCapable,volume.getInstanceId());
+    }
+ else {
+      s_logger.info("Pool id for volume id: " + volumeId + " belonging to account id: "+ accountId+ " is null. Assuming the snapshotsDir for the account has already been deleted");
+    }
+    if (success) {
+      success=(answer != null) && answer.getResult();
+      if (success) {
+        s_logger.debug("Deleted snapshotsDir for volume: " + volumeId + " under account: "+ accountId);
+      }
+ else       if (answer != null) {
+        s_logger.error(answer.getDetails());
+      }
+    }
+    List<SnapshotVO> snapshots=listSnapsforVolume(volumeId);
+    for (    SnapshotVO snapshot : snapshots) {
+      if (_snapshotDao.delete(snapshot.getId())) {
+        _accountMgr.decrementResourceCount(accountId,ResourceType.snapshot);
+        String eventParams="id=" + snapshot.getId();
+        EventVO event=new EventVO();
+        event.setUserId(1L);
+        event.setAccountId(snapshot.getAccountId());
+        event.setType(EventTypes.EVENT_SNAPSHOT_DELETE);
+        event.setDescription("Successfully deleted snapshot " + snapshot.getId() + " for volumeId: "+ snapshot.getVolumeId());
+        event.setParameters(eventParams);
+        event.setLevel(EventVO.LEVEL_INFO);
+        _eventDao.persist(event);
+      }
+    }
+  }
+  return success;
+}
