@@ -1,0 +1,192 @@
+{
+  saveStartedEvent(userId,accountId,EventTypes.EVENT_VM_CREATE,"Deploying Vm",startEventId);
+  AccountVO account=_accountDao.findById(accountId);
+  DataCenterVO dc=_dcDao.findById(dataCenterId);
+  ServiceOfferingVO offering=_offeringsDao.findById(serviceOfferingId);
+  VMTemplateVO template=_templateDao.findById(templateId);
+  if (template == null) {
+    throw new InvalidParameterValueException("Please specify a valid template or ISO ID.");
+  }
+  byte[] decodedUserData=null;
+  if (userData != null) {
+    if (userData.length() >= 2 * UserVmManager.MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    decodedUserData=org.apache.commons.codec.binary.Base64.decodeBase64(userData.getBytes());
+    if (decodedUserData.length > UserVmManager.MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+  }
+  boolean isIso=Storage.ImageFormat.ISO.equals(template.getFormat());
+  DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+  if (domain == null) {
+    domain="v" + Long.toHexString(accountId) + _domain;
+  }
+  if (!template.getEnablePassword()) {
+    password="saved_password";
+  }
+  if (password == null || password.equals("") || (!validPassword(password))) {
+    throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
+  }
+  List<NetworkGroupVO> networkGroupVOs=new ArrayList<NetworkGroupVO>();
+  if (networkGroups != null) {
+    for (    String groupName : networkGroups) {
+      NetworkGroupVO networkGroupVO=_networkSecurityGroupDao.findByAccountAndName(accountId,groupName);
+      if (networkGroupVO == null) {
+        throw new InvalidParameterValueException("Network Group " + groupName + " does not exist");
+      }
+      networkGroupVOs.add(networkGroupVO);
+    }
+  }
+  UserStatisticsVO stats=_userStatsDao.findBy(account.getId(),dataCenterId);
+  if (stats == null) {
+    stats=new UserStatisticsVO(account.getId(),dataCenterId);
+    _userStatsDao.persist(stats);
+  }
+  Long vmId=_vmDao.getNextInSequence(Long.class,"id");
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled())     s_logger.info("DeployVM acquired a new instance " + vmId + ", update async job-"+ job.getId()+ " progress status");
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"vm_instance",vmId);
+    _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,vmId);
+  }
+  HashMap<Long,StoragePoolVO> avoids=new HashMap<Long,StoragePoolVO>();
+  for (int retry=0; retry < 1; retry++) {
+    String externalIp=null;
+    UserVmVO created=null;
+    ArrayList<StoragePoolVO> a=new ArrayList<StoragePoolVO>(avoids.values());
+    if (_directAttachNetworkExternalIpAllocator) {
+      try {
+        created=_vmMgr.createDirectlyAttachedVMExternal(vmId,userId,account,dc,offering,template,diskOffering,displayName,group,userData,a,networkGroupVOs,startEventId,size);
+      }
+ catch (      ResourceAllocationException rae) {
+        throw rae;
+      }
+    }
+ else {
+      if (offering.getGuestIpType() == GuestIpType.Virtualized) {
+        try {
+          externalIp=_networkMgr.assignSourceNatIpAddress(account,dc,domain,offering,startEventId);
+        }
+ catch (        ResourceAllocationException rae) {
+          throw rae;
+        }
+        if (externalIp == null) {
+          throw new InternalErrorException("Unable to allocate a source nat ip address");
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Source Nat acquired: " + externalIp);
+        }
+        try {
+          created=_vmMgr.createVirtualMachine(vmId,userId,account,dc,offering,template,diskOffering,displayName,group,userData,a,startEventId,size);
+        }
+ catch (        ResourceAllocationException rae) {
+          throw rae;
+        }
+      }
+ else {
+        try {
+          created=_vmMgr.createDirectlyAttachedVM(vmId,userId,account,dc,offering,template,diskOffering,displayName,group,userData,a,networkGroupVOs,startEventId,size);
+        }
+ catch (        ResourceAllocationException rae) {
+          throw rae;
+        }
+      }
+    }
+    if (created == null) {
+      throw new InternalErrorException("Unable to create VM for account (" + accountId + "): "+ account.getAccountName());
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM created: " + created.getId() + "-"+ created.getName());
+    }
+    boolean executionExceptionFlag=false;
+    boolean storageUnavailableExceptionFlag=false;
+    boolean concurrentOperationExceptionFlag=false;
+    String executionExceptionMsg="";
+    String storageUnavailableExceptionMsg="";
+    String concurrentOperationExceptionMsg="";
+    UserVmVO started=null;
+    if (isIso) {
+      String isoPath=_storageMgr.getAbsoluteIsoPath(templateId,dataCenterId);
+      try {
+        started=_vmMgr.startVirtualMachine(userId,created.getId(),password,isoPath,startEventId);
+      }
+ catch (      ExecutionException e) {
+        executionExceptionFlag=true;
+        executionExceptionMsg=e.getMessage();
+      }
+catch (      StorageUnavailableException e) {
+        storageUnavailableExceptionFlag=true;
+        storageUnavailableExceptionMsg=e.getMessage();
+      }
+catch (      ConcurrentOperationException e) {
+        concurrentOperationExceptionFlag=true;
+        concurrentOperationExceptionMsg=e.getMessage();
+      }
+    }
+ else {
+      try {
+        started=_vmMgr.startVirtualMachine(userId,created.getId(),password,null,startEventId);
+      }
+ catch (      ExecutionException e) {
+        executionExceptionFlag=true;
+        executionExceptionMsg=e.getMessage();
+      }
+catch (      StorageUnavailableException e) {
+        storageUnavailableExceptionFlag=true;
+        storageUnavailableExceptionMsg=e.getMessage();
+      }
+catch (      ConcurrentOperationException e) {
+        concurrentOperationExceptionFlag=true;
+        concurrentOperationExceptionMsg=e.getMessage();
+      }
+    }
+    if (started == null) {
+      List<Pair<VolumeVO,StoragePoolVO>> disks=_storageMgr.isStoredOn(created);
+      _vmMgr.destroyVirtualMachine(userId,created.getId());
+      boolean retryCreate=true;
+      for (      Pair<VolumeVO,StoragePoolVO> disk : disks) {
+        if (disk.second().isLocal()) {
+          avoids.put(disk.second().getId(),disk.second());
+        }
+ else {
+          retryCreate=false;
+        }
+      }
+      if (retryCreate) {
+        continue;
+      }
+ else       if (executionExceptionFlag) {
+        throw new ExecutionException(executionExceptionMsg);
+      }
+ else       if (storageUnavailableExceptionFlag) {
+        throw new StorageUnavailableException(storageUnavailableExceptionMsg);
+      }
+ else       if (concurrentOperationExceptionFlag) {
+        throw new ConcurrentOperationException(concurrentOperationExceptionMsg);
+      }
+ else {
+        throw new InternalErrorException("Unable to start the VM " + created.getId() + "-"+ created.getName());
+      }
+    }
+ else {
+      if (isIso) {
+        started.setIsoId(templateId);
+        _userVmDao.update(started.getId(),started);
+        started=_userVmDao.findById(started.getId());
+      }
+      try {
+        associateIpAddressListToAccount(userId,accountId,dc.getId(),null);
+      }
+ catch (      InsufficientAddressCapacityException e) {
+        s_logger.debug("Unable to assign public IP address pool: " + e.getMessage());
+      }
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM started: " + started.getId() + "-"+ started.getName());
+    }
+    return started;
+  }
+  return null;
+}

@@ -7,6 +7,7 @@
   Long zoneId=(Long)params.get(BaseCmd.Properties.ZONE_ID.getName());
   Long diskOfferingId=(Long)params.get(BaseCmd.Properties.DISK_OFFERING_ID.getName());
   Long snapshotId=(Long)params.get(BaseCmd.Properties.SNAPSHOT_ID.getName());
+  Long size=(Long)params.get(BaseCmd.Properties.SIZE.getName());
   if (account == null) {
     if ((accountName == null) || (domainId == null)) {
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"Account and domainId must be passed in.");
@@ -30,10 +31,28 @@
   if (userId == null) {
     userId=Long.valueOf(Account.ACCOUNT_ID_SYSTEM);
   }
+  if (size == null) {
+    size=Long.valueOf(0);
+  }
   boolean useSnapshot=false;
   if (snapshotId == null) {
-    if ((zoneId == null) || (diskOfferingId == null)) {
-      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Missing parameter(s), both zoneid and diskofferingid must be specified.");
+    if ((zoneId == null)) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Missing parameter,zoneid must be specified.");
+    }
+    if (diskOfferingId == null && size == 0) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Missing parameter(s),either a positive volume size or a valid disk offering id must be specified.");
+    }
+ else     if (diskOfferingId == null && size != 0) {
+      try {
+        boolean ok=getManagementServer().validateCustomVolumeSizeRange(size);
+        if (!ok)         throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid size for custom volume creation:");
+      }
+ catch (      InvalidParameterValueException e) {
+        s_logger.warn("Invalid size for custom volume creation");
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid size for custom volume creation:" + e.getMessage());
+      }
+      List<DiskOfferingVO> privateTemplateList=getManagementServer().findPrivateDiskOffering();
+      diskOfferingId=privateTemplateList.get(0).getId();
     }
   }
  else {
@@ -60,7 +79,7 @@
       jobId=getManagementServer().createVolumeFromSnapshotAsync(userId,account.getId(),snapshotId,name);
     }
  else {
-      jobId=getManagementServer().createVolumeAsync(userId,account.getId(),name,zoneId,diskOfferingId);
+      jobId=getManagementServer().createVolumeAsync(userId,account.getId(),name,zoneId,diskOfferingId,size);
     }
     if (jobId == 0) {
       s_logger.warn("Unable to schedule async-job for CreateVolume command");
