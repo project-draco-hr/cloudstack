@@ -2,22 +2,33 @@
   Long loadBalancerId=cmd.getLoadBalancerId();
   Long instanceIdParam=cmd.getVirtualMachineId();
   List<Long> instanceIds=cmd.getVirtualMachineIds();
+  if ((instanceIdParam == null) && (instanceIds == null)) {
+    throw new InvalidParameterValueException("Unable to assign to load balancer " + loadBalancerId + ", no instance id is specified.");
+  }
   if ((instanceIds == null) && (instanceIdParam != null)) {
     instanceIds=new ArrayList<Long>();
     instanceIds.add(instanceIdParam);
   }
-  String accountName=cmd.getAccountName();
-  Long domainId=cmd.getDomainId();
+  LoadBalancerVO loadBalancer=_loadBalancerDao.findById(loadBalancerId);
+  if (loadBalancer == null) {
+    throw new InvalidParameterValueException("Failed to assign to load balancer " + loadBalancerId + ", the load balancer was not found.");
+  }
+  Account account=(Account)UserContext.current().getAccountObject();
+  if (account != null) {
+    if ((account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) || (account.getType() == Account.ACCOUNT_TYPE_READ_ONLY_ADMIN)) {
+      if (!_domainDao.isChildDomain(account.getDomainId(),loadBalancer.getDomainId())) {
+        throw new PermissionDeniedException("Failed to assign to load balancer " + loadBalancerId + ", permission denied.");
+      }
+    }
+ else     if (account.getId().longValue() != loadBalancer.getAccountId()) {
+      throw new PermissionDeniedException("Failed to assign to load balancer " + loadBalancerId + ", permission denied.");
+    }
+  }
   Transaction txn=Transaction.currentTxn();
   try {
     List<FirewallRuleVO> firewallRulesToApply=new ArrayList<FirewallRuleVO>();
     long accountId=0;
     DomainRouterVO router=null;
-    LoadBalancerVO loadBalancer=_loadBalancerDao.findById(Long.valueOf(loadBalancerId));
-    if (loadBalancer == null) {
-      s_logger.warn("Unable to find load balancer with id " + loadBalancerId);
-      return;
-    }
     List<LoadBalancerVMMapVO> mappedInstances=_loadBalancerVMMapDao.listByLoadBalancerId(loadBalancerId,false);
     Set<Long> mappedInstanceIds=new HashSet<Long>();
     if (mappedInstances != null) {
@@ -113,7 +124,6 @@
     String type=EventTypes.EVENT_NET_RULE_ADD;
     String ruleName="load balancer";
     String level=EventVO.LEVEL_INFO;
-    Account account=_accountDao.findById(accountId);
     LoadBalancerVO loadBalancerLock=null;
     try {
       loadBalancerLock=_loadBalancerDao.acquire(loadBalancerId);
@@ -133,6 +143,7 @@
           if (updatedRule.getId() == null) {
             _rulesDao.persist(updatedRule);
             description="created new " + ruleName + " rule ["+ updatedRule.getPublicIpAddress()+ ":"+ updatedRule.getPublicPort()+ "]->["+ updatedRule.getPrivateIpAddress()+ ":"+ updatedRule.getPrivatePort()+ "]"+ " "+ updatedRule.getProtocol();
+            EventUtils.saveEvent(UserContext.current().getUserId(),loadBalancer.getAccountId(),level,type,description);
           }
         }
       }
