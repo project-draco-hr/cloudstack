@@ -1,0 +1,82 @@
+{
+  AccountVO account=_accountDao.findById(accountId);
+  if (account == null) {
+    throw new InvalidParameterValueException("Unable to find account: " + accountId);
+  }
+  DataCenterVO dc=_dcDao.findById(dataCenterId);
+  if (dc == null) {
+    throw new InvalidParameterValueException("Unable to find zone: " + dataCenterId);
+  }
+  ServiceOfferingVO offering=_offeringsDao.findById(serviceOfferingId);
+  if (offering == null) {
+    throw new InvalidParameterValueException("Unable to find service offering: " + serviceOfferingId);
+  }
+  VMTemplateVO template=_templateDao.findById(templateId);
+  if (template == null) {
+    throw new InvalidParameterValueException("Please specify a valid template or ISO ID.");
+  }
+  boolean isIso=Storage.ImageFormat.ISO.equals(template.getFormat());
+  if (isIso && !template.isBootable()) {
+    throw new InvalidParameterValueException("Please specify a bootable ISO.");
+  }
+  DiskOfferingVO diskOffering=null;
+  if (diskOfferingId != null) {
+    diskOffering=_diskOfferingDao.findById(diskOfferingId);
+  }
+  if (isIso && diskOffering == null) {
+    throw new InvalidParameterValueException("Please specify a valid disk offering ID.");
+  }
+  if (!template.isPublicTemplate()) {
+    Long templateOwner=template.getAccountId();
+    if (!BaseCmd.isAdmin(account.getType()) && ((templateOwner == null) || (templateOwner.longValue() != accountId))) {
+      LaunchPermissionVO permission=_launchPermissionDao.findByTemplateAndAccount(templateId,account.getId().longValue());
+      if (permission == null) {
+        throw new PermissionDeniedException("Account " + account.getAccountName() + " does not have permission to launch instances from template "+ template.getName());
+      }
+    }
+  }
+  byte[] decodedUserData=null;
+  if (userData != null) {
+    if (userData.length() >= 2 * UserVmManager.MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    decodedUserData=org.apache.commons.codec.binary.Base64.decodeBase64(userData.getBytes());
+    if (decodedUserData.length > UserVmManager.MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    if (decodedUserData.length < 1) {
+      throw new InvalidParameterValueException("User data is too short");
+    }
+  }
+  if (offering.getGuestIpType() != GuestIpType.Virtualized) {
+    _networkGroupMgr.createDefaultNetworkGroup(accountId);
+  }
+  if (networkGroups != null) {
+    if (offering.getGuestIpType() == GuestIpType.Virtualized) {
+      throw new InvalidParameterValueException("Network groups are not compatible with service offering " + offering.getName());
+    }
+    Set<String> nameSet=new HashSet<String>();
+    nameSet.addAll(Arrays.asList(networkGroups));
+    nameSet.add(NetworkGroupManager.DEFAULT_GROUP_NAME);
+    networkGroups=nameSet.toArray(new String[nameSet.size()]);
+    List<NetworkGroupVO> networkGroupVOs=_networkSecurityGroupDao.findByAccountAndNames(accountId,networkGroups);
+    if (networkGroupVOs.size() != nameSet.size()) {
+      throw new InvalidParameterValueException("Some network group names do not exist");
+    }
+  }
+ else {
+    if (offering.getGuestIpType() != GuestIpType.Virtualized && _networkGroupsEnabled) {
+      networkGroups=new String[]{NetworkGroupManager.DEFAULT_GROUP_NAME};
+    }
+  }
+  long eventId=saveScheduledEvent(userId,accountId,EventTypes.EVENT_VM_CREATE,"deploying Vm");
+  DeployVMParam param=new DeployVMParam(userId,accountId,dataCenterId,serviceOfferingId,templateId,diskOfferingId,domain,password,displayName,group,userData,networkGroups,eventId);
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobVO job=new AsyncJobVO();
+  job.setUserId(UserContext.current().getUserId());
+  job.setAccountId(accountId);
+  job.setCmd("DeployVM");
+  job.setCmdInfo(gson.toJson(param));
+  job.setCmdOriginator(DeployVMCmd.getResultObjectName());
+  return _asyncMgr.submitAsyncJob(job);
+}
