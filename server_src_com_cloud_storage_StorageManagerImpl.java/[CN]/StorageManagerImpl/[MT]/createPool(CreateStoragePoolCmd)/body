@@ -1,0 +1,187 @@
+{
+  Long clusterId=cmd.getClusterId();
+  Long podId=cmd.getPodId();
+  Map ds=cmd.getDetails();
+  if (clusterId != null && podId == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Cluster id requires pod id");
+  }
+  Map<String,String> details=new HashMap<String,String>();
+  if (ds != null) {
+    Collection detailsCollection=ds.values();
+    Iterator it=detailsCollection.iterator();
+    while (it.hasNext()) {
+      HashMap d=(HashMap)it.next();
+      Iterator it2=d.entrySet().iterator();
+      while (it2.hasNext()) {
+        Map.Entry entry=(Map.Entry)it2.next();
+        details.put((String)entry.getKey(),(String)entry.getValue());
+      }
+    }
+  }
+  Long zoneId=cmd.getZoneId();
+  DataCenterVO zone=_dcDao.findById(cmd.getZoneId());
+  if (zone == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"unable to find zone by id " + zoneId);
+  }
+  URI uri=null;
+  try {
+    uri=new URI(cmd.getUrl());
+    if (uri.getScheme() == null)     throw new ServerApiException(BaseCmd.PARAM_ERROR,"scheme is null " + cmd.getUrl() + ", add nfs:// as a prefix");
+ else     if (uri.getScheme().equalsIgnoreCase("nfs")) {
+      String uriHost=uri.getHost();
+      String uriPath=uri.getPath();
+      if (uriHost == null || uriPath == null || uriHost.trim().isEmpty() || uriPath.trim().isEmpty()) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"host or path is null, should be nfs://hostname/path");
+      }
+    }
+  }
+ catch (  URISyntaxException e) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,cmd.getUrl() + " is not a valid uri");
+  }
+  String tags=cmd.getTags();
+  if (tags != null) {
+    String[] tokens=tags.split(",");
+    for (    String tag : tokens) {
+      tag=tag.trim();
+      if (tag.length() == 0) {
+        continue;
+      }
+      details.put(tag,"true");
+    }
+  }
+  Hypervisor.Type hypervisorType=null;
+  List<HostVO> hosts=null;
+  if (podId != null) {
+    hosts=_hostDao.listByHostPod(podId);
+  }
+ else {
+    hosts=_hostDao.listByDataCenter(zoneId);
+  }
+  for (  HostVO h : hosts) {
+    if (h.getType() == Type.Routing) {
+      hypervisorType=h.getHypervisorType();
+      break;
+    }
+  }
+  if (hypervisorType == null) {
+    if (_hypervisorType == Hypervisor.Type.KVM) {
+      hypervisorType=Hypervisor.Type.KVM;
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Couldn't find a host to serve in the server pool");
+      }
+      return null;
+    }
+  }
+  String scheme=uri.getScheme();
+  String storageHost=uri.getHost();
+  String hostPath=uri.getPath();
+  int port=uri.getPort();
+  StoragePoolVO pool=null;
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("createPool Params @ scheme - " + scheme + " storageHost - "+ storageHost+ " hostPath - "+ hostPath+ " port - "+ port);
+  }
+  if (scheme.equalsIgnoreCase("nfs")) {
+    if (port == -1) {
+      port=2049;
+    }
+    pool=new StoragePoolVO(StoragePoolType.NetworkFilesystem,storageHost,port,hostPath);
+    if (hypervisorType == Hypervisor.Type.XenServer && clusterId == null) {
+      throw new IllegalArgumentException("NFS need to have clusters specified for XenServers");
+    }
+  }
+ else   if (scheme.equalsIgnoreCase("file")) {
+    if (port == -1) {
+      port=0;
+    }
+    pool=new StoragePoolVO(StoragePoolType.Filesystem,"localhost",0,hostPath);
+  }
+ else   if (scheme.equalsIgnoreCase("iscsi")) {
+    String[] tokens=hostPath.split("/");
+    int lun=NumbersUtil.parseInt(tokens[tokens.length - 1],-1);
+    if (port == -1) {
+      port=3260;
+    }
+    if (lun != -1) {
+      if (hypervisorType == Hypervisor.Type.XenServer && clusterId == null) {
+        throw new IllegalArgumentException("IscsiLUN need to have clusters specified");
+      }
+      hostPath.replaceFirst("/","");
+      pool=new StoragePoolVO(StoragePoolType.IscsiLUN,storageHost,port,hostPath);
+    }
+ else {
+      Enumeration<StoragePoolDiscoverer> en=_discoverers.enumeration();
+      while (en.hasMoreElements()) {
+        Map<StoragePoolVO,Map<String,String>> pools;
+        try {
+          pools=en.nextElement().find(cmd.getZoneId(),podId,uri,details);
+        }
+ catch (        DiscoveryException e) {
+          throw new IllegalArgumentException("Not enough information for discovery " + uri,e);
+        }
+        if (pools != null) {
+          Map.Entry<StoragePoolVO,Map<String,String>> entry=pools.entrySet().iterator().next();
+          pool=entry.getKey();
+          details=entry.getValue();
+          break;
+        }
+      }
+    }
+  }
+ else   if (scheme.equalsIgnoreCase("iso")) {
+    if (port == -1) {
+      port=2049;
+    }
+    pool=new StoragePoolVO(StoragePoolType.ISO,storageHost,port,hostPath);
+  }
+ else {
+    s_logger.warn("Unable to figure out the scheme for URI: " + uri);
+    throw new IllegalArgumentException("Unable to figure out the scheme for URI: " + uri);
+  }
+  if (pool == null) {
+    s_logger.warn("Unable to figure out the scheme for URI: " + uri);
+    throw new IllegalArgumentException("Unable to figure out the scheme for URI: " + uri);
+  }
+  List<StoragePoolVO> pools=_storagePoolDao.listPoolByHostPath(storageHost,hostPath);
+  if (!pools.isEmpty()) {
+    Long oldPodId=pools.get(0).getPodId();
+    throw new ResourceInUseException("Storage pool " + uri + " already in use by another pod (id="+ oldPodId+ ")","StoragePool",uri.toASCIIString());
+  }
+  List<HostVO> allHosts=_hostDao.listBy(Host.Type.Routing,clusterId,podId,zoneId);
+  if (allHosts.isEmpty() && _hypervisorType != Hypervisor.Type.KVM) {
+    throw new ResourceAllocationException("No host exists to associate a storage pool with");
+  }
+  long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
+  String uuid=UUID.nameUUIDFromBytes(new String(storageHost + hostPath).getBytes()).toString();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("In createPool Setting poolId - " + poolId + " uuid - "+ uuid+ " zoneId - "+ zoneId+ " podId - "+ podId+ " poolName - "+ cmd.getStoragePoolName());
+  }
+  pool.setId(poolId);
+  pool.setUuid(uuid);
+  pool.setDataCenterId(cmd.getZoneId());
+  pool.setPodId(podId);
+  pool.setName(cmd.getStoragePoolName());
+  pool.setClusterId(clusterId);
+  pool.setStatus(Status.Up);
+  pool=_storagePoolDao.persist(pool,details);
+  if (_hypervisorType == Hypervisor.Type.KVM && allHosts.isEmpty()) {
+    return pool;
+  }
+  s_logger.debug("In createPool Adding the pool to each of the hosts");
+  List<HostVO> poolHosts=new ArrayList<HostVO>();
+  for (  HostVO h : allHosts) {
+    boolean success=addPoolToHost(h.getId(),pool);
+    if (success) {
+      poolHosts.add(h);
+    }
+  }
+  if (poolHosts.isEmpty()) {
+    _storagePoolDao.delete(pool.getId());
+    pool=null;
+  }
+ else {
+    createCapacityEntry(pool);
+  }
+  return pool;
+}
