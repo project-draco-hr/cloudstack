@@ -1,16 +1,16 @@
 {
-  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
-  String accountName=(String)params.get(BaseCmd.Properties.ACCOUNT.getName());
-  Long domainId=(Long)params.get(BaseCmd.Properties.DOMAIN_ID.getName());
-  Long userId=(Long)params.get(BaseCmd.Properties.USER_ID.getName());
-  Integer startPort=(Integer)params.get(BaseCmd.Properties.START_PORT.getName());
-  Integer endPort=(Integer)params.get(BaseCmd.Properties.END_PORT.getName());
-  Integer icmpType=(Integer)params.get(BaseCmd.Properties.ICMP_TYPE.getName());
-  Integer icmpCode=(Integer)params.get(BaseCmd.Properties.ICMP_CODE.getName());
-  String protocol=(String)params.get(BaseCmd.Properties.PROTOCOL.getName());
-  String networkGroup=(String)params.get(BaseCmd.Properties.NETWORK_GROUP_NAME.getName());
-  String cidrList=(String)params.get(BaseCmd.Properties.CIDR_LIST.getName());
-  Map groupList=(Map)params.get(BaseCmd.Properties.USER_NETWORK_GROUP_LIST.getName());
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long userId=UserContext.current().getUserId();
+  Long domainId=cmd.getDomainId();
+  Integer startPort=cmd.getStartPort();
+  Integer endPort=cmd.getEndPort();
+  Integer icmpType=cmd.getIcmpType();
+  Integer icmpCode=cmd.getIcmpCode();
+  String protocol=cmd.getProtocol();
+  String networkGroup=cmd.getNetworkGroupName();
+  String cidrList=cmd.getCidrList();
+  Map groupList=cmd.getUserNetworkGroupList();
+  String[] cidrs=null;
   Long accountId=null;
   Integer startPortOrType=null;
   Integer endPortOrCode=null;
@@ -63,16 +63,16 @@
     endPortOrCode=endPort;
   }
   if ((account == null) || isAdmin(account.getType())) {
-    if ((accountName != null) && (domainId != null)) {
-      if ((account != null) && !getManagementServer().isChildDomain(account.getDomainId(),domainId)) {
+    if ((account.getAccountName() != null) && (domainId != null)) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("Unable to find rules for network security group id = " + networkGroup + ", permission denied.");
         }
         throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find rules for network security group id = " + networkGroup + ", permission denied.");
       }
-      Account groupOwner=getManagementServer().findActiveAccount(accountName,domainId);
+      Account groupOwner=_accountDao.findActiveAccount(account.getAccountName(),domainId);
       if (groupOwner == null) {
-        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find account " + account.getAccountName() + " in domain "+ domainId);
       }
       accountId=groupOwner.getId();
     }
@@ -92,7 +92,7 @@
   if (accountId == null) {
     throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find account for network security group " + networkGroup + "; failed to revoke ingress.");
   }
-  NetworkGroupVO sg=getManagementServer().findNetworkGroupByName(accountId,networkGroup);
+  NetworkGroupVO sg=_networkGroupDao.findByAccountAndName(accountId,networkGroup);
   if (sg == null) {
     s_logger.debug("Unable to find network security group with id " + networkGroup);
     throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find network security group with id " + networkGroup);
@@ -106,7 +106,7 @@
     if (protocol.equals("all")) {
       throw new ServerApiException(BaseCmd.NET_INVALID_PARAM_ERROR,"Cannot specify cidrs without specifying protocol and ports.");
     }
-    String[] cidrs=cidrList.split(",");
+    cidrs=cidrList.split(",");
     for (    String cidr : cidrs) {
       if (!NetUtils.isValidCIDR(cidr)) {
         s_logger.debug("Invalid cidr (" + cidr + ") given, unable to revoke ingress.");
@@ -126,14 +126,14 @@
       if ((group == null) || (authorizedAccountName == null)) {
         throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid user group specified, fields 'group' and 'account' cannot be null, please specify groups in the form:  userGroupList[0].group=XXX&userGroupList[0].account=YYY");
       }
-      Account authorizedAccount=getManagementServer().findActiveAccount(authorizedAccountName,domainId);
+      Account authorizedAccount=_accountDao.findActiveAccount(authorizedAccountName,domainId);
       if (authorizedAccount == null) {
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("Nonexistent account: " + authorizedAccountName + ", domainid: "+ domainId+ " when trying to revoke ingress for "+ networkGroup+ ":"+ protocol+ ":"+ startPortOrType+ ":"+ endPortOrCode);
         }
         throw new ServerApiException(BaseCmd.PARAM_ERROR,"Nonexistent account: " + authorizedAccountName + " when trying to revoke ingress for "+ networkGroup+ ":"+ protocol+ ":"+ startPortOrType+ ":"+ endPortOrCode);
       }
-      NetworkGroupVO groupVO=getManagementServer().findNetworkGroupByName(authorizedAccount.getId(),group);
+      NetworkGroupVO groupVO=_networkGroupDao.findByAccountAndName(authorizedAccount.getId(),group);
       if (groupVO == null) {
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("Nonexistent group and/or accountId: " + accountId + ", groupName="+ group);
@@ -146,14 +146,44 @@
   if (userId == null) {
     userId=Long.valueOf(1);
   }
-  long jobId=getManagementServer().revokeNetworkGroupIngressAsync(accountId,networkGroup,protocol,startPortOrType,endPortOrCode,authorizedCidrs.toArray(new String[authorizedCidrs.size()]),authorizedGroups);
-  if (jobId == 0) {
-    s_logger.warn("Unable to schedule async-job for RevokeNetworkGroupIngressCmd command");
+  if (!_enabled) {
+    return false;
   }
- else {
-    if (s_logger.isDebugEnabled())     s_logger.debug("RevokeNetworkGroupIngressCmd command has been accepted, job id: " + jobId);
+  int numDeleted=0;
+  final int numToDelete=cidrList.length() + authorizedGroups.size();
+  final Transaction txn=Transaction.currentTxn();
+  NetworkGroupVO networkGroupHandle=_networkGroupDao.findByAccountAndName(accountId,networkGroup);
+  if (networkGroupHandle == null) {
+    s_logger.warn("Network security group not found: name= " + networkGroup);
+    return false;
   }
-  List<Pair<String,Object>> returnValues=new ArrayList<Pair<String,Object>>();
-  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.JOB_ID.getName(),Long.valueOf(jobId)));
-  return returnValues;
+  try {
+    txn.start();
+    networkGroupHandle=_networkGroupDao.acquire(networkGroupHandle.getId());
+    if (networkGroupHandle == null) {
+      s_logger.warn("Could not acquire lock on network security group: name= " + networkGroup);
+      return false;
+    }
+    for (    final NetworkGroupVO ngVO : authorizedGroups) {
+      numDeleted+=_ingressRuleDao.deleteByPortProtoAndGroup(networkGroupHandle.getId(),protocol,startPort,endPort,ngVO.getId());
+    }
+    for (    final String cidr : cidrs) {
+      numDeleted+=_ingressRuleDao.deleteByPortProtoAndCidr(networkGroupHandle.getId(),protocol,startPort,endPort,cidr);
+    }
+    s_logger.debug("revokeNetworkGroupIngress for group: " + networkGroup + ", numToDelete="+ numToDelete+ ", numDeleted="+ numDeleted);
+    final Set<Long> affectedVms=new HashSet<Long>();
+    affectedVms.addAll(_networkGroupVMMapDao.listVmIdsByNetworkGroup(networkGroupHandle.getId()));
+    scheduleRulesetUpdateToHosts(affectedVms,true,null);
+    return true;
+  }
+ catch (  Exception e) {
+    s_logger.warn("Exception caught when deleting ingress rules ",e);
+    throw new CloudRuntimeException("Exception caught when deleting ingress rules",e);
+  }
+ finally {
+    if (networkGroup != null) {
+      _networkGroupDao.release(networkGroupHandle.getId());
+    }
+    txn.commit();
+  }
 }
