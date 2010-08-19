@@ -1,10 +1,10 @@
 {
-  Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
-  Long userId=(Long)params.get(BaseCmd.Properties.USER_ID.getName());
-  Long securityGroupId=(Long)params.get(BaseCmd.Properties.ID.getName());
-  String publicIp=(String)params.get(BaseCmd.Properties.PUBLIC_IP.getName());
-  Long vmId=(Long)params.get(BaseCmd.Properties.VIRTUAL_MACHINE_ID.getName());
-  SecurityGroupVO securityG=getManagementServer().findSecurityGroupById(securityGroupId);
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long userId=UserContext.current().getUserId();
+  Long securityGroupId=cmd.getId();
+  String publicIp=cmd.getPublicIp();
+  Long vmId=cmd.getVirtualMachineId();
+  SecurityGroupVO securityG=_securityGroupDao.findById(securityGroupId);
   if (securityG == null) {
     throw new ServerApiException(BaseCmd.PARAM_ERROR,"unable to find a port forwarding service with id " + securityGroupId);
   }
@@ -12,11 +12,11 @@
     if (!isAdmin(account.getType()) && (account.getId().longValue() != securityG.getAccountId())) {
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"unable to find a port forwarding service with id " + securityGroupId + " for this account");
     }
- else     if (!getManagementServer().isChildDomain(account.getDomainId(),securityG.getDomainId())) {
+ else     if (!isChildDomain(account.getDomainId(),securityG.getDomainId())) {
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid port forwarding service id (" + securityGroupId + ") given, unable to remove port forwarding service.");
     }
   }
-  UserVmVO vmInstance=getManagementServer().findUserVMInstanceById(vmId.longValue());
+  UserVmVO vmInstance=findUserVMInstanceById(vmId.longValue());
   if (vmInstance == null) {
     throw new ServerApiException(BaseCmd.VM_INVALID_PARAM_ERROR,"unable to find a virtual machine with id " + vmId);
   }
@@ -24,11 +24,11 @@
     if (!isAdmin(account.getType()) && (account.getId().longValue() != vmInstance.getAccountId())) {
       throw new ServerApiException(BaseCmd.VM_INVALID_PARAM_ERROR,"unable to find a virtual machine with id " + vmId + " for this account");
     }
- else     if (!getManagementServer().isChildDomain(account.getDomainId(),vmInstance.getDomainId())) {
+ else     if (!isChildDomain(account.getDomainId(),vmInstance.getDomainId())) {
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid virtual machine id (" + vmId + ") given, unable to remove port forwarding service.");
     }
   }
-  Account ipAddrAccount=getManagementServer().findAccountByIpAddress(publicIp);
+  Account ipAddrAccount=findAccountByIpAddress(publicIp);
   if (ipAddrAccount == null) {
     if (account == null) {
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find ip address " + publicIp);
@@ -46,14 +46,6 @@
   if (userId == null) {
     userId=Long.valueOf(1);
   }
-  long jobId=getManagementServer().removeSecurityGroupAsync(userId,securityGroupId,publicIp,vmId);
-  if (jobId == 0) {
-    s_logger.warn("Unable to schedule async-job for RemovePortForwardingServiceCmd comamnd");
-  }
- else {
-    if (s_logger.isDebugEnabled())     s_logger.debug("RemovePortForwardingServiceCmd command has been accepted, job id: " + jobId);
-  }
-  List<Pair<String,Object>> returnValues=new ArrayList<Pair<String,Object>>();
-  returnValues.add(new Pair<String,Object>(BaseCmd.Properties.JOB_ID.getName(),Long.valueOf(jobId)));
-  return returnValues;
+  long eventId=EventUtils.saveScheduledEvent(userId,vmInstance.getAccountId(),EventTypes.EVENT_PORT_FORWARDING_SERVICE_REMOVE,"removing security groups for Vm with Id: " + vmId);
+  removeSecurityGroup(userId,securityGroupId,publicIp,vmId,eventId);
 }
