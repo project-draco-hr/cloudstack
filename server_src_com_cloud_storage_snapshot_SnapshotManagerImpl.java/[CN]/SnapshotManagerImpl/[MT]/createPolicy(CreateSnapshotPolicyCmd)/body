@@ -1,0 +1,99 @@
+{
+  Long volumeId=cmd.getVolumeId();
+  VolumeVO volume=_volsDao.findById(cmd.getVolumeId());
+  if (volume == null) {
+    throw new InvalidParameterValueException("Failed to create snapshot policy, unable to find a volume with id " + volumeId);
+  }
+  StoragePoolVO storagePoolVO=_storagePoolDao.findById(volume.getPoolId());
+  if (storagePoolVO == null) {
+    throw new InvalidParameterValueException("Failed to create snapshot policy, volumeId: " + volumeId + " does not have a valid storage pool. Is it destroyed?");
+  }
+  if (storagePoolVO.isLocal()) {
+    throw new InvalidParameterValueException("Failed to create snapshot policy, cannot create a snapshot from a volume residing on a local storage pool, poolId: " + volume.getPoolId());
+  }
+  Long instanceId=volume.getInstanceId();
+  if (instanceId != null) {
+    if (_vmDao.findById(instanceId) == null) {
+      throw new InvalidParameterValueException("Failed to create snapshot policy, snapshots of volumes attached to System or router VM are not allowed");
+    }
+  }
+  Long accountId=volume.getAccountId();
+  Long userId=UserContext.current().getUserId();
+  if (userId == null) {
+    userId=User.UID_SYSTEM;
+  }
+  IntervalType type=DateUtil.IntervalType.getIntervalType(cmd.getIntervalType());
+  if (type == null) {
+    throw new InvalidParameterValueException("Unsupported interval type " + cmd.getIntervalType());
+  }
+  TimeZone timeZone=TimeZone.getTimeZone(cmd.getTimezone());
+  String timezoneId=timeZone.getID();
+  if (!timezoneId.equals(cmd.getTimezone())) {
+    s_logger.warn("Using timezone: " + timezoneId + " for running this snapshot policy as an equivalent of "+ cmd.getTimezone());
+  }
+  try {
+    DateUtil.getNextRunTime(type,cmd.getSchedule(),timezoneId,null);
+  }
+ catch (  Exception e) {
+    throw new InvalidParameterValueException("Invalid schedule: " + cmd.getSchedule() + " for interval type: "+ cmd.getIntervalType());
+  }
+  int intervalMaxSnaps=type.getMax();
+  if (cmd.getMaxSnaps() > intervalMaxSnaps) {
+    throw new InvalidParameterValueException("maxSnaps exceeds limit: " + intervalMaxSnaps + " for interval type: "+ cmd.getIntervalType());
+  }
+  Long policyId=null;
+  SnapshotPolicyVO policy=getPolicyForVolumeByInterval(volumeId,(short)type.ordinal());
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  EventVO event=new EventVO();
+  event.setAccountId(accountId);
+  event.setUserId(userId);
+  if (policy != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Policy for specified interval already exists. Updating policy to new schedule");
+    }
+    policyId=policy.getId();
+    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_UPDATE);
+    event.setDescription("Failed to update schedule for Snapshot policy with id: " + policyId);
+    event.setLevel(EventVO.LEVEL_ERROR);
+    SnapshotScheduleVO snapshotSchedule=_snapshotScheduleDao.getCurrentSchedule(volumeId,policyId,true);
+    if (snapshotSchedule != null) {
+      Date scheduledTimestamp=snapshotSchedule.getScheduledTimestamp();
+      String dateDisplay=DateUtil.displayDateInTimezone(DateUtil.GMT_TIMEZONE,scheduledTimestamp);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Cannot update the policy now. Wait until the current snapshot scheduled at " + dateDisplay + " finishes");
+      }
+      policyId=null;
+      policy=null;
+    }
+ else {
+      _snapSchedMgr.removeSchedule(volumeId,policyId);
+      policy.setSchedule(cmd.getSchedule());
+      policy.setTimezone(cmd.getTimezone());
+      policy.setMaxSnaps(cmd.getMaxSnaps());
+      policy.setActive(true);
+      if (_snapshotPolicyDao.update(policy.getId(),policy)) {
+        event.setLevel(EventVO.LEVEL_INFO);
+        event.setDescription("Successfully updated snapshot policy with Id: " + policyId);
+      }
+    }
+  }
+ else {
+    policy=new SnapshotPolicyVO(volumeId,cmd.getSchedule(),cmd.getTimezone(),(short)type.ordinal(),cmd.getMaxSnaps());
+    policy=_snapshotPolicyDao.persist(policy);
+    policyId=policy.getId();
+    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_CREATE);
+    event.setDescription("Successfully created snapshot policy with Id: " + policyId);
+  }
+  _eventDao.persist(event);
+  if (policyId != null) {
+    _snapSchedMgr.scheduleNextSnapshotJob(policy);
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Failed to update schedule for Snapshot policy with id: " + policyId);
+    }
+  }
+  txn.commit();
+  return policy;
+}
