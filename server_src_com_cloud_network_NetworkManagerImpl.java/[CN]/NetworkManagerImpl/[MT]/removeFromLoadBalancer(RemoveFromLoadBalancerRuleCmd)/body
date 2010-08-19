@@ -1,13 +1,32 @@
 {
+  Long userId=UserContext.current().getUserId();
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long loadBalancerId=cmd.getId();
+  Long vmInstanceId=cmd.getVirtualMachineId();
+  List<Long> instanceIds=cmd.getVirtualMachineIds();
+  if ((vmInstanceId == null) && (instanceIds == null)) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"No virtual machine id specified.");
+  }
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
+  LoadBalancerVO loadBalancer=_loadBalancerDao.findById(Long.valueOf(loadBalancerId));
+  if (loadBalancer == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find load balancer rule with id " + loadBalancerId);
+  }
+ else   if (account != null) {
+    if (!isAdmin(account.getType()) && (loadBalancer.getAccountId() != account.getId().longValue())) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Account " + account.getAccountName() + " does not own load balancer rule "+ loadBalancer.getName()+ " (id:"+ loadBalancer.getId()+ ")");
+    }
+ else     if (!_domainDao.isChildDomain(account.getDomainId(),loadBalancer.getDomainId())) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid load balancer rule id (" + loadBalancer.getId() + ") given, unable to remove virtual machine instances.");
+    }
+  }
   Transaction txn=Transaction.currentTxn();
   LoadBalancerVO loadBalancerLock=null;
   boolean success=true;
   try {
-    LoadBalancerVO loadBalancer=_loadBalancerDao.findById(loadBalancerId);
-    if (loadBalancer == null) {
-      return false;
-    }
-    IPAddressVO ipAddress=_publicIpAddressDao.findById(loadBalancer.getIpAddress());
+    IPAddressVO ipAddress=_ipAddressDao.findById(loadBalancer.getIpAddress());
     if (ipAddress == null) {
       return false;
     }
@@ -22,20 +41,20 @@
         s_logger.warn("Unable to find virtual machine with id " + instanceId);
         throw new InvalidParameterValueException("Unable to find virtual machine with id " + instanceId);
       }
-      FirewallRuleVO fwRule=_firewallRulesDao.findByGroupAndPrivateIp(loadBalancerId,userVm.getGuestIpAddress(),false);
+      FirewallRuleVO fwRule=_rulesDao.findByGroupAndPrivateIp(loadBalancerId,userVm.getGuestIpAddress(),false);
       if (fwRule != null) {
         fwRule.setEnabled(false);
-        _firewallRulesDao.update(fwRule.getId(),fwRule);
+        _rulesDao.update(fwRule.getId(),fwRule);
       }
     }
     List<FirewallRuleVO> allLbRules=new ArrayList<FirewallRuleVO>();
-    IPAddressVO ipAddr=_publicIpAddressDao.findById(loadBalancer.getIpAddress());
-    List<IPAddressVO> ipAddrs=_networkMgr.listPublicIpAddressesInVirtualNetwork(loadBalancer.getAccountId(),ipAddr.getDataCenterId(),null);
+    IPAddressVO ipAddr=_ipAddressDao.findById(loadBalancer.getIpAddress());
+    List<IPAddressVO> ipAddrs=listPublicIpAddressesInVirtualNetwork(loadBalancer.getAccountId(),ipAddr.getDataCenterId(),null);
     for (    IPAddressVO ipv : ipAddrs) {
-      List<FirewallRuleVO> rules=_firewallRulesDao.listIPForwarding(ipv.getAddress(),false);
+      List<FirewallRuleVO> rules=_rulesDao.listIPForwarding(ipv.getAddress(),false);
       allLbRules.addAll(rules);
     }
-    _networkMgr.updateFirewallRules(loadBalancer.getIpAddress(),allLbRules,router);
+    updateFirewallRules(loadBalancer.getIpAddress(),allLbRules,router);
     loadBalancerLock=_loadBalancerDao.acquire(loadBalancerId);
     if (loadBalancerLock == null) {
       s_logger.warn("removeFromLoadBalancer: failed to lock load balancer " + loadBalancerId + ", deleting mappings anyway...");
@@ -44,10 +63,9 @@
     String description;
     String type=EventTypes.EVENT_NET_RULE_DELETE;
     String level=EventVO.LEVEL_INFO;
-    Account account=_accountDao.findById(loadBalancer.getAccountId());
     for (    FirewallRuleVO updatedRule : allLbRules) {
       if (!updatedRule.isEnabled()) {
-        _firewallRulesDao.remove(updatedRule.getId());
+        _rulesDao.remove(updatedRule.getId());
         description="deleted load balancer rule [" + updatedRule.getPublicIpAddress() + ":"+ updatedRule.getPublicPort()+ "]->["+ updatedRule.getPrivateIpAddress()+ ":"+ updatedRule.getPrivatePort()+ "]"+ " "+ updatedRule.getProtocol();
         EventUtils.saveEvent(userId,account.getId(),level,type,description);
       }
