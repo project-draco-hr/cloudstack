@@ -1,22 +1,46 @@
 {
   String snapshotName=cmd.getSnapshotName();
   String VolPath=cmd.getVolumePath();
+  String snapshotPath=cmd.getSnapshotPath();
+  String vmName=cmd.getVmName();
   try {
-    StorageVol vol=getVolume(VolPath);
-    if (vol == null) {
-      return new ManageSnapshotAnswer(cmd,false,null);
+    DomainInfo.DomainState state=null;
+    Domain vm=null;
+    if (vmName != null) {
+      try {
+        vm=getDomain(cmd.getVmName());
+        state=vm.getInfo().state;
+      }
+ catch (      LibvirtException e) {
+      }
     }
-    Domain vm=getDomain(cmd.getVmName());
-    String vmUuid=vm.getUUIDString();
-    Object[] args=new Object[]{snapshotName,vmUuid};
-    String snapshot=SnapshotXML.format(args);
-    s_logger.debug(snapshot);
-    if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
-      vm.snapshotCreateXML(snapshot);
+    if (state == DomainInfo.DomainState.VIR_DOMAIN_RUNNING) {
+      String vmUuid=vm.getUUIDString();
+      Object[] args=new Object[]{snapshotName,vmUuid};
+      String snapshot=SnapshotXML.format(args);
+      s_logger.debug(snapshot);
+      if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
+        vm.snapshotCreateXML(snapshot);
+      }
+ else {
+        DomainSnapshot snap=vm.snapshotLookupByName(snapshotName);
+        snap.delete(0);
+      }
     }
  else {
-      DomainSnapshot snap=vm.snapshotLookupByName(snapshotName);
-      snap.delete(0);
+      final Script command=new Script(_manageSnapshotPath,_timeout,s_logger);
+      if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
+        command.add("-c",VolPath);
+      }
+ else {
+        command.add("-d",snapshotPath);
+      }
+      command.add("-n",snapshotName);
+      String result=command.execute();
+      if (result != null) {
+        s_logger.debug("Failed to manage snapshot: " + result);
+        return new ManageSnapshotAnswer(cmd,false,"Failed to manage snapshot: " + result);
+      }
     }
   }
  catch (  LibvirtException e) {
