@@ -1,0 +1,79 @@
+{
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  String vmName=vmSpec.getName();
+  Connection conn=getConnection();
+  State state=State.Stopped;
+  VM vm=null;
+  try {
+    Host host=Host.getByUuid(conn,_host.uuid);
+synchronized (_vms) {
+      _vms.put(vmName,State.Starting);
+    }
+    Pair<VM,String> v=createVmFromTemplate(conn,vmSpec,host);
+    vm=v.first();
+    String vmUuid=v.second();
+    for (    VolumeTO disk : vmSpec.getDisks()) {
+      createVbd(conn,vmName,vm,disk,disk.getType() == VolumeType.ROOT && vmSpec.getType() != VirtualMachine.Type.User);
+    }
+    NicTO controlNic=null;
+    for (    NicTO nic : vmSpec.getNetworks()) {
+      if (nic.getControlPort() != null) {
+        controlNic=nic;
+      }
+      createVif(conn,vmName,vm,nic);
+    }
+    vm.startOn(conn,host,false,true);
+    if (_canBridgeFirewall) {
+      String result=null;
+      if (vmSpec.getType() != VirtualMachine.Type.User) {
+        result=callHostPlugin("vmops","default_network_rules_systemvm","vmName",vmName);
+      }
+ else {
+      }
+      if (result == null || result.isEmpty() || !Boolean.parseBoolean(result)) {
+        s_logger.warn("Failed to program default network rules for " + vmName);
+      }
+ else {
+        s_logger.info("Programmed default network rules for " + vmName);
+      }
+    }
+    if (controlNic != null) {
+      String privateIp=controlNic.getIp();
+      int cmdPort=controlNic.getControlPort();
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Ping command port, " + privateIp + ":"+ cmdPort);
+      }
+      String result=connect(vmName,privateIp,cmdPort);
+      if (result != null) {
+        throw new CloudRuntimeException("Can not ping System vm " + vmName + "due to:"+ result);
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Ping command port succeeded for vm " + vmName);
+      }
+    }
+    state=State.Running;
+    return new Start2Answer(cmd);
+  }
+ catch (  XmlRpcException e) {
+    String msg=handleVmStartFailure(vmName,vm,"",e);
+    return new Start2Answer(cmd,msg);
+  }
+catch (  XenAPIException e) {
+    String msg=handleVmStartFailure(vmName,vm,"",e);
+    return new Start2Answer(cmd,msg);
+  }
+catch (  Exception e) {
+    String msg=handleVmStartFailure(vmName,vm,"",e);
+    return new Start2Answer(cmd,msg);
+  }
+ finally {
+synchronized (_vms) {
+      if (state != State.Stopped) {
+        _vms.put(vmName,state);
+      }
+ else {
+        _vms.remove(vmName);
+      }
+    }
+  }
+}
