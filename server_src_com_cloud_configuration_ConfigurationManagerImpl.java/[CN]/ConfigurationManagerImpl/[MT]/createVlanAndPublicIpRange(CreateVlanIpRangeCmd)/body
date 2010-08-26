@@ -1,0 +1,183 @@
+{
+  Long userId=UserContext.current().getUserId();
+  if (userId == null) {
+    userId=Long.valueOf(User.UID_SYSTEM);
+  }
+  Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
+  if (forVirtualNetwork == null) {
+    forVirtualNetwork=Boolean.TRUE;
+  }
+  String vlanId=cmd.getVlan();
+  if (vlanId == null) {
+    vlanId=Vlan.UNTAGGED;
+  }
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  Account account=null;
+  if ((accountName != null) && (domainId != null)) {
+    account=_accountDao.findActiveAccount(accountName,domainId);
+    if (account == null) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Please specify a valid account.");
+    }
+  }
+  VlanType vlanType=forVirtualNetwork ? VlanType.VirtualNetwork : VlanType.DirectAttached;
+  Long zoneId=cmd.getZoneId();
+  Long podId=cmd.getPodId();
+  String startIP=cmd.getStartIp();
+  String endIP=cmd.getEndIp();
+  String vlanGateway=cmd.getGateway();
+  String vlanNetmask=cmd.getNetmask();
+  String hypervisorType=_configDao.getValue("hypervisor.type");
+  if (hypervisorType.equalsIgnoreCase("xenserver")) {
+    if (vlanType.toString().equalsIgnoreCase("VirtualNetwork") && vlanId.equalsIgnoreCase("untagged")) {
+      if (_configDao.getValue("xen.public.network.device") == null || _configDao.getValue("xen.public.network.device").equals("")) {
+        throw new InternalErrorException("For adding an untagged IP range, please set up xen.public.network.device");
+      }
+    }
+  }
+  DataCenterVO zone;
+  if (zoneId == null || ((zone=_zoneDao.findById(zoneId)) == null)) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  boolean associateIpRangeToAccount=false;
+  if (vlanType.equals(VlanType.VirtualNetwork)) {
+    if (account != null) {
+      long ipResourceLimit=_accountMgr.findCorrectResourceLimit((AccountVO)account,ResourceType.public_ip);
+      long accountIpRange=NetUtils.ip2Long(endIP) - NetUtils.ip2Long(startIP) + 1;
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(" IPResourceLimit " + ipResourceLimit + " accountIpRange "+ accountIpRange);
+      }
+      if (ipResourceLimit != -1 && accountIpRange > ipResourceLimit) {
+        throw new InvalidParameterValueException(" Public IP Resource Limit is set to " + ipResourceLimit + " which is less than the IP range of "+ accountIpRange+ " provided");
+      }
+      associateIpRangeToAccount=true;
+    }
+  }
+ else   if (vlanType.equals(VlanType.DirectAttached)) {
+    if (!((account != null && podId == null) || (account == null && podId != null))) {
+      throw new InvalidParameterValueException("Direct Attached IP ranges must either be pod-wide, or for one account.");
+    }
+    if (account != null) {
+      if (vlanId.equals(Vlan.UNTAGGED)) {
+        throw new InvalidParameterValueException("Direct Attached IP ranges for an account must be tagged.");
+      }
+      List<HostPodVO> podsInZone=_podDao.listByDataCenterId(zone.getId());
+      for (      HostPodVO pod : podsInZone) {
+        if (_podVlanMapDao.listPodVlanMapsByPod(pod.getId()).size() > 0) {
+          throw new InvalidParameterValueException("Zone " + zone.getName() + " already has pod-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
+        }
+      }
+      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAccountVlanMapsByAccount(account.getId());
+      for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
+        VlanVO vlan=_vlanDao.findById(accountVlanMap.getVlanDbId());
+        if (vlan.getDataCenterId() == zone.getId().longValue()) {
+          throw new InvalidParameterValueException("The account " + account.getAccountName() + " is already assigned to an IP range in zone "+ zone.getName()+ ".");
+        }
+      }
+    }
+ else     if (podId != null) {
+      if (!vlanId.equals(Vlan.UNTAGGED)) {
+        throw new InvalidParameterValueException("Direct Attached IP ranges for a pod must be untagged.");
+      }
+      HostPodVO pod=null;
+      if (podId != null && ((pod=_podDao.findById(podId)) == null)) {
+        throw new InvalidParameterValueException("Please specify a valid pod.");
+      }
+      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAll();
+      for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
+        VlanVO vlan=_vlanDao.findById(accountVlanMap.getVlanDbId());
+        if (vlan.getDataCenterId() == zone.getId().longValue()) {
+          throw new InvalidParameterValueException("Zone " + zone.getName() + " already has account-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
+        }
+      }
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("Please specify a valid IP range type. Valid types are: " + VlanType.values().toString());
+  }
+  if (!NetUtils.isValidIp(vlanGateway)) {
+    throw new InvalidParameterValueException("Please specify a valid gateway");
+  }
+  if (!NetUtils.isValidIp(vlanNetmask)) {
+    throw new InvalidParameterValueException("Please specify a valid netmask");
+  }
+  String newVlanSubnet=NetUtils.getSubNet(vlanGateway,vlanNetmask);
+  String guestNetworkCidr=zone.getGuestNetworkCidr();
+  String[] cidrPair=guestNetworkCidr.split("\\/");
+  String guestIpNetwork=NetUtils.getIpRangeStartIpFromCidr(cidrPair[0],Long.parseLong(cidrPair[1]));
+  long guestCidrSize=Long.parseLong(cidrPair[1]);
+  long vlanCidrSize=NetUtils.getCidrSize(vlanNetmask);
+  long cidrSizeToUse=-1;
+  if (vlanCidrSize < guestCidrSize) {
+    cidrSizeToUse=vlanCidrSize;
+  }
+ else {
+    cidrSizeToUse=guestCidrSize;
+  }
+  String guestSubnet=NetUtils.getCidrSubNet(guestIpNetwork,cidrSizeToUse);
+  if (newVlanSubnet.equals(guestSubnet)) {
+    throw new InvalidParameterValueException("The new IP range you have specified has the same subnet as the guest network in zone: " + zone.getName() + ". Please specify a different gateway/netmask.");
+  }
+  checkPublicIpRangeErrors(zoneId,vlanId,vlanGateway,vlanNetmask,startIP,endIP);
+  List<VlanVO> vlans=_vlanDao.findByZone(zone.getId());
+  for (  VlanVO vlan : vlans) {
+    String otherVlanGateway=vlan.getVlanGateway();
+    String otherVlanSubnet=NetUtils.getSubNet(vlan.getVlanGateway(),vlan.getVlanNetmask());
+    String[] otherVlanIpRange=vlan.getIpRange().split("\\-");
+    String otherVlanStartIP=otherVlanIpRange[0];
+    String otherVlanEndIP=null;
+    if (otherVlanIpRange.length > 1) {
+      otherVlanEndIP=otherVlanIpRange[1];
+    }
+    if (!vlanId.equals(vlan.getVlanId()) && newVlanSubnet.equals(otherVlanSubnet)) {
+      throw new InvalidParameterValueException("The IP range with tag: " + vlan.getVlanId() + " in zone "+ zone.getName()+ " has the same subnet. Please specify a different gateway/netmask.");
+    }
+    if (vlanId.equals(vlan.getVlanId()) && newVlanSubnet.equals(otherVlanSubnet)) {
+      if (NetUtils.ipRangesOverlap(startIP,endIP,otherVlanStartIP,otherVlanEndIP)) {
+        throw new InvalidParameterValueException("The IP range with tag: " + vlan.getVlanId() + " already has IPs that overlap with the new range. Please specify a different start IP/end IP.");
+      }
+      if (!vlanGateway.equals(otherVlanGateway)) {
+        throw new InvalidParameterValueException("The IP range with tag: " + vlan.getVlanId() + " has already been added with gateway "+ otherVlanGateway+ ". Please specify a different tag.");
+      }
+    }
+  }
+  if (_zoneDao.findVnet(zoneId,vlanId).size() > 0) {
+    throw new InvalidParameterValueException("The VLAN tag " + vlanId + " is already being used for the guest network in zone "+ zone.getName());
+  }
+  String ipRange=startIP;
+  if (endIP != null) {
+    ipRange+="-" + endIP;
+  }
+  VlanVO vlan=new VlanVO(vlanType,vlanId,vlanGateway,vlanNetmask,zone.getId(),ipRange);
+  vlan=_vlanDao.persist(vlan);
+  if (account != null && vlanType.equals(VlanType.VirtualNetwork)) {
+    if (!savePublicIPRangeForAccount(startIP,endIP,zoneId,vlan.getId(),account.getId(),account.getDomainId())) {
+      deletePublicIPRange(vlan.getId());
+      _vlanDao.delete(vlan.getId());
+      throw new InternalErrorException("Failed to save IP range. Please contact Cloud Support.");
+    }
+  }
+ else   if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId())) {
+    deletePublicIPRange(vlan.getId());
+    _vlanDao.delete(vlan.getId());
+    throw new InternalErrorException("Failed to save IP range. Please contact Cloud Support.");
+  }
+  if (account != null) {
+    AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(account.getId(),vlan.getId());
+    _accountVlanMapDao.persist(accountVlanMapVO);
+  }
+ else   if (podId != null) {
+    PodVlanMapVO podVlanMapVO=new PodVlanMapVO(podId,vlan.getId());
+    _podVlanMapDao.persist(podVlanMapVO);
+  }
+  String eventMsg="Successfully created new IP range (tag = " + vlanId + ", gateway = "+ vlanGateway+ ", netmask = "+ vlanNetmask+ ", start IP = "+ startIP;
+  if (endIP != null) {
+    eventMsg+=", end IP = " + endIP;
+  }
+  eventMsg+=".";
+  saveConfigurationEvent(userId,account.getId(),EventTypes.EVENT_VLAN_IP_RANGE_CREATE,eventMsg,"vlanType=" + vlanType,"dcId=" + zoneId,"accountId=" + account.getId(),"podId=" + podId,"vlanId=" + vlanId,"vlanGateway=" + vlanGateway,"vlanNetmask=" + vlanNetmask,"startIP=" + startIP,"endIP=" + endIP);
+  if (associateIpRangeToAccount) {
+    associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId());
+  }
+  return vlan;
+}
