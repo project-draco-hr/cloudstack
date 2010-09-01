@@ -1,0 +1,62 @@
+{
+  Long accountId=null;
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long groupId=cmd.getPortForwardingServiceId();
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Unable to list port forwarding service rules for domain " + domainId + ", permission denied.");
+      }
+      if (accountName != null) {
+        Account userAcct=_accountDao.findActiveAccount(accountName,domainId);
+        if (userAcct != null) {
+          accountId=userAcct.getId();
+        }
+ else {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+      }
+    }
+  }
+ else {
+    accountId=account.getId();
+  }
+  if ((groupId != null) && (accountId != null)) {
+    SecurityGroupVO sg=_securityGroupDao.findById(groupId);
+    if (sg != null) {
+      if ((sg.getAccountId() != null) && sg.getAccountId().longValue() != accountId.longValue()) {
+        throw new PermissionDeniedException("Unable to list port forwarding service rules, account " + accountId + " does not own port forwarding service "+ groupId);
+      }
+    }
+ else {
+      throw new InvalidParameterValueException("Unable to find port forwarding service with id " + groupId);
+    }
+  }
+  Filter searchFilter=new Filter(NetworkRuleConfigVO.class,"id",true,null,null);
+  Object id=cmd.getId();
+  SearchBuilder<NetworkRuleConfigVO> sb=_networkRuleConfigDao.createSearchBuilder();
+  if (id != null) {
+    sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  }
+  if (groupId != null) {
+    sb.and("securityGroupId",sb.entity().getSecurityGroupId(),SearchCriteria.Op.EQ);
+  }
+  if (accountId != null) {
+    SearchBuilder<SecurityGroupVO> securityGroupSearch=_securityGroupDao.createSearchBuilder();
+    securityGroupSearch.and("accountId",securityGroupSearch.entity().getAccountId(),SearchCriteria.Op.EQ);
+    sb.join("groupId",securityGroupSearch,securityGroupSearch.entity().getId(),sb.entity().getSecurityGroupId());
+  }
+  SearchCriteria<NetworkRuleConfigVO> sc=sb.create();
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (groupId != null) {
+    sc.setParameters("securityGroupId",groupId);
+  }
+  if (accountId != null) {
+    sc.setJoinParameters("groupId","accountId",accountId);
+  }
+  return _networkRuleConfigDao.search(sc,searchFilter);
+}
