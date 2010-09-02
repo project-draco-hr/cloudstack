@@ -1,9 +1,10 @@
 {
+  Connection conn=getConnection();
 synchronized (pool.getUuid().intern()) {
     Map<String,String> deviceConfig=new HashMap<String,String>();
     try {
-      String target=pool.getHostAddress().trim();
-      String path=pool.getPath().trim();
+      String target=pool.getHost();
+      String path=pool.getPath();
       if (path.endsWith("/")) {
         path=path.substring(0,path.length() - 1);
       }
@@ -28,7 +29,10 @@ synchronized (pool.getUuid().intern()) {
         if (dc.get("targetIQN") == null)         continue;
         if (dc.get("lunid") == null)         continue;
         if (target.equals(dc.get("target")) && targetiqn.equals(dc.get("targetIQN")) && lunid.equals(dc.get("lunid"))) {
-          return sr;
+          if (checkSR(sr)) {
+            return sr;
+          }
+          throw new CloudRuntimeException("SR check failed for storage pool: " + pool.getUuid() + "on host:"+ _host.uuid);
         }
       }
       deviceConfig.put("target",target);
@@ -36,7 +40,7 @@ synchronized (pool.getUuid().intern()) {
       Host host=Host.getByUuid(conn,_host.uuid);
       SR sr=null;
       try {
-        sr=SR.create(conn,host,deviceConfig,new Long(0),pool.getUuid(),pool.getName(),SRType.LVMOISCSI.toString(),"user",true,new HashMap<String,String>());
+        sr=SR.create(conn,host,deviceConfig,new Long(0),pool.getUuid(),Long.toString(pool.getId()),SRType.LVMOISCSI.toString(),"user",true,new HashMap<String,String>());
       }
  catch (      XenAPIException e) {
         String errmsg=e.toString();
@@ -70,10 +74,7 @@ synchronized (pool.getUuid().intern()) {
         }
       }
       deviceConfig.put("SCSIid",scsiid);
-      sr=SR.create(conn,host,deviceConfig,new Long(0),pool.getUuid(),pool.getName(),SRType.LVMOISCSI.toString(),"user",true,new HashMap<String,String>());
-      if (!checkSR(sr)) {
-        throw new Exception("no attached PBD");
-      }
+      sr=SR.create(conn,host,deviceConfig,new Long(0),pool.getUuid(),Long.toString(pool.getId()),SRType.LVMOISCSI.toString(),"user",true,new HashMap<String,String>());
       sr.scan(conn);
       return sr;
     }
