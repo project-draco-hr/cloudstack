@@ -1,5 +1,6 @@
 {
   long count=1;
+  boolean restart=true;
   try {
     StoragePoolVO primaryStorage=_storagePoolDao.findById(primaryStorageId);
     if (primaryStorage == null) {
@@ -7,8 +8,8 @@
       return false;
     }
     count=_storagePoolDao.countBy(primaryStorage.getId(),Status.Up);
+    if (count == 1)     restart=false;
     List<VolumeVO> allVolumes=_volsDao.findByPoolId(primaryStorageId);
-    List<VolumeVO> markedVolumes=new ArrayList<VolumeVO>();
     for (    VolumeVO volume : allVolumes) {
       VMInstanceVO vmInstance=_vmInstanceDao.findById(volume.getInstanceId());
       if (vmInstance.getState().equals(State.Running) || vmInstance.getState().equals(State.Stopped) || vmInstance.getState().equals(State.Stopping)|| vmInstance.getState().equals(State.Starting)) {
@@ -21,7 +22,7 @@
             _storagePoolDao.persist(primaryStorage);
             return false;
           }
- else {
+ else           if (restart) {
             long eventId1=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_PROXY_START,"starting console proxy with Id: " + vmInstance.getId());
             _configMgr.updateConfiguration(userId,"consoleproxy.restart","true");
             if (_consoleProxyMgr.startProxy(vmInstance.getId(),eventId1) == null) {
@@ -48,7 +49,7 @@
             _storagePoolDao.persist(primaryStorage);
             return false;
           }
- else {
+ else           if (restart) {
             long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_START,"starting ssvm with Id: " + vmInstance.getId());
             if (_secStorageMgr.startSecStorageVm(vmInstance.getId(),eventId) == null) {
               s_logger.warn("There was an error starting the ssvm id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance");
@@ -66,10 +67,10 @@
             _storagePoolDao.persist(primaryStorage);
             return false;
           }
- else {
-            long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_START,"starting ssvm with Id: " + vmInstance.getId());
-            if (_secStorageMgr.startSecStorageVm(vmInstance.getId(),eventId) == null) {
-              s_logger.warn("There was an error starting the ssvm id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance");
+ else           if (restart) {
+            long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_PROXY_START,"starting domr with Id: " + vmInstance.getId());
+            if (_networkMgr.startRouter(vmInstance.getId(),eventId) == null) {
+              s_logger.warn("There was an error starting the omr id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance");
               primaryStorage.setStatus(Status.ErrorInMaintenance);
               _storagePoolDao.persist(primaryStorage);
               return false;
@@ -77,9 +78,6 @@
           }
         }
       }
-    }
-    for (    VolumeVO vol : markedVolumes) {
-      _volsDao.remove(vol.getId());
     }
     primaryStorage.setStatus(Status.Maintenance);
     _storagePoolDao.persist(primaryStorage);
