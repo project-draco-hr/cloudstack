@@ -1,31 +1,48 @@
 {
   String secondaryStorageURL=cmd.getSecondaryStorageURL();
-  String snapshotUUID=cmd.getSnapshotPath();
   StoragePool secondaryStorage=null;
-  StoragePool privateTemplStorage=null;
-  StorageVol privateTemplateVol=null;
-  StorageVol snapshotVol=null;
   try {
     String templateFolder=cmd.getAccountId() + File.separator + cmd.getTemplateId()+ File.separator;
     String templateInstallFolder="/template/tmpl/" + templateFolder;
     secondaryStorage=getNfsSPbyURI(_conn,new URI(secondaryStorageURL));
-    String mountPath=_mountPoint + File.separator + secondaryStorage.getUUIDString()+ templateInstallFolder;
-    File mpfile=new File(mountPath);
-    if (!mpfile.exists()) {
-      mpfile.mkdir();
+    String tmpltPath=_mountPoint + File.separator + secondaryStorage.getUUIDString()+ templateInstallFolder;
+    _storage.mkdirs(tmpltPath);
+    Script command=new Script(_createTmplPath,_timeout,s_logger);
+    command.add("-f",cmd.getSnapshotPath());
+    command.add("-c",cmd.getSnapshotName());
+    command.add("-t",tmpltPath);
+    command.add("-n",cmd.getUniqueName() + ".qcow2");
+    command.add("-s");
+    String result=command.execute();
+    if (result != null) {
+      s_logger.debug("failed to create template: " + result);
+      return new CreatePrivateTemplateAnswer(cmd,false,result,null,0,null,null);
     }
-    privateTemplStorage=getNfsSPbyURI(_conn,new URI(secondaryStorageURL + templateInstallFolder));
-    snapshotVol=getVolume(snapshotUUID);
-    LibvirtStorageVolumeDef vol=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),snapshotVol.getInfo().capacity,volFormat.QCOW2,null,null);
-    s_logger.debug(vol.toString());
-    privateTemplateVol=copyVolume(privateTemplStorage,vol,snapshotVol);
-    return new CreatePrivateTemplateAnswer(cmd,true,null,templateInstallFolder + privateTemplateVol.getName(),privateTemplateVol.getInfo().capacity / 1024 * 1024,privateTemplateVol.getName(),ImageFormat.QCOW2);
+    Map<String,Object> params=new HashMap<String,Object>();
+    params.put(StorageLayer.InstanceConfigKey,_storage);
+    Processor qcow2Processor=new QCOW2Processor();
+    qcow2Processor.configure("QCOW2 Processor",params);
+    FormatInfo info=qcow2Processor.process(tmpltPath,null,cmd.getUniqueName());
+    TemplateLocation loc=new TemplateLocation(_storage,tmpltPath);
+    loc.create(1,true,cmd.getUniqueName());
+    loc.addFormat(info);
+    loc.save();
+    return new CreatePrivateTemplateAnswer(cmd,true,null,templateInstallFolder + cmd.getUniqueName() + ".qcow2",info.virtualSize,cmd.getUniqueName(),ImageFormat.QCOW2);
   }
  catch (  URISyntaxException e) {
     return new CreatePrivateTemplateAnswer(cmd,false,e.toString(),null,0,null,null);
   }
 catch (  LibvirtException e) {
     s_logger.debug("Failed to get secondary storage pool: " + e.toString());
+    return new CreatePrivateTemplateAnswer(cmd,false,e.toString(),null,0,null,null);
+  }
+catch (  InternalErrorException e) {
+    return new CreatePrivateTemplateAnswer(cmd,false,e.toString(),null,0,null,null);
+  }
+catch (  IOException e) {
+    return new CreatePrivateTemplateAnswer(cmd,false,e.toString(),null,0,null,null);
+  }
+catch (  ConfigurationException e) {
     return new CreatePrivateTemplateAnswer(cmd,false,e.toString(),null,0,null,null);
   }
 }

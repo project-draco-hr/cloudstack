@@ -1,0 +1,67 @@
+{
+  VolumeVO volume=null;
+  if (volumeId != 0) {
+    volume=_volsDao.findById(volumeId);
+  }
+ else {
+    volume=_volsDao.findByInstanceAndDeviceId(instanceId,deviceId).get(0);
+  }
+  Long vmId=null;
+  if (instanceId == 0) {
+    vmId=volume.getInstanceId();
+  }
+ else {
+    vmId=instanceId;
+  }
+  if (vmId == null) {
+    return;
+  }
+  EventVO event=new EventVO();
+  event.setType(EventTypes.EVENT_VOLUME_DETACH);
+  event.setUserId(1L);
+  event.setAccountId(volume.getAccountId());
+  event.setState(EventState.Started);
+  event.setStartId(startEventId);
+  event.setDescription("Detaching volume: " + volumeId + " from Vm: "+ vmId);
+  _eventDao.persist(event);
+  UserVmVO vm=_vmDao.findById(vmId);
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled())     s_logger.info("Trying to attaching volume " + volumeId + "to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
+    _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,volumeId);
+  }
+  String errorMsg="Failed to detach volume: " + volume.getName() + " from VM: "+ vm.getName();
+  boolean sendCommand=(vm.getState() == State.Running);
+  Answer answer=null;
+  if (sendCommand) {
+    AttachVolumeCommand cmd=new AttachVolumeCommand(false,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),deviceId != 0 ? deviceId : volume.getDeviceId());
+    try {
+      answer=_agentMgr.send(vm.getHostId(),cmd);
+    }
+ catch (    Exception e) {
+      throw new InternalErrorException(errorMsg + " due to: " + e.getMessage());
+    }
+  }
+  event=new EventVO();
+  event.setAccountId(volume.getAccountId());
+  event.setUserId(1L);
+  event.setType(EventTypes.EVENT_VOLUME_DETACH);
+  event.setState(EventState.Completed);
+  event.setStartId(startEventId);
+  if (!sendCommand || (answer != null && answer.getResult())) {
+    _volsDao.detachVolume(volume.getId());
+    if (!vm.getName().equals(vm.getDisplayName()))     event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getName()+ "("+ vm.getDisplayName()+ ")");
+ else     event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getName());
+    event.setLevel(EventVO.LEVEL_INFO);
+    _eventDao.persist(event);
+  }
+ else {
+    if (answer != null) {
+      String details=answer.getDetails();
+      if (details != null && !details.isEmpty())       errorMsg+="; " + details;
+    }
+    throw new InternalErrorException(errorMsg);
+  }
+}
