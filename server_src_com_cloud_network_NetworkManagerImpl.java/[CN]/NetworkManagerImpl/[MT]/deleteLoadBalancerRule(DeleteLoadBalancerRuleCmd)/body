@@ -1,13 +1,28 @@
 {
+  Long loadBalancerId=cmd.getId();
+  Long userId=UserContext.current().getUserId();
+  Account account=(Account)UserContext.current().getAccountObject();
+  LoadBalancerVO loadBalancer=_loadBalancerDao.findById(loadBalancerId);
+  if (loadBalancer == null) {
+    throw new InvalidParameterValueException("Unable to find load balancer rule with id " + loadBalancerId);
+  }
+  if (account != null) {
+    if (!isAdmin(account.getType())) {
+      if (loadBalancer.getAccountId() != account.getId().longValue()) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Account " + account.getAccountName() + " does not own load balancer rule "+ loadBalancer.getName()+ " (id:"+ loadBalancerId+ ")");
+      }
+    }
+ else     if (!_domainDao.isChildDomain(account.getDomainId(),loadBalancer.getDomainId())) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to delete load balancer rule " + loadBalancer.getName() + " (id:"+ loadBalancerId+ "), permission denied.");
+    }
+  }
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
   Transaction txn=Transaction.currentTxn();
-  LoadBalancerVO loadBalancer=null;
   LoadBalancerVO loadBalancerLock=null;
   try {
-    loadBalancer=_loadBalancerDao.findById(loadBalancerId);
-    if (loadBalancer == null) {
-      return false;
-    }
-    IPAddressVO ipAddress=_publicIpAddressDao.findById(loadBalancer.getIpAddress());
+    IPAddressVO ipAddress=_ipAddressDao.findById(loadBalancer.getIpAddress());
     if (ipAddress == null) {
       return false;
     }
@@ -20,12 +35,12 @@
         _firewallRulesDao.update(fwRule.getId(),fwRule);
       }
       List<FirewallRuleVO> allLbRules=new ArrayList<FirewallRuleVO>();
-      List<IPAddressVO> ipAddrs=_networkMgr.listPublicIpAddressesInVirtualNetwork(loadBalancer.getAccountId(),ipAddress.getDataCenterId(),null);
+      List<IPAddressVO> ipAddrs=listPublicIpAddressesInVirtualNetwork(loadBalancer.getAccountId(),ipAddress.getDataCenterId(),null);
       for (      IPAddressVO ipv : ipAddrs) {
         List<FirewallRuleVO> rules=_firewallRulesDao.listIPForwarding(ipv.getAddress(),false);
         allLbRules.addAll(rules);
       }
-      _networkMgr.updateFirewallRules(loadBalancer.getIpAddress(),allLbRules,router);
+      updateFirewallRules(loadBalancer.getIpAddress(),allLbRules,router);
       loadBalancerLock=_loadBalancerDao.acquire(loadBalancerId);
       if (loadBalancerLock == null) {
         s_logger.warn("deleteLoadBalancer: failed to lock load balancer " + loadBalancerId + ", deleting mappings anyway...");
@@ -35,11 +50,11 @@
       String type=EventTypes.EVENT_NET_RULE_DELETE;
       String ruleName="load balancer";
       String level=EventVO.LEVEL_INFO;
-      Account account=_accountDao.findById(loadBalancer.getAccountId());
+      Account accountOwner=_accountDao.findById(loadBalancer.getAccountId());
       for (      FirewallRuleVO updatedRule : fwRules) {
         _firewallRulesDao.remove(updatedRule.getId());
         description="deleted " + ruleName + " rule ["+ updatedRule.getPublicIpAddress()+ ":"+ updatedRule.getPublicPort()+ "]->["+ updatedRule.getPrivateIpAddress()+ ":"+ updatedRule.getPrivatePort()+ "]"+ " "+ updatedRule.getProtocol();
-        EventUtils.saveEvent(userId,account.getId(),level,type,description);
+        EventUtils.saveEvent(userId,accountOwner.getId(),level,type,description);
       }
     }
     txn.commit();
