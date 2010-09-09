@@ -1,0 +1,44 @@
+{
+  UploadJob uj=jobs.get(jobId);
+  if (uj == null) {
+    s_logger.warn("setUploadStatus for jobId: " + jobId + ", status="+ status+ " no job found");
+    return;
+  }
+  TemplateUploader tu=uj.getTemplateUploader();
+  s_logger.warn("Upload Completion for jobId: " + jobId + ", status="+ status);
+  s_logger.warn("UploadedBytes=" + tu.getUploadedBytes() + ", error="+ tu.getUploadError()+ ", pct="+ tu.getUploadPercent());
+switch (status) {
+case ABORTED:
+case NOT_STARTED:
+case UNRECOVERABLE_ERROR:
+    uj.cleanup();
+  break;
+case UNKNOWN:
+return;
+case IN_PROGRESS:
+s_logger.info("Resuming jobId: " + jobId + ", status="+ status);
+tu.setResume(true);
+threadPool.execute(tu);
+break;
+case RECOVERABLE_ERROR:
+threadPool.execute(tu);
+break;
+case UPLOAD_FINISHED:
+tu.setUploadError("Upload success, starting install ");
+String result=postUpload(jobId);
+if (result != null) {
+s_logger.error("Failed post upload script: " + result);
+tu.setStatus(Status.UNRECOVERABLE_ERROR);
+tu.setUploadError("Failed post upload script: " + result);
+}
+ else {
+s_logger.warn("Upload completed successfully at " + new SimpleDateFormat().format(new Date()));
+tu.setStatus(Status.POST_UPLOAD_FINISHED);
+tu.setUploadError("Upload completed successfully at " + new SimpleDateFormat().format(new Date()));
+}
+uj.cleanup();
+break;
+default :
+break;
+}
+}
