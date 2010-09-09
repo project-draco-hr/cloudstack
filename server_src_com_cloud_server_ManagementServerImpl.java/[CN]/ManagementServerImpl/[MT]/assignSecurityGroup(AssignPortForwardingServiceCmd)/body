@@ -1,12 +1,48 @@
 {
+  Long userId=UserContext.current().getUserId();
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long securityGroupId=cmd.getId();
+  List<Long> sgIdList=cmd.getIds();
+  String publicIp=cmd.getPublicIp();
+  Long vmId=cmd.getVirtualMachineId();
+  if ((securityGroupId == null) && (sgIdList == null)) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"No service id (or list of ids) specified.");
+  }
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
+  List<Long> validateSGList=null;
+  if (securityGroupId == null) {
+    validateSGList=sgIdList;
+  }
+ else {
+    validateSGList=new ArrayList<Long>();
+    validateSGList.add(securityGroupId);
+  }
+  Long validatedAccountId=validateSecurityGroupsAndInstance(validateSGList,vmId);
+  if (validatedAccountId == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to apply port forwarding services " + StringUtils.join(sgIdList,",") + " to instance "+ vmId+ ".  Invalid list of port forwarding services for the given instance.");
+  }
+  if (account != null) {
+    if (!isAdmin(account.getType()) && (account.getId().longValue() != validatedAccountId.longValue())) {
+      throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Permission denied applying port forwarding services " + StringUtils.join(sgIdList,",") + " to instance "+ vmId+ ".");
+    }
+ else {
+      Account validatedAccount=findAccountById(validatedAccountId);
+      if (!isChildDomain(account.getDomainId(),validatedAccount.getDomainId())) {
+        throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Permission denied applying port forwarding services " + StringUtils.join(sgIdList,",") + " to instance "+ vmId+ ".");
+      }
+    }
+  }
+  UserVm userVm=_userVmDao.findById(vmId);
+  if (userVm == null) {
+    s_logger.warn("Unable to find virtual machine with id " + vmId);
+    throw new InvalidParameterValueException("Unable to find virtual machine with id " + vmId);
+  }
+  long startEventId=EventUtils.saveScheduledEvent(userId,userVm.getAccountId(),EventTypes.EVENT_PORT_FORWARDING_SERVICE_APPLY,"applying port forwarding service for Vm with Id: " + vmId);
   boolean locked=false;
   Transaction txn=Transaction.currentTxn();
   try {
-    UserVmVO userVm=_userVmDao.findById(vmId);
-    if (userVm == null) {
-      s_logger.warn("Unable to find virtual machine with id " + vmId);
-      throw new InvalidParameterValueException("Unable to find virtual machine with id " + vmId);
-    }
     EventUtils.saveStartedEvent(userId,userVm.getAccountId(),EventTypes.EVENT_PORT_FORWARDING_SERVICE_APPLY,"Applying port forwarding service for Vm with Id: " + vmId,startEventId);
     State vmState=userVm.getState();
 switch (vmState) {
@@ -14,7 +50,7 @@ case Destroyed:
 case Error:
 case Expunging:
 case Unknown:
-      throw new InvalidParameterValueException("Unable to assign port forwarding service(s) '" + ((securityGroupId == null) ? StringUtils.join(securityGroupIdList,",") : securityGroupId) + "' to virtual machine "+ vmId+ " due to virtual machine being in an invalid state for assigning a port forwarding service ("+ vmState+ ")");
+      throw new InvalidParameterValueException("Unable to assign port forwarding service(s) '" + ((securityGroupId == null) ? StringUtils.join(sgIdList,",") : securityGroupId) + "' to virtual machine "+ vmId+ " due to virtual machine being in an invalid state for assigning a port forwarding service ("+ vmState+ ")");
   }
   ServiceOfferingVO offering=_offeringsDao.findById(userVm.getServiceOfferingId());
   if ((offering == null) || !GuestIpType.Virtualized.equals(offering.getGuestIpType())) {
@@ -42,7 +78,6 @@ case Unknown:
     throw new InvalidParameterValueException("Invalid IP address " + publicIp + " for applying port forwarding services, the IP address is not in a 'virtual network' vlan.");
   }
   txn.start();
-  Account account=_accountDao.findById(userVm.getAccountId());
   if (securityGroupId == null) {
     List<FirewallRuleVO> fwRulesToRemove=_firewallRulesDao.listForwardingByPubAndPrivIp(true,publicIp,userVm.getGuestIpAddress());
 {
@@ -53,13 +88,13 @@ case Unknown:
         fwRule.setEnabled(false);
         _firewallRulesDao.remove(fwRule.getId());
         description="deleted ip forwarding rule [" + fwRule.getPublicIpAddress() + ":"+ fwRule.getPublicPort()+ "]->["+ fwRule.getPrivateIpAddress()+ ":"+ fwRule.getPrivatePort()+ "]"+ " "+ fwRule.getProtocol();
-        EventUtils.saveEvent(userId,account.getId(),level,type,description);
+        EventUtils.saveEvent(userId,userVm.getAccountId(),level,type,description);
       }
     }
     List<FirewallRuleVO> updatedRules=_networkMgr.updateFirewallRules(null,fwRulesToRemove,router);
     if ((updatedRules != null) && (updatedRules.size() != fwRulesToRemove.size())) {
       if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Unable to clean up all port forwarding service rules for public IP " + publicIp + " and guest vm "+ userVm.getName()+ " while applying port forwarding service(s) '"+ ((securityGroupId == null) ? StringUtils.join(securityGroupIdList,",") : securityGroupId)+ "'"+ " -- intended to remove "+ fwRulesToRemove.size()+ " rules, removd "+ ((updatedRules == null) ? "null" : updatedRules.size())+ " rules.");
+        s_logger.debug("Unable to clean up all port forwarding service rules for public IP " + publicIp + " and guest vm "+ userVm.getName()+ " while applying port forwarding service(s) '"+ ((securityGroupId == null) ? StringUtils.join(sgIdList,",") : securityGroupId)+ "'"+ " -- intended to remove "+ fwRulesToRemove.size()+ " rules, removd "+ ((updatedRules == null) ? "null" : updatedRules.size())+ " rules.");
       }
     }
     List<SecurityGroupVMMapVO> sgVmMappings=_securityGroupVMMapDao.listByIpAndInstanceId(publicIp,vmId);
@@ -101,7 +136,7 @@ case Unknown:
     finalSecurityGroupIdList.add(securityGroupId);
   }
  else {
-    finalSecurityGroupIdList.addAll(securityGroupIdList);
+    finalSecurityGroupIdList.addAll(sgIdList);
   }
   for (  Long sgId : finalSecurityGroupIdList) {
     if (sgId.longValue() == 0) {
