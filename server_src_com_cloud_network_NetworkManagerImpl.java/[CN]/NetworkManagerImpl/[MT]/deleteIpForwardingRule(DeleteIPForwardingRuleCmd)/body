@@ -1,0 +1,84 @@
+{
+  Long ruleId=cmd.getId();
+  Long userId=UserContext.current().getUserId();
+  Account account=(Account)UserContext.current().getAccountObject();
+  FirewallRuleVO rule=_firewallRulesDao.findById(ruleId);
+  if (rule == null) {
+    throw new InvalidParameterValueException("Unable to find port forwarding rule " + ruleId);
+  }
+  IPAddressVO ipAddress=_ipAddressDao.findById(rule.getPublicIpAddress());
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to find IP address for port forwarding rule " + ruleId);
+  }
+  String privatePort=rule.getPrivatePort();
+  String publicPort=rule.getPublicPort();
+  if (!NetUtils.isValidPort(publicPort) || !NetUtils.isValidPort(privatePort)) {
+    throw new InvalidParameterValueException("Invalid value for port");
+  }
+  String proto=rule.getProtocol();
+  if (!NetUtils.isValidProto(proto)) {
+    throw new InvalidParameterValueException("Invalid protocol");
+  }
+  Account ruleOwner=_accountDao.findById(ipAddress.getAccountId());
+  if (ruleOwner == null) {
+    throw new InvalidParameterValueException("Unable to find owning account for port forwarding rule " + ruleId);
+  }
+  if (account != null) {
+    if (isAdmin(account.getType())) {
+      if (!_domainDao.isChildDomain(account.getDomainId(),ruleOwner.getDomainId())) {
+        throw new PermissionDeniedException("Unable to delete port forwarding rule " + ruleId + ", permission denied.");
+      }
+    }
+ else     if (account.getId().longValue() != ruleOwner.getId().longValue()) {
+      throw new PermissionDeniedException("Unable to delete port forwarding rule " + ruleId + ", permission denied.");
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  boolean success=false;
+  try {
+    txn.start();
+    String privateIp=rule.getPrivateIpAddress();
+    String publicIp=rule.getPublicIpAddress();
+    List<FirewallRuleVO> fwdings=_firewallRulesDao.listIPForwardingForUpdate(publicIp,publicPort,proto);
+    FirewallRuleVO fwRule=null;
+    if (fwdings.size() == 0) {
+      throw new InvalidParameterValueException("No such rule");
+    }
+ else     if (fwdings.size() == 1) {
+      fwRule=fwdings.get(0);
+      if (fwRule.getPrivateIpAddress().equalsIgnoreCase(privateIp) && fwRule.getPrivatePort().equals(privatePort)) {
+        _firewallRulesDao.delete(fwRule.getId());
+      }
+ else {
+        throw new InvalidParameterValueException("No such rule");
+      }
+    }
+ else {
+      throw new InternalErrorException("Multiple matches. Please contact support");
+    }
+    fwRule.setEnabled(false);
+    success=updateFirewallRule(fwRule,null,null);
+    String description;
+    String type=EventTypes.EVENT_NET_RULE_DELETE;
+    String level=EventVO.LEVEL_INFO;
+    String ruleName=rule.isForwarding() ? "ip forwarding" : "load balancer";
+    if (success) {
+      description="deleted " + ruleName + " rule ["+ rule.getPublicIpAddress()+ ":"+ rule.getPublicPort()+ "]->["+ rule.getPrivateIpAddress()+ ":"+ rule.getPrivatePort()+ "] "+ rule.getProtocol();
+    }
+ else {
+      level=EventVO.LEVEL_ERROR;
+      description="deleted " + ruleName + " rule ["+ rule.getPublicIpAddress()+ ":"+ rule.getPublicPort()+ "]->["+ rule.getPrivateIpAddress()+ ":"+ rule.getPrivatePort()+ "] "+ rule.getProtocol();
+    }
+    EventUtils.saveEvent(userId,ipAddress.getAccountId(),level,type,description);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    s_logger.error("Unexpected exception deleting port forwarding rule " + ruleId,ex);
+    return false;
+  }
+ finally {
+    txn.close();
+  }
+  return success;
+}
