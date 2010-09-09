@@ -1,0 +1,103 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=null;
+  boolean isAdmin=false;
+  if ((account == null) || isAdmin(account.getType())) {
+    isAdmin=true;
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Invalid domain id (" + domainId + ") given, unable to list volumes.");
+      }
+      if (accountName != null) {
+        Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
+        if (userAccount != null) {
+          accountId=userAccount.getId();
+        }
+ else {
+          throw new InvalidParameterValueException("could not find account " + accountName + " in domain "+ domainId);
+        }
+      }
+    }
+ else {
+      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+    }
+  }
+ else {
+    accountId=account.getId();
+  }
+  Filter searchFilter=new Filter(VolumeVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object id=cmd.getId();
+  Long vmInstanceId=cmd.getVirtualMachineId();
+  Object name=cmd.getVolumeName();
+  Object keyword=cmd.getKeyword();
+  Object type=null;
+  Object zone=null;
+  Object pod=null;
+  if (isAdmin) {
+    type=cmd.getType();
+    zone=cmd.getZoneId();
+    pod=cmd.getPodId();
+  }
+ else {
+    domainId=null;
+  }
+  SearchBuilder<VolumeVO> sb=_volumeDao.createSearchBuilder();
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("accountIdEQ",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  sb.and("volumeType",sb.entity().getVolumeType(),SearchCriteria.Op.LIKE);
+  sb.and("instanceId",sb.entity().getInstanceId(),SearchCriteria.Op.EQ);
+  sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
+  sb.and("podId",sb.entity().getPodId(),SearchCriteria.Op.EQ);
+  sb.and("domRNameLabel",sb.entity().getName(),SearchCriteria.Op.NLIKE);
+  sb.and("domPNameLabel",sb.entity().getName(),SearchCriteria.Op.NLIKE);
+  sb.and("domSNameLabel",sb.entity().getName(),SearchCriteria.Op.NLIKE);
+  sb.and("status",sb.entity().getStatus(),SearchCriteria.Op.EQ);
+  sb.and("destroyed",sb.entity().getDestroyed(),SearchCriteria.Op.EQ);
+  if ((accountId == null) && (domainId != null)) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId());
+  }
+  SearchCriteria<VolumeVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<VolumeVO> ssc=_volumeDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("nameLabel",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("volumeType",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (accountId != null) {
+    sc.setParameters("accountIdEQ",accountId);
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById((Long)domainId);
+    sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+  }
+  if (type != null) {
+    sc.setParameters("volumeType","%" + type + "%");
+  }
+  if (vmInstanceId != null) {
+    sc.setParameters("instanceId",vmInstanceId);
+  }
+  if (zone != null) {
+    sc.setParameters("dataCenterId",zone);
+  }
+  if (pod != null) {
+    sc.setParameters("podId",pod);
+  }
+  sc.setParameters("domRNameLabel","r-%");
+  sc.setParameters("domPNameLabel","v-%");
+  sc.setParameters("domSNameLabel","s-%");
+  sc.setParameters("destroyed",false);
+  return _volumeDao.search(sc,searchFilter);
+}
