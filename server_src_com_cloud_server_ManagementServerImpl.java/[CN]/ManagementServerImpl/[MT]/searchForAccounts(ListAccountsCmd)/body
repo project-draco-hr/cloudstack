@@ -1,0 +1,62 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=cmd.getId();
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId == null) {
+      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+    }
+ else     if (account != null) {
+      if (!_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid domain id (" + domainId + ") given, unable to list accounts");
+      }
+    }
+  }
+ else {
+    accountId=account.getId();
+  }
+  Filter searchFilter=new Filter(AccountVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object type=cmd.getAccountType();
+  Object state=cmd.getState();
+  Object isCleanupRequired=cmd.isCleanupRequired();
+  Object keyword=cmd.getKeyword();
+  SearchBuilder<AccountVO> sb=_accountDao.createSearchBuilder();
+  sb.and("accountName",sb.entity().getAccountName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  sb.and("needsCleanup",sb.entity().getNeedsCleanup(),SearchCriteria.Op.EQ);
+  if ((accountId == null) && (domainId != null)) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId());
+  }
+  SearchCriteria<AccountVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<AccountVO> ssc=_accountDao.createSearchCriteria();
+    ssc.addOr("accountName",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("state",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("accountName",SearchCriteria.Op.SC,ssc);
+  }
+  if (accountName != null) {
+    sc.setParameters("accountName","%" + accountName + "%");
+  }
+  if (accountId != null) {
+    sc.setParameters("id",accountId);
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById((Long)domainId);
+    sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+  }
+  if (type != null) {
+    sc.setParameters("type",type);
+  }
+  if (state != null) {
+    sc.setParameters("state",state);
+  }
+  if (isCleanupRequired != null) {
+    sc.setParameters("needsCleanup",isCleanupRequired);
+  }
+  return _accountDao.search(sc,searchFilter);
+}
