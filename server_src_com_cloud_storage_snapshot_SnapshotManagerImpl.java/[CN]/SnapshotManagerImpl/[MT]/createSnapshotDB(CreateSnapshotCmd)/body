@@ -1,9 +1,10 @@
 {
-  VolumeVO volume=findVolumeById(volumeId);
+  Long volumeId=cmd.getVolumeId();
+  VolumeVO volume=_volsDao.findById(volumeId);
   if (volume.getStatus() != AsyncInstanceCreateStatus.Created) {
     throw new InvalidParameterValueException("VolumeId: " + volumeId + " is not in Created state but "+ volume.getStatus()+ ". Cannot take snapshot.");
   }
-  StoragePoolVO storagePoolVO=findPoolById(volume.getPoolId());
+  StoragePoolVO storagePoolVO=_storagePoolDao.findById(volume.getPoolId());
   if (storagePoolVO == null) {
     throw new InvalidParameterValueException("VolumeId: " + volumeId + " does not have a valid storage pool. Is it destroyed?");
   }
@@ -12,13 +13,15 @@
   }
   Long instanceId=volume.getInstanceId();
   if (instanceId != null) {
-    if (findUserVMInstanceById(instanceId) == null) {
+    if (_vmDao.findById(instanceId) == null) {
       throw new InvalidParameterValueException("Snapshots of volumes attached to System or router VM are not allowed");
     }
   }
-  Long jobId=_snapshotScheduler.scheduleManualSnapshot(userId,volumeId);
-  if (jobId == null) {
+  SnapshotScheduleVO schedule=_snapSchedMgr.scheduleManualSnapshot(volumeId);
+  if (schedule == null) {
     throw new InternalErrorException("Snapshot could not be scheduled because there is another snapshot underway for the same volume. " + "Please wait for some time.");
   }
-  return jobId;
+  List<Long> policyIds=new ArrayList<Long>();
+  policyIds.add(Snapshot.MANUAL_POLICY_ID);
+  return createSnapshotImpl(volumeId,policyIds);
 }
