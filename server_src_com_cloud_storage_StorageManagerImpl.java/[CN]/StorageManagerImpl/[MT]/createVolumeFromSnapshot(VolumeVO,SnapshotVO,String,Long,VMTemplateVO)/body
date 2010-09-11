@@ -2,31 +2,7 @@
   VolumeVO createdVolume=null;
   Long volumeId=null;
   String volumeFolder=null;
-  Account account=_accountDao.findById(accountId);
-  VolumeVO volume=new VolumeVO(null,userSpecifiedName,-1,-1,-1,-1,new Long(-1),null,null,0,Volume.VolumeType.DATADISK);
-  volume.setPoolId(null);
-  volume.setDataCenterId(dc.getId());
-  volume.setPodId(null);
-  volume.setAccountId(accountId);
-  volume.setDomainId(account.getDomainId().longValue());
-  volume.setMirrorState(MirrorState.NOT_MIRRORED);
-  if (diskOffering != null) {
-    volume.setDiskOfferingId(diskOffering.getId());
-  }
-  volume.setSize(originalVolumeSize);
-  volume.setStorageResourceType(StorageResourceType.STORAGE_POOL);
-  volume.setInstanceId(null);
-  volume.setUpdated(new Date());
-  volume.setStatus(AsyncInstanceCreateStatus.Creating);
-  volume=_volsDao.persist(volume);
-  volumeId=volume.getId();
-  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
-  if (asyncExecutor != null) {
-    AsyncJobVO job=asyncExecutor.getJob();
-    if (s_logger.isInfoEnabled())     s_logger.info("CreateVolume created a new instance " + volumeId + ", update async job-"+ job.getId()+ " progress status");
-    _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
-    _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,volumeId);
-  }
+  Account account=_accountDao.findById(volume.getAccountId());
   final HashSet<StoragePool> poolsToAvoid=new HashSet<StoragePool>();
   StoragePoolVO pool=null;
   boolean success=false;
@@ -34,14 +10,16 @@
   Pair<HostPodVO,Long> pod=null;
   String volumeUUID=null;
   String details=null;
-  DiskCharacteristicsTO dskCh=createDiskCharacteristics(volume,template,dc,diskOffering);
+  DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+  DataCenterVO dc=_dcDao.findById(volume.getDataCenterId());
+  DiskCharacteristicsTO dskCh=createDiskCharacteristics(volume,template,dc.getId(),diskOffering);
   while ((pod=_agentMgr.findPod(null,null,dc,account.getId(),podsToAvoid)) != null) {
     while ((pool=findStoragePool(dskCh,dc,pod.first(),null,null,null,null,poolsToAvoid)) != null) {
       volumeFolder=pool.getPath();
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Attempting to create volume from snapshotId: " + snapshot.getId() + " on storage pool "+ pool.getName());
       }
-      Pair<String,String> volumeDetails=createVDIFromSnapshot(userId,snapshot,pool,templatePath);
+      Pair<String,String> volumeDetails=createVDIFromSnapshot(UserContext.current().getUserId(),snapshot,pool,templatePath);
       volumeUUID=volumeDetails.first();
       details=volumeDetails.second();
       if (volumeUUID != null) {
@@ -64,7 +42,7 @@
   txn.start();
   createdVolume=_volsDao.findById(volumeId);
   if (success) {
-    _accountMgr.incrementResourceCount(accountId,ResourceType.volume);
+    _accountMgr.incrementResourceCount(account.getId(),ResourceType.volume);
     createdVolume.setStatus(AsyncInstanceCreateStatus.Created);
     createdVolume.setPodId(pod.first().getId());
     createdVolume.setPoolId(pool.getId());

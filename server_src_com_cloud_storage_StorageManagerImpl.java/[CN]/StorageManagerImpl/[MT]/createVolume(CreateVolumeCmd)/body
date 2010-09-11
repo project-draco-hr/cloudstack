@@ -1,0 +1,52 @@
+{
+  VolumeVO createdVolume=_volsDao.findById(cmd.getId());
+  Long userId=UserContext.current().getUserId();
+  if (cmd.getSnapshotId() != null) {
+    return createVolumeFromSnapshot(createdVolume,cmd.getSnapshotId());
+  }
+ else {
+    DataCenterVO dc=_dcDao.findById(cmd.getZoneId());
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(cmd.getDiskOfferingId());
+    long size=diskOffering.getDiskSize();
+    try {
+      List<StoragePoolVO> poolsToAvoid=new ArrayList<StoragePoolVO>();
+      Set<Long> podsToAvoid=new HashSet<Long>();
+      Pair<HostPodVO,Long> pod=null;
+      while ((pod=_agentMgr.findPod(null,null,dc,createdVolume.getAccountId(),podsToAvoid)) != null) {
+        if ((createdVolume=createVolume(createdVolume,null,null,dc,pod.first(),null,null,diskOffering,poolsToAvoid,size)) != null) {
+          break;
+        }
+ else {
+          podsToAvoid.add(pod.first().getId());
+        }
+      }
+      EventVO event=new EventVO();
+      event.setAccountId(createdVolume.getAccountId());
+      event.setUserId(userId);
+      event.setType(EventTypes.EVENT_VOLUME_CREATE);
+      event.setStartId(startEventId);
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      if (createdVolume != null) {
+        _accountMgr.incrementResourceCount(createdVolume.getAccountId(),ResourceType.volume);
+        long sizeMB=createdVolume.getSize() / (1024 * 1024);
+        StoragePoolVO pool=_storagePoolDao.findById(createdVolume.getPoolId());
+        String eventParams="id=" + createdVolume.getId() + "\ndoId="+ diskOffering.getId()+ "\ntId="+ -1+ "\ndcId="+ dc.getId()+ "\nsize="+ sizeMB;
+        event.setLevel(EventVO.LEVEL_INFO);
+        event.setDescription("Created volume: " + createdVolume.getName() + " with size: "+ sizeMB+ " MB in pool: "+ pool.getName());
+        event.setParameters(eventParams);
+        _eventDao.persist(event);
+      }
+ else {
+        createdVolume.setStatus(AsyncInstanceCreateStatus.Corrupted);
+        createdVolume.setDestroyed(true);
+        _volsDao.update(createdVolume.getId(),createdVolume);
+      }
+      txn.commit();
+    }
+ catch (    Exception e) {
+      s_logger.error("Unhandled exception while creating volume " + createdVolume.getName(),e);
+    }
+  }
+  return createdVolume;
+}
