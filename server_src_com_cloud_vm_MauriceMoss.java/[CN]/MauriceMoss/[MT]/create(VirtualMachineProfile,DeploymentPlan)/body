@@ -1,0 +1,32 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating actual resources for VM " + vmProfile);
+  }
+  Journal journal=new Journal.LogJournal("Creating " + vmProfile,s_logger);
+  Set<DeployDestination> avoids=new HashSet<DeployDestination>();
+  int retry=_retry;
+  while (_retry-- > 0) {
+    DeployDestination context=null;
+    for (    DeploymentDispatcher dispatcher : _dispatchers) {
+      context=dispatcher.plan(vmProfile,plan,avoids);
+      if (context != null) {
+        journal.record("Deployment found ",vmProfile,context);
+        break;
+      }
+    }
+    if (context == null) {
+      throw new CloudRuntimeException("Unable to create a deployment for " + vmProfile);
+    }
+    VMInstanceVO vm=_vmDao.findById(vmProfile.getId());
+    vm.setDataCenterId(context.getDataCenter().getId());
+    vm.setPodId(context.getPod().getId());
+    vm.setHostId(context.getHost().getId());
+    _vmDao.update(vm.getId(),vm);
+    _networkMgr.create(vm);
+    _storageMgr.create(vm);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creation complete for VM " + vmProfile);
+  }
+  return vmProfile;
+}

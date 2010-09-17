@@ -1,0 +1,44 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Allocating entries for VM: " + vm);
+  }
+  VMInstanceVO instance=_vmDao.findById(vm.getId());
+  VirtualMachineProfile vmProfile=new VirtualMachineProfile(instance,serviceOffering);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  instance.setDataCenterId(plan.getDataCenterId());
+  _vmDao.update(instance.getId(),instance);
+  List<NicProfile> nics=_networkMgr.allocate(instance,networks);
+  vmProfile.setNics(nics);
+  if (dataDiskOfferings == null) {
+    dataDiskOfferings=new ArrayList<Pair<DiskOfferingVO,Long>>(0);
+  }
+  List<DiskProfile> disks=new ArrayList<DiskProfile>(dataDiskOfferings.size() + 1);
+  if (template.getFormat() == ImageFormat.ISO) {
+    disks.add(_storageMgr.allocateRawVolume(VolumeType.ROOT,"ROOT-" + vm.getId(),rootDiskOffering.first(),rootDiskOffering.second(),instance,owner));
+  }
+ else {
+    disks.add(_storageMgr.allocateTemplatedVolume(VolumeType.ROOT,"ROOT-" + vm.getId(),rootDiskOffering.first(),template,instance,owner));
+  }
+  for (  Pair<DiskOfferingVO,Long> offering : dataDiskOfferings) {
+    disks.add(_storageMgr.allocateRawVolume(VolumeType.DATADISK,"DATA-" + vm.getId(),offering.first(),offering.second(),instance,owner));
+  }
+  vmProfile.setDisks(disks);
+  txn.commit();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Allocation completed for VM: " + vm);
+  }
+  boolean created=false;
+  try {
+    vmProfile=create(vmProfile,plan);
+    created=vmProfile != null;
+  }
+ catch (  InsufficientCapacityException e) {
+    throw e;
+  }
+ finally {
+    if (!created) {
+    }
+  }
+  return vmProfile;
+}
