@@ -20,12 +20,19 @@
     throw new IllegalArgumentException("Please specify a valid zone.");
   }
   VolumeVO volume=findVolumeById(volumeId);
-  String secondaryStorageURL=_storageMgr.getSecondaryStorageURL(zoneId);
-  StoragePoolVO srcPool=_poolDao.findById(volume.getPoolId());
-  Long sourceHostId=_storageMgr.findHostIdForStoragePool(srcPool);
-  CopyVolumeCommand cvCmd=new CopyVolumeCommand(volume.getId(),volume.getPath(),srcPool,secondaryStorageURL,true);
-  CopyVolumeAnswer cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(sourceHostId,cvCmd);
-  if (cvAnswer == null || !cvAnswer.getResult()) {
-    throw new InternalErrorException("Failed to copy the volume from the source primary storage pool to secondary storage.");
+  if (_uploadMonitor.isTypeUploadInProgress(volumeId,Type.VOLUME)) {
+    throw new IllegalArgumentException(volume.getName() + " upload is in progress. Please wait for some time to schedule another upload for the same");
   }
+  long userId=UserContext.current().getUserId();
+  long accountId=volume.getAccountId();
+  long eventId=saveScheduledEvent(userId,accountId,EventTypes.EVENT_VOLUME_UPLOAD,"Extraction job");
+  ExtractTemplateParam param=new ExtractTemplateParam(userId,volumeId,zoneId,eventId,url);
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobVO job=new AsyncJobVO();
+  job.setUserId(userId);
+  job.setAccountId(accountId);
+  job.setCmd("ExtractVolume");
+  job.setCmdInfo(gson.toJson(param));
+  job.setCmdOriginator(ExtractVolumeCmd.getStaticName());
+  return _asyncMgr.submitAsyncJob(job);
 }
