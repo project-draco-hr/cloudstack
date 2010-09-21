@@ -3,10 +3,30 @@
   String secondaryStorageURL=_storageMgr.getSecondaryStorageURL(zoneId);
   StoragePoolVO srcPool=_poolDao.findById(volume.getPoolId());
   Long sourceHostId=_storageMgr.findHostIdForStoragePool(srcPool);
+  List<HostVO> storageServers=_hostDao.listByTypeDataCenter(Host.Type.SecondaryStorage,zoneId);
+  HostVO sserver=storageServers.get(0);
+  saveStartedEvent(1L,volume.getAccountId(),EventTypes.EVENT_VOLUME_UPLOAD,"Starting upload of " + volume.getName() + " to "+ url,eventId);
+  UploadVO uploadJob=_uploadMonitor.createNewUploadEntry(sserver.getId(),volumeId,UploadVO.Status.COPY_IN_PROGRESS,0,Type.VOLUME,null,null,url);
+  uploadJob=_uploadDao.createForUpdate(uploadJob.getId());
+  ExtractJobResultObject resultObj=new ExtractJobResultObject(volume.getAccountId(),volume.getName(),UploadVO.Status.COPY_IN_PROGRESS.toString(),0,uploadJob.getId());
+  _asyncMgr.updateAsyncJobAttachment(asyncJobId,Type.VOLUME.toString(),volumeId);
+  _asyncMgr.updateAsyncJobStatus(asyncJobId,AsyncJobResult.STATUS_IN_PROGRESS,resultObj);
   CopyVolumeCommand cvCmd=new CopyVolumeCommand(volume.getId(),volume.getPath(),srcPool,secondaryStorageURL,true);
   CopyVolumeAnswer cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(sourceHostId,cvCmd);
   if (cvAnswer == null || !cvAnswer.getResult()) {
-    throw new InternalErrorException("Failed to copy the volume from the source primary storage pool to secondary storage.");
+    String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
+    resultObj.setResult_string(errorString);
+    resultObj.setUploadStatus(UploadVO.Status.COPY_ERROR.toString());
+    _asyncMgr.completeAsyncJob(asyncJobId,AsyncJobResult.STATUS_FAILED,0,resultObj);
+    uploadJob.setUploadState(UploadVO.Status.COPY_ERROR);
+    uploadJob.setErrorString(errorString);
+    uploadJob.setLastUpdated(new Date());
+    _uploadDao.update(uploadJob.getId(),uploadJob);
+    saveEvent(1L,volume.getAccountId(),EventTypes.EVENT_VOLUME_UPLOAD,errorString);
+    throw new InternalErrorException(errorString);
   }
-  _uploadMonitor.extractVolume(volume,url,zoneId,"volumes/" + volume.getId() + "/"+ cvAnswer.getVolumePath()+ ".vhd",eventId,asyncJobId,_asyncMgr);
+  uploadJob.setUploadState(UploadVO.Status.COPY_COMPLETE);
+  uploadJob.setLastUpdated(new Date());
+  _uploadDao.update(uploadJob.getId(),uploadJob);
+  _uploadMonitor.extractVolume(uploadJob,sserver,volume,url,zoneId,"volumes/" + volume.getId() + "/"+ cvAnswer.getVolumePath()+ ".vhd",eventId,asyncJobId,_asyncMgr);
 }
