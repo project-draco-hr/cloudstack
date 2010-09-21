@@ -1,0 +1,38 @@
+{
+  URI uri=new URI(url);
+  if ((uri.getScheme() == null) || (!uri.getScheme().equalsIgnoreCase("ftp"))) {
+    throw new IllegalArgumentException("Unsupported scheme for url: " + url);
+  }
+  String host=uri.getHost();
+  try {
+    InetAddress hostAddr=InetAddress.getByName(host);
+    if (hostAddr.isAnyLocalAddress() || hostAddr.isLinkLocalAddress() || hostAddr.isLoopbackAddress()|| hostAddr.isMulticastAddress()) {
+      throw new IllegalArgumentException("Illegal host specified in url");
+    }
+    if (hostAddr instanceof Inet6Address) {
+      throw new IllegalArgumentException("IPV6 addresses not supported (" + hostAddr.getHostAddress() + ")");
+    }
+  }
+ catch (  UnknownHostException uhe) {
+    throw new IllegalArgumentException("Unable to resolve " + host);
+  }
+  if (_dcDao.findById(zoneId) == null) {
+    throw new IllegalArgumentException("Please specify a valid zone.");
+  }
+  VolumeVO volume=findVolumeById(volumeId);
+  if (_uploadMonitor.isTypeUploadInProgress(volumeId,Type.VOLUME)) {
+    throw new IllegalArgumentException(volume.getName() + " upload is in progress. Please wait for some time to schedule another upload for the same");
+  }
+  long userId=UserContext.current().getUserId();
+  long accountId=volume.getAccountId();
+  long eventId=saveScheduledEvent(userId,accountId,EventTypes.EVENT_VOLUME_UPLOAD,"Extraction job");
+  ExtractTemplateParam param=new ExtractTemplateParam(userId,volumeId,zoneId,eventId,url);
+  Gson gson=GsonHelper.getBuilder().create();
+  AsyncJobVO job=new AsyncJobVO();
+  job.setUserId(userId);
+  job.setAccountId(accountId);
+  job.setCmd("ExtractVolume");
+  job.setCmdInfo(gson.toJson(param));
+  job.setCmdOriginator(ExtractVolumeCmd.getStaticName());
+  return _asyncMgr.submitAsyncJob(job);
+}
