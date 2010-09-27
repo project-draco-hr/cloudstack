@@ -1,0 +1,31 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating volume: " + toBeCreated);
+  }
+  DiskProfile diskProfile=new DiskProfile(toBeCreated,offering);
+  Set<StoragePool> avoids=new HashSet<StoragePool>();
+  StoragePool pool=null;
+  while ((pool=findStorage(diskProfile,dest,vm,alreadyCreated,avoids)) != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Trying to create in " + pool);
+    }
+    avoids.add(pool);
+    toBeCreated.setPoolId(pool.getId());
+    try {
+      _volsDao.update(toBeCreated,Volume.Event.OperationRetry);
+    }
+ catch (    ConcurrentOperationException e) {
+      throw new CloudRuntimeException("Unable to retry a create operation on volume " + toBeCreated);
+    }
+    CreateCommand cmd=new CreateCommand(diskProfile,new StorageFilerTO(pool),diskProfile.getSize());
+    Answer answer=sendToPool(pool,cmd);
+    if (answer.getResult()) {
+      CreateAnswer createAnswer=(CreateAnswer)answer;
+      return new Pair<VolumeTO,StoragePool>(createAnswer.getVolume(),pool);
+    }
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Unable to create volume " + toBeCreated);
+  }
+  return null;
+}
