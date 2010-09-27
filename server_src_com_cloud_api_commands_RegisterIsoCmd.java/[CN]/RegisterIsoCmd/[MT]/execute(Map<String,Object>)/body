@@ -1,5 +1,7 @@
 {
   Account account=(Account)params.get(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+  String accountName=(String)params.get(BaseCmd.Properties.ACCOUNT.getName());
+  Long domainId=(Long)params.get(BaseCmd.Properties.DOMAIN_ID.getName());
   Long userId=(Long)params.get(BaseCmd.Properties.USER_ID.getName());
   String name=(String)params.get(BaseCmd.Properties.NAME.getName());
   String displayText=(String)params.get(BaseCmd.Properties.DISPLAY_TEXT.getName());
@@ -15,18 +17,31 @@
   if (zoneId.longValue() == -1) {
     zoneId=null;
   }
-  long accountId=1L;
-  if (account != null) {
-    accountId=account.getId();
-  }
-  Account accountObj;
-  if (account == null) {
-    accountObj=getManagementServer().findAccountById(accountId);
+  Long accountId=null;
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId != null) {
+      if ((account != null) && !getManagementServer().isChildDomain(account.getDomainId(),domainId)) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid domain id (" + domainId + ") ");
+      }
+      if (accountName != null) {
+        Account userAccount=getManagementServer().findActiveAccount(accountName,domainId);
+        if (userAccount == null) {
+          throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=userAccount.getId();
+      }
+    }
+ else {
+      accountId=((account != null) ? account.getId() : null);
+    }
   }
  else {
-    accountObj=account;
+    accountId=account.getId();
   }
-  boolean isAdmin=(accountObj.getType() == Account.ACCOUNT_TYPE_ADMIN);
+  if (accountId == null) {
+    throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"No valid account specified for registering ISO.");
+  }
+  boolean isAdmin=getManagementServer().findAccountById(accountId).getType() == Account.ACCOUNT_TYPE_ADMIN;
   if (!isAdmin && zoneId == null) {
     throw new ServerApiException(BaseCmd.PARAM_ERROR,"Please specify a valid zone Id.");
   }
@@ -51,7 +66,7 @@
   }
   Long templateId;
   try {
-    templateId=getManagementServer().createTemplate(userId,zoneId,name,displayText,isPublic.booleanValue(),featured.booleanValue(),ImageFormat.ISO.toString(),FileSystem.cdfs.toString(),url,null,true,64,false,guestOSId,bootable);
+    templateId=getManagementServer().createTemplate(userId,accountId,zoneId,name,displayText,isPublic.booleanValue(),featured.booleanValue(),ImageFormat.ISO.toString(),FileSystem.cdfs.toString(),url,null,true,64,false,guestOSId,bootable);
   }
  catch (  Exception ex) {
     throw new ServerApiException(BaseCmd.INTERNAL_ERROR,ex.getMessage());
