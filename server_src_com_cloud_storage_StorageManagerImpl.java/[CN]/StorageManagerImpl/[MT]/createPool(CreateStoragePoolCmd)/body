@@ -67,6 +67,9 @@
     if (_hypervisorType == Hypervisor.Type.KVM) {
       hypervisorType=Hypervisor.Type.KVM;
     }
+ else     if (_hypervisorType == Hypervisor.Type.VmWare) {
+      hypervisorType=Hypervisor.Type.VmWare;
+    }
  else {
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Couldn't find a host to serve in the server pool");
@@ -153,7 +156,14 @@
     throw new ResourceAllocationException("No host exists to associate a storage pool with");
   }
   long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
-  String uuid=UUID.nameUUIDFromBytes(new String(storageHost + hostPath + System.currentTimeMillis()).getBytes()).toString();
+  String uuid=UUID.nameUUIDFromBytes(new String(storageHost + hostPath).getBytes()).toString();
+  List<StoragePoolVO> spHandles=_storagePoolDao.findIfDuplicatePoolsExistByUUID(uuid);
+  if ((spHandles != null) && (spHandles.size() > 0)) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Another active pool with the same uuid already exists");
+    }
+    throw new ResourceInUseException("Another active pool with the same uuid already exists");
+  }
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("In createPool Setting poolId - " + poolId + " uuid - "+ uuid+ " zoneId - "+ zoneId+ " podId - "+ podId+ " poolName - "+ cmd.getStoragePoolName());
   }
@@ -177,7 +187,7 @@
     }
   }
   if (poolHosts.isEmpty()) {
-    _storagePoolDao.delete(pool.getId());
+    _storagePoolDao.expunge(pool.getId());
     pool=null;
   }
  else {

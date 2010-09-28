@@ -1,0 +1,71 @@
+{
+  try {
+    String apiKey=null;
+    String secretKey=null;
+    String signature=null;
+    String unsignedRequest=null;
+    List<String> parameterNames=new ArrayList<String>();
+    for (    Object paramNameObj : requestParameters.keySet()) {
+      parameterNames.add((String)paramNameObj);
+    }
+    Collections.sort(parameterNames);
+    for (    String paramName : parameterNames) {
+      String paramValue=((String[])requestParameters.get(paramName))[0];
+      if ("signature".equalsIgnoreCase(paramName)) {
+        signature=paramValue;
+      }
+ else {
+        if ("apikey".equalsIgnoreCase(paramName)) {
+          apiKey=paramValue;
+        }
+        if (unsignedRequest == null) {
+          unsignedRequest=paramName + "=" + URLEncoder.encode(paramValue,"UTF-8").replaceAll("\\+","%20");
+        }
+ else {
+          unsignedRequest=unsignedRequest + "&" + paramName+ "="+ URLEncoder.encode(paramValue,"UTF-8").replaceAll("\\+","%20");
+        }
+      }
+    }
+    if ((signature == null) || (apiKey == null)) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.info("expired session, missing signature, or missing apiKey -- ignoring request...sig: " + signature + ", apiKey: "+ apiKey);
+      }
+      return false;
+    }
+    Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+    User user=null;
+    Pair<User,Account> userAcctPair=_ms.findUserByApiKey(apiKey);
+    if (userAcctPair == null) {
+      s_logger.info("apiKey does not map to a valid user -- ignoring request, apiKey: " + apiKey);
+      return false;
+    }
+    user=userAcctPair.first();
+    Account account=userAcctPair.second();
+    if (!user.getState().equals(Account.ACCOUNT_STATE_ENABLED) || !account.getState().equals(Account.ACCOUNT_STATE_ENABLED)) {
+      s_logger.info("disabled or locked user accessing the api, userid = " + user.getId() + "; name = "+ user.getUsername()+ "; state: "+ user.getState()+ "; accountState: "+ account.getState());
+      return false;
+    }
+    secretKey=user.getSecretKey();
+    if (secretKey == null) {
+      s_logger.info("User does not have a secret key associated with the account -- ignoring request, username: " + user.getUsername());
+      return false;
+    }
+    unsignedRequest=unsignedRequest.toLowerCase();
+    Mac mac=Mac.getInstance("HmacSHA1");
+    SecretKeySpec keySpec=new SecretKeySpec(secretKey.getBytes(),"HmacSHA1");
+    mac.init(keySpec);
+    mac.update(unsignedRequest.getBytes());
+    byte[] encryptedBytes=mac.doFinal();
+    String computedSignature=Base64.encodeBytes(encryptedBytes);
+    boolean equalSig=signature.equals(computedSignature);
+    if (!equalSig) {
+      s_logger.info("User signature: " + signature + " is not equaled to computed signature: "+ computedSignature);
+    }
+    return equalSig;
+  }
+ catch (  Exception ex) {
+    s_logger.error("unable to verifty request signature",ex);
+  }
+  return false;
+}

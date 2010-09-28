@@ -1,0 +1,81 @@
+{
+  String desc="template";
+  if (isISO) {
+    desc="ISO";
+  }
+  VMTemplateVO template=_tmpltDao.findById(templateId);
+  if (template == null) {
+    throw new InvalidParameterValueException("Unable to find template with id " + templateId);
+  }
+  if (template.getName().startsWith("xs-tools")) {
+    throw new InvalidParameterValueException("Unable to extract the " + desc + " "+ template.getName()+ " It is not allowed");
+  }
+  if (isISO) {
+    if (template.getFormat() != ImageFormat.ISO) {
+      throw new InvalidParameterValueException("Unsupported format, could not extract the ISO");
+    }
+  }
+ else {
+    if (template.getFormat() == ImageFormat.ISO) {
+      throw new InvalidParameterValueException("Unsupported format, could not extract the template");
+    }
+  }
+  if (_dcDao.findById(zoneId) == null) {
+    throw new IllegalArgumentException("Please specify a valid zone.");
+  }
+  if (url.toLowerCase().contains("file://")) {
+    throw new InvalidParameterValueException("file:// type urls are currently unsupported");
+  }
+  URI uri=null;
+  try {
+    uri=new URI(url);
+    if ((uri.getScheme() == null) || (!uri.getScheme().equalsIgnoreCase("ftp"))) {
+      throw new InvalidParameterValueException("Unsupported scheme for url: " + url);
+    }
+  }
+ catch (  URISyntaxException ex) {
+    throw new InvalidParameterValueException("Invalid url given: " + url);
+  }
+  String host=uri.getHost();
+  try {
+    InetAddress hostAddr=InetAddress.getByName(host);
+    if (hostAddr.isAnyLocalAddress() || hostAddr.isLinkLocalAddress() || hostAddr.isLoopbackAddress()|| hostAddr.isMulticastAddress()) {
+      throw new InvalidParameterValueException("Illegal host specified in url");
+    }
+    if (hostAddr instanceof Inet6Address) {
+      throw new InvalidParameterValueException("IPV6 addresses not supported (" + hostAddr.getHostAddress() + ")");
+    }
+  }
+ catch (  UnknownHostException uhe) {
+    throw new InvalidParameterValueException("Unable to resolve " + host);
+  }
+  if (account != null) {
+    if (!isAdmin(account.getType())) {
+      if (template.getAccountId() != account.getId()) {
+        throw new PermissionDeniedException("Unable to find " + desc + " with ID: "+ templateId+ " for account: "+ account.getAccountName());
+      }
+    }
+ else {
+      Account userAccount=_accountDao.findById(template.getAccountId());
+      if ((userAccount == null) || !_domainDao.isChildDomain(account.getDomainId(),userAccount.getDomainId())) {
+        throw new PermissionDeniedException("Unable to extract " + desc + " "+ templateId+ " to "+ url+ ", permission denied.");
+      }
+    }
+  }
+  HostVO secondaryStorageHost=_storageMgr.getSecondaryStorageHost(zoneId);
+  VMTemplateHostVO tmpltHostRef=null;
+  if (secondaryStorageHost != null) {
+    tmpltHostRef=_tmpltHostDao.findByHostTemplate(secondaryStorageHost.getId(),templateId);
+    if (tmpltHostRef != null && tmpltHostRef.getDownloadState() != com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+      throw new InvalidParameterValueException("The " + desc + " has not been downloaded ");
+    }
+  }
+  if (_uploadMonitor.isTypeUploadInProgress(templateId,isISO ? Type.ISO : Type.TEMPLATE)) {
+    throw new IllegalArgumentException(template.getName() + " upload is in progress. Please wait for some time to schedule another upload for the same");
+  }
+  long userId=UserContext.current().getUserId();
+  long accountId=template.getAccountId();
+  String event=isISO ? EventTypes.EVENT_ISO_UPLOAD : EventTypes.EVENT_TEMPLATE_UPLOAD;
+  long eventId=EventUtils.saveScheduledEvent(userId,accountId,event,"Extraction job");
+  extract(template,url,tmpltHostRef,zoneId,eventId,job.getId(),mgr);
+}

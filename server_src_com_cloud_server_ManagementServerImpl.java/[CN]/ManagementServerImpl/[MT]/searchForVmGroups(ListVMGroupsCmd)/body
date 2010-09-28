@@ -1,0 +1,62 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=null;
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid domain id (" + domainId + ") given, unable to list vm groups.");
+      }
+      if (accountName != null) {
+        account=_accountDao.findActiveAccount(accountName,domainId);
+        if (account == null) {
+          throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=account.getId();
+      }
+    }
+ else {
+      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+    }
+  }
+ else {
+    accountName=account.getAccountName();
+    accountId=account.getId();
+    domainId=account.getDomainId();
+  }
+  Filter searchFilter=new Filter(InstanceGroupVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object id=cmd.getId();
+  Object name=cmd.getGroupName();
+  Object keyword=cmd.getKeyword();
+  SearchBuilder<InstanceGroupVO> sb=_vmGroupDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  if ((accountId == null) && (domainId != null)) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<InstanceGroupVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<InstanceGroupVO> ssc=_vmGroupDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById((Long)domainId);
+    if (domain != null) {
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+  }
+  return _vmGroupDao.search(sc,searchFilter);
+}

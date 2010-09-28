@@ -1,0 +1,41 @@
+{
+  UserVmVO vm=_vmDao.findById(userVmId);
+  InstanceGroupVO group=_vmGroupDao.findByAccountAndName(vm.getAccountId(),groupName);
+  if (group == null) {
+    group=createVmGroup(groupName,vm.getAccountId());
+  }
+  if (group != null) {
+    final Transaction txn=Transaction.currentTxn();
+    txn.start();
+    UserVm userVm=_vmDao.acquire(userVmId);
+    if (userVm == null) {
+      s_logger.warn("Failed to acquire lock on user vm id=" + userVmId);
+    }
+    try {
+      InstanceGroupVO ngrpLock=_vmGroupDao.lock(group.getId(),false);
+      if (ngrpLock == null) {
+        s_logger.warn("Failed to acquire lock on vm group id=" + group.getId() + " name="+ group.getName());
+        txn.rollback();
+        return false;
+      }
+      if (_groupVMMapDao.listByInstanceId(userVmId) != null) {
+        List<InstanceGroupVMMapVO> groupVmMaps=_groupVMMapDao.listByInstanceId(userVmId);
+        for (        InstanceGroupVMMapVO groupMap : groupVmMaps) {
+          SearchCriteria<InstanceGroupVMMapVO> sc=_groupVMMapDao.createSearchCriteria();
+          sc.addAnd("instanceId",SearchCriteria.Op.EQ,groupMap.getInstanceId());
+          _groupVMMapDao.expunge(sc);
+        }
+      }
+      InstanceGroupVMMapVO groupVmMapVO=new InstanceGroupVMMapVO(group.getId(),userVmId);
+      _groupVMMapDao.persist(groupVmMapVO);
+      txn.commit();
+      return true;
+    }
+  finally {
+      if (userVm != null) {
+        _vmDao.release(userVmId);
+      }
+    }
+  }
+  return false;
+}

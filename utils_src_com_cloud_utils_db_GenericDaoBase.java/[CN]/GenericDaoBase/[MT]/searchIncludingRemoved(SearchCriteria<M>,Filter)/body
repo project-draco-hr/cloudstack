@@ -1,0 +1,67 @@
+{
+  String clause=sc != null ? sc.getWhereClause() : null;
+  if (clause != null && clause.length() == 0) {
+    clause=null;
+  }
+  final StringBuilder str=createPartialSelectSql(sc,clause != null);
+  if (clause != null) {
+    str.append(clause);
+  }
+  Collection<JoinBuilder<SearchCriteria<?>>> joins=null;
+  if (sc != null) {
+    joins=sc.getJoins();
+    if (joins != null) {
+      addJoins(str,joins);
+    }
+  }
+  addGroupBy(str,sc);
+  addFilter(str,filter);
+  final String sql=str.toString();
+  final Transaction txn=Transaction.currentTxn();
+  PreparedStatement pstmt=s_initStmt;
+  try {
+    pstmt=txn.prepareAutoCloseStatement(sql);
+    int i=0;
+    if (clause != null) {
+      for (      final Pair<Attribute,Object> value : sc.getValues()) {
+        prepareAttribute(++i,pstmt,value.first(),value.second());
+      }
+    }
+    if (joins != null) {
+      for (      JoinBuilder<SearchCriteria<?>> join : joins) {
+        for (        final Pair<Attribute,Object> value : join.getT().getValues()) {
+          prepareAttribute(++i,pstmt,value.first(),value.second());
+        }
+      }
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("join search statement is " + pstmt.toString());
+      }
+    }
+    ResultSet rs=pstmt.executeQuery();
+    SelectType st=sc.getSelectType();
+    ArrayList<M> results=new ArrayList<M>();
+    List<Field> fields=sc.getSelectFields();
+    while (rs.next()) {
+      if (st == SelectType.Entity) {
+        results.add((M)toEntityBean(rs,false));
+      }
+ else       if (st == SelectType.Fields || st == SelectType.Result) {
+        M m=sc.getResultType().newInstance();
+        for (int j=1; j <= fields.size(); j++) {
+          setField(m,fields.get(j - 1),rs,j);
+        }
+        results.add(m);
+      }
+ else       if (st == SelectType.Single) {
+        results.add(getObject(sc.getResultType(),rs,1));
+      }
+    }
+    return results;
+  }
+ catch (  final SQLException e) {
+    throw new CloudRuntimeException("DB Exception on: " + pstmt.toString(),e);
+  }
+catch (  final Throwable e) {
+    throw new CloudRuntimeException("Caught: " + pstmt.toString(),e);
+  }
+}

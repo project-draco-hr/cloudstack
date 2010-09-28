@@ -35,6 +35,10 @@
       }
     }
   }
+  if (!vlanId.equals(Vlan.UNTAGGED)) {
+    VlanVO vlanHandle=_vlanDao.findByZoneAndVlanId(zoneId,vlanId);
+    if (vlanHandle != null && !vlanHandle.getVlanType().equals(vlanType))     throw new InvalidParameterValueException("This vlan id is already associated with the vlan type " + vlanHandle.getVlanType().toString() + ",whilst you are trying to associate it with vlan type "+ vlanType.toString());
+  }
   DataCenterVO zone;
   if (zoneId == null || ((zone=_zoneDao.findById(zoneId)) == null)) {
     throw new InvalidParameterValueException("Please specify a valid zone.");
@@ -67,13 +71,6 @@
           throw new InvalidParameterValueException("Zone " + zone.getName() + " already has pod-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
         }
       }
-      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAccountVlanMapsByAccount(account.getId());
-      for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
-        VlanVO vlan=_vlanDao.findById(accountVlanMap.getVlanDbId());
-        if (vlan.getDataCenterId() == zone.getId().longValue()) {
-          throw new InvalidParameterValueException("The account " + account.getAccountName() + " is already assigned to an IP range in zone "+ zone.getName()+ ".");
-        }
-      }
     }
  else     if (podId != null) {
       if (!vlanId.equals(Vlan.UNTAGGED)) {
@@ -82,10 +79,10 @@
       if (podId != null && ((_podDao.findById(podId)) == null)) {
         throw new InvalidParameterValueException("Please specify a valid pod.");
       }
-      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAll();
+      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAllIncludingRemoved();
       for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
         VlanVO vlan=_vlanDao.findById(accountVlanMap.getVlanDbId());
-        if (vlan.getDataCenterId() == zone.getId().longValue()) {
+        if (vlan.getDataCenterId() == zone.getId()) {
           throw new InvalidParameterValueException("Zone " + zone.getName() + " already has account-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
         }
       }
@@ -152,13 +149,13 @@
   if (account != null && vlanType.equals(VlanType.VirtualNetwork)) {
     if (!savePublicIPRangeForAccount(startIP,endIP,zoneId,vlan.getId(),account.getId(),account.getDomainId())) {
       deletePublicIPRange(vlan.getId());
-      _vlanDao.delete(vlan.getId());
+      _vlanDao.expunge(vlan.getId());
       throw new InternalErrorException("Failed to save IP range. Please contact Cloud Support.");
     }
   }
  else   if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId())) {
     deletePublicIPRange(vlan.getId());
-    _vlanDao.delete(vlan.getId());
+    _vlanDao.expunge(vlan.getId());
     throw new InternalErrorException("Failed to save IP range. Please contact Cloud Support.");
   }
   if (account != null) {

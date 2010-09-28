@@ -1,0 +1,33 @@
+{
+  List<VolumeVO> vols=_volsDao.findCreatedByInstance(vm.getId());
+  List<VolumeVO> recreateVols=new ArrayList<VolumeVO>(vols.size());
+  Host host=dest.getHost();
+  VolumeTO[] disks=new VolumeTO[vols.size()];
+  int i=0;
+  Iterator<VolumeVO> it=vols.iterator();
+  while (it.hasNext()) {
+    VolumeVO vol=it.next();
+    if (vol.isRecreatable()) {
+      it.remove();
+      if (vm.getType().equals(VirtualMachine.Type.ConsoleProxy) || vm.getType().equals(VirtualMachine.Type.DomainRouter) || vm.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
+        StoragePoolVO sp=_storagePoolDao.findById(vol.getPoolId());
+        if (sp != null && sp.getStatus().equals(Status.PrepareForMaintenance)) {
+          recreateVols.add(vol);
+          continue;
+        }
+      }
+      StoragePoolHostVO ph=_storagePoolHostDao.findByPoolHost(vol.getPoolId(),host.getId());
+      if (ph == null) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Must recreate " + vol + " since "+ vol.getPoolId()+ " has is not hooked up with host "+ host.getId());
+        }
+        recreateVols.add(vol);
+      }
+    }
+  }
+  for (  VolumeVO vol : recreateVols) {
+    VolumeVO create=allocateDuplicateVolume(vol);
+    vols.add(vol);
+  }
+  return disks;
+}

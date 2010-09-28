@@ -3,6 +3,13 @@
   long userId=1L;
   boolean accountCleanupNeeded=false;
   try {
+    List<InstanceGroupVO> groups=_vmGroupDao.listByAccountId(accountId);
+    for (    InstanceGroupVO group : groups) {
+      if (!_vmMgr.deleteVmGroup(group.getId())) {
+        s_logger.error("Unable to delete group: " + group.getId());
+        accountCleanupNeeded=true;
+      }
+    }
     boolean success=_snapMgr.deleteSnapshotDirsForAccount(accountId);
     if (success) {
       s_logger.debug("Successfully deleted snapshots directories for all volumes under account " + accountId + " across all zones");
@@ -19,6 +26,9 @@
     }
     List<VolumeVO> volumes=_volumeDao.findDetachedByAccount(accountId);
     for (    VolumeVO volume : volumes) {
+      if (volume.getPoolId() == null) {
+        accountCleanupNeeded=true;
+      }
       _storageMgr.destroyVolume(volume);
     }
     List<DomainRouterVO> routers=_routerDao.listBy(accountId);
@@ -59,8 +69,8 @@
       for (      SecurityGroupVO securityGroup : securityGroups) {
         SearchCriteria<SecurityGroupVMMapVO> sc=_securityGroupVMMapDao.createSearchCriteria();
         sc.addAnd("securityGroupId",SearchCriteria.Op.EQ,securityGroup.getId());
-        _securityGroupVMMapDao.delete(sc);
-        _networkRuleConfigDao.deleteBySecurityGroup(securityGroup.getId().longValue());
+        _securityGroupVMMapDao.expunge(sc);
+        _networkRuleConfigDao.deleteBySecurityGroup(securityGroup.getId());
         _securityGroupDao.remove(securityGroup.getId());
       }
     }

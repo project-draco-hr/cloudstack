@@ -1,0 +1,31 @@
+{
+  long id=_consoleProxyDao.getNextInSequence(Long.class,"id");
+  String name=VirtualMachineName.getConsoleProxyName(id,_instance);
+  DataCenterVO dc=_dcDao.findById(dataCenterId);
+  AccountVO systemAcct=_accountMgr.getSystemAccount();
+  DataCenterDeployment plan=new DataCenterDeployment(dataCenterId,1);
+  List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemVmControlNetwork,NetworkOfferingVO.SystemVmManagementNetwork,NetworkOfferingVO.SystemVmPublicNetwork);
+  List<NetworkConfigurationVO> profiles=new ArrayList<NetworkConfigurationVO>(offerings.size());
+  for (  NetworkOfferingVO offering : offerings) {
+    profiles.add(_networkMgr.setupNetworkConfiguration(_accountMgr.getSystemAccount(),offering,plan));
+  }
+  ConsoleProxyVO proxy=new ConsoleProxyVO(id,_serviceOffering.getId(),name,_template.getId(),_template.getGuestOSId(),dataCenterId,systemAcct.getDomainId(),systemAcct.getId(),0);
+  proxy=_consoleProxyDao.persist(proxy);
+  try {
+    VirtualMachineProfile vmProfile=_vmMgr.allocate(proxy,_template,_serviceOffering,profiles,plan,_accountMgr.getSystemAccount());
+  }
+ catch (  InsufficientCapacityException e) {
+    s_logger.warn("InsufficientCapacity",e);
+    throw new CloudRuntimeException("Insufficient capacity exception",e);
+  }
+catch (  StorageUnavailableException e) {
+    s_logger.warn("Unable to contact storage",e);
+    throw new CloudRuntimeException("Unable to contact storage",e);
+  }
+  Map<String,Object> context=new HashMap<String,Object>();
+  context.put("dc",dc);
+  HostPodVO pod=_podDao.findById(proxy.getPodId());
+  context.put("pod",pod);
+  context.put("proxyVmId",proxy.getId());
+  return context;
+}

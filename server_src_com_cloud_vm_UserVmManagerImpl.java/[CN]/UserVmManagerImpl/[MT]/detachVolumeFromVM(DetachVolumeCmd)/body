@@ -1,6 +1,23 @@
 {
   Account account=(Account)UserContext.current().getAccountObject();
+  if ((cmmd.getId() == null && cmmd.getDeviceId() == null && cmmd.getVirtualMachineId() == null) || (cmmd.getId() != null && (cmmd.getDeviceId() != null || cmmd.getVirtualMachineId() != null)) || (cmmd.getId() == null && (cmmd.getDeviceId() == null || cmmd.getVirtualMachineId() == null))) {
+    throw new InvalidParameterValueException("Please provide either a volume id, or a tuple(device id, instance id)");
+  }
   Long volumeId=cmmd.getId();
+  VolumeVO volume=null;
+  if (volumeId != null) {
+    volume=_volsDao.findById(volumeId);
+  }
+ else {
+    volume=_volsDao.findByInstanceAndDeviceId(cmmd.getVirtualMachineId(),cmmd.getDeviceId()).get(0);
+  }
+  Long vmId=null;
+  if (cmmd.getVirtualMachineId() == null) {
+    vmId=volume.getInstanceId();
+  }
+ else {
+    vmId=cmmd.getVirtualMachineId();
+  }
   boolean isAdmin;
   if (account == null) {
     isAdmin=true;
@@ -8,7 +25,6 @@
  else {
     isAdmin=isAdmin(account.getType());
   }
-  VolumeVO volume=_volsDao.findById(volumeId);
   if (volume == null)   throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId);
   if (!isAdmin) {
     if (account.getId() != volume.getAccountId())     throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId + " for account: "+ account.getAccountName());
@@ -24,7 +40,6 @@
   if (!_storageMgr.volumeOnSharedStoragePool(volume)) {
     throw new InvalidParameterValueException("Please specify a volume that has been created on a shared storage pool.");
   }
-  Long vmId=volume.getInstanceId();
   if (vmId == null) {
     throw new InvalidParameterValueException("The specified volume is not attached to a VM.");
   }
@@ -44,7 +59,7 @@
   boolean sendCommand=(vm.getState() == State.Running);
   Answer answer=null;
   if (sendCommand) {
-    AttachVolumeCommand cmd=new AttachVolumeCommand(false,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),volume.getDeviceId());
+    AttachVolumeCommand cmd=new AttachVolumeCommand(false,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),cmmd.getDeviceId() != null ? cmmd.getDeviceId() : volume.getDeviceId());
     try {
       answer=_agentMgr.send(vm.getHostId(),cmd);
     }

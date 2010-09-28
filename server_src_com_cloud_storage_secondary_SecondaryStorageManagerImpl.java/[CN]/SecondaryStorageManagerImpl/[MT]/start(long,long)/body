@@ -41,8 +41,9 @@
     HostVO routingHost=(HostVO)_agentMgr.findHost(Host.Type.Routing,dc,pod,sp,_serviceOffering,_template,secStorageVm,null,avoid);
     if (routingHost == null) {
       if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Unable to find a routing host for " + secStorageVm.toString());
-        continue;
+        String msg="Unable to find a routing host for " + secStorageVm.toString() + " in pod "+ pod.getId();
+        s_logger.debug(msg);
+        throw new CloudRuntimeException(msg);
       }
     }
     if (!_secStorageVmDao.updateIf(secStorageVm,Event.StartRequested,routingHost.getId())) {
@@ -61,9 +62,9 @@
         }
         String privateIpAddress=allocPrivateIpAddress(secStorageVm.getDataCenterId(),routingHost.getPodId(),secStorageVm.getId(),secStorageVm.getPrivateMacAddress());
         if (privateIpAddress == null && (_IpAllocator != null && !_IpAllocator.exteralIpAddressAllocatorEnabled())) {
-          s_logger.debug("Not enough ip addresses in " + routingHost.getPodId());
-          avoid.add(routingHost);
-          continue;
+          String msg="Unable to allocate private ip addresses for  " + secStorageVm.getName() + " in pod "+ pod.getId();
+          s_logger.debug(msg);
+          throw new CloudRuntimeException(msg);
         }
         secStorageVm.setPrivateIpAddress(privateIpAddress);
         String guestIpAddress=_dcDao.allocateLinkLocalPrivateIpAddress(secStorageVm.getDataCenterId(),routingHost.getPodId(),secStorageVm.getId());
@@ -72,12 +73,12 @@
         secStorageVm=_secStorageVmDao.findById(secStorageVm.getId());
         List<VolumeVO> vols=_storageMgr.prepare(secStorageVm,routingHost);
         if (vols == null || vols.size() == 0) {
-          s_logger.warn("Can not share " + secStorageVm.getName());
-          avoid.add(routingHost);
-          continue;
+          String msg="Unable to prepare storage for " + secStorageVm.getName() + " in pod "+ pod.getId();
+          s_logger.debug(msg);
+          throw new CloudRuntimeException(msg);
         }
         VolumeVO vol=vols.get(0);
-        StartSecStorageVmCommand cmdStart=new StartSecStorageVmCommand(_secStorageVmCmdPort,secStorageVm,secStorageVm.getName(),"",vols,_mgmt_host,_mgmt_port,_useSSlCopy);
+        StartSecStorageVmCommand cmdStart=new StartSecStorageVmCommand(_networkRate,_multicastRate,_secStorageVmCmdPort,secStorageVm,secStorageVm.getName(),"",vols,_mgmt_host,_mgmt_port,_useSSlCopy);
         if (s_logger.isDebugEnabled())         s_logger.debug("Sending start command for secondary storage vm " + secStorageVm.getName() + " to "+ routingHost.getName());
         try {
           answer=_agentMgr.send(routingHost.getId(),cmdStart);

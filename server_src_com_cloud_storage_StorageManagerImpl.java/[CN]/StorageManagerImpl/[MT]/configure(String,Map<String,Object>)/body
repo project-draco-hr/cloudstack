@@ -6,16 +6,11 @@
     s_logger.error("Unable to get the configuration dao.");
     return false;
   }
-  _storagePoolAllocators=locator.getAdapters(StoragePoolAllocator.class);
-  if (!_storagePoolAllocators.isSet()) {
-    throw new ConfigurationException("Unable to get any storage pool allocators.");
-  }
-  _discoverers=locator.getAdapters(StoragePoolDiscoverer.class);
-  String overProvisioningFactorStr=(String)params.get("storage.overprovisioning.factor");
+  Map<String,String> configs=configDao.getConfiguration("management-server",params);
+  String overProvisioningFactorStr=configs.get("storage.overprovisioning.factor");
   if (overProvisioningFactorStr != null) {
     _overProvisioningFactor=Integer.parseInt(overProvisioningFactorStr);
   }
-  Map<String,String> configs=configDao.getConfiguration("management-server",params);
   _retry=NumbersUtil.parseInt(configs.get(Config.StartRetry.key()),2);
   _pingInterval=NumbersUtil.parseInt(configs.get("ping.interval"),60);
   _hostRetry=NumbersUtil.parseInt(configs.get("host.retry"),2);
@@ -26,6 +21,9 @@
   String hypervisoType=configDao.getValue("hypervisor.type");
   if (hypervisoType.equalsIgnoreCase("KVM")) {
     _hypervisorType=Hypervisor.Type.KVM;
+  }
+ else   if (hypervisoType.equalsIgnoreCase("vmware")) {
+    _hypervisorType=Hypervisor.Type.VmWare;
   }
   _agentMgr.registerForHostEvents(new StoragePoolMonitor(this,_hostDao,_storagePoolDao),true,false,true);
   String storageCleanupEnabled=configs.get("storage.cleanup.enabled");
@@ -41,7 +39,7 @@
   }
   PoolsUsedByVmSearch=_storagePoolDao.createSearchBuilder();
   SearchBuilder<VolumeVO> volSearch=_volsDao.createSearchBuilder();
-  PoolsUsedByVmSearch.join("volumes",volSearch,volSearch.entity().getPoolId(),PoolsUsedByVmSearch.entity().getId());
+  PoolsUsedByVmSearch.join("volumes",volSearch,volSearch.entity().getPoolId(),PoolsUsedByVmSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   volSearch.and("vm",volSearch.entity().getInstanceId(),SearchCriteria.Op.EQ);
   volSearch.done();
   PoolsUsedByVmSearch.done();
@@ -50,7 +48,7 @@
   HostTemplateStatesSearch.and("state",HostTemplateStatesSearch.entity().getDownloadState(),SearchCriteria.Op.EQ);
   SearchBuilder<HostVO> HostSearch=_hostDao.createSearchBuilder();
   HostSearch.and("dcId",HostSearch.entity().getDataCenterId(),SearchCriteria.Op.EQ);
-  HostTemplateStatesSearch.join("host",HostSearch,HostSearch.entity().getId(),HostTemplateStatesSearch.entity().getHostId());
+  HostTemplateStatesSearch.join("host",HostSearch,HostSearch.entity().getId(),HostTemplateStatesSearch.entity().getHostId(),JoinBuilder.JoinType.INNER);
   HostSearch.done();
   HostTemplateStatesSearch.done();
   return true;
