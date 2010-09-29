@@ -5,50 +5,51 @@
   Long volumeId=cmd.getVolumeId();
   String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
   String backedUpSnapshotUuid=cmd.getSnapshotUuid();
-  String origTemplateInstallPath=cmd.getOrigTemplateInstallPath();
   Long newTemplateId=cmd.getNewTemplateId();
   String userSpecifiedName=cmd.getTemplateName();
-  String details="Failed to create private template " + newTemplateId + " from snapshot for volume: "+ volumeId+ " with backupUuid: "+ backedUpSnapshotUuid;
-  String newTemplatePath=null;
-  String templateName=null;
+  String details=null;
+  SR snapshotSR=null;
+  SR tmpltSR=null;
   boolean result=false;
-  long virtualSize=0;
   try {
     URI uri=new URI(secondaryStoragePoolURL);
-    String remoteTemplateMountPath=uri.getHost() + ":" + uri.getPath()+ "/template/";
-    String templateFolder=cmd.getAccountId() + "/" + newTemplateId+ "/";
-    String templateDownloadFolder=createTemplateDownloadFolder(remoteTemplateMountPath,templateFolder);
-    String templateInstallFolder="tmpl/" + templateFolder;
-    Pair<VHDInfo,String> vhdDetails=createVHDFromSnapshot(primaryStorageNameLabel,dcId,accountId,volumeId,secondaryStoragePoolURL,backedUpSnapshotUuid,origTemplateInstallPath,templateDownloadFolder);
-    VHDInfo vhdInfo=vhdDetails.first();
-    String failureDetails=vhdDetails.second();
-    if (vhdInfo == null) {
-      if (failureDetails != null) {
-        details+=failureDetails;
-      }
+    String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
+    String installPath="template/tmpl/" + accountId + "/"+ newTemplateId;
+    if (!createSecondaryStorageFolder(secondaryStorageMountPath,installPath)) {
+      details=" Filed to create folder " + installPath + " in secondary storage";
+      s_logger.warn(details);
+      return new CreatePrivateTemplateAnswer(cmd,false,details);
     }
- else {
-      templateName=vhdInfo.getUuid();
-      String templateFilename=templateName + ".vhd";
-      String templateInstallPath=templateInstallFolder + "/" + templateFilename;
-      newTemplatePath="template" + "/" + templateInstallPath;
-      virtualSize=vhdInfo.getVirtualSize();
-      result=postCreatePrivateTemplate(remoteTemplateMountPath,templateDownloadFolder,templateInstallFolder,templateFilename,templateName,userSpecifiedName,null,virtualSize,newTemplateId);
-      if (!result) {
-        details+=", reason: Could not create the template.properties file on secondary storage dir: " + templateInstallFolder;
-      }
- else {
-        details=null;
-      }
+    Connection conn=getConnection();
+    URI snapshotURI=new URI(secondaryStoragePoolURL + "/snapshots/" + accountId+ "/"+ volumeId);
+    snapshotSR=createNfsSRbyURI(snapshotURI,false);
+    snapshotSR.scan(conn);
+    VDI snapshotVDI=getVDIbyUuid(backedUpSnapshotUuid);
+    URI tmpltURI=new URI(secondaryStoragePoolURL + "/" + installPath);
+    tmpltSR=createNfsSRbyURI(tmpltURI,false);
+    VDI tmpltVDI=cloudVDIcopy(snapshotVDI,tmpltSR);
+    String tmpltSrUUID=tmpltSR.getUuid(conn);
+    String tmpltUUID=tmpltVDI.getUuid(conn);
+    String tmpltFilename=tmpltUUID + ".vhd";
+    long virtualSize=tmpltVDI.getVirtualSize(conn);
+    long size=tmpltVDI.getPhysicalUtilisation(conn);
+    result=postCreatePrivateTemplate(tmpltSrUUID,tmpltFilename,tmpltUUID,userSpecifiedName,null,size,virtualSize,newTemplateId);
+    if (!result) {
+      throw new CloudRuntimeException("Could not create the template.properties file on secondary storage dir: " + tmpltURI);
     }
+    return new CreatePrivateTemplateAnswer(cmd,true,null,installPath,virtualSize,tmpltUUID,ImageFormat.VHD);
   }
  catch (  XenAPIException e) {
-    details+=", reason: " + e.getMessage();
+    details="Creating template from snapshot " + backedUpSnapshotUuid + " failed due to "+ e.getMessage();
     s_logger.error(details,e);
   }
 catch (  Exception e) {
-    details+=", reason: " + e.getMessage();
+    details="Creating template from snapshot " + backedUpSnapshotUuid + " failed due to "+ e.getMessage();
     s_logger.error(details,e);
   }
-  return new CreatePrivateTemplateAnswer(cmd,result,details,newTemplatePath,virtualSize,templateName,ImageFormat.VHD);
+ finally {
+    removeSR(snapshotSR);
+    removeSR(tmpltSR);
+  }
+  return new CreatePrivateTemplateAnswer(cmd,result,details);
 }

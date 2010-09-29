@@ -1,0 +1,101 @@
+{
+  String uniqueName=getRandomPrivateTemplateName();
+  VMTemplateVO privateTemplate=null;
+  long templateId=template.getId();
+  VolumeVO volume=null;
+  long zoneId;
+  HostVO secondaryStorageHost;
+  Command cmd=null;
+  if (snapshotId != null) {
+    SnapshotVO snapshot=_snapshotDao.findById(snapshotId);
+    if (snapshot == null) {
+      throw new CloudRuntimeException("Unable to find snapshot for Id " + snapshotId);
+    }
+    String backupSnapshotUUID=snapshot.getBackupSnapshotId();
+    if (backupSnapshotUUID == null) {
+      throw new CloudRuntimeException("Unable to create private template from snapshot " + snapshotId + " due to there is no backupSnapshotUUID for this snapshot");
+    }
+    Long origVolumeId=snapshot.getVolumeId();
+    volume=_volsDao.findById(volumeId);
+    zoneId=volume.getDataCenterId();
+    secondaryStorageHost=_storageMgr.getSecondaryStorageHost(zoneId);
+    String secondaryStorageURL=_storageMgr.getSecondaryStorageURL(zoneId);
+    if (secondaryStorageHost == null || secondaryStorageURL == null) {
+      throw new CloudRuntimeException("Did not find the secondary storage URL in the database for zoneId " + zoneId);
+    }
+    Long dcId=volume.getDataCenterId();
+    Long accountId=volume.getAccountId();
+    String origTemplateInstallPath=null;
+    cmd=new CreatePrivateTemplateFromSnapshotCommand(_storageMgr.getPrimaryStorageNameLabel(volume),secondaryStorageURL,dcId,accountId,origVolumeId,backupSnapshotUUID,snapshot.getName(),origTemplateInstallPath,templateId,name);
+  }
+ else   if (volumeId != null) {
+    volume=_volsDao.findById(volumeId);
+    if (volume == null) {
+      throw new CloudRuntimeException("Unable to find volume for Id " + volumeId);
+    }
+    long instanceId=volume.getInstanceId();
+    VMInstanceVO vm=_vmDao.findById(instanceId);
+    State vmState=vm.getState();
+    if (!vmState.equals(State.Stopped) && !vmState.equals(State.Destroyed)) {
+      throw new CloudRuntimeException("Please put VM " + vm.getName() + " into Stopped state first");
+    }
+    zoneId=volume.getDataCenterId();
+    secondaryStorageHost=_storageMgr.getSecondaryStorageHost(zoneId);
+    String secondaryStorageURL=_storageMgr.getSecondaryStorageURL(zoneId);
+    if (secondaryStorageHost == null || secondaryStorageURL == null) {
+      throw new CloudRuntimeException("Did not find the secondary storage URL in the database for zoneId " + zoneId);
+    }
+    cmd=new CreatePrivateTemplateFromVolumeCommand(secondaryStorageURL,templateId,volume.getAccountId(),name,uniqueName,volume.getPath());
+  }
+ else {
+    throw new CloudRuntimeException("Creating private Template need to specify snapshotId or volumeId");
+  }
+  CreatePrivateTemplateAnswer answer=(CreatePrivateTemplateAnswer)_storageMgr.sendToHostsOnStoragePool(volume.getPoolId(),cmd,null);
+  if ((answer != null) && answer.getResult()) {
+    privateTemplate=_templateDao.findById(templateId);
+    Long origTemplateId=volume.getTemplateId();
+    VMTemplateVO origTemplate=null;
+    if (origTemplateId != null) {
+      origTemplate=_templateDao.findById(origTemplateId);
+    }
+    if ((origTemplate != null) && !Storage.ImageFormat.ISO.equals(origTemplate.getFormat())) {
+      privateTemplate.setFileSystem(origTemplate.getFileSystem());
+      privateTemplate.setRequiresHvm(origTemplate.requiresHvm());
+      privateTemplate.setBits(origTemplate.getBits());
+    }
+ else {
+      privateTemplate.setFileSystem(Storage.FileSystem.Unknown);
+      privateTemplate.setRequiresHvm(true);
+      privateTemplate.setBits(64);
+    }
+    String answerUniqueName=answer.getUniqueName();
+    if (answerUniqueName != null) {
+      privateTemplate.setUniqueName(answerUniqueName);
+    }
+ else {
+      privateTemplate.setUniqueName(uniqueName);
+    }
+    ImageFormat format=answer.getImageFormat();
+    if (format != null) {
+      privateTemplate.setFormat(format);
+    }
+ else {
+      privateTemplate.setFormat(ImageFormat.RAW);
+    }
+    _templateDao.update(templateId,privateTemplate);
+    _templateDao.addTemplateToZone(privateTemplate,zoneId);
+    VMTemplateHostVO templateHostVO=new VMTemplateHostVO(secondaryStorageHost.getId(),templateId);
+    templateHostVO.setDownloadPercent(100);
+    templateHostVO.setDownloadState(Status.DOWNLOADED);
+    templateHostVO.setInstallPath(answer.getPath());
+    templateHostVO.setLastUpdated(new Date());
+    templateHostVO.setSize(answer.getVirtualSize());
+    _templateHostDao.persist(templateHostVO);
+    _accountMgr.incrementResourceCount(volume.getAccountId(),ResourceType.template);
+  }
+ else {
+    _templateDao.remove(templateId);
+    throw new CloudRuntimeException("Creating private Template failed due to " + answer.getDetails());
+  }
+  return privateTemplate;
+}

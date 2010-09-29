@@ -7,7 +7,6 @@
   String snapshotUuid=cmd.getSnapshotUuid();
   String prevSnapshotUuid=cmd.getPrevSnapshotUuid();
   String prevBackupUuid=cmd.getPrevBackupUuid();
-  boolean isFirstSnapshotOfRootVolume=cmd.isFirstSnapshotOfRootVolume();
   String details=null;
   boolean success=false;
   String snapshotBackupUuid=null;
@@ -21,24 +20,37 @@
     Boolean isISCSI=SRType.LVMOISCSI.equals(primaryStorageSR.getType(conn));
     URI uri=new URI(secondaryStoragePoolURL);
     String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
-    if (secondaryStorageMountPath == null) {
-      details="Couldn't backup snapshot because the URL passed: " + secondaryStoragePoolURL + " is invalid.";
+    if (prevBackupUuid == null) {
+      String folder="snapshots/" + accountId + "/"+ volumeId;
+      if (!createSecondaryStorageFolder(secondaryStorageMountPath,folder)) {
+        details=" Filed to create folder " + folder + " in secondary storage";
+        s_logger.warn(details);
+        return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid);
+      }
+      String snapshotMountpoint=secondaryStoragePoolURL + "/" + folder;
+      SR snapshotSr=null;
+      try {
+        snapshotSr=createNfsSRbyURI(new URI(snapshotMountpoint),false);
+        VDI snapshotVdi=getVDIbyUuid(snapshotUuid);
+        VDI backedVdi=snapshotVdi.copy(conn,snapshotSr);
+        snapshotBackupUuid=backedVdi.getUuid(conn);
+        success=true;
+      }
+  finally {
+        if (snapshotSr != null) {
+          removeSR(snapshotSr);
+        }
+      }
     }
  else {
-      boolean gcHappened=true;
-      if (gcHappened) {
-        snapshotBackupUuid=backupSnapshot(primaryStorageSRUuid,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotUuid,prevSnapshotUuid,prevBackupUuid,isFirstSnapshotOfRootVolume,isISCSI);
-        success=(snapshotBackupUuid != null);
-      }
- else {
-        s_logger.warn("GC hasn't happened yet for previousSnapshotUuid: " + prevSnapshotUuid + ". Will retry again after 1 min");
-      }
+      snapshotBackupUuid=backupSnapshot(primaryStorageSRUuid,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotUuid,prevSnapshotUuid,prevBackupUuid,isISCSI);
+      success=(snapshotBackupUuid != null);
     }
-    if (!success) {
-    }
- else     if (prevSnapshotUuid != null && !isFirstSnapshotOfRootVolume) {
+    if (success) {
       details="Successfully backedUp the snapshotUuid: " + snapshotUuid + " to secondary storage.";
-      destroySnapshotOnPrimaryStorage(prevSnapshotUuid);
+      if (prevSnapshotUuid != null) {
+        destroySnapshotOnPrimaryStorage(prevSnapshotUuid);
+      }
     }
   }
  catch (  XenAPIException e) {

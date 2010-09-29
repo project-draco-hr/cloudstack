@@ -1,0 +1,50 @@
+{
+  String secondaryStoragePoolURL=cmd.getSecondaryStorageURL();
+  String volumeUUID=cmd.getVolumePath();
+  Long accountId=cmd.getAccountId();
+  String userSpecifiedName=cmd.getTemplateName();
+  Long templateId=cmd.getTemplateId();
+  String details=null;
+  SR tmpltSR=null;
+  boolean result=false;
+  try {
+    URI uri=new URI(secondaryStoragePoolURL);
+    String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
+    String installPath="template/tmpl/" + accountId + "/"+ templateId;
+    if (!createSecondaryStorageFolder(secondaryStorageMountPath,installPath)) {
+      details=" Filed to create folder " + installPath + " in secondary storage";
+      s_logger.warn(details);
+      return new CreatePrivateTemplateAnswer(cmd,false,details);
+    }
+    Connection conn=getConnection();
+    VDI volume=getVDIbyUuid(volumeUUID);
+    URI tmpltURI=new URI(secondaryStoragePoolURL + "/" + installPath);
+    tmpltSR=createNfsSRbyURI(tmpltURI,false);
+    VDI tmpltVDI=cloudVDIcopy(volume,tmpltSR);
+    if (userSpecifiedName != null) {
+      tmpltVDI.setNameLabel(conn,userSpecifiedName);
+    }
+    String tmpltSrUUID=tmpltSR.getUuid(conn);
+    String tmpltUUID=tmpltVDI.getUuid(conn);
+    String tmpltFilename=tmpltUUID + ".vhd";
+    long virtualSize=tmpltVDI.getVirtualSize(conn);
+    long size=tmpltVDI.getPhysicalUtilisation(conn);
+    result=postCreatePrivateTemplate(tmpltSrUUID,tmpltFilename,tmpltUUID,userSpecifiedName,null,size,virtualSize,templateId);
+    if (!result) {
+      throw new CloudRuntimeException("Could not create the template.properties file on secondary storage dir: " + tmpltURI);
+    }
+    return new CreatePrivateTemplateAnswer(cmd,true,null,installPath,virtualSize,tmpltUUID,ImageFormat.VHD);
+  }
+ catch (  XenAPIException e) {
+    details="Creating template from volume " + volumeUUID + " failed due to "+ e.getMessage();
+    s_logger.error(details,e);
+  }
+catch (  Exception e) {
+    details="Creating template from volume " + volumeUUID + " failed due to "+ e.getMessage();
+    s_logger.error(details,e);
+  }
+ finally {
+    removeSR(tmpltSR);
+  }
+  return new CreatePrivateTemplateAnswer(cmd,result,details);
+}

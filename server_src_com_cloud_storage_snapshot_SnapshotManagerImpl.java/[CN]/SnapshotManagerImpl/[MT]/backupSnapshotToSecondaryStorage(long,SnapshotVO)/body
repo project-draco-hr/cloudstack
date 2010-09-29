@@ -1,124 +1,102 @@
 {
-  long id=snapshot.getId();
-  snapshot.setStatus(Snapshot.Status.BackingUp);
-  _snapshotDao.update(snapshot.getId(),snapshot);
-  long volumeId=snapshot.getVolumeId();
-  VolumeVO volume=_volsDao.lock(volumeId,true);
-  String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
-  Long dcId=volume.getDataCenterId();
-  Long accountId=volume.getAccountId();
-  String secondaryStoragePoolUrl=_storageMgr.getSecondaryStorageURL(volume.getDataCenterId());
-  String snapshotUuid=snapshot.getPath();
-  SnapshotVO prevSnapshot=null;
-  String prevSnapshotUuid=null;
-  String prevBackupUuid=null;
-  boolean isFirstSnapshotOfRootVolume=false;
-  long prevSnapshotId=snapshot.getPrevSnapshotId();
-  if (prevSnapshotId > 0) {
-    prevSnapshot=_snapshotDao.findById(prevSnapshotId);
-    prevSnapshotUuid=prevSnapshot.getPath();
-    prevBackupUuid=prevSnapshot.getBackupSnapshotId();
-  }
+  long snapshotId=ss.getId();
+  SnapshotVO snapshot=null;
+  try {
+    snapshot=_snapshotDao.acquire(snapshotId);
+    snapshot.setStatus(Snapshot.Status.BackingUp);
+    _snapshotDao.update(snapshot.getId(),snapshot);
+    long volumeId=snapshot.getVolumeId();
+    VolumeVO volume=_volsDao.lock(volumeId,true);
+    String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
+    Long dcId=volume.getDataCenterId();
+    Long accountId=volume.getAccountId();
+    String secondaryStoragePoolUrl=_storageMgr.getSecondaryStorageURL(volume.getDataCenterId());
+    String snapshotUuid=snapshot.getPath();
+    SnapshotVO prevSnapshot=null;
+    String prevSnapshotUuid=null;
+    String prevBackupUuid=null;
+    long prevSnapshotId=snapshot.getPrevSnapshotId();
+    if (prevSnapshotId > 0) {
+      prevSnapshot=_snapshotDao.findById(prevSnapshotId);
+      prevSnapshotUuid=prevSnapshot.getPath();
+      prevBackupUuid=prevSnapshot.getBackupSnapshotId();
+    }
+    String firstBackupUuid=volume.getFirstSnapshotBackupUuid();
+    boolean isVolumeInactive=_storageMgr.volumeInactive(volume);
+    String vmName=_storageMgr.getVmNameOnVolume(volume);
+    BackupSnapshotCommand backupSnapshotCommand=new BackupSnapshotCommand(primaryStoragePoolNameLabel,secondaryStoragePoolUrl,dcId,accountId,volumeId,snapshotUuid,snapshot.getName(),prevSnapshotUuid,prevBackupUuid,firstBackupUuid,isVolumeInactive,vmName);
+    String backedUpSnapshotUuid=null;
+    String basicErrMsg="Failed to backup snapshot id " + snapshot.getId() + " to secondary storage for volume: "+ volumeId;
+    boolean backedUp=false;
+    BackupSnapshotAnswer answer=(BackupSnapshotAnswer)_storageMgr.sendToHostsOnStoragePool(volume.getPoolId(),backupSnapshotCommand,basicErrMsg,_totalRetries,_pauseInterval,_shouldBeSnapshotCapable,volume.getInstanceId());
+    if (answer != null && answer.getResult()) {
+      backedUpSnapshotUuid=answer.getBackupSnapshotName();
+      if (backedUpSnapshotUuid != null) {
+        backedUp=true;
+        if (prevSnapshot != null && backedUpSnapshotUuid.equalsIgnoreCase(prevSnapshot.getBackupSnapshotId())) {
+          s_logger.debug("Delete duplicate Snapshot id: " + prevSnapshotId);
+          long pprevSnapshotId=prevSnapshot.getPrevSnapshotId();
+          snapshot.setPrevSnapshotId(pprevSnapshotId);
+          _snapshotDao.update(snapshot.getId(),snapshot);
+          _snapshotDao.expunge(prevSnapshot.getId());
+          EventVO event=new EventVO();
+          String eventParams="id=" + prevSnapshot.getId() + "\nssName="+ prevSnapshot.getName();
+          event.setType(EventTypes.EVENT_SNAPSHOT_DELETE);
+          event.setState(EventState.Completed);
+          event.setDescription("Delete snapshot id: " + prevSnapshot.getId() + " due to new snapshot is same as this one");
+          event.setLevel(EventVO.LEVEL_INFO);
+          event.setParameters(eventParams);
+          _eventDao.persist(event);
+          prevSnapshotId=pprevSnapshotId;
+          if (prevSnapshotId == 0) {
+            prevSnapshot=null;
+            prevSnapshotUuid=null;
+            prevBackupUuid=null;
+          }
  else {
-    if (volume.getVolumeType() == VolumeType.ROOT && getImageFormat(volumeId) != ImageFormat.ISO && volume.getTemplateId() != null) {
-      isFirstSnapshotOfRootVolume=true;
-      Long templateId=volume.getTemplateId();
-      Long poolId=volume.getPoolId();
-      if (templateId != null && poolId != null) {
-        VMTemplateStoragePoolVO vmTemplateStoragePoolVO=_templatePoolDao.findByPoolTemplate(poolId,templateId);
-        if (vmTemplateStoragePoolVO != null) {
-          prevSnapshotUuid=vmTemplateStoragePoolVO.getInstallPath();
-        }
- else {
-          s_logger.warn("Volume id: " + volumeId + " in pool id: "+ poolId+ " based off  template id: "+ templateId+ " doesn't have an entry in the template_spool_ref table."+ " Using null as the template.");
+            prevSnapshot=_snapshotDao.findById(prevSnapshotId);
+            prevSnapshotUuid=prevSnapshot.getPath();
+            prevBackupUuid=prevSnapshot.getBackupSnapshotId();
+          }
         }
       }
     }
-  }
-  String firstBackupUuid=volume.getFirstSnapshotBackupUuid();
-  boolean isVolumeInactive=_storageMgr.volumeInactive(volume);
-  String vmName=_storageMgr.getVmNameOnVolume(volume);
-  BackupSnapshotCommand backupSnapshotCommand=new BackupSnapshotCommand(primaryStoragePoolNameLabel,secondaryStoragePoolUrl,dcId,accountId,volumeId,snapshotUuid,snapshot.getName(),prevSnapshotUuid,prevBackupUuid,firstBackupUuid,isFirstSnapshotOfRootVolume,isVolumeInactive,vmName);
-  String backedUpSnapshotUuid=null;
-  String basicErrMsg="Failed to backup snapshot id " + snapshot.getId() + " to secondary storage for volume: "+ volumeId;
-  boolean backedUp=false;
-  BackupSnapshotAnswer answer=(BackupSnapshotAnswer)_storageMgr.sendToHostsOnStoragePool(volume.getPoolId(),backupSnapshotCommand,basicErrMsg,_totalRetries,_pauseInterval,_shouldBeSnapshotCapable,volume.getInstanceId());
-  if (answer != null && answer.getResult()) {
-    backedUpSnapshotUuid=answer.getBackupSnapshotName();
-    if (backedUpSnapshotUuid != null) {
-      backedUp=true;
-      if (prevSnapshot != null && backedUpSnapshotUuid.equalsIgnoreCase(prevSnapshot.getBackupSnapshotId())) {
-        s_logger.debug("Delete duplicate Snapshot id: " + prevSnapshotId);
-        long pprevSnapshotId=prevSnapshot.getPrevSnapshotId();
-        snapshot.setPrevSnapshotId(pprevSnapshotId);
-        _snapshotDao.update(snapshot.getId(),snapshot);
-        _snapshotDao.expunge(prevSnapshot.getId());
-        EventVO event=new EventVO();
-        String eventParams="id=" + prevSnapshot.getId() + "\nssName="+ prevSnapshot.getName();
-        event.setType(EventTypes.EVENT_SNAPSHOT_DELETE);
-        event.setState(EventState.Completed);
-        event.setDescription("Delete snapshot id: " + prevSnapshot.getId() + " due to new snapshot is same as this one");
-        event.setLevel(EventVO.LEVEL_INFO);
-        event.setParameters(eventParams);
-        _eventDao.persist(event);
-        prevSnapshotId=pprevSnapshotId;
-        if (prevSnapshotId == 0) {
-          prevSnapshot=null;
-          prevSnapshotUuid=null;
-          prevBackupUuid=null;
-        }
+ else     if (answer != null) {
+      s_logger.error(answer.getDetails());
+    }
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    SnapshotVO snapshotVO=_snapshotDao.findById(snapshotId);
+    snapshotVO.setBackupSnapshotId(backedUpSnapshotUuid);
+    if (volume.getFirstSnapshotBackupUuid() == null) {
+      volume.setFirstSnapshotBackupUuid(backedUpSnapshotUuid);
+      _volsDao.update(volumeId,volume);
+    }
+    EventVO event=new EventVO();
+    event.setUserId(userId);
+    event.setAccountId(volume.getAccountId());
+    event.setType(EventTypes.EVENT_SNAPSHOT_CREATE);
+    String snapshotName=snapshotVO.getName();
+    if (backedUp) {
+      snapshotVO.setStatus(Snapshot.Status.BackedUp);
+      String eventParams="id=" + snapshotId + "\nssName="+ snapshotName+ "\nsize="+ volume.getSize()+ "\ndcId="+ volume.getDataCenterId();
+      event.setDescription("Backed up snapshot id: " + snapshotId + " to secondary for volume "+ volumeId);
+      event.setLevel(EventVO.LEVEL_INFO);
+      event.setParameters(eventParams);
+      _snapshotDao.update(snapshotId,snapshotVO);
+    }
  else {
-          prevSnapshot=_snapshotDao.findById(prevSnapshotId);
-          prevSnapshotUuid=prevSnapshot.getPath();
-          prevBackupUuid=prevSnapshot.getBackupSnapshotId();
-        }
-      }
-      if (prevSnapshot != null && prevSnapshot.getRemoved() != null) {
-        s_logger.debug("Snapshot id: " + prevSnapshotId + " was marked as removed. Deleting it from the primary/secondary/DB now.");
-        long prevValidSnapshotId=prevSnapshot.getPrevSnapshotId();
-        String prevValidSnapshotBackupUuid=null;
-        if (prevValidSnapshotId > 0) {
-          prevValidSnapshotBackupUuid=_snapshotDao.findById(prevValidSnapshotId).getBackupSnapshotId();
-        }
-        snapshot.setPrevSnapshotId(prevValidSnapshotId);
-        _snapshotDao.update(id,snapshot);
-        backedUp=destroyLastSnapshot(prevValidSnapshotBackupUuid,prevSnapshot,backedUpSnapshotUuid);
-        if (!backedUp) {
-          s_logger.debug("Error while deleting last snapshot id: " + prevSnapshotId + " for volume "+ volumeId);
-        }
-      }
+      _snapshotDao.remove(snapshotId);
+      event.setLevel(EventVO.LEVEL_ERROR);
+      event.setDescription("Failed to backup snapshot id: " + snapshotId + " to secondary for volume "+ volumeId);
+    }
+    _eventDao.persist(event);
+    txn.commit();
+    return backedUp;
+  }
+  finally {
+    if (snapshot != null) {
+      _snapshotDao.release(snapshotId);
     }
   }
- else   if (answer != null) {
-    s_logger.error(answer.getDetails());
-  }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  SnapshotVO snapshotVO=_snapshotDao.findById(id);
-  snapshotVO.setBackupSnapshotId(backedUpSnapshotUuid);
-  if (volume.getFirstSnapshotBackupUuid() == null) {
-    volume.setFirstSnapshotBackupUuid(backedUpSnapshotUuid);
-    _volsDao.update(volumeId,volume);
-  }
-  EventVO event=new EventVO();
-  event.setUserId(userId);
-  event.setAccountId(volume.getAccountId());
-  event.setType(EventTypes.EVENT_SNAPSHOT_CREATE);
-  String snapshotName=snapshotVO.getName();
-  if (backedUp) {
-    snapshotVO.setStatus(Snapshot.Status.BackedUp);
-    String eventParams="id=" + id + "\nssName="+ snapshotName+ "\nsize="+ volume.getSize()+ "\ndcId="+ volume.getDataCenterId();
-    event.setDescription("Backed up snapshot id: " + id + " to secondary for volume "+ volumeId);
-    event.setLevel(EventVO.LEVEL_INFO);
-    event.setParameters(eventParams);
-    _snapshotDao.update(id,snapshotVO);
-  }
- else {
-    _snapshotDao.remove(id);
-    event.setLevel(EventVO.LEVEL_ERROR);
-    event.setDescription("Failed to backup snapshot id: " + id + " to secondary for volume "+ volumeId);
-  }
-  _eventDao.persist(event);
-  txn.commit();
-  return backedUp;
 }
