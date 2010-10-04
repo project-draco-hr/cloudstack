@@ -1,4 +1,7 @@
 {
+  StringBuffer auditTrailSb=new StringBuffer();
+  auditTrailSb.append(req.getRemoteAddr());
+  auditTrailSb.append(" -- " + req.getMethod() + " ");
   try {
     Map<String,Object[]> params=new HashMap<String,Object[]>();
     params.putAll(req.getParameterMap());
@@ -13,16 +16,21 @@
       String command=(String)commandObj[0];
       if ("logout".equalsIgnoreCase(command)) {
         if (session != null) {
-          String userIdStr=(String)session.getAttribute("userId");
+          String userIdStr=(String)session.getAttribute(BaseCmd.Properties.USER_ID.getName());
+          Account account=(Account)session.getAttribute(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+          NDC.push("userId=" + userIdStr + " accountId="+ account == null ? null : account.getId() + " sessionId=" + session.getId());
           if (userIdStr != null) {
             _apiServer.logoutUser(Long.parseLong(userIdStr));
           }
           session.invalidate();
         }
+        auditTrailSb.append("command=logout");
+        auditTrailSb.append(" " + HttpServletResponse.SC_OK);
         writeResponse(resp,getLogoutSuccessResponse(responseType),false,responseType);
         return;
       }
  else       if ("login".equalsIgnoreCase(command)) {
+        auditTrailSb.append("command=login");
         if (session != null)         session.invalidate();
         session=req.getSession(true);
         String[] username=(String[])params.get("username");
@@ -36,15 +44,18 @@
         if ((domainIdArr != null) && (domainIdArr.length > 0)) {
           try {
             domainId=new Long(Long.parseLong(domainIdArr[0]));
+            auditTrailSb.append(" domainid=" + domainId);
           }
  catch (          NumberFormatException e) {
             s_logger.warn("Invalid domain id entered by user");
+            auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "Invalid domain id entered, please enter a valid one");
             resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"Invalid domain id entered, please enter a valid one");
           }
         }
         String domain=null;
         if (domainName != null) {
           domain=domainName[0];
+          auditTrailSb.append(" domain=" + domain);
           if (domain != null) {
             if (!domain.endsWith("/")) {
               domain+='/';
@@ -55,24 +66,29 @@
           }
         }
         if (username != null) {
+          auditTrailSb.append(" username=" + username[0]);
           String pwd=((password == null) ? null : password[0]);
           List<Pair<String,Object>> sessionParams=_apiServer.loginUser(username[0],pwd,domainId,domain,params);
           if (sessionParams != null) {
             for (            Pair<String,Object> sessionParam : sessionParams) {
               session.setAttribute(sessionParam.first(),sessionParam.second());
             }
+            NDC.push("userId=" + session.getAttribute(BaseCmd.Properties.USER_ID.getName()) + " accountId="+ ((Account)session.getAttribute(BaseCmd.Properties.ACCOUNT_OBJ.getName())).getId()+ " sessionId="+ session.getId());
             String loginResponse=getLoginSuccessResponse(session,responseType);
+            auditTrailSb.append(" " + HttpServletResponse.SC_OK);
             writeResponse(resp,loginResponse,false,responseType);
             return;
           }
  else {
             session.invalidate();
+            auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "failed to authenticated user, check username/password are correct");
             resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"failed to authenticated user, check username/password are correct");
             return;
           }
         }
       }
     }
+    auditTrailSb.append(req.getQueryString());
     boolean isNew=((session == null) ? true : session.isNew());
     Object accountObj=null;
     String userId=null;
@@ -87,12 +103,14 @@
       String[] sessionKeyParam=(String[])params.get(BaseCmd.Properties.SESSION_KEY.getName());
       if ((sessionKeyParam == null) || (sessionKey == null) || !sessionKey.equals(sessionKeyParam[0])) {
         session.invalidate();
+        auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "unable to verify user credentials");
         resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"unable to verify user credentials");
       }
       if ((userId != null) && (account != null) && (accountObj != null)&& _apiServer.verifyUser(Long.valueOf(userId))) {
         String[] command=(String[])params.get("command");
         if (command == null) {
           s_logger.info("missing command, ignoring request...");
+          auditTrailSb.append(" " + HttpServletResponse.SC_BAD_REQUEST + " "+ "no command specified");
           resp.sendError(HttpServletResponse.SC_BAD_REQUEST,"no command specified");
           return;
         }
@@ -102,6 +120,7 @@
         account=null;
         accountObj=null;
         session.invalidate();
+        auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "unable to verify user credentials");
         resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"unable to verify user credentials");
         return;
       }
@@ -123,10 +142,11 @@
       }
       updateUserContext(params,session != null ? session.getId() : null);
       try {
-        String response=_apiServer.handleRequest(params,false,responseType);
+        String response=_apiServer.handleRequest(params,false,responseType,auditTrailSb);
         writeResponse(resp,response != null ? response : "",false,responseType);
       }
  catch (      ServerApiException se) {
+        auditTrailSb.append(" " + se.getErrorCode() + " "+ se.getDescription());
         resp.sendError(se.getErrorCode(),se.getDescription());
       }
     }
@@ -134,6 +154,7 @@
       if (session != null) {
         session.invalidate();
       }
+      auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "unable to verify user credentials and/or request signature");
       resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"unable to verify user credentials and/or request signature");
     }
   }
@@ -141,11 +162,15 @@
     if (s_logger.isTraceEnabled()) {
       s_logger.trace("exception processing request: " + ioex);
     }
+    auditTrailSb.append(" exception processing request");
   }
 catch (  Exception ex) {
     s_logger.error("unknown exception writing api response",ex);
+    auditTrailSb.append(" unknown exception writing api response");
   }
  finally {
+    s_accessLogger.info(auditTrailSb.toString());
     UserContext.unregisterContext();
+    NDC.remove();
   }
 }
