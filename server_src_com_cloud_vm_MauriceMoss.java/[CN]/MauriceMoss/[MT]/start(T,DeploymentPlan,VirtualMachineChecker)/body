@@ -4,11 +4,16 @@
   }
   Journal journal=new Journal.LogJournal("Creating " + vm,s_logger);
   ServiceOffering offering=_offeringDao.findById(vm.getServiceOfferingId());
+  VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
+  BootloaderType bt=BootloaderType.PyGrub;
+  if (template.getFormat() == Storage.ImageFormat.ISO || template.isRequiresHvm()) {
+    bt=BootloaderType.HVM;
+  }
   GuestOSVO guestOS=_guestOsDao.findById(vm.getGuestOSId());
   if (guestOS == null) {
     throw new CloudRuntimeException("Guest OS is not set");
   }
-  VirtualMachineProfile vmProfile=new VirtualMachineProfile(vm,offering,guestOS.getName());
+  VirtualMachineProfile vmProfile=new VirtualMachineProfile(vm,offering,guestOS.getName(),template.getHypervisorType());
   _vmDao.updateIf(vm,Event.StartRequested,null);
   Set<DeployDestination> avoids=new HashSet<DeployDestination>();
   int retry=_retry;
@@ -28,11 +33,6 @@
     vm.setDataCenterId(dest.getDataCenter().getId());
     vm.setPodId(dest.getPod().getId());
     _vmDao.updateIf(vm,Event.OperationRetry,dest.getHost().getId());
-    VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
-    BootloaderType bt=BootloaderType.PyGrub;
-    if (template.getFormat() == Storage.ImageFormat.ISO || template.isRequiresHvm()) {
-      bt=BootloaderType.HVM;
-    }
     VirtualMachineTO vmTO=new VirtualMachineTO(vmProfile,bt);
     VolumeTO[] volumes=null;
     try {
@@ -48,6 +48,9 @@ catch (    StorageUnavailableException e) {
     NicTO[] nics=_networkMgr.prepare(vmProfile,dest);
     vmTO.setNics(nics);
     vmTO.setDisks(volumes);
+    if (checker != null) {
+      checker.finalizeDeployment(vmTO,vmProfile,dest);
+    }
     Start2Command cmd=new Start2Command(vmTO);
     try {
       Start2Answer answer=(Start2Answer)_agentMgr.send(dest.getHost().getId(),cmd);
