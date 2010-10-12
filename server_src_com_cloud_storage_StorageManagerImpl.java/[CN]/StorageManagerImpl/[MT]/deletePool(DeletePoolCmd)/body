@@ -1,0 +1,54 @@
+{
+  Long id=command.getId();
+  boolean deleteFlag=false;
+  StoragePoolVO sPool=_storagePoolDao.findById(id);
+  if (sPool == null) {
+    throw new InvalidParameterValueException("Unable to find pool by id " + id);
+  }
+  if (sPool.getPoolType().equals(StoragePoolType.LVM)) {
+    throw new InvalidParameterValueException("Unable to delete local storage id: " + id);
+  }
+  List<StoragePoolHostVO> hostPoolRecords=_storagePoolHostDao.listByPoolId(id);
+  if (hostPoolRecords.size() == 0) {
+    _storagePoolDao.remove(id);
+    return true;
+  }
+ else {
+    Pair<Long,Long> volumeRecords=_volsDao.getCountAndTotalByPool(id);
+    if (volumeRecords.first() > 0) {
+      return false;
+    }
+ else {
+      StoragePoolVO lock=_storagePoolDao.acquire(sPool.getId());
+      try {
+        if (lock == null) {
+          s_logger.debug("Failed to acquire lock when deleting StoragePool with ID: " + sPool.getId());
+          return false;
+        }
+        for (        StoragePoolHostVO host : hostPoolRecords) {
+          DeleteStoragePoolCommand cmd=new DeleteStoragePoolCommand(sPool);
+          final Answer answer=_agentMgr.easySend(host.getHostId(),cmd);
+          if (answer != null) {
+            if (answer.getResult() == true) {
+              deleteFlag=true;
+              break;
+            }
+          }
+        }
+      }
+  finally {
+        if (lock != null) {
+          _storagePoolDao.release(lock.getId());
+        }
+      }
+      if (deleteFlag) {
+        for (        StoragePoolHostVO host : hostPoolRecords) {
+          _storagePoolHostDao.deleteStoragePoolHostDetails(host.getHostId(),host.getPoolId());
+        }
+        _storagePoolDao.remove(id);
+        return true;
+      }
+    }
+  }
+  return false;
+}

@@ -1,0 +1,43 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long domainId=cmd.getId();
+  Boolean cleanup=cmd.getCleanup();
+  if ((domainId == DomainVO.ROOT_DOMAIN) || ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId))) {
+    throw new PermissionDeniedException("Unable to delete domain " + domainId + ", permission denied.");
+  }
+  try {
+    DomainVO domain=_domainDao.findById(domainId);
+    if (domain != null) {
+      long ownerId=domain.getAccountId();
+      if ((cleanup != null) && cleanup.booleanValue()) {
+        boolean success=cleanupDomain(domainId,ownerId);
+        if (!success) {
+          EventUtils.saveEvent(new Long(1),ownerId,EventVO.LEVEL_ERROR,EventTypes.EVENT_DOMAIN_DELETE,"Failed to clean up domain resources and sub domains, domain with id " + domainId + " was not deleted.");
+          s_logger.error("Failed to clean up domain resources and sub domains, delete failed on domain " + domain.getName() + " (id: "+ domainId+ ").");
+          return false;
+        }
+      }
+ else {
+        if (!_domainDao.remove(domainId)) {
+          EventUtils.saveEvent(new Long(1),ownerId,EventVO.LEVEL_ERROR,EventTypes.EVENT_DOMAIN_DELETE,"Domain with id " + domainId + " was not deleted");
+          s_logger.error("Delete failed on domain " + domain.getName() + " (id: "+ domainId+ "); please make sure all users and sub domains have been removed from the domain before deleting");
+          return false;
+        }
+ else {
+          EventUtils.saveEvent(new Long(1),ownerId,EventVO.LEVEL_INFO,EventTypes.EVENT_DOMAIN_DELETE,"Domain with id " + domainId + " was deleted");
+        }
+      }
+    }
+ else {
+      throw new InvalidParameterValueException("Failed to delete domain nable " + domainId + ", domain not found");
+    }
+    return true;
+  }
+ catch (  InvalidParameterValueException ex) {
+    throw ex;
+  }
+catch (  Exception ex) {
+    s_logger.error("Exception deleting domain with id " + domainId,ex);
+    return false;
+  }
+}

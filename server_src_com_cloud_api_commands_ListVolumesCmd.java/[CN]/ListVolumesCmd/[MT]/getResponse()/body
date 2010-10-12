@@ -1,0 +1,75 @@
+{
+  List<VolumeVO> volumes=(List<VolumeVO>)getResponseObject();
+  ListResponse<VolumeResponse> response=new ListResponse<VolumeResponse>();
+  List<VolumeResponse> volResponses=new ArrayList<VolumeResponse>();
+  for (  VolumeVO volume : volumes) {
+    VolumeResponse volResponse=new VolumeResponse();
+    volResponse.setId(volume.getId());
+    AsyncJobVO asyncJob=ApiDBUtils.findInstancePendingAsyncJob("volume",volume.getId());
+    if (asyncJob != null) {
+      volResponse.setJobId(asyncJob.getId());
+      volResponse.setJobStatus(asyncJob.getStatus());
+    }
+    if (volume.getName() != null) {
+      volResponse.setName(volume.getName());
+    }
+ else {
+      volResponse.setName("");
+    }
+    volResponse.setZoneId(volume.getDataCenterId());
+    volResponse.setZoneName(ApiDBUtils.findZoneById(volume.getDataCenterId()).getName());
+    volResponse.setVolumeType(volume.getVolumeType().toString());
+    volResponse.setDeviceId(volume.getDeviceId());
+    Long instanceId=volume.getInstanceId();
+    if (instanceId != null) {
+      VMInstanceVO vm=ApiDBUtils.findVMInstanceById(instanceId);
+      volResponse.setVirtualMachineId(vm.getId());
+      volResponse.setVirtualMachineName(vm.getName());
+      volResponse.setVirtualMachineDisplayName(vm.getName());
+      volResponse.setVirtualMachineState(vm.getState().toString());
+    }
+    volResponse.setSize(volume.getSize());
+    volResponse.setCreated(volume.getCreated());
+    volResponse.setState(volume.getStatus().toString());
+    Account accountTemp=ApiDBUtils.findAccountById(volume.getAccountId());
+    if (accountTemp != null) {
+      volResponse.setAccountName(accountTemp.getAccountName());
+      volResponse.setDomainId(accountTemp.getDomainId());
+      volResponse.setDomainName(ApiDBUtils.findDomainById(accountTemp.getDomainId()).getName());
+    }
+    String storageType;
+    try {
+      if (volume.getPoolId() == null) {
+        if (volume.getState() == Volume.State.Allocated) {
+          storageType="shared";
+        }
+ else {
+          storageType="unknown";
+        }
+      }
+ else {
+        storageType=ApiDBUtils.volumeIsOnSharedStorage(volume.getId()) ? "shared" : "local";
+      }
+    }
+ catch (    InvalidParameterValueException e) {
+      s_logger.error(e.getMessage(),e);
+      throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Volume " + volume.getName() + " does not have a valid ID");
+    }
+    volResponse.setStorageType(storageType);
+    volResponse.setDiskOfferingId(volume.getDiskOfferingId());
+    DiskOfferingVO diskOffering=ApiDBUtils.findDiskOfferingById(volume.getDiskOfferingId());
+    volResponse.setDiskOfferingName(diskOffering.getName());
+    volResponse.setDiskOfferingDisplayText(diskOffering.getDisplayText());
+    Long poolId=volume.getPoolId();
+    String poolName=(poolId == null) ? "none" : ApiDBUtils.findStoragePoolById(poolId).getName();
+    volResponse.setStoragePoolName(poolName);
+    volResponse.setSourceId(volume.getSourceId());
+    volResponse.setSourceType(volume.getSourceType().toString());
+    volResponse.setHypervisor(ApiDBUtils.getVolumeHyperType(volume.getId()).toString());
+    volResponse.setResponseName("volume");
+    volResponses.add(volResponse);
+  }
+  response.setResponses(volResponses);
+  response.setResponseName(getName());
+  return response;
+}

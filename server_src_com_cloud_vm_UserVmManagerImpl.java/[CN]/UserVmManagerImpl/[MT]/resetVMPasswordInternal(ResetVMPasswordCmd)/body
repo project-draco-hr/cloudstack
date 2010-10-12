@@ -1,0 +1,48 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long userId=UserContext.current().getUserId();
+  Long id=cmd.getId();
+  String password=null;
+  UserVmVO vmInstance=_vmDao.findById(id.longValue());
+  if (vmInstance == null) {
+    throw new ServerApiException(BaseCmd.VM_INVALID_PARAM_ERROR,"unable to find a virtual machine with id " + id);
+  }
+  userId=accountAndUserValidation(id,account,userId,vmInstance);
+  VMTemplateVO template=_templateDao.findById(vmInstance.getTemplateId());
+  if (template.getEnablePassword()) {
+    password=PasswordGenerator.generateRandomPassword();
+    ;
+  }
+ else {
+    password="saved_password";
+  }
+  if (password == null || password.equals("")) {
+    return false;
+  }
+ else {
+    cmd.setPassword(password);
+  }
+  if (template.getEnablePassword()) {
+    if (vmInstance.getDomainRouterId() == null)     return true;
+    if (_networkMgr.savePasswordToRouter(vmInstance.getDomainRouterId(),vmInstance.getPrivateIpAddress(),password)) {
+      if (!rebootVirtualMachine(userId,id)) {
+        if (vmInstance.getState() == State.Stopped) {
+          return true;
+        }
+        return false;
+      }
+ else {
+        return true;
+      }
+    }
+ else {
+      return false;
+    }
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Reset password called for a vm that is not using a password enabled template");
+    }
+    return false;
+  }
+}

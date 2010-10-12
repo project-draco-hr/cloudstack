@@ -16,8 +16,8 @@
       String command=(String)commandObj[0];
       if ("logout".equalsIgnoreCase(command)) {
         if (session != null) {
-          String userIdStr=(String)session.getAttribute(BaseCmd.Properties.USER_ID.getName());
-          Account account=(Account)session.getAttribute(BaseCmd.Properties.ACCOUNT_OBJ.getName());
+          String userIdStr=(String)session.getAttribute("userid");
+          Account account=(Account)session.getAttribute("accountobj");
           auditTrailSb.insert(0,"(userId=" + userIdStr + " accountId="+ account == null ? null : account.getId() + " sessionId=" + session.getId()+ ")");
           if (userIdStr != null) {
             _apiServer.logoutUser(Long.parseLong(userIdStr));
@@ -66,20 +66,15 @@
           }
         }
         if (username != null) {
-          auditTrailSb.append(" username=" + username[0]);
           String pwd=((password == null) ? null : password[0]);
-          List<Pair<String,Object>> sessionParams=_apiServer.loginUser(username[0],pwd,domainId,domain,params);
-          if (sessionParams != null) {
-            for (            Pair<String,Object> sessionParam : sessionParams) {
-              session.setAttribute(sessionParam.first(),sessionParam.second());
-            }
-            auditTrailSb.insert(0,"(userId=" + session.getAttribute(BaseCmd.Properties.USER_ID.getName()) + " accountId="+ ((Account)session.getAttribute(BaseCmd.Properties.ACCOUNT_OBJ.getName())).getId()+ " sessionId="+ session.getId()+ ")");
+          try {
+            _apiServer.loginUser(session,username[0],pwd,domainId,domain,params);
+            auditTrailSb.insert(0,"(userId=" + session.getAttribute("userid") + " accountId="+ ((Account)session.getAttribute("accountobj")).getId()+ " sessionId="+ session.getId()+ ")");
             String loginResponse=getLoginSuccessResponse(session,responseType);
-            auditTrailSb.append(" " + HttpServletResponse.SC_OK);
             writeResponse(resp,loginResponse,false,responseType);
             return;
           }
- else {
+ catch (          CloudAuthenticationException ex) {
             session.invalidate();
             auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "failed to authenticated user, check username/password are correct");
             resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"failed to authenticated user, check username/password are correct");
@@ -90,23 +85,22 @@
     }
     auditTrailSb.append(req.getQueryString());
     boolean isNew=((session == null) ? true : session.isNew());
-    Object accountObj=null;
-    String userId=null;
-    String account=null;
-    String domainId=null;
+    UserContext.registerContext(null,null,null,null,null,null,false);
+    Long userId=null;
     if (!isNew) {
-      userId=(String)session.getAttribute(BaseCmd.Properties.USER_ID.getName());
-      account=(String)session.getAttribute(BaseCmd.Properties.ACCOUNT.getName());
-      domainId=(String)session.getAttribute(BaseCmd.Properties.DOMAIN_ID.getName());
-      accountObj=session.getAttribute(BaseCmd.Properties.ACCOUNT_OBJ.getName());
-      String sessionKey=(String)session.getAttribute(BaseCmd.Properties.SESSION_KEY.getName());
-      String[] sessionKeyParam=(String[])params.get(BaseCmd.Properties.SESSION_KEY.getName());
+      userId=(Long)session.getAttribute("userid");
+      String account=(String)session.getAttribute("account");
+      Long domainId=(Long)session.getAttribute("domainid");
+      Object accountObj=session.getAttribute("accountobj");
+      String sessionKey=(String)session.getAttribute("sessionkey");
+      String[] sessionKeyParam=(String[])params.get("sessionkey");
       if ((sessionKeyParam == null) || (sessionKey == null) || !sessionKey.equals(sessionKeyParam[0])) {
         session.invalidate();
         auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "unable to verify user credentials");
         resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"unable to verify user credentials");
+        return;
       }
-      if ((userId != null) && (account != null) && (accountObj != null)&& _apiServer.verifyUser(Long.valueOf(userId))) {
+      if ((userId != null) && (account != null) && (accountObj != null)&& _apiServer.verifyUser(userId)) {
         String[] command=(String[])params.get("command");
         if (command == null) {
           s_logger.info("missing command, ignoring request...");
@@ -114,33 +108,16 @@
           resp.sendError(HttpServletResponse.SC_BAD_REQUEST,"no command specified");
           return;
         }
+        UserContext.updateContext(userId,accountObj,account,((Account)accountObj).getId(),domainId,session.getId());
       }
  else {
-        userId=null;
-        account=null;
-        accountObj=null;
         session.invalidate();
         auditTrailSb.append(" " + HttpServletResponse.SC_UNAUTHORIZED + " "+ "unable to verify user credentials");
         resp.sendError(HttpServletResponse.SC_UNAUTHORIZED,"unable to verify user credentials");
         return;
       }
     }
-    UserContext.registerContext(null,null,null,false);
-    if (_apiServer.verifyRequest(params,userId)) {
-      if (accountObj != null) {
-        Account userAccount=(Account)accountObj;
-        if (userAccount.getType() == Account.ACCOUNT_TYPE_NORMAL) {
-          params.put(BaseCmd.Properties.USER_ID.getName(),new String[]{userId});
-          params.put(BaseCmd.Properties.ACCOUNT.getName(),new String[]{account});
-          params.put(BaseCmd.Properties.DOMAIN_ID.getName(),new String[]{domainId});
-          params.put(BaseCmd.Properties.ACCOUNT_OBJ.getName(),new Object[]{accountObj});
-        }
- else {
-          params.put(BaseCmd.Properties.USER_ID.getName(),new String[]{userId});
-          params.put(BaseCmd.Properties.ACCOUNT_OBJ.getName(),new Object[]{accountObj});
-        }
-      }
-      updateUserContext(params,session != null ? session.getId() : null);
+    if (_apiServer.verifyRequest(params,userId.toString())) {
       auditTrailSb.insert(0,"(userId=" + UserContext.current().getUserId() + " accountId="+ UserContext.current().getAccountId()+ " sessionId="+ (session != null ? session.getId() : null)+ ")");
       try {
         String response=_apiServer.handleRequest(params,false,responseType,auditTrailSb);

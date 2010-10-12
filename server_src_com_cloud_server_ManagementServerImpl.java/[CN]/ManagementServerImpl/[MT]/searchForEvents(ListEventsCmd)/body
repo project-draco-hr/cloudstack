@@ -1,0 +1,99 @@
+{
+  Account account=(Account)UserContext.current().getAccountObject();
+  Long accountId=null;
+  boolean isAdmin=false;
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  if ((account == null) || isAdmin(account.getType())) {
+    isAdmin=true;
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Invalid domain id (" + domainId + ") given, unable to list events.");
+      }
+      if (accountName != null) {
+        Account userAccount=_accountDao.findAccount(accountName,domainId);
+        if (userAccount != null) {
+          accountId=userAccount.getId();
+        }
+ else {
+          throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find account " + accountName + " in domain "+ domainId);
+        }
+      }
+    }
+ else {
+      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+    }
+  }
+ else {
+    accountId=account.getId();
+  }
+  Filter searchFilter=new Filter(EventVO.class,"createDate",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object type=cmd.getType();
+  Object level=cmd.getLevel();
+  Date startDate=cmd.getStartDate();
+  Date endDate=cmd.getEndDate();
+  Object keyword=cmd.getKeyword();
+  Integer entryTime=cmd.getEntryTime();
+  Integer duration=cmd.getDuration();
+  if ((entryTime != null) && (duration != null)) {
+    if (entryTime <= duration) {
+      throw new InvalidParameterValueException("Entry time must be greater than duration");
+    }
+    return listPendingEvents(entryTime,duration);
+  }
+  SearchBuilder<EventVO> sb=_eventDao.createSearchBuilder();
+  sb.and("levelL",sb.entity().getLevel(),SearchCriteria.Op.LIKE);
+  sb.and("levelEQ",sb.entity().getLevel(),SearchCriteria.Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("accountName",sb.entity().getAccountName(),SearchCriteria.Op.LIKE);
+  sb.and("domainIdEQ",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
+  sb.and("createDateB",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
+  sb.and("createDateG",sb.entity().getCreateDate(),SearchCriteria.Op.GTEQ);
+  sb.and("createDateL",sb.entity().getCreateDate(),SearchCriteria.Op.LTEQ);
+  if ((accountId == null) && (accountName == null) && (domainId != null)&& isAdmin) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<EventVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<EventVO> ssc=_eventDao.createSearchCriteria();
+    ssc.addOr("type",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("level",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("level",SearchCriteria.Op.SC,ssc);
+  }
+  if (level != null)   sc.setParameters("levelEQ",level);
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+ else   if (domainId != null) {
+    if (accountName != null) {
+      sc.setParameters("domainIdEQ",domainId);
+      sc.setParameters("accountName","%" + accountName + "%");
+      sc.addAnd("removed",SearchCriteria.Op.NULL);
+    }
+ else     if (isAdmin) {
+      DomainVO domain=_domainDao.findById(domainId);
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+  }
+  if (type != null) {
+    sc.setParameters("type",type);
+  }
+  if (startDate != null && endDate != null) {
+    startDate=massageDate(startDate,0,0,0);
+    endDate=massageDate(endDate,23,59,59);
+    sc.setParameters("createDateB",startDate,endDate);
+  }
+ else   if (startDate != null) {
+    startDate=massageDate(startDate,0,0,0);
+    sc.setParameters("createDateG",startDate);
+  }
+ else   if (endDate != null) {
+    endDate=massageDate(endDate,23,59,59);
+    sc.setParameters("createDateL",endDate);
+  }
+  return _eventDao.searchAllEvents(sc,searchFilter);
+}

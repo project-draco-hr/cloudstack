@@ -1,0 +1,73 @@
+{
+  String publicIp=cmd.getPublicIp();
+  String privateIp=cmd.getPrivateIp();
+  String privatePort=cmd.getPrivatePort();
+  String publicPort=cmd.getPublicPort();
+  String protocol=cmd.getProtocol();
+  Long vmId=cmd.getVirtualMachineId();
+  Long userId=UserContext.current().getUserId();
+  Account account=(Account)UserContext.current().getAccountObject();
+  UserVmVO userVM=null;
+  if (userId == null) {
+    userId=Long.valueOf(User.UID_SYSTEM);
+  }
+  IPAddressVO ipAddressVO=findIPAddressById(publicIp);
+  if (ipAddressVO == null) {
+    throw new InvalidParameterValueException("Unable to find IP address " + publicIp);
+  }
+  if (ipAddressVO.getAccountId() == null) {
+    throw new InvalidParameterValueException("Unable to update port forwarding rule, owner of IP address " + publicIp + " not found.");
+  }
+  if (privateIp != null) {
+    if (!NetUtils.isValidIp(privateIp)) {
+      throw new InvalidParameterValueException("Invalid private IP address specified: " + privateIp);
+    }
+    Criteria c=new Criteria();
+    c.addCriteria(Criteria.ACCOUNTID,new Object[]{ipAddressVO.getAccountId()});
+    c.addCriteria(Criteria.DATACENTERID,ipAddressVO.getDataCenterId());
+    c.addCriteria(Criteria.IPADDRESS,privateIp);
+    List<UserVmVO> userVMs=searchForUserVMs(c);
+    if ((userVMs == null) || userVMs.isEmpty()) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Invalid private IP address specified: " + privateIp + ", no virtual machine instances running with that address.");
+    }
+    userVM=userVMs.get(0);
+  }
+ else   if (vmId != null) {
+    userVM=findUserVMInstanceById(vmId);
+    if (userVM == null) {
+      throw new InvalidParameterValueException("Unable to find virtual machine with id " + vmId);
+    }
+    if ((ipAddressVO.getAccountId() == null) || (ipAddressVO.getAccountId().longValue() != userVM.getAccountId())) {
+      throw new PermissionDeniedException("Unable to update port forwarding rule on IP address " + publicIp + ", permission denied.");
+    }
+    if (ipAddressVO.getDataCenterId() != userVM.getDataCenterId()) {
+      throw new PermissionDeniedException("Unable to update port forwarding rule, IP address " + publicIp + " is not in the same availability zone as virtual machine "+ userVM.toString());
+    }
+    privateIp=userVM.getGuestIpAddress();
+  }
+ else {
+    throw new InvalidParameterValueException("No private IP address (privateip) or virtual machine instance id (virtualmachineid) specified, unable to update port forwarding rule");
+  }
+  if (account != null) {
+    if (isAdmin(account.getType())) {
+      if (!_domainDao.isChildDomain(account.getDomainId(),ipAddressVO.getDomainId())) {
+        throw new PermissionDeniedException("Unable to update port forwarding rule on IP address " + publicIp + ", permission denied.");
+      }
+    }
+ else     if (account.getId() != ipAddressVO.getAccountId()) {
+      throw new PermissionDeniedException("Unable to update port forwarding rule on IP address " + publicIp + ", permission denied.");
+    }
+  }
+  List<FirewallRuleVO> fwRules=_firewallRulesDao.listIPForwardingForUpdate(publicIp,publicPort,protocol);
+  if ((fwRules != null) && (fwRules.size() == 1)) {
+    FirewallRuleVO fwRule=fwRules.get(0);
+    String oldPrivateIP=fwRule.getPrivateIpAddress();
+    String oldPrivatePort=fwRule.getPrivatePort();
+    fwRule.setPrivateIpAddress(privateIp);
+    fwRule.setPrivatePort(privatePort);
+    _firewallRulesDao.update(fwRule.getId(),fwRule);
+    _networkMgr.updateFirewallRule(fwRule,oldPrivateIP,oldPrivatePort);
+    return fwRule;
+  }
+  return null;
+}

@@ -1,0 +1,47 @@
+{
+  if (cmdObj instanceof BaseAsyncCmd) {
+    Long objectId=null;
+    if (cmdObj instanceof BaseAsyncCreateCmd) {
+      BaseAsyncCreateCmd createCmd=(BaseAsyncCreateCmd)cmdObj;
+      objectId=_dispatcher.dispatchCreateCmd(createCmd,params);
+      createCmd.setId(objectId);
+      params.put("id",objectId.toString());
+    }
+ else {
+      ApiDispatcher.setupParameters(cmdObj,params);
+    }
+    BaseAsyncCmd asyncCmd=(BaseAsyncCmd)cmdObj;
+    UserContext ctx=UserContext.current();
+    Long userId=ctx.getUserId();
+    Account account=(Account)ctx.getAccountObject();
+    if (userId != null) {
+      params.put("ctxUserId",userId.toString());
+    }
+    if (account != null) {
+      params.put("ctxAccountId",String.valueOf(account.getId()));
+    }
+    Long eventId=EventUtils.saveScheduledEvent((userId == null) ? User.UID_SYSTEM : userId,asyncCmd.getAccountId(),asyncCmd.getEventType(),asyncCmd.getEventDescription());
+    if (eventId != null) {
+      params.put("starteventid",eventId.toString());
+    }
+    AsyncJobVO job=new AsyncJobVO();
+    job.setUserId(userId);
+    if (account != null) {
+      job.setAccountId(ctx.getAccountId());
+    }
+ else {
+      job.setAccountId(1L);
+    }
+    job.setCmd(cmdObj.getClass().getName());
+    job.setCmdInfo(GsonHelper.getBuilder().create().toJson(params));
+    long jobId=_asyncMgr.submitAsyncJob(job);
+    if (objectId != null) {
+      return ((BaseAsyncCreateCmd)asyncCmd).getResponse(jobId,objectId);
+    }
+    return ApiResponseSerializer.toSerializedString(asyncCmd.getResponse(jobId),asyncCmd.getResponseType());
+  }
+ else {
+    _dispatcher.dispatch(cmdObj,params);
+    return ApiResponseSerializer.toSerializedString(cmdObj.getResponse(),cmdObj.getResponseType());
+  }
+}

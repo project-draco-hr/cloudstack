@@ -1,0 +1,71 @@
+{
+  return new Runnable(){
+    public void run(){
+      long jobId=0;
+      Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+      try {
+        jobId=job.getId();
+        NDC.push("job-" + jobId);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Executing " + job.getCmd() + " for job-"+ jobId);
+        }
+        Class<?> cmdClass=Class.forName(job.getCmd());
+        BaseAsyncCmd cmdObj=(BaseAsyncCmd)cmdClass.newInstance();
+        cmdObj.setAsyncJobManager(mgr);
+        cmdObj.setJob(job);
+        Type mapType=new TypeToken<Map<String,String>>(){
+        }
+.getType();
+        Gson gson=GsonHelper.getBuilder().create();
+        Map<String,String> params=gson.fromJson(job.getCmdInfo(),mapType);
+        String userIdStr=params.get("ctxUserId");
+        String acctIdStr=params.get("ctxAccountId");
+        Long userId=null;
+        Account accountObject=null;
+        if (userIdStr != null) {
+          userId=Long.parseLong(userIdStr);
+        }
+        if (acctIdStr != null) {
+          accountObject=_accountDao.findById(Long.parseLong(acctIdStr));
+        }
+        UserContext.registerContext(userId,accountObject,null,null,null,null,false);
+        _dispatcher.dispatch(cmdObj,params);
+        completeAsyncJob(jobId,AsyncJobResult.STATUS_SUCCEEDED,0,cmdObj.getResponse());
+        if (job.getSyncSource() != null) {
+          _queueMgr.purgeItem(job.getSyncSource().getId());
+          checkQueue(job.getSyncSource().getQueueId());
+        }
+        if (s_logger.isDebugEnabled())         s_logger.debug("Done executing " + job.getCmd() + " for job-"+ jobId);
+      }
+ catch (      Throwable e) {
+        if (e instanceof AsyncCommandQueued) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("job " + job.getCmd() + " for job-"+ jobId+ " was queued, processing the queue.");
+          }
+          checkQueue(((AsyncCommandQueued)e).getQueue().getId());
+        }
+ else {
+          if (!(e instanceof ServerApiException)) {
+            s_logger.error("Unexpected exception while executing " + job.getCmd(),e);
+          }
+          completeAsyncJob(jobId,AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+          try {
+            if (job.getSyncSource() != null) {
+              _queueMgr.purgeItem(job.getSyncSource().getId());
+              checkQueue(job.getSyncSource().getQueueId());
+            }
+          }
+ catch (          Throwable ex) {
+            s_logger.fatal("Exception on exception, log it for record",ex);
+          }
+        }
+      }
+ finally {
+        StackMaid.current().exitCleanup();
+        txn.close();
+        NDC.pop();
+      }
+    }
+  }
+;
+}

@@ -1,0 +1,68 @@
+{
+  Long id=cmd.getId();
+  String name=cmd.getName();
+  String displayText=cmd.getDisplayText();
+  String format=cmd.getFormat();
+  Long guestOSId=cmd.getOsTypeId();
+  Boolean passwordEnabled=cmd.isPasswordEnabled();
+  Boolean bootable=cmd.isBootable();
+  Account account=(Account)UserContext.current().getAccountObject();
+  VMTemplateVO template=findTemplateById(id);
+  if (template == null) {
+    throw new InvalidParameterValueException("unable to find template/iso with id " + id);
+  }
+  if (id == Long.valueOf(1)) {
+    throw new InvalidParameterValueException("Unable to update template/iso with id " + id);
+  }
+  if (account != null) {
+    Long templateOwner=template.getAccountId();
+    if (!BaseCmd.isAdmin(account.getType())) {
+      if ((templateOwner == null) || (account.getId() != templateOwner.longValue())) {
+        throw new PermissionDeniedException("Unable to modify template/iso with id " + id + ", permission denied.");
+      }
+    }
+ else     if (account.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      Long templateOwnerDomainId=findDomainIdByAccountId(templateOwner);
+      if (!isChildDomain(account.getDomainId(),templateOwnerDomainId)) {
+        throw new PermissionDeniedException("Unable to modify template/iso with id " + id + ", permission denied");
+      }
+    }
+  }
+  boolean updateNeeded=!(name == null && displayText == null && format == null && guestOSId == null && passwordEnabled == null && bootable == null);
+  if (!updateNeeded) {
+    return true;
+  }
+  template=_templateDao.createForUpdate(id);
+  if (name != null) {
+    template.setName(name);
+  }
+  if (displayText != null) {
+    template.setDisplayText(displayText);
+  }
+  ImageFormat imageFormat=null;
+  if (format != null) {
+    try {
+      imageFormat=ImageFormat.valueOf(format.toUpperCase());
+    }
+ catch (    IllegalArgumentException e) {
+      throw new InvalidParameterValueException("Image format: " + format + " is incorrect. Supported formats are "+ EnumUtils.listValues(ImageFormat.values()));
+    }
+    template.setFormat(imageFormat);
+  }
+  if (guestOSId != null) {
+    GuestOSVO guestOS=_guestOSDao.findById(guestOSId);
+    if (guestOS == null) {
+      throw new InvalidParameterValueException("Please specify a valid guest OS ID.");
+    }
+ else {
+      template.setGuestOSId(guestOSId);
+    }
+  }
+  if (passwordEnabled != null) {
+    template.setEnablePassword(passwordEnabled);
+  }
+  if (bootable != null) {
+    template.setBootable(bootable);
+  }
+  return _templateDao.update(id,template);
+}
