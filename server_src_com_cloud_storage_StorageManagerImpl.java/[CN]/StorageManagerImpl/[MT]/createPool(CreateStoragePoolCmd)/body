@@ -49,33 +49,12 @@
       details.put(tag,"true");
     }
   }
-  Hypervisor.Type hypervisorType=null;
   List<HostVO> hosts=null;
   if (podId != null) {
     hosts=_hostDao.listByHostPod(podId);
   }
  else {
     hosts=_hostDao.listByDataCenter(zoneId);
-  }
-  for (  HostVO h : hosts) {
-    if (h.getType() == Type.Routing) {
-      hypervisorType=h.getHypervisorType();
-      break;
-    }
-  }
-  if (hypervisorType == null) {
-    if (_hypervisorType == Hypervisor.Type.KVM) {
-      hypervisorType=Hypervisor.Type.KVM;
-    }
- else     if (_hypervisorType == Hypervisor.Type.VmWare) {
-      hypervisorType=Hypervisor.Type.VmWare;
-    }
- else {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Couldn't find a host to serve in the server pool");
-      }
-      return null;
-    }
   }
   String scheme=uri.getScheme();
   String storageHost=uri.getHost();
@@ -90,7 +69,7 @@
       port=2049;
     }
     pool=new StoragePoolVO(StoragePoolType.NetworkFilesystem,storageHost,port,hostPath);
-    if (hypervisorType == Hypervisor.Type.XenServer && clusterId == null) {
+    if (clusterId == null) {
       throw new IllegalArgumentException("NFS need to have clusters specified for XenServers");
     }
   }
@@ -107,7 +86,7 @@
       port=3260;
     }
     if (lun != -1) {
-      if (hypervisorType == Hypervisor.Type.XenServer && clusterId == null) {
+      if (clusterId == null) {
         throw new IllegalArgumentException("IscsiLUN need to have clusters specified");
       }
       hostPath.replaceFirst("/","");
@@ -152,7 +131,7 @@
     throw new ResourceInUseException("Storage pool " + uri + " already in use by another pod (id="+ oldPodId+ ")","StoragePool",uri.toASCIIString());
   }
   List<HostVO> allHosts=_hostDao.listBy(Host.Type.Routing,clusterId,podId,zoneId);
-  if (allHosts.isEmpty() && _hypervisorType != Hypervisor.Type.KVM) {
+  if (allHosts.isEmpty()) {
     throw new ResourceAllocationException("No host exists to associate a storage pool with");
   }
   long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
@@ -175,7 +154,7 @@
   pool.setClusterId(clusterId);
   pool.setStatus(Status.Up);
   pool=_storagePoolDao.persist(pool,details);
-  if (_hypervisorType == Hypervisor.Type.KVM && allHosts.isEmpty()) {
+  if (allHosts.isEmpty()) {
     return pool;
   }
   s_logger.debug("In createPool Adding the pool to each of the hosts");

@@ -1,32 +1,87 @@
 {
-  List<VolumeVO> vols=_volsDao.findCreatedByInstance(vm.getId());
+  List<VolumeVO> vols=_volsDao.findUsableVolumesForInstance(vm.getId());
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Preparing " + vols.size() + " volumes for "+ vm);
+  }
   List<VolumeVO> recreateVols=new ArrayList<VolumeVO>(vols.size());
-  Host host=dest.getHost();
   VolumeTO[] disks=new VolumeTO[vols.size()];
-  Iterator<VolumeVO> it=vols.iterator();
-  while (it.hasNext()) {
-    VolumeVO vol=it.next();
-    if (vol.isRecreatable()) {
-      it.remove();
-      if (vm.getType().equals(VirtualMachine.Type.ConsoleProxy) || vm.getType().equals(VirtualMachine.Type.DomainRouter) || vm.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
-        StoragePoolVO sp=_storagePoolDao.findById(vol.getPoolId());
-        if (sp != null && sp.getStatus().equals(Status.PrepareForMaintenance)) {
+  int i=0;
+  for (  VolumeVO vol : vols) {
+    Volume.State state=vol.getState();
+    if (state == Volume.State.Ready) {
+      StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
+      if (pool.getRemoved() != null || pool.isInMaintenance()) {
+        if (vol.isRecreatable()) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Volume " + vol + " has to be recreated due to storage pool "+ pool+ " is unavailable");
+          }
           recreateVols.add(vol);
-          continue;
+        }
+ else {
+          throw new StorageUnavailableException("Volume " + vol + " is not available on the storage pool.",pool);
         }
       }
-      StoragePoolHostVO ph=_storagePoolHostDao.findByPoolHost(vol.getPoolId(),host.getId());
-      if (ph == null) {
+ else {
         if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Must recreate " + vol + " since "+ vol.getPoolId()+ " has is not hooked up with host "+ host.getId());
+          s_logger.debug("Volume " + vol + " is ready.");
         }
-        recreateVols.add(vol);
+        disks[i++]=new VolumeTO(vol,pool);
       }
+    }
+ else     if (state == Volume.State.Allocated) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating volume " + vol + " for the first time.");
+      }
+      recreateVols.add(vol);
+    }
+ else {
+      throw new StorageUnavailableException("Volume " + vol + " can not be used",vol);
     }
   }
   for (  VolumeVO vol : recreateVols) {
-    VolumeVO create=allocateDuplicateVolume(vol);
-    vols.add(vol);
+    VolumeVO newVol;
+    if (vol.getState() == Volume.State.Allocated) {
+      newVol=vol;
+    }
+ else {
+      newVol=switchVolume(vol);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Created new volume " + newVol + " for old volume "+ vol);
+      }
+    }
+    try {
+      _volsDao.update(newVol,Volume.Event.Create);
+    }
+ catch (    ConcurrentOperationException e) {
+      throw new StorageUnavailableException("Unable to create " + newVol,newVol);
+    }
+    Pair<VolumeTO,StoragePool> created=createVolume(newVol,_diskOfferingDao.findById(newVol.getDiskOfferingId()),vm,vols,dest);
+    if (created == null) {
+      newVol.setPoolId(null);
+      try {
+        _volsDao.update(newVol,Event.OperationFailed);
+      }
+ catch (      ConcurrentOperationException e) {
+        throw new CloudRuntimeException("Unable to update the failure on a volume: " + newVol,e);
+      }
+      throw new StorageUnavailableException("Unable to create " + newVol,newVol);
+    }
+    newVol.setStatus(AsyncInstanceCreateStatus.Created);
+    newVol.setFolder(created.second().getPath());
+    newVol.setPath(created.first().getPath());
+    newVol.setSize(created.first().getSize());
+    newVol.setPoolType(created.second().getPoolType());
+    newVol.setPodId(created.second().getPodId());
+    try {
+      _volsDao.update(newVol,Event.OperationSucceeded);
+    }
+ catch (    ConcurrentOperationException e) {
+      throw new CloudRuntimeException("Unable to update an CREATE operation succeeded on volume " + newVol,e);
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Volume " + newVol + " is created on "+ created.second());
+    }
+    disks[i++]=created.first();
   }
   return disks;
 }

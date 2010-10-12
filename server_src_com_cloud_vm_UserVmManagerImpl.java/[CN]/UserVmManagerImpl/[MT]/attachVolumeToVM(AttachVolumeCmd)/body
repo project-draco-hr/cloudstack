@@ -66,6 +66,19 @@
  else {
     rootVolumeOfVm=rootVolumesOfVm.get(0);
   }
+  if (volume.getState().equals(Volume.State.Allocated)) {
+    VMTemplateVO rootDiskTmplt=_templateDao.findById(vm.getTemplateId());
+    DataCenterVO dcVO=_dcDao.findById(vm.getDataCenterId());
+    HostPodVO pod=_podDao.findById(vm.getPodId());
+    StoragePoolVO rootDiskPool=_storagePoolDao.findById(rootVolumeOfVm.getPoolId());
+    ServiceOfferingVO svo=_serviceOfferingDao.findById(vm.getServiceOfferingId());
+    DiskOfferingVO diskVO=_diskOfferingDao.findById(volume.getDiskOfferingId());
+    HypervisorType rootDiskHyperType=_volsDao.getHypervisorType(rootVolumeOfVm.getId());
+    volume=_storageMgr.createVolume(volume,vm,rootDiskTmplt,dcVO,pod,rootDiskPool.getClusterId(),svo,diskVO,new ArrayList<StoragePoolVO>(),volume.getSize(),rootDiskHyperType);
+    if (volume == null) {
+      throw new InternalErrorException("Failed to create volume when attaching it to VM: " + vm.getName());
+    }
+  }
   List<VolumeVO> vols=_volsDao.findByInstance(vmId);
   if (deviceId != null) {
     if (deviceId.longValue() > 15 || deviceId.longValue() == 0 || deviceId.longValue() == 3) {
@@ -136,7 +149,9 @@
   AttachVolumeAnswer answer=null;
   Long hostId=vm.getHostId();
   if (sendCommand) {
+    StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
     AttachVolumeCommand cmd=new AttachVolumeCommand(true,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),deviceId);
+    cmd.setPoolUuid(volumePool.getUuid());
     try {
       answer=(AttachVolumeAnswer)_agentMgr.send(hostId,cmd);
     }

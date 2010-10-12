@@ -1,0 +1,69 @@
+{
+  String response=null;
+  String[] command=null;
+  try {
+    command=(String[])params.get("command");
+    if (command == null) {
+      s_logger.error("invalid request, no command sent");
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("dumping request parameters");
+        for (        Object key : params.keySet()) {
+          String keyStr=(String)key;
+          String[] value=(String[])params.get(key);
+          s_logger.trace("   key: " + keyStr + ", value: "+ ((value == null) ? "'null'" : value[0]));
+        }
+      }
+      response=buildErrorResponse("invalid request, no command sent",responseType);
+    }
+ else {
+      Map<String,String> paramMap=new HashMap<String,String>();
+      Set keys=params.keySet();
+      Iterator keysIter=keys.iterator();
+      while (keysIter.hasNext()) {
+        String key=(String)keysIter.next();
+        if ("command".equalsIgnoreCase(key)) {
+          continue;
+        }
+        String[] value=(String[])params.get(key);
+        String decodedValue=null;
+        if (decode) {
+          try {
+            decodedValue=URLDecoder.decode(value[0],"UTF-8");
+          }
+ catch (          UnsupportedEncodingException usex) {
+            s_logger.warn(key + " could not be decoded, value = " + value[0]);
+            throw new ServerApiException(BaseCmd.PARAM_ERROR,key + " could not be decoded, received value " + value[0]);
+          }
+        }
+ else {
+          decodedValue=value[0];
+        }
+        paramMap.put(key,decodedValue);
+      }
+      String cmdClassName=_apiCommands.getProperty(command[0]);
+      if (cmdClassName != null) {
+        Class<?> cmdClass=Class.forName(cmdClassName);
+        BaseCmd cmdObj=(BaseCmd)cmdClass.newInstance();
+        cmdObj.setResponseType(responseType);
+        response=queueCommand(cmdObj,paramMap);
+        buildAuditTrail(auditTrailSb,command[0],response);
+      }
+ else {
+        String errorString=" unknown API command: " + ((command == null) ? "null" : command[0]);
+        s_logger.warn(errorString);
+        auditTrailSb.append(" " + errorString);
+        response=buildErrorResponse(errorString,responseType);
+      }
+    }
+  }
+ catch (  Exception ex) {
+    if (ex instanceof ServerApiException) {
+      throw (ServerApiException)ex;
+    }
+ else {
+      s_logger.error("unhandled exception executing api command: " + ((command == null) ? "null" : command[0]),ex);
+      throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Internal server error, unable to execute request.");
+    }
+  }
+  return response;
+}

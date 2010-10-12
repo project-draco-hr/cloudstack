@@ -1,53 +1,32 @@
 {
-  s_logger.debug("Calling deleteSnapshot for snapshotId: " + snapshotId + " and policyId "+ policyId);
-  long prevSnapshotId=0;
-  SnapshotVO nextSnapshot=null;
-  boolean deleted=true;
-  boolean actuallyDelete=false;
-  List<SnapshotPolicyRefVO> snapPolicyRefs=_snapPolicyRefDao.listBySnapshotId(snapshotId);
-  if (snapPolicyRefs.size() == 1 && (snapPolicyRefs.get(0).getPolicyId() == policyId)) {
-    SnapshotVO currentSnapshot=_snapshotDao.findById(snapshotId);
-    String backupOfSnapshot=currentSnapshot.getBackupSnapshotId();
-    nextSnapshot=_snapshotDao.findNextSnapshot(snapshotId);
-    String backupOfNextSnapshot=null;
-    if (nextSnapshot != null) {
-      backupOfNextSnapshot=nextSnapshot.getBackupSnapshotId();
-    }
-    prevSnapshotId=currentSnapshot.getPrevSnapshotId();
-    String backupOfPreviousSnapshot=null;
-    if (prevSnapshotId > 0) {
-      SnapshotVO prevSnapshot=_snapshotDao.findById(prevSnapshotId);
-      backupOfPreviousSnapshot=prevSnapshot.getBackupSnapshotId();
-    }
-    if (backupOfSnapshot != null) {
-      if (backupOfNextSnapshot != null && backupOfSnapshot.equals(backupOfNextSnapshot)) {
-      }
- else       if (backupOfPreviousSnapshot != null && backupOfSnapshot.equals(backupOfPreviousSnapshot)) {
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Calling deleteSnapshot for snapshotId: " + snapshotId + " and policyId "+ policyId);
+  }
+  SnapshotVO lastSnapshot=null;
+  _snapshotDao.remove(snapshotId);
+  long lastId=snapshotId;
+  while (true) {
+    lastSnapshot=_snapshotDao.findNextSnapshot(lastId);
+    if (lastSnapshot == null || lastSnapshot.getPrevSnapshotId() == 0)     break;
+    lastId=lastSnapshot.getId();
+  }
+  lastSnapshot=_snapshotDao.findById(lastId);
+  while (lastSnapshot.getRemoved() != null) {
+    String BackupSnapshotId=lastSnapshot.getBackupSnapshotId();
+    if (BackupSnapshotId != null) {
+      if (destroySnapshotBackUp(userId,lastId,policyId)) {
       }
  else {
-        actuallyDelete=true;
-        deleted=destroySnapshot(userId,snapshotId,policyId);
-      }
-      if (!actuallyDelete) {
-        boolean isLastSnap=(nextSnapshot == null);
-        postDeleteSnapshot(snapshotId,policyId,isLastSnap);
-        String eventParams="id=" + snapshotId;
-        EventVO event=new EventVO();
-        event.setUserId(userId);
-        event.setAccountId((currentSnapshot != null) ? currentSnapshot.getAccountId() : 0);
-        event.setType(EventTypes.EVENT_SNAPSHOT_DELETE);
-        event.setDescription("Successfully deleted snapshot " + snapshotId + " for volumeId: "+ currentSnapshot.getVolumeId()+ " and policyId "+ policyId);
-        event.setParameters(eventParams);
-        event.setLevel(EventVO.LEVEL_INFO);
-        _eventDao.persist(event);
+        s_logger.debug("Destroying snapshot backup failed " + lastSnapshot);
+        break;
       }
     }
+    postDeleteSnapshot(userId,lastId,policyId);
+    lastId=lastSnapshot.getPrevSnapshotId();
+    if (lastId == 0) {
+      break;
+    }
+    lastSnapshot=_snapshotDao.findById(lastId);
   }
- else {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    _snapPolicyRefDao.removeSnapPolicy(snapshotId,policyId);
-    txn.commit();
-  }
-  return deleted;
+  return true;
 }

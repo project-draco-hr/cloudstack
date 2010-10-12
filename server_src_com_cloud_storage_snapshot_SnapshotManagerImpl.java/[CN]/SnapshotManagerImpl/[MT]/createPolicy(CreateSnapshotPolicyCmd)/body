@@ -4,6 +4,7 @@
   if (volume == null) {
     throw new InvalidParameterValueException("Failed to create snapshot policy, unable to find a volume with id " + volumeId);
   }
+  checkAccountPermissions(volume.getAccountId(),volume.getDomainId(),"volume",volumeId);
   StoragePoolVO storagePoolVO=_storagePoolDao.findById(volume.getPoolId());
   if (storagePoolVO == null) {
     throw new InvalidParameterValueException("Failed to create snapshot policy, volumeId: " + volumeId + " does not have a valid storage pool. Is it destroyed?");
@@ -41,59 +42,36 @@
   if (cmd.getMaxSnaps() > intervalMaxSnaps) {
     throw new InvalidParameterValueException("maxSnaps exceeds limit: " + intervalMaxSnaps + " for interval type: "+ cmd.getIntervalType());
   }
-  Long policyId=null;
-  SnapshotPolicyVO policy=getPolicyForVolumeByInterval(volumeId,(short)type.ordinal());
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
+  SnapshotPolicyVO policy=new SnapshotPolicyVO(volumeId,cmd.getSchedule(),timezoneId,(short)type.ordinal(),intervalMaxSnaps);
   EventVO event=new EventVO();
+  try {
+    policy=_snapshotPolicyDao.persist(policy);
+    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_CREATE);
+    event.setDescription("Successfully created snapshot policy with Id: " + policy.getId());
+  }
+ catch (  EntityExistsException e) {
+    policy=_snapshotPolicyDao.findOneByVolume(volumeId);
+    try {
+      policy=_snapshotPolicyDao.acquire(policy.getId());
+      policy.setSchedule(cmd.getSchedule());
+      policy.setTimezone(timezoneId);
+      policy.setInterval((short)type.ordinal());
+      policy.setMaxSnaps(intervalMaxSnaps);
+      policy.setActive(true);
+      _snapshotPolicyDao.update(policy.getId(),policy);
+    }
+  finally {
+      if (policy != null) {
+        _snapshotPolicyDao.release(policy.getId());
+      }
+    }
+    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_UPDATE);
+    event.setDescription("Successfully updated snapshot policy with Id: " + policy.getId());
+  }
   event.setAccountId(accountId);
   event.setUserId(userId);
-  if (policy != null) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Policy for specified interval already exists. Updating policy to new schedule");
-    }
-    policyId=policy.getId();
-    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_UPDATE);
-    event.setDescription("Failed to update schedule for Snapshot policy with id: " + policyId);
-    event.setLevel(EventVO.LEVEL_ERROR);
-    SnapshotScheduleVO snapshotSchedule=_snapshotScheduleDao.getCurrentSchedule(volumeId,policyId,true);
-    if (snapshotSchedule != null) {
-      Date scheduledTimestamp=snapshotSchedule.getScheduledTimestamp();
-      String dateDisplay=DateUtil.displayDateInTimezone(DateUtil.GMT_TIMEZONE,scheduledTimestamp);
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Cannot update the policy now. Wait until the current snapshot scheduled at " + dateDisplay + " finishes");
-      }
-      policyId=null;
-      policy=null;
-    }
- else {
-      _snapSchedMgr.removeSchedule(volumeId,policyId);
-      policy.setSchedule(cmd.getSchedule());
-      policy.setTimezone(cmd.getTimezone());
-      policy.setMaxSnaps(cmd.getMaxSnaps());
-      policy.setActive(true);
-      if (_snapshotPolicyDao.update(policy.getId(),policy)) {
-        event.setLevel(EventVO.LEVEL_INFO);
-        event.setDescription("Successfully updated snapshot policy with Id: " + policyId);
-      }
-    }
-  }
- else {
-    policy=new SnapshotPolicyVO(volumeId,cmd.getSchedule(),cmd.getTimezone(),(short)type.ordinal(),cmd.getMaxSnaps());
-    policy=_snapshotPolicyDao.persist(policy);
-    policyId=policy.getId();
-    event.setType(EventTypes.EVENT_SNAPSHOT_POLICY_CREATE);
-    event.setDescription("Successfully created snapshot policy with Id: " + policyId);
-  }
+  event.setLevel(EventVO.LEVEL_INFO);
   _eventDao.persist(event);
-  if (policyId != null) {
-    _snapSchedMgr.scheduleNextSnapshotJob(policy);
-  }
- else {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Failed to update schedule for Snapshot policy with id: " + policyId);
-    }
-  }
-  txn.commit();
+  _snapSchedMgr.scheduleNextSnapshotJob(policy);
   return policy;
 }

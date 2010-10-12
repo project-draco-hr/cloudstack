@@ -1,67 +1,30 @@
 {
   String primaryStorageNameLabel=cmd.getPrimaryStoragePoolNameLabel();
-  Long dcId=cmd.getDataCenterId();
   Long accountId=cmd.getAccountId();
   Long volumeId=cmd.getVolumeId();
   String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
   String backedUpSnapshotUuid=cmd.getSnapshotUuid();
-  String templatePath=cmd.getTemplatePath();
   boolean result=false;
-  String details="Failed to create volume from snapshot for volume: " + volumeId + " with backupUuid: "+ backedUpSnapshotUuid;
-  String vhdUUID=null;
-  SR temporarySROnSecondaryStorage=null;
-  String mountPointOfTemporaryDirOnSecondaryStorage=null;
+  String details=null;
+  String volumeUUID=null;
+  SR snapshotSR=null;
+  if (secondaryStoragePoolURL == null) {
+    details+=" because the URL passed: " + secondaryStoragePoolURL + " is invalid.";
+    return new CreateVolumeFromSnapshotAnswer(cmd,result,details,volumeUUID);
+  }
   try {
-    VDI vdi=null;
     Connection conn=getConnection();
     SR primaryStorageSR=getSRByNameLabelandHost(primaryStorageNameLabel);
     if (primaryStorageSR == null) {
       throw new InternalErrorException("Could not create volume from snapshot because the primary Storage SR could not be created from the name label: " + primaryStorageNameLabel);
     }
-    Boolean isISCSI=SRType.LVMOISCSI.equals(primaryStorageSR.getType(conn));
-    URI uri=new URI(secondaryStoragePoolURL);
-    String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
-    if (secondaryStorageMountPath == null) {
-      details+=" because the URL passed: " + secondaryStoragePoolURL + " is invalid.";
-      return new CreateVolumeFromSnapshotAnswer(cmd,result,details,vhdUUID);
-    }
-    String templateDownloadFolder="";
-    VHDInfo vhdInfo=createVHDFromSnapshot(dcId,accountId,volumeId,secondaryStorageMountPath,backedUpSnapshotUuid,templatePath,templateDownloadFolder,isISCSI);
-    if (vhdInfo == null) {
-      details+=" because the vmops plugin on XenServer failed at some point";
-    }
- else {
-      vhdUUID=vhdInfo.getUuid();
-      String tempDirRelativePath="snapshots" + File.separator + accountId+ File.separator+ volumeId+ "_temp";
-      mountPointOfTemporaryDirOnSecondaryStorage=secondaryStorageMountPath + File.separator + tempDirRelativePath;
-      uri=new URI("nfs://" + mountPointOfTemporaryDirOnSecondaryStorage);
-      temporarySROnSecondaryStorage=createNfsSRbyURI(uri,false);
-      if (temporarySROnSecondaryStorage == null) {
-        details+="because SR couldn't be created on " + mountPointOfTemporaryDirOnSecondaryStorage;
-      }
- else {
-        s_logger.debug("Successfully created temporary SR on secondary storage " + temporarySROnSecondaryStorage.getNameLabel(conn) + "with uuid "+ temporarySROnSecondaryStorage.getUuid(conn)+ " and scanned it");
-        vdi=getVDIbyUuid(vhdUUID);
-        if (vdi != null) {
-          s_logger.debug("Successfully created VDI on secondary storage SR " + temporarySROnSecondaryStorage.getNameLabel(conn) + " with uuid "+ vhdUUID);
-          s_logger.debug("Copying VDI: " + vdi.getLocation(conn) + " from secondary to primary");
-          VDI vdiOnPrimaryStorage=cloudVDIcopy(vdi,primaryStorageSR);
-          if (vdiOnPrimaryStorage != null) {
-            vhdUUID=vdiOnPrimaryStorage.getUuid(conn);
-            s_logger.debug("Successfully copied and introduced VDI on primary storage with path " + vdiOnPrimaryStorage.getLocation(conn) + " and uuid "+ vhdUUID);
-            result=true;
-            details=null;
-          }
- else {
-            details+=". Could not copy the vdi " + vhdUUID + " to primary storage";
-          }
-          vdi.destroy(conn);
-        }
- else {
-          details+=". Could not scan and introduce vdi with uuid: " + vhdUUID;
-        }
-      }
-    }
+    URI snapshotURI=new URI(secondaryStoragePoolURL + "/snapshots/" + accountId+ "/"+ volumeId);
+    snapshotSR=createNfsSRbyURI(snapshotURI,false);
+    snapshotSR.scan(conn);
+    VDI snapshotVDI=getVDIbyUuid(backedUpSnapshotUuid);
+    VDI volumeVDI=cloudVDIcopy(snapshotVDI,primaryStorageSR);
+    volumeUUID=volumeVDI.getUuid(conn);
+    result=true;
   }
  catch (  XenAPIException e) {
     details+=" due to " + e.toString();
@@ -72,16 +35,12 @@ catch (  Exception e) {
     s_logger.warn(details,e);
   }
  finally {
-    if (temporarySROnSecondaryStorage != null) {
-      removeSR(temporarySROnSecondaryStorage);
-      File folderPath=new File(mountPointOfTemporaryDirOnSecondaryStorage);
-      String remoteMountPath=folderPath.getParent();
-      String folder=folderPath.getName();
-      deleteSecondaryStorageFolder(remoteMountPath,folder);
+    if (snapshotSR != null) {
+      removeSR(snapshotSR);
     }
   }
   if (!result) {
     s_logger.error(details);
   }
-  return new CreateVolumeFromSnapshotAnswer(cmd,result,details,vhdUUID);
+  return new CreateVolumeFromSnapshotAnswer(cmd,result,details,volumeUUID);
 }

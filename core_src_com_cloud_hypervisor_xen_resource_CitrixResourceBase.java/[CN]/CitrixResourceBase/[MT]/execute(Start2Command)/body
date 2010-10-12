@@ -9,17 +9,14 @@
 synchronized (_vms) {
       _vms.put(vmName,State.Starting);
     }
-    Pair<VM,String> v=createVmFromTemplate(conn,vmSpec,host);
-    vm=v.first();
-    String vmUuid=v.second();
+    vm=createVmFromTemplate(conn,vmSpec,host);
     for (    VolumeTO disk : vmSpec.getDisks()) {
-      createVbd(conn,vmName,vm,disk,disk.getType() == VolumeType.ROOT && vmSpec.getType() != VirtualMachine.Type.User);
+      createVbd(conn,disk,vmName,vm);
     }
-    NicTO controlNic=null;
-    for (    NicTO nic : vmSpec.getNetworks()) {
-      if (nic.getControlPort() != null) {
-        controlNic=nic;
-      }
+    if (vmSpec.getType() != VirtualMachine.Type.User) {
+      createPatchVbd(conn,vmName,vm);
+    }
+    for (    NicTO nic : vmSpec.getNics()) {
       createVif(conn,vmName,vm,nic);
     }
     vm.startOn(conn,host,false,true);
@@ -37,9 +34,11 @@ synchronized (_vms) {
         s_logger.info("Programmed default network rules for " + vmName);
       }
     }
-    if (controlNic != null) {
-      String privateIp=controlNic.getIp();
-      int cmdPort=controlNic.getControlPort();
+    Monitor monitor=vmSpec.getMonitor();
+    if (monitor != null && monitor instanceof SshMonitor) {
+      SshMonitor sshMon=(SshMonitor)monitor;
+      String privateIp=sshMon.getIp();
+      int cmdPort=sshMon.getPort();
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Ping command port, " + privateIp + ":"+ cmdPort);
       }
@@ -55,14 +54,17 @@ synchronized (_vms) {
     return new Start2Answer(cmd);
   }
  catch (  XmlRpcException e) {
+    s_logger.warn("Exception ",e);
     String msg=handleVmStartFailure(vmName,vm,"",e);
     return new Start2Answer(cmd,msg);
   }
 catch (  XenAPIException e) {
+    s_logger.warn("Exception ",e);
     String msg=handleVmStartFailure(vmName,vm,"",e);
     return new Start2Answer(cmd,msg);
   }
 catch (  Exception e) {
+    s_logger.warn("Exception ",e);
     String msg=handleVmStartFailure(vmName,vm,"",e);
     return new Start2Answer(cmd,msg);
   }
