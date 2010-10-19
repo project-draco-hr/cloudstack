@@ -1,0 +1,52 @@
+{
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Checking the database");
+  }
+  final NetworkGroupWorkVO work=_workDao.take(_serverId);
+  if (work == null) {
+    return;
+  }
+  Long userVmId=work.getInstanceId();
+  UserVm vm=null;
+  Long seqnum=null;
+  s_logger.info("Working on " + work.toString());
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    vm=_userVMDao.acquire(work.getInstanceId());
+    if (vm == null) {
+      s_logger.warn("Unable to acquire lock on vm id=" + userVmId);
+      return;
+    }
+    Long agentId=null;
+    VmRulesetLogVO log=_rulesetLogDao.findByVmId(userVmId);
+    if (log == null) {
+      s_logger.warn("Cannot find log record for vm id=" + userVmId);
+      return;
+    }
+    seqnum=log.getLogsequence();
+    if (vm != null && vm.getState() == State.Running) {
+      Map<PortAndProto,Set<String>> rules=generateRulesForVM(userVmId);
+      agentId=vm.getHostId();
+      if (agentId != null) {
+        _rulesetLogDao.findByVmId(work.getInstanceId());
+        NetworkIngressRulesCmd cmd=generateRulesetCmd(vm.getInstanceName(),vm.getGuestIpAddress(),vm.getGuestMacAddress(),vm.getId(),generateRulesetSignature(rules),seqnum,rules);
+        Commands cmds=new Commands(cmd);
+        try {
+          _agentMgr.send(agentId,cmds,_answerListener);
+        }
+ catch (        AgentUnavailableException e) {
+          s_logger.debug("Unable to send updates for vm: " + userVmId + "(agentid="+ agentId+ ")");
+          _workDao.updateStep(work.getInstanceId(),seqnum,Step.Done);
+        }
+      }
+    }
+  }
+  finally {
+    if (vm != null) {
+      _userVMDao.release(userVmId);
+      _workDao.updateStep(work.getId(),Step.Done);
+    }
+    txn.commit();
+  }
+}
