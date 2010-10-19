@@ -1,0 +1,36 @@
+{
+  List<NicVO> nics=_nicDao.listBy(vmProfile.getId());
+  NicTO[] nicTos=new NicTO[nics.size()];
+  int i=0;
+  for (  NicVO nic : nics) {
+    NetworkConfigurationVO config=_networkConfigDao.findById(nic.getNetworkConfigurationId());
+    NicProfile profile=null;
+    if (nic.getReservationStrategy() == ReservationStrategy.Start) {
+      NetworkGuru concierge=_networkGurus.get(config.getGuruName());
+      nic.setState(Resource.State.Reserving);
+      _nicDao.update(nic.getId(),nic);
+      profile=toNicProfile(nic);
+      String reservationId=concierge.reserve(profile,config,vmProfile,dest);
+      nic.setIp4Address(profile.getIp4Address());
+      nic.setIp6Address(profile.getIp6Address());
+      nic.setMacAddress(profile.getMacAddress());
+      nic.setIsolationUri(profile.getIsolationUri());
+      nic.setBroadcastUri(profile.getBroadCastUri());
+      nic.setReservationId(reservationId);
+      nic.setReserver(concierge.getName());
+      nic.setState(Resource.State.Reserved);
+      nic.setNetmask(profile.getNetmask());
+      nic.setGateway(profile.getGateway());
+      nic.setAddressFormat(profile.getFormat());
+      _nicDao.update(nic.getId(),nic);
+      for (      NetworkElement element : _networkElements) {
+        if (!element.prepare(config,profile,vmProfile,null,user)) {
+          s_logger.warn("Unable to prepare " + nic + " for element "+ element.getName());
+          return null;
+        }
+      }
+    }
+    nicTos[i++]=toNicTO(nic,profile,config);
+  }
+  return nicTos;
+}
