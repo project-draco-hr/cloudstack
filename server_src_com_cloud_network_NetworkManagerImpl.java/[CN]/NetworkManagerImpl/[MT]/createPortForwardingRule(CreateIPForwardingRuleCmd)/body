@@ -35,19 +35,33 @@
     throw new IllegalArgumentException("Unable to create port forwarding rule (" + protocol + ":"+ publicPort+ "->"+ privatePort+ ") for virtual machine "+ userVM.toString()+ ", bad network type ("+ ((offering == null) ? "null" : offering.getGuestIpType())+ ")");
   }
   List<FirewallRuleVO> existingRulesOnPubIp=_rulesDao.listIPForwarding(ipAddress.getAddress());
-  Map<String,Pair<String,String>> mappedPublicPorts=new HashMap<String,Pair<String,String>>();
+  Map<String,Ternary<String,String,List<String>>> mappedPublicPorts=new HashMap<String,Ternary<String,String,List<String>>>();
   if (existingRulesOnPubIp != null) {
     for (    FirewallRuleVO fwRule : existingRulesOnPubIp) {
-      mappedPublicPorts.put(fwRule.getPublicPort(),new Pair<String,String>(fwRule.getPrivateIpAddress(),fwRule.getPrivatePort()));
+      Ternary<String,String,List<String>> portMappings=mappedPublicPorts.get(fwRule.getPublicPort());
+      List<String> protocolList=null;
+      if (portMappings == null) {
+        protocolList=new ArrayList<String>();
+      }
+ else {
+        protocolList=portMappings.third();
+      }
+      protocolList.add(fwRule.getProtocol());
+      mappedPublicPorts.put(fwRule.getPublicPort(),new Ternary<String,String,List<String>>(fwRule.getPrivateIpAddress(),fwRule.getPrivatePort(),protocolList));
     }
   }
-  Pair<String,String> privateIpPort=mappedPublicPorts.get(publicPort);
+  Ternary<String,String,List<String>> privateIpPort=mappedPublicPorts.get(publicPort);
   if (privateIpPort != null) {
     if (privateIpPort.first().equals(userVM.getGuestIpAddress()) && privateIpPort.second().equals(privatePort)) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("skipping the creating of firewall rule " + ipAddress + ":"+ publicPort+ " to "+ userVM.getGuestIpAddress()+ ":"+ privatePort+ "; rule already exists.");
+      List<String> protocolList=privateIpPort.third();
+      for (      String mappedProtocol : protocolList) {
+        if (mappedProtocol.equalsIgnoreCase(protocol)) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("skipping the creating of firewall rule " + ipAddress + ":"+ publicPort+ " to "+ userVM.getGuestIpAddress()+ ":"+ privatePort+ "; rule already exists.");
+          }
+          return null;
+        }
       }
-      return null;
     }
  else {
       throw new NetworkRuleConflictException("An existing port forwarding service rule for " + ipAddress + ":"+ publicPort+ " already exists, found while trying to create mapping to "+ userVM.getGuestIpAddress()+ ":"+ privatePort+ ".");
