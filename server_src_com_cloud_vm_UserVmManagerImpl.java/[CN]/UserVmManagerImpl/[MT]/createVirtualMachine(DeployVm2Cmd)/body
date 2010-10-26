@@ -1,3 +1,111 @@
 {
-  return null;
+  Account caller=UserContext.current().getAccount();
+  AccountVO owner=_accountDao.findById(cmd.getAccountId());
+  if (owner == null || owner.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find account: " + cmd.getAccountId());
+  }
+  Domain domain=_domainDao.findById(owner.getDomainId());
+  if (domain == null || domain.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find domain: " + cmd.getDomainId());
+  }
+  _accountMgr.checkAccess(caller,domain);
+  DataCenterVO dc=_dcDao.findById(cmd.getZoneId());
+  if (dc == null) {
+    throw new InvalidParameterValueException("Unable to find zone: " + cmd.getZoneId());
+  }
+  ServiceOfferingVO offering=_serviceOfferingDao.findById(cmd.getServiceOfferingId());
+  if (offering == null || offering.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find service offering: " + cmd.getServiceOfferingId());
+  }
+  VMTemplateVO template=_templateDao.findById(cmd.getTemplateId());
+  if (template == null || template.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to use template " + cmd.getTemplateId());
+  }
+  boolean isIso=Storage.ImageFormat.ISO == template.getFormat();
+  if (isIso && !template.isBootable()) {
+    throw new InvalidParameterValueException("Installing from ISO requires an ISO that is bootable: " + template.getId());
+  }
+  Pair<DiskOfferingVO,Long> rootDiskOffering=new Pair<DiskOfferingVO,Long>(null,null);
+  List<Pair<DiskOfferingVO,Long>> dataDiskOfferings=new ArrayList<Pair<DiskOfferingVO,Long>>();
+  if (isIso) {
+    if (cmd.getDiskOfferingId() == null) {
+      throw new InvalidParameterValueException("Installing from ISO requires a disk offering to be specified for the root disk.");
+    }
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(cmd.getDiskOfferingId());
+    if (diskOffering == null) {
+      throw new InvalidParameterValueException("Unable to find disk offering " + cmd.getDiskOfferingId());
+    }
+    Long size=null;
+    if (diskOffering.getDiskSize() == 0) {
+      size=cmd.getSize();
+      if (size == null) {
+        throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+      }
+    }
+    rootDiskOffering.first(diskOffering);
+    rootDiskOffering.second(size);
+  }
+ else {
+    rootDiskOffering.first(offering);
+    if (cmd.getDiskOfferingId() != null) {
+      DiskOfferingVO diskOffering=_diskOfferingDao.findById(cmd.getDiskOfferingId());
+      if (diskOffering == null) {
+        throw new InvalidParameterValueException("Unable to find disk offering " + cmd.getDiskOfferingId());
+      }
+      Long size=null;
+      if (diskOffering.getDiskSize() == 0) {
+        size=cmd.getSize();
+        if (size == null) {
+          throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+        }
+      }
+      dataDiskOfferings.add(new Pair<DiskOfferingVO,Long>(diskOffering,size));
+    }
+  }
+  String password=PasswordGenerator.generateRandomPassword();
+  if (!template.getEnablePassword()) {
+    password="saved_password";
+  }
+  if (password == null || password.equals("") || (!validPassword(password))) {
+    throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
+  }
+  String networkDomain=null;
+  if (networkDomain == null) {
+    networkDomain="v" + Long.toHexString(owner.getId()) + _defaultNetworkDomain;
+  }
+  String userData=cmd.getUserData();
+  byte[] decodedUserData=null;
+  if (userData != null) {
+    if (userData.length() >= 2 * MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    decodedUserData=org.apache.commons.codec.binary.Base64.decodeBase64(userData.getBytes());
+    if (decodedUserData.length > MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    if (decodedUserData.length < 1) {
+      throw new InvalidParameterValueException("User data is too short");
+    }
+  }
+  _accountMgr.checkAccess(caller,template);
+  DataCenterDeployment plan=new DataCenterDeployment(dc.getId(),1);
+  long id=_vmDao.getNextInSequence(Long.class,"id");
+  UserVmVO vm=new UserVmVO(id,VirtualMachineName.getVmName(id,owner.getId(),_instance),cmd.getDisplayName(),template.getId(),template.getGuestOSId(),offering.getOfferHA(),domain.getId(),owner.getId(),offering.getId(),userData);
+  s_logger.debug("Allocating in the DB for vm");
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  vm=_vmDao.persist(vm);
+  List<NetworkConfigurationVO> configs=_networkMgr.setupNetworkConfiguration(owner,offering,plan);
+  List<Pair<NetworkConfigurationVO,NicProfile>> networks=new ArrayList<Pair<NetworkConfigurationVO,NicProfile>>();
+  for (  NetworkConfigurationVO config : configs) {
+    networks.add(new Pair<NetworkConfigurationVO,NicProfile>(config,null));
+  }
+  if (_itMgr.allocate(vm,template,offering,rootDiskOffering,dataDiskOfferings,networks,plan,owner) == null) {
+    return null;
+  }
+  txn.commit();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Successfully allocated DB entry for " + vm);
+  }
+  return vm;
 }
