@@ -1,26 +1,31 @@
 {
+  if (_certDao.listAll().size() > 0) {
+    throw new ResourceAllocationException("There is already a custom certificate in the db");
+  }
   String certificatePath=cmd.getPath();
   Long certVOId=_certDao.persistCustomCertToDb(certificatePath);
   if (certVOId != null && certVOId != 0) {
-    List<HostVO> hosts=_hostDao.listAll();
-    List<HostVO> consoleProxyList=new ArrayList<HostVO>();
-    for (    HostVO host : hosts) {
-      if (host.getType().equals(com.cloud.host.Host.Type.ConsoleProxy)) {
-        consoleProxyList.add(host);
-      }
-    }
-    for (    HostVO consoleProxy : consoleProxyList) {
+    List<ConsoleProxyVO> cpList=_consoleProxyDao.listAll();
+    for (    ConsoleProxyVO cp : cpList) {
+      HostVO cpHost=_hostDao.findConsoleProxyHost(cp.getName(),com.cloud.host.Host.Type.ConsoleProxy);
       UpdateCertificateCommand certCmd=new UpdateCertificateCommand(_certDao.findById(certVOId).getCertificate());
       try {
-        Answer updateCertAns=_agentMgr.send(consoleProxy.getId(),certCmd);
+        Answer updateCertAns=_agentMgr.send(cpHost.getId(),certCmd);
+        if (updateCertAns.getResult() == true) {
+          long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_PROXY_REBOOT,"rebooting console proxy with Id: " + cp.getId());
+          _consoleProxyMgr.rebootProxy(cp.getId(),eventId);
+        }
       }
  catch (      AgentUnavailableException e) {
-        s_logger.warn("Unable to send command to the console proxy resource",e);
+        s_logger.warn("Unable to send update certificate command to the console proxy resource",e);
       }
 catch (      OperationTimedoutException e) {
-        s_logger.warn("Unable to send command to the console proxy resource",e);
+        s_logger.warn("Unable to send update certificate command to the console proxy resource",e);
       }
     }
+    return true;
   }
-  return false;
+ else {
+    return false;
+  }
 }
