@@ -1,0 +1,34 @@
+{
+  List<CertificateVO> certList=_certDao.listAll();
+  if (certList.size() > 0) {
+    CertificateVO cert=certList.get(0);
+    String certStr=cert.getCertificate();
+    long proxyVmId=((StartupProxyCommand)cmd).getProxyVmId();
+    ConsoleProxyVO consoleProxy=_consoleProxyDao.findById(proxyVmId);
+    if (consoleProxy != null) {
+      HostVO consoleProxyHost=_hostDao.findConsoleProxyHost(consoleProxy.getName(),Type.ConsoleProxy);
+      UpdateCertificateCommand certCmd=new UpdateCertificateCommand(certStr);
+      try {
+        Answer updateCertAns=_agentMgr.send(consoleProxyHost.getId(),certCmd);
+        if (updateCertAns.getResult() == true) {
+          long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_PROXY_REBOOT,"rebooting console proxy with Id: " + consoleProxy.getId());
+          rebootProxy(consoleProxy.getId(),eventId);
+          s_logger.info("Successfully rebooted console proxy resource after custom certificate application");
+          return true;
+        }
+      }
+ catch (      AgentUnavailableException e) {
+        s_logger.warn("Unable to send update certificate command to the console proxy resource",e);
+        return false;
+      }
+catch (      OperationTimedoutException e) {
+        s_logger.warn("Unable to send update certificate command to the console proxy resource",e);
+        return false;
+      }
+    }
+  }
+ else {
+    return false;
+  }
+  return false;
+}
