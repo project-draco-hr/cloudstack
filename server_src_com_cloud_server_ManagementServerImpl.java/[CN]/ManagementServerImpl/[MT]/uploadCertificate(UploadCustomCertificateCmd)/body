@@ -2,17 +2,16 @@
   String certificatePath=cmd.getPath();
   Long certVOId=_certDao.persistCustomCertToDb(certificatePath);
   if (certVOId != null && certVOId != 0) {
-    List<HostVO> hosts=_hostDao.listAll();
-    List<HostVO> consoleProxyList=new ArrayList<HostVO>();
-    for (    HostVO host : hosts) {
-      if (host.getType().equals(com.cloud.host.Host.Type.ConsoleProxy)) {
-        consoleProxyList.add(host);
-      }
-    }
-    for (    HostVO consoleProxy : consoleProxyList) {
+    List<ConsoleProxyVO> cpList=_consoleProxyDao.listAll();
+    for (    ConsoleProxyVO cp : cpList) {
+      HostVO cpHost=_hostDao.findConsoleProxyHost(cp.getName(),com.cloud.host.Host.Type.ConsoleProxy);
       UpdateCertificateCommand certCmd=new UpdateCertificateCommand(_certDao.findById(certVOId).getCertificate());
       try {
-        Answer updateCertAns=_agentMgr.send(consoleProxy.getId(),certCmd);
+        Answer updateCertAns=_agentMgr.send(cpHost.getId(),certCmd);
+        if (updateCertAns.getResult() == true) {
+          long eventId=saveScheduledEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_PROXY_REBOOT,"stopping console proxy with Id: " + cp.getId());
+          boolean cpReboot=_consoleProxyMgr.rebootProxy(cp.getId(),eventId);
+        }
       }
  catch (      AgentUnavailableException e) {
         s_logger.warn("Unable to send command to the console proxy resource",e);
@@ -22,5 +21,5 @@ catch (      OperationTimedoutException e) {
       }
     }
   }
-  return false;
+  return true;
 }
