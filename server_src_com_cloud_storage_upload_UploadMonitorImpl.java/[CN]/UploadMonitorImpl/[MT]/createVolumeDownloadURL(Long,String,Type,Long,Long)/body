@@ -1,17 +1,16 @@
 {
   List<HostVO> storageServers=_serverDao.listByTypeDataCenter(Host.Type.SecondaryStorage,dataCenterId);
   if (storageServers == null)   throw new CloudRuntimeException("No Storage Server found at the datacenter - " + dataCenterId);
-  Type type=(template.getFormat() == ImageFormat.ISO) ? Type.ISO : Type.TEMPLATE;
-  List<UploadVO> extractURLList=_uploadDao.listByTypeUploadStatus(template.getId(),type,UploadVO.Status.DOWNLOAD_URL_CREATED);
-  if (extractURLList.size() > 0)   return extractURLList.get(0);
-  HostVO sserver=storageServers.get(0);
-  UploadVO uploadTemplateObj=new UploadVO(sserver.getId(),template.getId(),new Date(),Status.DOWNLOAD_URL_NOT_CREATED,0,type,Mode.HTTP_DOWNLOAD);
-  _uploadDao.persist(uploadTemplateObj);
-  CreateEntityDownloadURLCommand cmd=new CreateEntityDownloadURLCommand(vmTemplateHost.getInstallPath());
-  long result=send(sserver.getId(),cmd,null);
+  UploadVO uploadJob=_uploadDao.createForUpdate(uploadId);
+  uploadJob.setUploadState(Status.DOWNLOAD_URL_NOT_CREATED);
+  uploadJob.setLastUpdated(new Date());
+  _uploadDao.update(uploadJob.getId(),uploadJob);
+  CreateEntityDownloadURLCommand cmd=new CreateEntityDownloadURLCommand(path);
+  long result=send(ApiDBUtils.findUploadById(uploadId).getHostId(),cmd,null);
   if (result == -1) {
-    s_logger.warn("Unable to create a link for the template/iso ");
-    throw new CloudRuntimeException("Unable to create a link at the SSVM");
+    String errorString="Unable to create a link for " + type + " id:"+ entityId;
+    s_logger.warn(errorString);
+    throw new CloudRuntimeException(errorString);
   }
   List<SecondaryStorageVmVO> ssVms=_secStorageVmDao.getSecStorageVmListInStates(dataCenterId,State.Running);
   if (ssVms.size() > 0) {
@@ -20,7 +19,7 @@
       s_logger.warn("A running secondary storage vm has a null public ip?");
       throw new CloudRuntimeException("SSVM has null public IP - couldnt create the URL");
     }
-    String extractURL=generateCopyUrl(ssVm.getPublicIpAddress(),vmTemplateHost.getInstallPath());
+    String extractURL=generateCopyUrl(ssVm.getPublicIpAddress(),path);
     UploadVO vo=_uploadDao.createForUpdate();
     vo.setLastUpdated(new Date());
     vo.setUploadUrl(extractURL);
@@ -29,8 +28,8 @@
       vo.setUploadState(Status.ERROR);
       vo.setErrorString("Could not create the download URL");
     }
-    _uploadDao.update(uploadTemplateObj.getId(),vo);
-    return _uploadDao.findById(uploadTemplateObj.getId(),true);
+    _uploadDao.update(uploadId,vo);
+    return;
   }
   throw new CloudRuntimeException("Couldnt find a running SSVM in the zone" + dataCenterId + ". Couldnt create the extraction URL.");
 }
