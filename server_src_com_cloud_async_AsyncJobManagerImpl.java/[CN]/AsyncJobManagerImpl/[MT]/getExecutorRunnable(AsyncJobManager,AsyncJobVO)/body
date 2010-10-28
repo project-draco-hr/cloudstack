@@ -2,6 +2,7 @@
   return new Runnable(){
     public void run(){
       long jobId=0;
+      BaseAsyncCmd cmdObj=null;
       Transaction txn=Transaction.open(Transaction.CLOUD_DB);
       try {
         jobId=job.getId();
@@ -10,7 +11,7 @@
           s_logger.debug("Executing " + job.getCmd() + " for job-"+ jobId);
         }
         Class<?> cmdClass=Class.forName(job.getCmd());
-        BaseAsyncCmd cmdObj=(BaseAsyncCmd)cmdClass.newInstance();
+        cmdObj=(BaseAsyncCmd)cmdClass.newInstance();
         cmdObj.setAsyncJobManager(mgr);
         cmdObj.setJob(job);
         Type mapType=new TypeToken<Map<String,String>>(){
@@ -45,10 +46,22 @@
           checkQueue(((AsyncCommandQueued)e).getQueue().getId());
         }
  else {
+          String errorMsg=null;
+          int errorCode=BaseCmd.INTERNAL_ERROR;
           if (!(e instanceof ServerApiException)) {
             s_logger.error("Unexpected exception while executing " + job.getCmd(),e);
+            errorMsg=e.getMessage();
           }
-          completeAsyncJob(jobId,AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,e.getMessage());
+ else {
+            ServerApiException sApiEx=(ServerApiException)e;
+            errorMsg=sApiEx.getDescription();
+            errorCode=sApiEx.getErrorCode();
+          }
+          ExceptionResponse response=new ExceptionResponse();
+          response.setErrorCode(errorCode);
+          response.setErrorText(errorMsg);
+          response.setResponseName((cmdObj == null) ? "unknowncommandresponse" : cmdObj.getName());
+          completeAsyncJob(jobId,AsyncJobResult.STATUS_FAILED,BaseCmd.INTERNAL_ERROR,response);
           try {
             if (job.getSyncSource() != null) {
               _queueMgr.purgeItem(job.getSyncSource().getId());
