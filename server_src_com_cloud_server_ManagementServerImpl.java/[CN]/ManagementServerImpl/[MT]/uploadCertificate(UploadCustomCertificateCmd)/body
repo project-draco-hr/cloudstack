@@ -1,5 +1,7 @@
 {
   try {
+    Transaction.currentTxn();
+    Long certVOId=null;
     CertificateVO cert=_certDao.listAll().get(0);
     if (cert.getMgmtServerId() != null)     throw new ResourceUnavailableException("Another management server is in the process of custom cert updating");
     if (cert.getUpdated().equalsIgnoreCase("Y")) {
@@ -10,8 +12,19 @@
     }
     String certificatePath=cmd.getPath();
     CertificateVO lockedCert=_certDao.acquire(cert.getId());
-    Long certVOId=_certDao.persistCustomCertToDb(certificatePath,lockedCert,this.getId());
-    _certDao.release(lockedCert.getId());
+    if (lockedCert == null) {
+      String msg="Unable to obtain lock on the cert from uploadCertificate()";
+      s_logger.error(msg);
+      throw new ResourceUnavailableException(msg);
+    }
+ else {
+      try {
+        certVOId=_certDao.persistCustomCertToDb(certificatePath,lockedCert,this.getId());
+      }
+  finally {
+        _certDao.release(cert.getId());
+      }
+    }
     if (certVOId != null && certVOId != 0) {
       List<ConsoleProxyVO> cpList=_consoleProxyDao.listAll();
       if (cpList.size() == 0) {
@@ -60,13 +73,18 @@ catch (        OperationTimedoutException e) {
       }
     }
  else {
-      return null;
+      throw new ManagementServerException("Unable to persist custom certificate to the cloud db");
     }
   }
  catch (  Exception e) {
     s_logger.warn("Failed to successfully update the cert across console proxies on management server:" + this.getId());
     if (e instanceof ResourceUnavailableException)     throw new ServerApiException(BaseCmd.CUSTOM_CERT_UPDATE_ERROR,e.getMessage());
     if (e instanceof ManagementServerException)     throw new ServerApiException(BaseCmd.CUSTOM_CERT_UPDATE_ERROR,e.getMessage());
+    if (e instanceof IndexOutOfBoundsException) {
+      String msg="Custom certificate record in the db deleted; this should never happen!";
+      s_logger.error(msg);
+      throw new ServerApiException(BaseCmd.CUSTOM_CERT_UPDATE_ERROR,msg);
+    }
   }
   return null;
 }
