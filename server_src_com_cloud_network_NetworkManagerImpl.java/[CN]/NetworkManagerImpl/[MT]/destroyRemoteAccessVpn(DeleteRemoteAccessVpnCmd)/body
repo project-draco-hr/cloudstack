@@ -1,0 +1,37 @@
+{
+  Long userId=UserContext.current().getUserId();
+  Account account=getAccountForApiCommand(cmd.getAccountName(),cmd.getDomainId());
+  RemoteAccessVpnVO vpnVO=_remoteAccessVpnDao.findByAccountAndZone(account.getId(),cmd.getZoneId());
+  if (vpnVO == null) {
+    throw new InvalidParameterValueException("No VPN found for account " + account.getAccountName() + " in zone "+ cmd.getZoneId());
+  }
+  EventUtils.saveStartedEvent(userId,account.getId(),EventTypes.EVENT_REMOTE_ACCESS_VPN_DESTROY,"Deleting Remote Access VPN for account: " + account.getAccountName() + " in zone "+ cmd.getZoneId(),cmd.getStartEventId());
+  String publicIp=vpnVO.getVpnServerAddress();
+  Long vpnId=vpnVO.getId();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  boolean locked=false;
+  boolean deleted=false;
+  try {
+    IPAddressVO ipAddr=_ipAddressDao.acquire(publicIp);
+    if (ipAddr == null) {
+      throw new ConcurrentOperationException("Another operation active, unable to create vpn");
+    }
+    locked=true;
+    deleted=_routerMgr.deleteRemoteAccessVpn(vpnVO);
+    return deleted;
+  }
+  finally {
+    if (deleted) {
+      _remoteAccessVpnDao.remove(vpnId);
+      EventUtils.saveEvent(userId,account.getId(),EventTypes.EVENT_REMOTE_ACCESS_VPN_DESTROY,"Deleted Remote Access VPN for account: " + account.getAccountName() + " in zone "+ cmd.getZoneId());
+    }
+ else {
+      EventUtils.saveEvent(userId,account.getId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_REMOTE_ACCESS_VPN_DESTROY,"Unable to delete Remote Access VPN ",account.getAccountName() + " in zone " + cmd.getZoneId());
+    }
+    txn.commit();
+    if (locked) {
+      _ipAddressDao.release(publicIp);
+    }
+  }
+}
