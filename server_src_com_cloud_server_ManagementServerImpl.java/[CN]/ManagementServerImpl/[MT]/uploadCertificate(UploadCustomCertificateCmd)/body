@@ -1,50 +1,43 @@
 {
+  CertificateVO cert=null;
+  Long certVOId=null;
   try {
     Transaction.currentTxn();
-    Long certVOId=null;
-    CertificateVO cert=_certDao.listAll().get(0);
-    if (cert.getMgmtServerId() != null)     throw new ResourceUnavailableException("Another management server is in the process of custom cert updating");
-    if (cert.getUpdated().equalsIgnoreCase("Y")) {
-      if (s_logger.isDebugEnabled())       s_logger.debug("A custom certificate already exists in the DB, will replace it with the new one being uploaded");
-    }
- else {
-      if (s_logger.isDebugEnabled())       s_logger.debug("No custom certificate exists in the DB, will upload a new one");
-    }
     String certificatePath=cmd.getPath();
-    FileInputStream fis=new FileInputStream(certificatePath);
-    BufferedInputStream bis=new BufferedInputStream(fis);
-    CertificateFactory cf=CertificateFactory.getInstance("X.509");
-    while (bis.available() > 1) {
-      Certificate localCert=cf.generateCertificate(bis);
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("The custom certificate generated for validation is:" + localCert.toString());
-      }
-    }
-    CertificateVO lockedCert=_certDao.acquire(cert.getId());
-    if (lockedCert == null) {
+    cert=_certDao.listAll().get(0);
+    cert=_certDao.acquire(cert.getId());
+    if (cert == null) {
       String msg="Unable to obtain lock on the cert from uploadCertificate()";
       s_logger.error(msg);
       throw new ResourceUnavailableException(msg);
     }
  else {
-      try {
-        certVOId=_certDao.persistCustomCertToDb(certificatePath,lockedCert,this.getId());
+      if (cert.getUpdated().equalsIgnoreCase("Y")) {
+        if (s_logger.isDebugEnabled())         s_logger.debug("A custom certificate already exists in the DB, will replace it with the new one being uploaded");
       }
-  finally {
-        _certDao.release(cert.getId());
+ else {
+        if (s_logger.isDebugEnabled())         s_logger.debug("No custom certificate exists in the DB, will upload a new one");
       }
+      certVOId=_certDao.persistCustomCertToDb(certificatePath,cert,this.getId());
     }
-    if (certVOId != null && certVOId != 0) {
+    if (certVOId != 0) {
+      FileInputStream fis=new FileInputStream(certificatePath);
+      BufferedInputStream bis=new BufferedInputStream(fis);
+      CertificateFactory cf=CertificateFactory.getInstance("X.509");
+      while (bis.available() > 1) {
+        Certificate localCert=cf.generateCertificate(bis);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("The custom certificate generated for validation is:" + localCert.toString());
+        }
+      }
       List<ConsoleProxyVO> cpList=_consoleProxyDao.listAll();
       if (cpList.size() == 0) {
-        releaseCertRecord(cert);
         String msg="Unable to find any console proxies in the system for certificate update";
         s_logger.warn(msg);
         throw new ResourceUnavailableException(msg);
       }
       List<HostVO> cpHosts=_hostDao.listByType(com.cloud.host.Host.Type.ConsoleProxy);
       if (cpHosts.size() == 0) {
-        releaseCertRecord(cert);
         String msg="Unable to find any console proxy hosts in the system for certificate update";
         s_logger.warn(msg);
         throw new ResourceUnavailableException(msg);
@@ -73,7 +66,6 @@ catch (        OperationTimedoutException e) {
           s_logger.warn("Unable to send update certificate command to the console proxy resource as there was a timeout for console proxy vm id:" + cp.getId() + " ,console proxy host id:"+ cpHostId,e);
         }
       }
-      releaseCertRecord(cert);
       if (updatedCpIdList.size() == cpList.size()) {
         return ("Updated:" + updatedCpIdList.size() + " out of:"+ cpList.size()+ " console proxies");
       }
@@ -106,14 +98,7 @@ catch (        OperationTimedoutException e) {
     }
   }
  finally {
-    try {
-      releaseCertRecord(_certDao.listAll().get(0));
-    }
- catch (    ResourceUnavailableException e) {
-      String msg="Unable to release the cert record for other mgmt servers";
-      s_logger.error(msg);
-      throw new ServerApiException(BaseCmd.CUSTOM_CERT_UPDATE_ERROR,msg);
-    }
+    _certDao.release(cert.getId());
   }
   return null;
 }
