@@ -1,0 +1,84 @@
+{
+  State state=vm.getState();
+  if (state == State.Starting || state == State.Running) {
+    s_logger.debug("VM is already started: " + vm);
+    return vm;
+  }
+  if (state != State.Stopped) {
+    s_logger.debug("VM " + vm + " is not in a state to be started: "+ state);
+    return null;
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating actual resources for VM " + vm);
+  }
+  Journal journal=new Journal.LogJournal("Creating " + vm,s_logger);
+  ItWorkVO work=new ItWorkVO(UUID.randomUUID().toString(),_nodeId,ItWorkVO.Type.Start);
+  work=_workDao.persist(work);
+  ReservationContextImpl context=new ReservationContextImpl(work.getId(),journal,caller,account);
+  ServiceOfferingVO offering=_offeringDao.findById(vm.getServiceOfferingId());
+  VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
+  DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),null,null);
+  HypervisorGuru hvGuru=_hvGurus.get(template.getHypervisorType());
+  GuestOSVO guestOS=_guestOsDao.findById(vm.getGuestOSId());
+  VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,guestOS.getDisplayName(),template,offering,null,params);
+  if (!_vmDao.updateIf(vm,Event.StartRequested,null)) {
+    throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
+  }
+  ExcludeList avoids=new ExcludeList();
+  int retry=_retry;
+  while (retry-- != 0) {
+    DeployDestination dest=null;
+    for (    DeploymentPlanner planner : _planners) {
+      dest=planner.plan(vmProfile,plan,avoids);
+      if (dest != null) {
+        avoids.addHost(dest.getHost().getId());
+        journal.record("Deployment found ",vmProfile,dest);
+        break;
+      }
+    }
+    if (dest == null) {
+      throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile);
+    }
+    vm.setDataCenterId(dest.getDataCenter().getId());
+    vm.setPodId(dest.getPod().getId());
+    _vmDao.updateIf(vm,Event.OperationRetry,dest.getHost().getId());
+    try {
+      _storageMgr.prepare(vmProfile,dest);
+    }
+ catch (    ConcurrentOperationException e) {
+      throw e;
+    }
+catch (    StorageUnavailableException e) {
+      s_logger.warn("Unable to contact storage.",e);
+      continue;
+    }
+    _networkMgr.prepare(vmProfile,dest,context);
+    VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
+    Commands cmds=new Commands(OnError.Revert);
+    cmds.addCommand(new Start2Command(vmTO));
+    @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
+    vmGuru.finalizeDeployment(cmds,vmProfile,dest,context);
+    try {
+      Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
+      if (answers[0].getResult() && vmGuru.processDeploymentResult(cmds,vmProfile,dest,context)) {
+        if (!_vmDao.updateIf(vm,Event.OperationSucceeded,dest.getHost().getId())) {
+          throw new CloudRuntimeException("Unable to transition to a new state.");
+        }
+        return vm;
+      }
+      s_logger.info("Unable to start VM on " + dest.getHost() + " due to "+ answers[0].getDetails());
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.debug("Unable to send the start command to host " + dest.getHost());
+      continue;
+    }
+catch (    OperationTimedoutException e) {
+      s_logger.debug("Unable to send the start command to host " + dest.getHost());
+      continue;
+    }
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creation complete for VM " + vmProfile);
+  }
+  return null;
+}

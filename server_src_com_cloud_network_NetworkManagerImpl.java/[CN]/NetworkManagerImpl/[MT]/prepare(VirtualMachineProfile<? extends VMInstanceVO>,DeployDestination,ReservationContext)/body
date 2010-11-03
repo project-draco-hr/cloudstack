@@ -1,0 +1,35 @@
+{
+  List<NicVO> nics=_nicDao.listBy(vmProfile.getId());
+  for (  NicVO nic : nics) {
+    Pair<NetworkGuru,NetworkConfigurationVO> implemented=implementNetworkConfiguration(nic.getNetworkConfigurationId(),dest,context);
+    NetworkGuru concierge=implemented.first();
+    NetworkConfigurationVO config=implemented.second();
+    NicProfile profile=null;
+    if (nic.getReservationStrategy() == ReservationStrategy.Start) {
+      nic.setState(Resource.State.Reserving);
+      _nicDao.update(nic.getId(),nic);
+      profile=toNicProfile(nic);
+      String reservationId=concierge.reserve(profile,config,vmProfile,dest);
+      nic.setIp4Address(profile.getIp4Address());
+      nic.setIp6Address(profile.getIp6Address());
+      nic.setMacAddress(profile.getMacAddress());
+      nic.setIsolationUri(profile.getIsolationUri());
+      nic.setBroadcastUri(profile.getBroadCastUri());
+      nic.setReservationId(reservationId);
+      nic.setReserver(concierge.getName());
+      nic.setState(Resource.State.Reserved);
+      nic.setNetmask(profile.getNetmask());
+      nic.setGateway(profile.getGateway());
+      nic.setAddressFormat(profile.getFormat());
+      _nicDao.update(nic.getId(),nic);
+      for (      NetworkElement element : _networkElements) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Asking " + element.getName() + " to prepare for "+ nic);
+        }
+        element.prepare(config,profile,vmProfile,dest,context);
+      }
+    }
+    vmProfile.addNic(profile);
+  }
+  return vmProfile.getNics();
+}
