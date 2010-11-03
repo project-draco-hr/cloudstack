@@ -1,6 +1,53 @@
 {
-  List<DataCenterVO> dcs=_dcDao.listAll();
   Account account=UserContext.current().getAccount();
+  List<DataCenterVO> dcs=null;
+  Long domainId=cmd.getDomainId();
+  if (domainId != null) {
+    dcs=_dcDao.findZonesByDomainId(domainId);
+  }
+ else   if ((account.getType() == Account.ACCOUNT_TYPE_ADMIN)) {
+    dcs=_dcDao.listAll();
+  }
+ else   if (account.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    dcs=new ArrayList<DataCenterVO>();
+    DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+    if (domainRecord != null) {
+      while (true) {
+        dcs.addAll(_dcDao.findZonesByDomainId(domainRecord.getId()));
+        if (domainRecord.getParent() != null)         domainRecord=_domainDao.findById(domainRecord.getParent());
+ else         break;
+      }
+    }
+    dcs.addAll(_dcDao.listPublicZones());
+  }
+ else   if (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    dcs=new ArrayList<DataCenterVO>();
+    DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+    if (domainRecord != null) {
+      DomainVO localRecord=domainRecord;
+      while (true) {
+        dcs.addAll(_dcDao.findZonesByDomainId(localRecord.getId()));
+        if (localRecord.getParent() != null)         localRecord=_domainDao.findById(localRecord.getParent());
+ else         break;
+      }
+    }
+    if (domainRecord != null) {
+      DomainVO localParent=domainRecord;
+      DomainVO immediateChild=null;
+      while (true) {
+        dcs.addAll(_dcDao.findZonesByDomainId(localParent.getId()));
+        immediateChild=_domainDao.findImmediateChildForParent(localParent.getId());
+        if (immediateChild != null) {
+          dcs.addAll(_dcDao.findZonesByDomainId(immediateChild.getId()));
+          localParent=immediateChild;
+        }
+ else {
+          break;
+        }
+      }
+    }
+    dcs.addAll(_dcDao.listPublicZones());
+  }
   Boolean available=cmd.isAvailable();
   if (account != null) {
     if ((available != null) && Boolean.FALSE.equals(available)) {
