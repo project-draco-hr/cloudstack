@@ -1,0 +1,44 @@
+{
+  List<RemoteAccessVpnVO> vpnVOList=_remoteAccessVpnDao.findByAccount(account.getId());
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  boolean locked=false;
+  boolean success=true;
+  VpnUserVO user=null;
+  final String op=add ? "add" : "remove";
+  try {
+    account=_accountDao.acquireInLockTable(account.getId());
+    if (account == null) {
+      throw new ConcurrentOperationException("Unable to " + op + " vpn user: Another operation active");
+    }
+    locked=true;
+    List<VpnUserVO> addVpnUsers=new ArrayList<VpnUserVO>();
+    List<VpnUserVO> removeVpnUsers=new ArrayList<VpnUserVO>();
+    if (add) {
+      user=_vpnUsersDao.persist(new VpnUserVO(account.getId(),username,password));
+      addVpnUsers.add(user);
+    }
+ else {
+      user=_vpnUsersDao.findByAccountAndUsername(account.getId(),username);
+      if (user == null) {
+        throw new InvalidParameterValueException("Could not find vpn user " + username);
+      }
+      removeVpnUsers.add(user);
+    }
+    for (    RemoteAccessVpnVO vpn : vpnVOList) {
+      success=success && _routerMgr.addRemoveVpnUsers(vpn,addVpnUsers,removeVpnUsers);
+    }
+    return success;
+  }
+  finally {
+    if (success) {
+      txn.rollback();
+    }
+ else {
+      txn.commit();
+    }
+    if (locked) {
+      _accountDao.releaseFromLockTable(account.getId());
+    }
+  }
+}
