@@ -19,14 +19,15 @@
   VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
   DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),null,null);
   HypervisorGuru hvGuru=_hvGurus.get(template.getHypervisorType());
+  @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
   GuestOSVO guestOS=_guestOsDao.findById(vm.getGuestOSId());
-  VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,guestOS.getDisplayName(),template,offering,null,params);
   if (!_vmDao.updateIf(vm,Event.StartRequested,null)) {
     throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
   }
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
   while (retry-- != 0) {
+    VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,guestOS.getDisplayName(),template,offering,null,params);
     DeployDestination dest=null;
     for (    DeploymentPlanner planner : _planners) {
       dest=planner.plan(vmProfile,plan,avoids);
@@ -53,10 +54,10 @@ catch (    StorageUnavailableException e) {
       continue;
     }
     _networkMgr.prepare(vmProfile,dest,context);
+    vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,context);
     VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
     Commands cmds=new Commands(OnError.Revert);
     cmds.addCommand(new Start2Command(vmTO));
-    @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
     vmGuru.finalizeDeployment(cmds,vmProfile,dest,context);
     try {
       Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
@@ -78,7 +79,7 @@ catch (    OperationTimedoutException e) {
     }
   }
   if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Creation complete for VM " + vmProfile);
+    s_logger.debug("Creation complete for VM " + vm);
   }
   return null;
 }
