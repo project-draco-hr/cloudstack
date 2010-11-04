@@ -4,122 +4,108 @@
   VM vm=null;
   SR isosr=null;
   List<Ternary<SR,VDI,VolumeVO>> mounts=null;
-  for (int retry=0; retry < 2; retry++) {
-    try {
+  try {
 synchronized (_vms) {
-        _vms.put(cmd.getVmName(),State.Starting);
-      }
-      List<VolumeVO> vols=cmd.getVolumes();
-      mounts=mount(vols);
-      if (retry == 1) {
-        cmd.setGuestOSDescription("Other install media");
-      }
-      vm=createVmFromTemplate(conn,cmd);
-      long memsize=cmd.getRamSize() * 1024L * 1024L;
-      setMemory(conn,vm,memsize);
-      vm.setIsATemplate(conn,false);
-      vm.setVCPUsMax(conn,(long)cmd.getCpu());
-      vm.setVCPUsAtStartup(conn,(long)cmd.getCpu());
-      Host host=Host.getByUuid(conn,_host.uuid);
-      vm.setAffinity(conn,host);
-      Map<String,String> vcpuparam=new HashMap<String,String>();
-      vcpuparam.put("weight",Integer.toString(cmd.getCpuWeight()));
-      vcpuparam.put("cap",Integer.toString(cmd.getUtilization()));
-      vm.setVCPUsParams(conn,vcpuparam);
-      boolean bootFromISO=cmd.getBootFromISO();
-      VBD.Record vbdr=new VBD.Record();
-      Ternary<SR,VDI,VolumeVO> mount=mounts.get(0);
+      _vms.put(cmd.getVmName(),State.Starting);
+    }
+    List<VolumeVO> vols=cmd.getVolumes();
+    mounts=mount(vols);
+    vm=createVmFromTemplate(conn,cmd);
+    long memsize=cmd.getRamSize() * 1024L * 1024L;
+    setMemory(conn,vm,memsize);
+    vm.setIsATemplate(conn,false);
+    vm.setVCPUsMax(conn,(long)cmd.getCpu());
+    vm.setVCPUsAtStartup(conn,(long)cmd.getCpu());
+    Host host=Host.getByUuid(conn,_host.uuid);
+    vm.setAffinity(conn,host);
+    Map<String,String> vcpuparam=new HashMap<String,String>();
+    vcpuparam.put("weight",Integer.toString(cmd.getCpuWeight()));
+    vcpuparam.put("cap",Integer.toString(cmd.getUtilization()));
+    vm.setVCPUsParams(conn,vcpuparam);
+    boolean bootFromISO=cmd.getBootFromISO();
+    VBD.Record vbdr=new VBD.Record();
+    Ternary<SR,VDI,VolumeVO> mount=mounts.get(0);
+    vbdr.VM=vm;
+    vbdr.VDI=mount.second();
+    vbdr.bootable=!bootFromISO;
+    vbdr.userdevice="0";
+    vbdr.mode=Types.VbdMode.RW;
+    vbdr.type=Types.VbdType.DISK;
+    VBD.create(conn,vbdr);
+    for (int i=1; i < mounts.size(); i++) {
+      mount=mounts.get(i);
       vbdr.VM=vm;
       vbdr.VDI=mount.second();
-      vbdr.bootable=!bootFromISO;
-      vbdr.userdevice="0";
+      vbdr.bootable=false;
+      vbdr.userdevice=Long.toString(mount.third().getDeviceId());
       vbdr.mode=Types.VbdMode.RW;
       vbdr.type=Types.VbdType.DISK;
+      vbdr.unpluggable=true;
       VBD.create(conn,vbdr);
-      for (int i=1; i < mounts.size(); i++) {
-        mount=mounts.get(i);
-        vbdr.VM=vm;
-        vbdr.VDI=mount.second();
-        vbdr.bootable=false;
-        vbdr.userdevice=Long.toString(mount.third().getDeviceId());
-        vbdr.mode=Types.VbdMode.RW;
-        vbdr.type=Types.VbdType.DISK;
-        vbdr.unpluggable=true;
-        VBD.create(conn,vbdr);
-      }
-      VBD.Record cdromVBDR=new VBD.Record();
-      cdromVBDR.VM=vm;
-      cdromVBDR.empty=true;
-      cdromVBDR.bootable=bootFromISO;
-      cdromVBDR.userdevice="3";
-      cdromVBDR.mode=Types.VbdMode.RO;
-      cdromVBDR.type=Types.VbdType.CD;
-      VBD cdromVBD=VBD.create(conn,cdromVBDR);
-      String isopath=cmd.getISOPath();
-      if (isopath != null) {
-        int index=isopath.lastIndexOf("/");
-        String mountpoint=isopath.substring(0,index);
-        URI uri=new URI(mountpoint);
-        isosr=createIsoSRbyURI(uri,cmd.getVmName(),false);
-        String isoname=isopath.substring(index + 1);
-        VDI isovdi=getVDIbyLocationandSR(isoname,isosr);
-        if (isovdi == null) {
-          String msg=" can not find ISO " + cmd.getISOPath();
-          s_logger.warn(msg);
-          return new StartAnswer(cmd,msg);
-        }
- else {
-          cdromVBD.insert(conn,isovdi);
-        }
-      }
-      createVIF(conn,vm,cmd.getGuestMacAddress(),cmd.getGuestNetworkId(),cmd.getNetworkRateMbps(),"0",false);
-      if (cmd.getExternalMacAddress() != null && cmd.getExternalVlan() != null) {
-        createVIF(conn,vm,cmd.getExternalMacAddress(),cmd.getExternalVlan(),0,"1",true);
-      }
-      vm.setActionsAfterCrash(conn,Types.OnCrashBehaviour.DESTROY);
-      vm.start(conn,false,true);
-      if (_canBridgeFirewall) {
-        String result=callHostPlugin("vmops","default_network_rules","vmName",cmd.getVmName(),"vmIP",cmd.getGuestIpAddress(),"vmMAC",cmd.getGuestMacAddress(),"vmID",Long.toString(cmd.getId()));
-        if (result == null || result.isEmpty() || !Boolean.parseBoolean(result)) {
-          s_logger.warn("Failed to program default network rules for vm " + cmd.getVmName());
-        }
- else {
-          s_logger.info("Programmed default network rules for vm " + cmd.getVmName());
-        }
-      }
-      state=State.Running;
-      return new StartAnswer(cmd);
     }
- catch (    XenAPIException e) {
-      String errormsg=e.toString();
-      String msg="Exception caught while starting VM due to message:" + errormsg + " ("+ e.getClass().getName()+ ")";
-      if (!errormsg.contains("Unable to find partition containing kernel") && !errormsg.contains("Unable to access a required file in the specified repository")) {
-        s_logger.warn(msg,e);
-        startvmfailhandle(vm,mounts);
-        removeSR(isosr);
+    VBD.Record cdromVBDR=new VBD.Record();
+    cdromVBDR.VM=vm;
+    cdromVBDR.empty=true;
+    cdromVBDR.bootable=bootFromISO;
+    cdromVBDR.userdevice="3";
+    cdromVBDR.mode=Types.VbdMode.RO;
+    cdromVBDR.type=Types.VbdType.CD;
+    VBD cdromVBD=VBD.create(conn,cdromVBDR);
+    String isopath=cmd.getISOPath();
+    if (isopath != null) {
+      int index=isopath.lastIndexOf("/");
+      String mountpoint=isopath.substring(0,index);
+      URI uri=new URI(mountpoint);
+      isosr=createIsoSRbyURI(uri,cmd.getVmName(),false);
+      String isoname=isopath.substring(index + 1);
+      VDI isovdi=getVDIbyLocationandSR(isoname,isosr);
+      if (isovdi == null) {
+        String msg=" can not find ISO " + cmd.getISOPath();
+        s_logger.warn(msg);
+        return new StartAnswer(cmd,msg);
       }
  else {
-        startvmfailhandle(vm,mounts);
-        removeSR(isosr);
-        continue;
+        cdromVBD.insert(conn,isovdi);
       }
-      state=State.Stopped;
-      return new StartAnswer(cmd,msg);
     }
-catch (    Exception e) {
-      String msg="Exception caught while starting VM due to message:" + e.getMessage();
-      s_logger.warn(msg,e);
-      startvmfailhandle(vm,mounts);
-      removeSR(isosr);
-      state=State.Stopped;
-      return new StartAnswer(cmd,msg);
+    createVIF(conn,vm,cmd.getGuestMacAddress(),cmd.getGuestNetworkId(),cmd.getNetworkRateMbps(),"0",false);
+    if (cmd.getExternalMacAddress() != null && cmd.getExternalVlan() != null) {
+      createVIF(conn,vm,cmd.getExternalMacAddress(),cmd.getExternalVlan(),0,"1",true);
     }
+    vm.setActionsAfterCrash(conn,Types.OnCrashBehaviour.DESTROY);
+    vm.start(conn,false,true);
+    if (_canBridgeFirewall) {
+      String result=callHostPlugin("vmops","default_network_rules","vmName",cmd.getVmName(),"vmIP",cmd.getGuestIpAddress(),"vmMAC",cmd.getGuestMacAddress(),"vmID",Long.toString(cmd.getId()));
+      if (result == null || result.isEmpty() || !Boolean.parseBoolean(result)) {
+        s_logger.warn("Failed to program default network rules for vm " + cmd.getVmName());
+      }
+ else {
+        s_logger.info("Programmed default network rules for vm " + cmd.getVmName());
+      }
+    }
+    state=State.Running;
+    return new StartAnswer(cmd);
+  }
+ catch (  XenAPIException e) {
+    String errormsg=e.toString();
+    String msg="Exception caught while starting VM due to message:" + errormsg + " ("+ e.getClass().getName()+ ")";
+    s_logger.warn(msg,e);
+    startvmfailhandle(vm,mounts);
+    removeSR(isosr);
+    state=State.Stopped;
+    return new StartAnswer(cmd,msg);
+  }
+catch (  Exception e) {
+    String msg="Exception caught while starting VM due to message:" + e.getMessage();
+    s_logger.warn(msg,e);
+    startvmfailhandle(vm,mounts);
+    removeSR(isosr);
+    state=State.Stopped;
+    return new StartAnswer(cmd,msg);
+  }
  finally {
 synchronized (_vms) {
-        _vms.put(cmd.getVmName(),state);
-      }
+      _vms.put(cmd.getVmName(),state);
     }
   }
-  String msg="Start VM failed";
-  return new StartAnswer(cmd,msg);
 }
