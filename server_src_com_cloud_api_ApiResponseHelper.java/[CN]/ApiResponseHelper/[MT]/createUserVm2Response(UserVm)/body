@@ -1,0 +1,105 @@
+{
+  UserVmResponse userVmResponse=new UserVmResponse();
+  Account acct=ApiDBUtils.findAccountById(Long.valueOf(userVm.getAccountId()));
+  if ((acct != null) && (acct.getRemoved() == null)) {
+    userVmResponse.setAccountName(acct.getAccountName());
+    userVmResponse.setDomainId(acct.getDomainId());
+    userVmResponse.setDomainName(ApiDBUtils.findDomainById(acct.getDomainId()).getName());
+  }
+ else {
+    return null;
+  }
+  userVmResponse.setId(userVm.getId());
+  AsyncJobVO asyncJob=ApiDBUtils.findInstancePendingAsyncJob("vm_instance",userVm.getId());
+  if (asyncJob != null) {
+    userVmResponse.setJobId(asyncJob.getId());
+    userVmResponse.setJobStatus(asyncJob.getStatus());
+  }
+  userVmResponse.setName(userVm.getHostName());
+  userVmResponse.setCreated(userVm.getCreated());
+  if (userVm.getState() != null) {
+    userVmResponse.setState(userVm.getState().toString());
+  }
+  userVmResponse.setHaEnable(userVm.isHaEnabled());
+  if (userVm.getDisplayName() != null) {
+    userVmResponse.setDisplayName(userVm.getDisplayName());
+  }
+ else {
+    userVmResponse.setDisplayName(userVm.getHostName());
+  }
+  InstanceGroupVO group=ApiDBUtils.findInstanceGroupForVM(userVm.getId());
+  if (group != null) {
+    userVmResponse.setGroup(group.getName());
+    userVmResponse.setGroupId(group.getId());
+  }
+  userVmResponse.setZoneId(userVm.getDataCenterId());
+  userVmResponse.setZoneName(ApiDBUtils.findZoneById(userVm.getDataCenterId()).getName());
+  Account account=UserContext.current().getAccount();
+  if (((account == null) || (account.getType() == Account.ACCOUNT_TYPE_ADMIN)) && (userVm.getHostId() != null)) {
+    userVmResponse.setHostId(userVm.getHostId());
+    userVmResponse.setHostName(ApiDBUtils.findHostById(userVm.getHostId()).getName());
+  }
+  VMTemplateVO template=ApiDBUtils.findTemplateById(userVm.getTemplateId());
+  if (template != null) {
+    userVmResponse.setTemplateId(userVm.getTemplateId());
+    userVmResponse.setTemplateName(template.getName());
+    userVmResponse.setTemplateDisplayText(template.getDisplayText());
+    userVmResponse.setPasswordEnabled(template.getEnablePassword());
+  }
+ else {
+    userVmResponse.setTemplateId(-1L);
+    userVmResponse.setTemplateName("ISO Boot");
+    userVmResponse.setTemplateDisplayText("ISO Boot");
+    userVmResponse.setPasswordEnabled(false);
+  }
+  if (userVm.getPassword() != null) {
+    userVmResponse.setPassword(userVm.getPassword());
+  }
+  if (userVm.getIsoId() != null) {
+    VMTemplateVO iso=ApiDBUtils.findTemplateById(userVm.getIsoId().longValue());
+    if (iso != null) {
+      userVmResponse.setIsoId(userVm.getIsoId());
+      userVmResponse.setIsoName(iso.getName());
+    }
+  }
+  ServiceOffering offering=ApiDBUtils.findServiceOfferingById(userVm.getServiceOfferingId());
+  userVmResponse.setServiceOfferingId(userVm.getServiceOfferingId());
+  userVmResponse.setServiceOfferingName(offering.getName());
+  userVmResponse.setCpuNumber(offering.getCpu());
+  userVmResponse.setCpuSpeed(offering.getSpeed());
+  userVmResponse.setMemory(offering.getRamSize());
+  VolumeVO rootVolume=ApiDBUtils.findRootVolume(userVm.getId());
+  if (rootVolume != null) {
+    userVmResponse.setRootDeviceId(rootVolume.getDeviceId());
+    String rootDeviceType="Not created";
+    if (rootVolume.getPoolId() != null) {
+      StoragePoolVO storagePool=ApiDBUtils.findStoragePoolById(rootVolume.getPoolId());
+      rootDeviceType=storagePool.getPoolType().toString();
+    }
+    userVmResponse.setRootDeviceType(rootDeviceType);
+  }
+  DecimalFormat decimalFormat=new DecimalFormat("#.##");
+  String cpuUsed=null;
+  VmStats vmStats=ApiDBUtils.getVmStatistics(userVm.getId());
+  if (vmStats != null) {
+    float cpuUtil=(float)vmStats.getCPUUtilization();
+    cpuUsed=decimalFormat.format(cpuUtil) + "%";
+    userVmResponse.setCpuUsed(cpuUsed);
+    long networkKbRead=(long)vmStats.getNetworkReadKBs();
+    userVmResponse.setNetworkKbsRead(networkKbRead);
+    long networkKbWrite=(long)vmStats.getNetworkWriteKBs();
+    userVmResponse.setNetworkKbsWrite(networkKbWrite);
+  }
+  userVmResponse.setGuestOsId(userVm.getGuestOSId());
+  userVmResponse.setNetworkGroupList(ApiDBUtils.getNetworkGroupsNamesForVm(userVm.getId()));
+  List<? extends Nic> nics=BaseCmd._networkMgr.getNics(userVm);
+  for (  Nic singleNic : nics) {
+    long configId=singleNic.getNetworkConfigurationId();
+    NetworkConfiguration networkConf=BaseCmd._networkMgr.getNetworkConfiguration(configId);
+    if (networkConf.getTrafficType() == TrafficType.Guest) {
+      userVmResponse.setIpAddress(singleNic.getIp4Address());
+    }
+  }
+  userVmResponse.setObjectName("virtualmachine");
+  return userVmResponse;
+}
