@@ -4,6 +4,7 @@
   UserVmVO userVM=null;
   FirewallRuleVO newFwRule=null;
   boolean locked=false;
+  boolean success=false;
   try {
     IPAddressVO ipAddress=_ipAddressDao.findById(cmd.getIpAddress());
     if (ipAddress == null) {
@@ -51,6 +52,11 @@
     newFwRule.setPublicIpAddress(ipAddress.getAddress());
     newFwRule.setPrivateIpAddress(userVM.getGuestIpAddress());
     newFwRule.setGroupId(null);
+    final DomainRouterVO router=_routerMgr.getRouter(ipAddress.getAccountId(),ipAddress.getDataCenterId());
+    success=createOrDeleteIpForwardingRuleOnDomr(newFwRule,router,userVM.getGuestIpAddress(),true);
+    if (!success) {
+      throw new PermissionDeniedException("Cannot create ip forwarding rule on domr");
+    }
     _rulesDao.persist(newFwRule);
     String description;
     String ruleName="ip forwarding";
@@ -62,6 +68,7 @@
  catch (  Exception e) {
     s_logger.warn("Unable to create new firewall rule for 1:1 NAT");
     txn.rollback();
+    throw new ServerApiException(BaseCmd.IP_ALLOCATION_ERROR,"Unable to create new firewall rule for 1:1 NAT:" + e.getMessage());
   }
  finally {
     if (locked)     _vmDao.releaseFromLockTable(userVM.getId());
