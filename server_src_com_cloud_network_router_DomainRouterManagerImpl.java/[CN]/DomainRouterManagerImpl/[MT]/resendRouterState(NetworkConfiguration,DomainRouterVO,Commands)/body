@@ -1,0 +1,30 @@
+{
+  if (router.getRole() == Role.DHCP_FIREWALL_LB_PASSWD_USERDATA) {
+    List<IPAddressVO> ipAddrs=_networkMgr.listPublicIpAddressesInVirtualNetwork(router.getAccountId(),router.getDataCenterId(),null);
+    List<String> ipAddrList=new ArrayList<String>();
+    for (    final IPAddressVO ipVO : ipAddrs) {
+      ipAddrList.add(ipVO.getAddress());
+    }
+    if (!ipAddrList.isEmpty()) {
+      try {
+        final boolean success=_networkMgr.associateIP(router,ipAddrList,true,0);
+        if (!success) {
+          return false;
+        }
+      }
+ catch (      ConcurrentOperationException e) {
+        s_logger.warn("unable to associate ip due to ",e);
+        return false;
+      }
+    }
+    final List<FirewallRuleVO> fwRules=new ArrayList<FirewallRuleVO>();
+    for (    final IPAddressVO ipVO : ipAddrs) {
+      fwRules.addAll(_rulesDao.listIPForwarding(ipVO.getAddress()));
+    }
+    final List<FirewallRuleVO> result=_networkMgr.updateFirewallRules(router.getPublicIpAddress(),fwRules,router);
+    if (result.size() != fwRules.size()) {
+      return false;
+    }
+  }
+  return resendDhcpEntries(router) && resendVpnServerData(router);
+}

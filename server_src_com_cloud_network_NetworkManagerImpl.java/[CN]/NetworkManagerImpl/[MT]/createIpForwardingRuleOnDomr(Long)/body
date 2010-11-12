@@ -1,0 +1,28 @@
+{
+  boolean success=false;
+  FirewallRuleVO rule=_rulesDao.findById(ruleId);
+  if (rule == null) {
+    throw new PermissionDeniedException("Cannot create ip forwarding rule in db");
+  }
+  IPAddressVO ipAddress=_ipAddressDao.findById(rule.getPublicIpAddress());
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to create ip forwarding rule on address " + ipAddress + ", invalid IP address specified.");
+  }
+  DomainRouterVO router=_routerMgr.getRouter(ipAddress.getAccountId(),ipAddress.getDataCenterId());
+  success=createOrDeleteIpForwardingRuleOnDomr(rule,router,rule.getPrivateIpAddress(),true);
+  if (!success) {
+    try {
+      _rulesDao.remove(ruleId);
+      throw new PermissionDeniedException("Cannot create ip forwarding rule on domr, hence deleting created record in db");
+    }
+ catch (    Exception e) {
+      throw new ServerApiException(BaseCmd.NET_CREATE_IPFW_RULE_ERROR,e.getMessage());
+    }
+  }
+  String description;
+  String ruleName="ip forwarding";
+  String level=EventVO.LEVEL_INFO;
+  description="created new " + ruleName + " rule ["+ rule.getPublicIpAddress()+ "]->["+ rule.getPrivateIpAddress()+ "]"+ ":"+ rule.getProtocol();
+  EventUtils.saveEvent(UserContext.current().getUserId(),ipAddress.getAccountId(),level,EventTypes.EVENT_NET_RULE_ADD,description);
+  return rule;
+}
