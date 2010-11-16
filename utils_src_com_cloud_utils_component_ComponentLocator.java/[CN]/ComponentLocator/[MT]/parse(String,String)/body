@@ -15,26 +15,37 @@
     s_logger.info("Config file found at " + file.getAbsolutePath() + ".  Configuring "+ _serverName);
     XmlHandler handler=new XmlHandler(_serverName);
     saxParser.parse(file,handler);
-    if (handler.parent != null) {
-      _parentLocator=getLocatorInternal(handler.parent,false,filename,log4jFile);
-    }
     _daoMap=new LinkedHashMap<String,ComponentInfo<GenericDao<?,? extends Serializable>>>();
     _managerMap=new LinkedHashMap<String,ComponentInfo<Manager>>();
     _adapterMap=new HashMap<String,Adapters<? extends Adapter>>();
+    if (handler.parent != null) {
+synchronized (s_locators) {
+        _parentLocator=s_locators.get(handler.parent);
+        if (_parentLocator == null) {
+          _parentLocator=new ComponentLocator(handler.parent);
+          s_locators.put(handler.parent,_parentLocator);
+          _parentLocator.parse(filename,log4jFile);
+        }
+      }
+    }
+    ComponentLibrary library=null;
     if (handler.library != null) {
       Class<?> clazz=Class.forName(handler.library);
-      ComponentLibrary library=(ComponentLibrary)clazz.newInstance();
-      _managerMap.putAll(library.getManagers());
+      library=(ComponentLibrary)clazz.newInstance();
       _daoMap.putAll(library.getDaos());
-      createAdaptersMap(library.getAdapters());
+      _managerMap.putAll(library.getManagers());
     }
-    _managerMap.putAll(handler.managers);
     _daoMap.putAll(handler.daos);
+    _managerMap.putAll(handler.managers);
     startDaos();
-    createAdaptersMap(handler.adapters);
-    instantiateManagers();
+    if (library != null) {
+      instantiateAdapters(library.getAdapters());
+    }
     instantiateAdapters(handler.adapters);
+    instantiateManagers();
+    _component=createInstance(handler.componentClass,true,true);
     configureManagers();
+    configureAdapters();
     startManagers();
     startAdapters();
   }
