@@ -4,13 +4,7 @@
     SAXParser saxParser=spfactory.newSAXParser();
     File file=PropertiesUtil.findConfigFile(filename);
     if (file == null) {
-      s_logger.warn("Unable to find the config file automatically.  Now checking properties files.");
-      _parentLocator=null;
-      _managerMap=new HashMap<String,ComponentInfo<Manager>>();
-      _adapterMap=new HashMap<String,Adapters<? extends Adapter>>();
-      _daoMap=new LinkedHashMap<String,ComponentInfo<GenericDao<?,?>>>();
-      _parentLocator=null;
-      return;
+      throw new CloudRuntimeException("Unable to find " + filename);
     }
     s_logger.info("Config file found at " + file.getAbsolutePath() + ".  Configuring "+ _serverName);
     XmlHandler handler=new XmlHandler(_serverName);
@@ -19,14 +13,18 @@
     _managerMap=new LinkedHashMap<String,ComponentInfo<Manager>>();
     _adapterMap=new HashMap<String,Adapters<? extends Adapter>>();
     if (handler.parent != null) {
-synchronized (s_locators) {
-        _parentLocator=s_locators.get(handler.parent);
-        if (_parentLocator == null) {
-          _parentLocator=new ComponentLocator(handler.parent);
-          s_locators.put(handler.parent,_parentLocator);
-          _parentLocator.parse(filename,log4jFile);
-        }
+      String[] tokens=handler.parent.split(":");
+      String parentFile=filename;
+      String parentName=handler.parent;
+      if (tokens.length > 1) {
+        parentFile=tokens[0];
+        parentName=tokens[1];
       }
+      _parentLocator=new ComponentLocator(parentName);
+      _parentLocator.parse2(parentFile);
+      _daoMap.putAll(_parentLocator._daoMap);
+      _managerMap.putAll(_parentLocator._managerMap);
+      _adapterMap.putAll(_parentLocator._adapterMap);
     }
     ComponentLibrary library=null;
     if (handler.library != null) {
@@ -37,17 +35,7 @@ synchronized (s_locators) {
     }
     _daoMap.putAll(handler.daos);
     _managerMap.putAll(handler.managers);
-    startDaos();
-    if (library != null) {
-      instantiateAdapters(library.getAdapters());
-    }
-    instantiateAdapters(handler.adapters);
-    instantiateManagers();
-    _component=createInstance(handler.componentClass,true,true);
-    configureManagers();
-    configureAdapters();
-    startManagers();
-    startAdapters();
+    return new Pair<XmlHandler,ComponentLibrary>(handler,library);
   }
  catch (  ParserConfigurationException e) {
     s_logger.error("Unable to load " + _serverName + " due to errors while parsing "+ filename,e);
@@ -69,4 +57,5 @@ catch (  Exception e) {
     s_logger.error("Unable to load configuration for " + _serverName + " from "+ filename,e);
     System.exit(1);
   }
+  return null;
 }
