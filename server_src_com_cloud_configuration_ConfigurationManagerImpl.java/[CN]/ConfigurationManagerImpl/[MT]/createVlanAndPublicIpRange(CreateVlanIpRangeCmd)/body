@@ -1,7 +1,19 @@
 {
+  Long zoneId=cmd.getZoneId();
+  Long podId=cmd.getPodId();
+  String startIP=cmd.getStartIp();
+  String endIP=cmd.getEndIp();
+  String vlanGateway=cmd.getGateway();
+  String vlanNetmask=cmd.getNetmask();
   Long userId=UserContext.current().getUserId();
   if (userId == null) {
     userId=Long.valueOf(User.UID_SYSTEM);
+  }
+  if (podId != null && ((_podDao.findById(podId)) == null)) {
+    throw new InvalidParameterValueException("Please specify a valid pod.");
+  }
+  if (podId != null && _podDao.findById(podId).getDataCenterId() != zoneId) {
+    throw new InvalidParameterValueException("Pod id=" + podId + " doesn't belong to zone id="+ zoneId);
   }
   Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
   if (forVirtualNetwork == null) {
@@ -10,6 +22,19 @@
   String vlanId=cmd.getVlan();
   if (vlanId == null) {
     vlanId=Vlan.UNTAGGED;
+  }
+  DataCenterVO zone;
+  if (zoneId == null || ((zone=_zoneDao.findById(zoneId)) == null)) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  if (zone.getNetworkType() == DataCenterNetworkType.Advanced && vlanId.equals(Vlan.UNTAGGED) && !forVirtualNetwork) {
+    throw new InvalidParameterValueException("Direct untagged network is not supported for the zone " + zone.getId() + " of type "+ zone.getNetworkType());
+  }
+ else   if (zone.getNetworkType() == DataCenterNetworkType.Basic && !(vlanId.equals(Vlan.UNTAGGED) && !forVirtualNetwork)) {
+    throw new InvalidParameterValueException("Only direct untagged network is supported in the zone " + zone.getId() + " of type "+ zone.getNetworkType());
+  }
+  if (zone.getVnet() == null && forVirtualNetwork) {
+    throw new InvalidParameterValueException("Can't add virtual network to the zone id=" + zone.getId() + " as zone doesn't have guest vlan configured");
   }
   String accountName=cmd.getAccountName();
   Long domainId=cmd.getDomainId();
@@ -21,12 +46,6 @@
     }
   }
   VlanType vlanType=forVirtualNetwork ? VlanType.VirtualNetwork : VlanType.DirectAttached;
-  Long zoneId=cmd.getZoneId();
-  Long podId=cmd.getPodId();
-  String startIP=cmd.getStartIp();
-  String endIP=cmd.getEndIp();
-  String vlanGateway=cmd.getGateway();
-  String vlanNetmask=cmd.getNetmask();
   String hypervisorType=_configDao.getValue("hypervisor.type");
   if (hypervisorType.equalsIgnoreCase("xenserver")) {
     if (vlanType.toString().equalsIgnoreCase("VirtualNetwork") && vlanId.equalsIgnoreCase("untagged")) {
@@ -38,10 +57,6 @@
   if (!vlanId.equals(Vlan.UNTAGGED)) {
     VlanVO vlanHandle=_vlanDao.findByZoneAndVlanId(zoneId,vlanId);
     if (vlanHandle != null && !vlanHandle.getVlanType().equals(vlanType))     throw new InvalidParameterValueException("This vlan id is already associated with the vlan type " + vlanHandle.getVlanType().toString() + ",whilst you are trying to associate it with vlan type "+ vlanType.toString());
-  }
-  DataCenterVO zone;
-  if (zoneId == null || ((zone=_zoneDao.findById(zoneId)) == null)) {
-    throw new InvalidParameterValueException("Please specify a valid zone.");
   }
   checkAccess(account,zone);
   boolean associateIpRangeToAccount=false;
@@ -76,9 +91,6 @@
  else     if (podId != null) {
       if (!vlanId.equals(Vlan.UNTAGGED)) {
         throw new InvalidParameterValueException("Direct Attached IP ranges for a pod must be untagged.");
-      }
-      if (podId != null && ((_podDao.findById(podId)) == null)) {
-        throw new InvalidParameterValueException("Please specify a valid pod.");
       }
       List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAllIncludingRemoved();
       for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
