@@ -1,0 +1,48 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  int deviceId=0;
+  boolean[] deviceIds=new boolean[networks.size()];
+  Arrays.fill(deviceIds,false);
+  List<NicVO> nics=new ArrayList<NicVO>(networks.size());
+  NicVO defaultNic=null;
+  for (  Pair<NetworkVO,NicProfile> network : networks) {
+    NetworkVO config=network.first();
+    NetworkGuru concierge=_networkGurus.get(config.getGuruName());
+    NicProfile requested=network.second();
+    NicProfile profile=concierge.allocate(config,requested,vm);
+    if (profile == null) {
+      continue;
+    }
+    NicVO vo=new NicVO(concierge.getName(),vm.getId(),config.getId());
+    vo.setMode(network.first().getMode());
+    while (deviceIds[deviceId] && deviceId < deviceIds.length) {
+      deviceId++;
+    }
+    deviceId=applyProfileToNic(vo,profile,deviceId);
+    vo=_nicDao.persist(vo);
+    if (vo.isDefaultNic()) {
+      if (defaultNic != null) {
+        throw new IllegalArgumentException("You cannot specify two nics as default nics: nic 1 = " + defaultNic + "; nic 2 = "+ vo);
+      }
+      defaultNic=vo;
+    }
+    int devId=vo.getDeviceId();
+    if (devId > deviceIds.length) {
+      throw new IllegalArgumentException("Device id for nic is too large: " + vo);
+    }
+    if (deviceIds[devId]) {
+      throw new IllegalArgumentException("Conflicting device id for two different nics: " + devId);
+    }
+    deviceIds[devId]=true;
+    nics.add(vo);
+    vm.addNic(new NicProfile(vo,network.first(),vo.getBroadcastUri(),vo.getIsolationUri()));
+  }
+  if (defaultNic == null && nics.size() > 2) {
+    throw new IllegalArgumentException("Default Nic was not set.");
+  }
+ else   if (nics.size() == 1) {
+    nics.get(0).setDefaultNic(true);
+  }
+  txn.commit();
+}
