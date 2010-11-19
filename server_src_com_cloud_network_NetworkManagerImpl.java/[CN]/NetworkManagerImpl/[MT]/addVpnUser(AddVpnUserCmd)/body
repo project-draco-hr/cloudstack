@@ -8,13 +8,27 @@
   if (!cmd.getPassword().matches("^[a-zA-Z0-9][a-zA-Z0-9@#+=._-]{2,31}$")) {
     throw new InvalidParameterValueException("Password has to be 3-32 characters including alphabets, numbers and the set '@#+=.-_'");
   }
-  VpnUserVO user=addRemoveVpnUser(account,cmd.getUserName(),cmd.getPassword(),true);
-  if (user != null) {
-    EventUtils.saveEvent(userId,account.getId(),EventTypes.EVENT_VPN_USER_ADD,"Added a VPN user for account: " + account.getAccountName() + " username= "+ cmd.getUserName());
+  account=_accountDao.acquireInLockTable(account.getId());
+  if (account == null) {
+    throw new ConcurrentOperationException("Unable to add vpn user: Another operation active");
   }
+  try {
+    long userCount=_vpnUsersDao.getVpnUserCount(account.getId());
+    Integer userLimit=getIntegerConfigValue(Config.RemoteAccessVpnUserLimit.key(),8);
+    if (userCount >= userLimit) {
+      throw new AccountLimitException("Cannot add more than " + userLimit + " remote access vpn users");
+    }
+    VpnUserVO user=addRemoveVpnUser(account,cmd.getUserName(),cmd.getPassword(),true);
+    if (user != null) {
+      EventUtils.saveEvent(userId,account.getId(),EventTypes.EVENT_VPN_USER_ADD,"Added a VPN user for account: " + account.getAccountName() + " username= "+ cmd.getUserName());
+      return user;
+    }
  else {
-    EventUtils.saveEvent(userId,account.getId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_VPN_USER_ADD,"Unable to add VPN user for account: ",account.getAccountName() + " username= " + cmd.getUserName());
-    throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Unable to add VPN user for account: " + account.getAccountName() + " username= "+ cmd.getUserName());
+      EventUtils.saveEvent(userId,account.getId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_VPN_USER_ADD,"Unable to add VPN user for account: ",account.getAccountName() + " username= " + cmd.getUserName());
+      throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Unable to add VPN user for account: " + account.getAccountName() + " username= "+ cmd.getUserName());
+    }
   }
-  return user;
+  finally {
+    if (account != null)     _accountDao.releaseFromLockTable(account.getId());
+  }
 }
