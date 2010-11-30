@@ -1,10 +1,28 @@
 {
   Filter searchFilter=new Filter(ServiceOfferingVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchCriteria<ServiceOfferingVO> sc=_offeringsDao.createSearchCriteria();
+  Account account=UserContext.current().getAccount();
   Object name=cmd.getServiceOfferingName();
   Object id=cmd.getId();
   Object keyword=cmd.getKeyword();
   Long vmId=cmd.getVirtualMachineId();
+  Long domainId=cmd.getDomainId();
+  if (domainId != null) {
+    if (account.getType() == Account.ACCOUNT_TYPE_ADMIN) {
+      return _offeringsDao.findServiceOfferingByDomainId(domainId);
+    }
+ else {
+      if (isPermissible(account.getDomainId(),domainId)) {
+        return _offeringsDao.findServiceOfferingByDomainId(domainId);
+      }
+ else {
+        throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"The account:" + account.getAccountName() + " does not fall in the same domain hierarchy as the service offering");
+      }
+    }
+  }
+  if ((account.getType() == Account.ACCOUNT_TYPE_NORMAL || account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN)) {
+    return searchOfferingsInternal(account,name,id,vmId,keyword,searchFilter);
+  }
   if (keyword != null) {
     SearchCriteria<ServiceOfferingVO> ssc=_offeringsDao.createSearchCriteria();
     ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
@@ -12,7 +30,6 @@
     sc.addAnd("name",SearchCriteria.Op.SC,ssc);
   }
  else   if (vmId != null) {
-    Account account=UserContext.current().getAccount();
     UserVmVO vmInstance=_userVmDao.findById(vmId);
     if ((vmInstance == null) || (vmInstance.getRemoved() != null)) {
       throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);

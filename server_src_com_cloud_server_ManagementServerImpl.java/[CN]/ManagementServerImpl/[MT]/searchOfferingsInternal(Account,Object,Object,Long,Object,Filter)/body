@@ -1,0 +1,52 @@
+{
+  List<ServiceOfferingVO> sol=new ArrayList<ServiceOfferingVO>();
+  DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+  boolean includePublicOfferings=true;
+  if (domainRecord != null) {
+    while (true) {
+      SearchCriteria<ServiceOfferingVO> sc=_offeringsDao.createSearchCriteria();
+      if (keyword != null) {
+        includePublicOfferings=false;
+        SearchCriteria<ServiceOfferingVO> ssc=_offeringsDao.createSearchCriteria();
+        ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+        ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+        sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+      }
+ else       if (vmId != null) {
+        includePublicOfferings=false;
+        UserVmVO vmInstance=_userVmDao.findById(vmId);
+        if ((vmInstance == null) || (vmInstance.getRemoved() != null)) {
+          throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+        }
+        if ((account != null) && !isAdmin(account.getType())) {
+          if (account.getId() != vmInstance.getAccountId()) {
+            throw new PermissionDeniedException("unable to find a virtual machine with id " + vmId + " for this account");
+          }
+        }
+        ServiceOfferingVO offering=_offeringsDao.findById(vmInstance.getServiceOfferingId());
+        sc.addAnd("id",SearchCriteria.Op.NEQ,offering.getId());
+        sc.addAnd("guestIpType",SearchCriteria.Op.EQ,offering.getGuestIpType());
+        sc.addAnd("useLocalStorage",SearchCriteria.Op.EQ,offering.getUseLocalStorage());
+      }
+      if (id != null) {
+        includePublicOfferings=false;
+        sc.addAnd("id",SearchCriteria.Op.EQ,id);
+      }
+      if (name != null) {
+        includePublicOfferings=false;
+        sc.addAnd("name",SearchCriteria.Op.LIKE,"%" + name + "%");
+      }
+      sc.addAnd("systemUse",SearchCriteria.Op.EQ,false);
+      sc.addAnd("domainId",SearchCriteria.Op.EQ,domainRecord.getId());
+      sol.addAll(_offeringsDao.search(sc,searchFilter));
+      if (domainRecord.getParent() != null)       domainRecord=_domainDao.findById(domainRecord.getParent());
+ else       break;
+    }
+  }
+ else {
+    s_logger.error("Could not find the domainId for account:" + account.getAccountName());
+    throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+  }
+  if (includePublicOfferings)   sol.addAll(_offeringsDao.findPublicServiceOfferings());
+  return sol;
+}
