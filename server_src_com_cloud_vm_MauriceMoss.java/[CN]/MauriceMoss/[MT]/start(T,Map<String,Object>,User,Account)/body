@@ -21,12 +21,15 @@
   HypervisorGuru hvGuru=_hvGurus.get(template.getHypervisorType());
   @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
   vm.setReservationId(work.getId());
-  if (!_vmDao.updateIf(vm,Event.StartRequested,null)) {
+  if (!stateTransitTo(vm,Event.StartRequested)) {
     throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
   }
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
   while (retry-- != 0) {
+    if (retry < (_retry - 1)) {
+      stateTransitTo(vm,Event.OperationRetry);
+    }
     VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params);
     DeployDestination dest=null;
     for (    DeploymentPlanner planner : _planners) {
@@ -42,11 +45,12 @@
     }
     vm.setDataCenterId(dest.getDataCenter().getId());
     vm.setPodId(dest.getPod().getId());
-    _vmDao.updateIf(vm,Event.OperationRetry,dest.getHost().getId());
+    vm.setHostId(dest.getHost().getId());
     try {
       _storageMgr.prepare(vmProfile,dest);
     }
  catch (    ConcurrentOperationException e) {
+      stateTransitTo(vm,Event.OperationFailed);
       throw e;
     }
 catch (    StorageUnavailableException e) {
@@ -62,7 +66,7 @@ catch (    StorageUnavailableException e) {
     try {
       Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
       if (answers[0].getResult() && vmGuru.finalizeStart(cmds,vmProfile,dest,context)) {
-        if (!_vmDao.updateIf(vm,Event.OperationSucceeded,dest.getHost().getId())) {
+        if (!stateTransitTo(vm,Event.OperationSucceeded)) {
           throw new CloudRuntimeException("Unable to transition to a new state.");
         }
         return vm;
@@ -78,6 +82,7 @@ catch (    OperationTimedoutException e) {
       continue;
     }
   }
+  stateTransitTo(vm,Event.OperationFailed);
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Creation complete for VM " + vm);
   }

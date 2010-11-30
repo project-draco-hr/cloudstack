@@ -1,0 +1,46 @@
+{
+  CapacityVO capacityCpu=_capacityDao.findByHostIdType(vm.getHostId(),CapacityVO.CAPACITY_TYPE_CPU);
+  CapacityVO capacityMemory=_capacityDao.findByHostIdType(vm.getHostId(),CapacityVO.CAPACITY_TYPE_MEMORY);
+  ServiceOfferingVO offeringVO=_offeringDao.findById(vm.getServiceOfferingId());
+  int cpu=offeringVO.getCpu();
+  int speed=offeringVO.getSpeed();
+  int vmCPU=cpu * speed;
+  int vmMem=offeringVO.getRamSize();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    capacityCpu=_capacityDao.lockRow(capacityCpu.getId(),true);
+    capacityMemory=_capacityDao.lockRow(capacityMemory.getId(),true);
+    long usedCpu=capacityCpu.getUsedCapacity();
+    long usedMem=capacityMemory.getUsedCapacity();
+    long reservedCpu=capacityCpu.getReservedCapacity();
+    long reservedMem=capacityMemory.getReservedCapacity();
+    long totalCpu=capacityCpu.getTotalCapacity();
+    long totalMem=capacityMemory.getTotalCapacity();
+    if (!moveFromReserved) {
+      if (usedCpu >= vmCPU)       capacityCpu.setUsedCapacity(usedCpu - vmCPU);
+      if (usedMem >= vmMem)       capacityMemory.setUsedCapacity(usedMem - vmMem);
+      if (moveToReservered) {
+        if (reservedCpu + vmCPU <= totalCpu) {
+          capacityCpu.setReservedCapacity(reservedCpu + vmCPU);
+        }
+        if (reservedMem + vmMem <= totalMem) {
+          capacityMemory.setReservedCapacity(reservedMem + vmMem);
+        }
+      }
+    }
+ else {
+      if (reservedCpu >= vmCPU) {
+        capacityCpu.setReservedCapacity(reservedCpu - vmCPU);
+      }
+      if (reservedMem >= vmMem) {
+        capacityMemory.setReservedCapacity(reservedMem - vmMem);
+      }
+    }
+    _capacityDao.update(capacityCpu.getId(),capacityCpu);
+    _capacityDao.update(capacityMemory.getId(),capacityMemory);
+  }
+  finally {
+    txn.commit();
+  }
+}
