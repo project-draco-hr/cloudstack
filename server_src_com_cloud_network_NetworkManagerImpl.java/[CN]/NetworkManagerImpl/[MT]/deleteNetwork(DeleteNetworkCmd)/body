@@ -1,0 +1,58 @@
+{
+  Long networkId=cmd.getId();
+  Long userId=UserContext.current().getUserId();
+  Account account=UserContext.current().getAccount();
+  NetworkVO network=_networkConfigDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("unable to find network " + networkId);
+  }
+  if (account != null) {
+    if (!isAdmin(account.getType())) {
+      if (network.getAccountId() != account.getId()) {
+        throw new PermissionDeniedException("Account " + account.getAccountName() + " does not own network id="+ networkId+ ", permission denied");
+      }
+    }
+ else     if (!(account.getType() == Account.ACCOUNT_TYPE_ADMIN) && !_domainDao.isChildDomain(account.getDomainId(),_accountDao.findById(network.getAccountId()).getId())) {
+      throw new PermissionDeniedException("Unable to delete network " + networkId + ", permission denied.");
+    }
+  }
+  List<NicVO> nics=_nicDao.listByNetworkId(networkId);
+  for (  NicVO nic : nics) {
+    UserVm vm=_vmDao.findById(nic.getId());
+    if (vm.getState() != State.Destroyed || vm.getState() != State.Expunging || vm.getState() != State.Error) {
+      throw new CloudRuntimeException("Can't delete a network; make sure that all vms using the network are destroyed");
+    }
+  }
+  if (account.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    if (network.getState() != Network.State.Allocated) {
+      throw new InvalidParameterValueException("Non-admin user can delete network in " + Network.State.Allocated + " state only.");
+    }
+  }
+ else {
+    if (!(network.getState() == Network.State.Allocated || network.getState() == Network.State.Setup)) {
+      throw new InvalidParameterValueException("Can delete network in " + Network.State.Allocated + " and "+ Network.State.Setup+ " states only.");
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(networkId);
+    for (    VlanVO vlan : vlans) {
+      boolean result=_configMgr.deleteVlanAndPublicIpRange(userId,vlan.getId());
+      if (result == false) {
+        txn.rollback();
+        throw new CloudRuntimeException("Unable to delete a network: failed to delete corresponding vlan with id " + vlan.getId());
+      }
+    }
+    _networkConfigDao.remove(networkId);
+    txn.commit();
+    return true;
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    s_logger.warn("Unexpected exception during deleting a network ",ex);
+    return false;
+  }
+ finally {
+    txn.close();
+  }
+}
