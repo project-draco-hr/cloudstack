@@ -1,14 +1,22 @@
 {
   try {
-    FirewallRule result=_networkService.createPortForwardingRule(this);
-    if (result != null) {
-      FirewallRuleResponse fwResponse=_responseGenerator.createFirewallRuleResponse(result);
-      fwResponse.setResponseName(getName());
-      this.setResponseObject(fwResponse);
-    }
- else {
+    UserContext callerContext=UserContext.current();
+    PortForwardingRule result=_rulesService.createPortForwardingRule(this,virtualMachineId,callerContext.getAccount());
+    if (result == null) {
       throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"An existing rule for ipAddress / port / protocol of " + ipAddress + " / "+ publicPort+ " / "+ protocol+ " exits.");
     }
+    boolean success=false;
+    try {
+      success=_rulesService.applyPortForwardingRules(result.getSourceIpAddress(),callerContext.getAccount());
+    }
+  finally {
+      if (!success) {
+        _rulesService.revokePortForwardingRule(result.getId(),true,callerContext.getAccount());
+      }
+    }
+    FirewallRuleResponse fwResponse=_responseGenerator.createFirewallRuleResponse(result);
+    fwResponse.setResponseName(getName());
+    setResponseObject(fwResponse);
   }
  catch (  NetworkRuleConflictException ex) {
     throw new ServerApiException(BaseCmd.NETWORK_RULE_CONFLICT_ERROR,ex.getMessage());

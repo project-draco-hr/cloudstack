@@ -1,0 +1,51 @@
+{
+  UserContext caller=UserContext.current();
+  LoadBalancerVO loadBalancer=_lbDao.findById(loadBalancerId);
+  if (loadBalancer == null) {
+    throw new InvalidParameterValueException("Failed to assign to load balancer " + loadBalancerId + ", the load balancer was not found.");
+  }
+  _accountMgr.checkAccess(caller.getAccount(),loadBalancer);
+  List<LoadBalancerVMMapVO> mappedInstances=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId,false);
+  Set<Long> mappedInstanceIds=new HashSet<Long>();
+  for (  LoadBalancerVMMapVO mappedInstance : mappedInstances) {
+    mappedInstanceIds.add(Long.valueOf(mappedInstance.getInstanceId()));
+  }
+  List<UserVm> vmsToAdd=new ArrayList<UserVm>();
+  for (  Long instanceId : instanceIds) {
+    if (mappedInstanceIds.contains(instanceId)) {
+      s_logger.debug("VM " + instanceId + " is already mapped to load balancer.");
+      continue;
+    }
+    UserVm vm=_vmDao.findById(instanceId);
+    if (vm == null || vm.getState() == State.Destroyed || vm.getState() == State.Expunging) {
+      throw new InvalidParameterValueException("Invalid instance id: " + instanceId);
+    }
+    _accountMgr.checkAccess(caller.getAccount(),vm);
+    if (vm.getAccountId() != loadBalancer.getAccountId()) {
+      throw new PermissionDeniedException("Cannot add virtual machines that do not belong to the same owner.");
+    }
+    List<? extends Nic> nics=_networkMgr.getNics(vm);
+    Nic nicInSameNetwork=null;
+    for (    Nic nic : nics) {
+      if (nic.getNetworkId() == loadBalancer.getNetworkId()) {
+        nicInSameNetwork=nic;
+        break;
+      }
+    }
+    if (nicInSameNetwork == null) {
+      throw new InvalidParameterValueException("VM " + instanceId + " cannot be added because it doesn't belong in the same network.");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Adding " + vm + " to the load balancer pool");
+    }
+    vmsToAdd.add(vm);
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  for (  UserVm vm : vmsToAdd) {
+    LoadBalancerVMMapVO map=new LoadBalancerVMMapVO(loadBalancer.getId(),vm.getId(),true);
+    map=_lb2VmMapDao.persist(map);
+  }
+  txn.commit();
+  return true;
+}
