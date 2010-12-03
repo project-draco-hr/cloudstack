@@ -21,14 +21,14 @@
   HypervisorGuru hvGuru=_hvGurus.get(template.getHypervisorType());
   @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
   vm.setReservationId(work.getId());
-  if (!stateTransitTo(vm,Event.StartRequested)) {
+  if (!stateTransitTo(vm,Event.StartRequested,null)) {
     throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
   }
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
   while (retry-- != 0) {
     if (retry < (_retry - 1)) {
-      stateTransitTo(vm,Event.OperationRetry);
+      stateTransitTo(vm,Event.OperationRetry,null);
     }
     VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params);
     DeployDestination dest=null;
@@ -45,12 +45,11 @@
     }
     vm.setDataCenterId(dest.getDataCenter().getId());
     vm.setPodId(dest.getPod().getId());
-    vm.setHostId(dest.getHost().getId());
     try {
       _storageMgr.prepare(vmProfile,dest);
     }
  catch (    ConcurrentOperationException e) {
-      stateTransitTo(vm,Event.OperationFailed);
+      stateTransitTo(vm,Event.OperationFailed,null);
       throw e;
     }
 catch (    StorageUnavailableException e) {
@@ -67,7 +66,7 @@ catch (    StorageUnavailableException e) {
     try {
       Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
       if (answers[0].getResult() && vmGuru.finalizeStart(cmds,vmProfile,dest,context)) {
-        if (!stateTransitTo(vm,Event.OperationSucceeded)) {
+        if (!stateTransitTo(vm,Event.OperationSucceeded,dest.getHost().getId())) {
           throw new CloudRuntimeException("Unable to transition to a new state.");
         }
         return vm;
@@ -83,7 +82,7 @@ catch (    OperationTimedoutException e) {
       continue;
     }
   }
-  stateTransitTo(vm,Event.OperationFailed);
+  stateTransitTo(vm,Event.OperationFailed,null);
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Creation complete for VM " + vm);
   }
