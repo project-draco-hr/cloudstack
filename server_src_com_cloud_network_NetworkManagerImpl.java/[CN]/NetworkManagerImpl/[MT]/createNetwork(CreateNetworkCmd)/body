@@ -1,0 +1,95 @@
+{
+  Account ctxAccount=UserContext.current().getAccount();
+  Long userId=UserContext.current().getUserId();
+  Long networkOfferingId=cmd.getNetworkOfferingId();
+  Long zoneId=cmd.getZoneId();
+  Long podId=cmd.getPodId();
+  String gateway=cmd.getGateway();
+  String cidr=cmd.getCidr();
+  String startIP=cmd.getStartIp();
+  String endIP=cmd.getEndIp();
+  String vlanNetmask=cmd.getNetmask();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  String vlanId=cmd.getVlan();
+  String name=cmd.getNetworkName();
+  String displayText=cmd.getDisplayText();
+  Account owner=null;
+  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
+  if (networkOffering == null || networkOffering.isSystemOnly()) {
+    throw new InvalidParameterValueException("Unable to find network offeirng by id " + networkOfferingId);
+  }
+  if (zoneId == null || ((_dcDao.findById(zoneId)) == null)) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  if (isAdmin(ctxAccount.getType())) {
+    if (domainId != null) {
+      if ((ctxAccount != null) && !_domainDao.isChildDomain(ctxAccount.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Failed to create a newtwork, invalid domain id (" + domainId + ") given.");
+      }
+      if (accountName != null) {
+        owner=_accountDao.findActiveAccount(accountName,domainId);
+        if (owner == null) {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+      }
+    }
+ else {
+      owner=ctxAccount;
+    }
+  }
+ else {
+    owner=ctxAccount;
+  }
+  if (owner.getId() == Account.ACCOUNT_ID_SYSTEM && !networkOffering.isShared()) {
+    throw new InvalidParameterValueException("Non-system account is required when create a network from Dedicated network offering with id=" + networkOfferingId);
+  }
+  if (vlanId != null && !networkOffering.getSpecifyVlan()) {
+    throw new InvalidParameterValueException("Can't specify vlan because network offering doesn't support it");
+  }
+  if (gateway != null && startIP != null && endIP != null && cidr == null) {
+    throw new InvalidParameterValueException("Cidr is missing");
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    DataCenterDeployment plan=new DataCenterDeployment(zoneId,null,null,null);
+    NetworkVO userNetwork=new NetworkVO();
+    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && cidr != null && gateway != null) {
+      userNetwork.setCidr(cidr);
+      userNetwork.setGateway(gateway);
+      if (vlanId != null) {
+        userNetwork.setBroadcastUri(URI.create("vlan://" + vlanId));
+      }
+    }
+    List<NetworkVO> networks=setupNetworkConfiguration(owner,networkOffering,userNetwork,plan,name,displayText);
+    Long networkId=null;
+    if (networks == null || networks.isEmpty()) {
+      txn.rollback();
+      throw new CloudRuntimeException("Fail to create a network");
+    }
+ else {
+      networkId=networks.get(0).getId();
+    }
+    if (networkOffering.isShared()) {
+      owner=null;
+    }
+    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && networkOffering.getGuestIpType() != GuestIpType.Virtualized && startIP != null && endIP != null && gateway != null) {
+      Vlan vlan=_configMgr.createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,gateway,vlanNetmask,false,vlanId,owner,networkId);
+      if (vlan == null) {
+        txn.rollback();
+        throw new CloudRuntimeException("Fail to create a vlan");
+      }
+    }
+    txn.commit();
+    return networks.get(0);
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Unexpected exception while creating network ",ex);
+    txn.rollback();
+  }
+ finally {
+    txn.close();
+  }
+  return null;
+}

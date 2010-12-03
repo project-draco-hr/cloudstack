@@ -1,0 +1,88 @@
+{
+  Long volumeId=cmd.getVolumeId();
+  if (volumeId != null) {
+    VolumeVO volume=_volsDao.findById(volumeId);
+    if (volume == null) {
+      throw new InvalidParameterValueException("unable to find a volume with id " + volumeId);
+    }
+    checkAccountPermissions(volume.getAccountId(),volume.getDomainId(),"volume",volumeId);
+  }
+  Account account=UserContext.current().getAccount();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=null;
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Unable to list templates for domain " + domainId + ", permission denied.");
+      }
+    }
+ else     if ((account != null) && (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN)) {
+      domainId=account.getDomainId();
+    }
+    if (domainId != null && accountName != null) {
+      Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
+      if (userAccount != null) {
+        accountId=userAccount.getId();
+      }
+    }
+  }
+ else {
+    accountId=account.getId();
+  }
+  Object name=cmd.getSnapshotName();
+  Object id=cmd.getId();
+  Object keyword=cmd.getKeyword();
+  Object snapshotTypeStr=cmd.getSnapshotType();
+  Filter searchFilter=new Filter(SnapshotVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<SnapshotVO> sb=_snapshotDao.createSearchBuilder();
+  sb.and("status",sb.entity().getStatus(),SearchCriteria.Op.EQ);
+  sb.and("volumeId",sb.entity().getVolumeId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("snapshotTypeEQ",sb.entity().getSnapshotType(),SearchCriteria.Op.EQ);
+  sb.and("snapshotTypeNEQ",sb.entity().getSnapshotType(),SearchCriteria.Op.NEQ);
+  if ((accountId == null) && (domainId != null)) {
+    SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
+    sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinType.INNER);
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    accountSearch.join("domainSearch",domainSearch,accountSearch.entity().getDomainId(),domainSearch.entity().getId(),JoinType.INNER);
+  }
+  SearchCriteria<SnapshotVO> sc=sb.create();
+  sc.setParameters("status",Snapshot.Status.BackedUp);
+  if (volumeId != null) {
+    sc.setParameters("volumeId",volumeId);
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (keyword != null) {
+    SearchCriteria<SnapshotVO> ssc=_snapshotDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById(domainId);
+    SearchCriteria<?> joinSearch=sc.getJoin("accountSearch");
+    joinSearch.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+  }
+  if (snapshotTypeStr != null) {
+    Type snapshotType=SnapshotVO.getSnapshotType((String)snapshotTypeStr);
+    if (snapshotType == null) {
+      throw new InvalidParameterValueException("Unsupported snapshot type " + snapshotTypeStr);
+    }
+    sc.setParameters("snapshotTypeEQ",snapshotType.ordinal());
+  }
+ else {
+    sc.setParameters("snapshotTypeNEQ",Snapshot.Type.TEMPLATE.ordinal());
+  }
+  return _snapshotDao.search(sc,searchFilter);
+}

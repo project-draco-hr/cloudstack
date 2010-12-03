@@ -1,5 +1,33 @@
 {
   Account caller=UserContext.current().getAccount();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  Account userAccount=null;
+  Long accountId=null;
+  List<Long> networkList=cmd.getNetworkIds();
+  if ((caller == null) || isAdmin(caller.getType())) {
+    if (domainId != null) {
+      if ((caller != null) && !_domainDao.isChildDomain(caller.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Failed to deploy VM, invalid domain id (" + domainId + ") given.");
+      }
+      if (accountName != null) {
+        userAccount=_accountDao.findActiveAccount(accountName,domainId);
+        if (userAccount == null) {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=userAccount.getId();
+      }
+    }
+ else {
+      accountId=((caller != null) ? caller.getId() : null);
+    }
+  }
+ else {
+    accountId=caller.getId();
+  }
+  if (accountId == null) {
+    throw new InvalidParameterValueException("No valid account specified for deploying a virtual machine.");
+  }
   AccountVO owner=_accountDao.findById(cmd.getAccountId());
   if (owner == null || owner.getRemoved() != null) {
     throw new InvalidParameterValueException("Unable to find account: " + cmd.getAccountId());
@@ -90,10 +118,24 @@
   _accountMgr.checkAccess(caller,template);
   DataCenterDeployment plan=new DataCenterDeployment(dc.getId());
   s_logger.debug("Allocating in the DB for vm");
-  List<NetworkVO> configs=_networkMgr.setupNetworkConfiguration(owner,offering,plan);
+  if (networkList == null || networkList.isEmpty()) {
+    throw new InvalidParameterValueException("NetworkIds have to be specified");
+  }
   List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>();
-  for (  NetworkVO config : configs) {
-    networks.add(new Pair<NetworkVO,NicProfile>(config,null));
+  for (  Long networkId : networkList) {
+    NetworkVO network=_networkDao.findById(networkId);
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to find network by id " + networkId);
+    }
+ else {
+      if (network.getAccountId() != Account.ACCOUNT_ID_SYSTEM && network.getAccountId() != accountId) {
+        throw new PermissionDeniedException("Unable to create a vm using network with id " + networkId + ", permission denied");
+      }
+ else       if (network.getTrafficType() != TrafficType.Guest) {
+        throw new InvalidParameterValueException("Unable to create a vm using network which traffic type is " + network.getTrafficType() + ". "+ "Only Guest traffic type is acceptes");
+      }
+      networks.add(new Pair<NetworkVO,NicProfile>(network,null));
+    }
   }
   long id=_vmDao.getNextInSequence(Long.class,"id");
   UserVmVO vm=new UserVmVO(id,VirtualMachineName.getVmName(id,owner.getId(),_instance),cmd.getDisplayName(),template.getId(),template.getGuestOSId(),offering.getOfferHA(),domain.getId(),owner.getId(),offering.getId(),userData);
