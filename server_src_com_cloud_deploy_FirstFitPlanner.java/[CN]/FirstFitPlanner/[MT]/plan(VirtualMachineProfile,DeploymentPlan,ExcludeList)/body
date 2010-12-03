@@ -3,11 +3,11 @@
   ServiceOffering offering=vmProfile.getServiceOffering();
   DataCenter dc=_dcDao.findById(vm.getDataCenterId());
   int cpu_requested=offering.getCpu() * offering.getSpeed();
-  int ram_requested=offering.getRamSize();
+  long ram_requested=offering.getRamSize() * 1024L * 1024L;
   if (vm.getLastHostId() != null) {
     HostVO host=_hostDao.findById(vm.getLastHostId());
     if (host.getStatus() == Status.Up) {
-      boolean canDepployToLastHost=deployToHost(vm.getLastHostId(),cpu_requested,ram_requested,true);
+      boolean canDepployToLastHost=deployToHost(host,cpu_requested,ram_requested,true,avoid);
       if (canDepployToLastHost) {
         Pod pod=_podDao.findById(vm.getPodId());
         Cluster cluster=_clusterDao.findById(host.getClusterId());
@@ -15,22 +15,31 @@
       }
     }
   }
-  List<HostPodVO> pods=_podDao.listByDataCenterId(plan.getDataCenterId());
+  List<HostPodVO> pods;
+  if (plan.getPodId() != null) {
+    pods=new ArrayList<HostPodVO>(1);
+    pods.add(_podDao.findById(plan.getPodId()));
+  }
+ else {
+    pods=_podDao.listByDataCenterId(plan.getDataCenterId());
+  }
   for (  HostPodVO hostPod : pods) {
-    List<ClusterVO> clusters=_clusterDao.listByPodId(hostPod.getId());
+    List<ClusterVO> clusters;
+    if (plan.getClusterId() != null) {
+      clusters=new ArrayList<ClusterVO>(1);
+      clusters.add(_clusterDao.findById(plan.getClusterId()));
+    }
+ else {
+      clusters=_clusterDao.listByPodId(hostPod.getId());
+    }
     for (    ClusterVO clusterVO : clusters) {
       if (clusterVO.getHypervisorType() != vmProfile.getHypervisorType()) {
         continue;
       }
-      List<HostVO> hosts=_hostDao.listByCluster(clusterVO.getId());
+      List<HostVO> hosts=_hostDao.listBy(Host.Type.Routing,clusterVO.getId(),hostPod.getId(),dc.getId());
+      hosts=prioritizeHosts(vmProfile.getTemplate(),hosts);
       for (      HostVO hostVO : hosts) {
-        if (hostVO.getStatus() != Status.Up) {
-          continue;
-        }
-        if (avoid.shouldAvoid(hostVO)) {
-          continue;
-        }
-        boolean canDeployToHost=deployToHost(hostVO.getId(),cpu_requested,ram_requested,false);
+        boolean canDeployToHost=deployToHost(hostVO,cpu_requested,ram_requested,false,avoid);
         if (canDeployToHost) {
           Pod pod=_podDao.findById(hostPod.getId());
           Cluster cluster=_clusterDao.findById(clusterVO.getId());
