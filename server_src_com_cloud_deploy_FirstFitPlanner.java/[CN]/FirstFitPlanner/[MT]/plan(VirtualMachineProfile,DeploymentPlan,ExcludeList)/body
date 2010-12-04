@@ -4,9 +4,10 @@
   DataCenter dc=_dcDao.findById(vm.getDataCenterId());
   int cpu_requested=offering.getCpu() * offering.getSpeed();
   long ram_requested=offering.getRamSize() * 1024L * 1024L;
+  s_logger.debug("try to allocate a host from dc:" + plan.getDataCenterId() + ", pod:"+ plan.getPodId()+ ",cluster:"+ plan.getClusterId()+ ", requested cpu: "+ cpu_requested+ ", requested ram: "+ ram_requested);
   if (vm.getLastHostId() != null) {
     HostVO host=_hostDao.findById(vm.getLastHostId());
-    if (host.getStatus() == Status.Up) {
+    if (host != null && host.getStatus() == Status.Up) {
       boolean canDepployToLastHost=deployToHost(host,cpu_requested,ram_requested,true,avoid);
       if (canDepployToLastHost) {
         Pod pod=_podDao.findById(vm.getPodId());
@@ -15,25 +16,44 @@
       }
     }
   }
-  List<HostPodVO> pods;
+  List<HostPodVO> pods=null;
   if (plan.getPodId() != null) {
-    pods=new ArrayList<HostPodVO>(1);
-    pods.add(_podDao.findById(plan.getPodId()));
-  }
- else {
-    pods=_podDao.listByDataCenterId(plan.getDataCenterId());
-  }
-  for (  HostPodVO hostPod : pods) {
-    List<ClusterVO> clusters;
-    if (plan.getClusterId() != null) {
-      clusters=new ArrayList<ClusterVO>(1);
-      clusters.add(_clusterDao.findById(plan.getClusterId()));
+    HostPodVO pod=_podDao.findById(plan.getPodId());
+    if (pod != null && dc.getId() == pod.getDataCenterId()) {
+      pods=new ArrayList<HostPodVO>(1);
+      pods.add(pod);
     }
  else {
+      s_logger.debug("Can't enforce the pod selector");
+      return null;
+    }
+  }
+  if (pods == null)   pods=_podDao.listByDataCenterId(plan.getDataCenterId());
+  for (  HostPodVO hostPod : pods) {
+    if (avoid.shouldAvoid(hostPod)) {
+      continue;
+    }
+    List<ClusterVO> clusters=null;
+    if (plan.getClusterId() != null) {
+      ClusterVO cluster=_clusterDao.findById(plan.getClusterId());
+      if (cluster != null && hostPod.getId() == cluster.getPodId()) {
+        clusters=new ArrayList<ClusterVO>(1);
+        clusters.add(cluster);
+      }
+ else {
+        s_logger.debug("Can't enforce the cluster selector");
+        return null;
+      }
+    }
+    if (clusters == null) {
       clusters=_clusterDao.listByPodId(hostPod.getId());
     }
     for (    ClusterVO clusterVO : clusters) {
+      if (avoid.shouldAvoid(clusterVO)) {
+        continue;
+      }
       if (clusterVO.getHypervisorType() != vmProfile.getHypervisorType()) {
+        avoid.addCluster(clusterVO.getId());
         continue;
       }
       List<HostVO> hosts=_hostDao.listBy(Host.Type.Routing,clusterVO.getId(),hostPod.getId(),dc.getId());
@@ -46,8 +66,11 @@
           Host host=_hostDao.findById(hostVO.getId());
           return new DeployDestination(dc,pod,cluster,host);
         }
+        avoid.addHost(hostVO.getId());
       }
+      avoid.addCluster(clusterVO.getId());
     }
+    avoid.addPod(hostPod.getId());
   }
   return null;
 }
