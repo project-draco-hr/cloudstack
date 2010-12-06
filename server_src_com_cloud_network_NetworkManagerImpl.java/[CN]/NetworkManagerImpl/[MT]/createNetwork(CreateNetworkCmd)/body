@@ -46,37 +46,43 @@
   }
   if (networkOffering.getGuestIpType() == GuestIpType.DirectPodBased && vlanId != null && vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
     SearchBuilder<NetworkVO> sb=_networkConfigDao.createSearchBuilder();
-    sb.and("broadcastDomainType",sb.entity().getId(),SearchCriteria.Op.EQ);
-    sb.and("dataCenterId",sb.entity().getName(),SearchCriteria.Op.LIKE);
+    sb.and("broadcastDomainType",sb.entity().getBroadcastDomainType(),SearchCriteria.Op.EQ);
+    sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
+    SearchBuilder<NetworkOfferingVO> networkSearch=_networkOfferingDao.createSearchBuilder();
+    networkSearch.and("guestIpType",networkSearch.entity().getGuestIpType(),SearchCriteria.Op.EQ);
+    sb.join("networkSearch",networkSearch,sb.entity().getNetworkOfferingId(),networkSearch.entity().getId(),JoinBuilder.JoinType.INNER);
     SearchCriteria<NetworkVO> sc=sb.create();
     sc.setParameters("broadcastDomainType",BroadcastDomainType.Native);
     sc.setParameters("dataCenterId",zoneId);
+    sc.setJoinParameters("networkSearch","guestIpType",GuestIpType.DirectPodBased);
     List<NetworkVO> networks=_networkConfigDao.search(sc,null);
     if (networks != null && !networks.isEmpty()) {
       throw new InvalidParameterValueException("Network with untagged vlan already exists for the zone " + zoneId);
     }
   }
-  if (vlanId != null && !networkOffering.getSpecifyVlan()) {
-    throw new InvalidParameterValueException("Can't specify vlan because network offering doesn't support it");
+  if (ctxAccount.getType() == Account.ACCOUNT_TYPE_NORMAL && networkOffering.getGuestIpType() != GuestIpType.Virtual) {
+    throw new InvalidParameterValueException("Regular user can create only networ of type " + GuestIpType.Virtual);
   }
-  if (gateway != null && startIP != null && endIP != null && cidr == null) {
-    throw new InvalidParameterValueException("Cidr is missing");
+  if (ctxAccount.getType() == Account.ACCOUNT_TYPE_NORMAL && vlanId != null && !networkOffering.getSpecifyVlan()) {
+    throw new InvalidParameterValueException("Can't specify vlan because network offering doesn't support it");
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
   try {
     DataCenterDeployment plan=new DataCenterDeployment(zoneId,null,null,null);
     NetworkVO userNetwork=new NetworkVO();
-    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && cidr != null && gateway != null) {
-      userNetwork.setCidr(cidr);
-      userNetwork.setGateway(gateway);
-      if (vlanId != null) {
-        userNetwork.setBroadcastUri(URI.create("vlan://" + vlanId));
-        if (vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
-          userNetwork.setBroadcastDomainType(BroadcastDomainType.Native);
-        }
+    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN) {
+      if (cidr != null && gateway != null) {
+        userNetwork.setCidr(cidr);
+        userNetwork.setGateway(gateway);
+        if (vlanId != null) {
+          userNetwork.setBroadcastUri(URI.create("vlan://" + vlanId));
+          if (!vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
+            userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+          }
  else {
-          userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+            userNetwork.setBroadcastDomainType(BroadcastDomainType.Native);
+          }
         }
       }
     }
