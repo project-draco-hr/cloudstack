@@ -1,7 +1,9 @@
 {
   Long vmId=cmd.getId();
   Account accountHandle=UserContext.current().getAccount();
-  if (accountHandle != null && accountHandle.getRemoved() != null)   throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"The account " + accountHandle.getId() + " is removed");
+  if (accountHandle != null && accountHandle.getRemoved() != null) {
+    throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"The account " + accountHandle.getId() + " is removed");
+  }
   UserVmVO vm=_vmDao.findById(vmId.longValue());
   if (vm == null) {
     throw new ServerApiException(BaseCmd.PARAM_ERROR,"unable to find a virtual machine with id " + vmId);
@@ -33,20 +35,26 @@
   AccountVO account=null;
   txn.start();
   account=_accountDao.lockRow(vm.getAccountId(),true);
-  if (account.getRemoved() != null)   throw new CloudRuntimeException("Unable to recover VM as the account is deleted");
+  if (account.getRemoved() != null) {
+    throw new CloudRuntimeException("Unable to recover VM as the account is deleted");
+  }
   if (_accountMgr.resourceLimitExceeded(account,ResourceType.user_vm)) {
     ResourceAllocationException rae=new ResourceAllocationException("Maximum number of virtual machines for account: " + account.getAccountName() + " has been exceeded.");
     rae.setResourceType("vm");
     event.setLevel(EventVO.LEVEL_ERROR);
-    if (!vm.getHostName().equals(vm.getDisplayName()))     event.setDescription("Failed to recover VM instance : " + vm.getHostName() + "("+ vm.getDisplayName()+ ")"+ "; the resource limit for account: "+ account.getAccountName()+ " has been exceeded.");
- else     event.setDescription("Failed to recover VM instance : " + vm.getHostName() + "; the resource limit for account: "+ account.getAccountName()+ " has been exceeded.");
+    if (!vm.getHostName().equals(vm.getDisplayName())) {
+      event.setDescription("Failed to recover VM instance : " + vm.getHostName() + "("+ vm.getDisplayName()+ ")"+ "; the resource limit for account: "+ account.getAccountName()+ " has been exceeded.");
+    }
+ else {
+      event.setDescription("Failed to recover VM instance : " + vm.getHostName() + "; the resource limit for account: "+ account.getAccountName()+ " has been exceeded.");
+    }
     _eventDao.persist(event);
     txn.commit();
     throw rae;
   }
   _haMgr.cancelDestroy(vm,vm.getHostId());
   _accountMgr.incrementResourceCount(account.getId(),ResourceType.user_vm);
-  if (!_vmDao.updateIf(vm,VirtualMachine.Event.RecoveryRequested,null)) {
+  if (!_itMgr.stateTransitTo(vm,VirtualMachine.Event.RecoveryRequested,null)) {
     s_logger.debug("Unable to recover the vm because it is not in the correct state: " + vmId);
     throw new InvalidParameterValueException("Unable to recover the vm because it is not in the correct state: " + vmId);
   }
@@ -72,8 +80,12 @@
   }
   _accountMgr.incrementResourceCount(account.getId(),ResourceType.volume,new Long(volumes.size()));
   event.setLevel(EventVO.LEVEL_INFO);
-  if (!vm.getHostName().equals(vm.getDisplayName()))   event.setDescription("successfully recovered VM instance : " + vm.getHostName() + "("+ vm.getDisplayName()+ ")");
- else   event.setDescription("successfully recovered VM instance : " + vm.getHostName());
+  if (!vm.getHostName().equals(vm.getDisplayName())) {
+    event.setDescription("successfully recovered VM instance : " + vm.getHostName() + "("+ vm.getDisplayName()+ ")");
+  }
+ else {
+    event.setDescription("successfully recovered VM instance : " + vm.getHostName());
+  }
   _eventDao.persist(event);
   txn.commit();
   return _vmDao.findById(vmId);

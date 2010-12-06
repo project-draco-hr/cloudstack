@@ -1,0 +1,88 @@
+{
+  UserContext ctx=UserContext.current();
+  Account caller=ctx.getAccount();
+  String ipAddr=rule.getSourceIpAddress().addr();
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddr);
+  Ip dstIp=rule.getDestinationIpAddress();
+  long networkId;
+  UserVmVO vm=null;
+  Network network=null;
+  if (vmId != null) {
+    vm=_vmDao.findById(vmId);
+    if (vm == null) {
+      throw new InvalidParameterValueException("Unable to create ip forwarding rule on address " + ipAddress + ", invalid virtual machine id specified ("+ vmId+ ").");
+    }
+    dstIp=null;
+    List<? extends Nic> nics=_networkMgr.getNics(vm);
+    for (    Nic nic : nics) {
+      Network ntwk=_networkMgr.getNetwork(nic.getNetworkId());
+      if (ntwk.getGuestType() == GuestIpType.Virtual) {
+        network=ntwk;
+        dstIp=new Ip(nic.getIp4Address());
+        break;
+      }
+    }
+    if (network == null) {
+      throw new CloudRuntimeException("Unable to find ip address to map to in " + vmId);
+    }
+  }
+ else {
+    network=_networkMgr.getNetwork(rule.getNetworkId());
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to get the network " + rule.getNetworkId());
+    }
+  }
+  _accountMgr.checkAccess(caller,network);
+  networkId=network.getId();
+  long accountId=network.getAccountId();
+  long domainId=network.getDomainId();
+  checkIpAndUserVm(ipAddress,vm,caller);
+  boolean isNat=NetUtils.NAT_PROTO.equals(rule.getProtocol());
+  if (isNat && (ipAddress.isSourceNat() || ipAddress.isOneToOneNat())) {
+    throw new NetworkRuleConflictException("Can't do one to one NAT on ip address: " + ipAddress.getAddress());
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddress(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol(),networkId,accountId,domainId);
+  newRule=_forwardingDao.persist(newRule);
+  if (isNat) {
+    ipAddress.setOneToOneNat(true);
+    _ipAddressDao.update(ipAddress.getAddress(),ipAddress);
+  }
+  txn.commit();
+  boolean success=false;
+  try {
+    detectRulesConflict(newRule,ipAddress);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    success=true;
+    return newRule;
+  }
+ catch (  Exception e) {
+    txn.start();
+    _forwardingDao.remove(newRule.getId());
+    if (isNat) {
+      ipAddress.setOneToOneNat(false);
+      _ipAddressDao.update(ipAddress.getAddress(),ipAddress);
+    }
+    txn.commit();
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add rule for " + newRule.getSourceIpAddress(),e);
+  }
+ finally {
+    String description;
+    String ruleName="ip forwarding";
+    String level=EventVO.LEVEL_INFO;
+    if (success == true) {
+      description="created new " + ruleName + " rule ["+ newRule.getSourceIpAddress()+ ":"+ newRule.getSourcePortStart()+ "]->["+ newRule.getDestinationIpAddress()+ ":"+ newRule.getDestinationPortStart()+ "]"+ " "+ newRule.getProtocol();
+    }
+ else {
+      level=EventVO.LEVEL_ERROR;
+      description="failed to create new " + ruleName + " rule ["+ newRule.getSourceIpAddress()+ ":"+ newRule.getSourcePortStart()+ "]->["+ newRule.getDestinationIpAddress()+ ":"+ newRule.getDestinationPortStart()+ "]"+ " "+ newRule.getProtocol();
+    }
+    EventUtils.saveEvent(UserContext.current().getUserId(),vm.getAccountId(),level,EventTypes.EVENT_NET_RULE_ADD,description);
+  }
+}

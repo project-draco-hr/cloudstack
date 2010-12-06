@@ -21,14 +21,17 @@
   HypervisorGuru hvGuru=_hvGurus.get(template.getHypervisorType());
   @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
   vm.setReservationId(work.getId());
-  if (!_vmDao.updateIf(vm,Event.StartRequested,null)) {
+  if (!stateTransitTo(vm,Event.StartRequested,null)) {
     throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
   }
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
+  DeployDestination dest=null;
   while (retry-- != 0) {
+    if (retry < (_retry - 1)) {
+      stateTransitTo(vm,Event.OperationRetry,dest.getHost().getId());
+    }
     VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params);
-    DeployDestination dest=null;
     for (    DeploymentPlanner planner : _planners) {
       dest=planner.plan(vmProfile,plan,avoids);
       if (dest != null) {
@@ -38,19 +41,21 @@
       }
     }
     if (dest == null) {
+      stateTransitTo(vm,Event.OperationFailed,null);
       throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId());
     }
     vm.setDataCenterId(dest.getDataCenter().getId());
     vm.setPodId(dest.getPod().getId());
-    _vmDao.updateIf(vm,Event.OperationRetry,dest.getHost().getId());
     try {
       _storageMgr.prepare(vmProfile,dest);
     }
  catch (    ConcurrentOperationException e) {
+      stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
       throw e;
     }
 catch (    StorageUnavailableException e) {
       s_logger.warn("Unable to contact storage.",e);
+      avoids.addCluster(dest.getCluster().getId());
       continue;
     }
     _networkMgr.prepare(vmProfile,dest,context);
@@ -62,7 +67,7 @@ catch (    StorageUnavailableException e) {
     try {
       Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
       if (answers[0].getResult() && vmGuru.finalizeStart(cmds,vmProfile,dest,context)) {
-        if (!_vmDao.updateIf(vm,Event.OperationSucceeded,dest.getHost().getId())) {
+        if (!stateTransitTo(vm,Event.OperationSucceeded,dest.getHost().getId())) {
           throw new CloudRuntimeException("Unable to transition to a new state.");
         }
         return vm;
@@ -78,6 +83,7 @@ catch (    OperationTimedoutException e) {
       continue;
     }
   }
+  stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Creation complete for VM " + vm);
   }

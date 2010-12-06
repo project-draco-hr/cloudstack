@@ -25,9 +25,13 @@
  else {
     isAdmin=isAdmin(account.getType());
   }
-  if (volume == null)   throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId);
+  if (volume == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId);
+  }
   if (!isAdmin) {
-    if (account.getId() != volume.getAccountId())     throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId + " for account: "+ account.getAccountName());
+    if (account.getId() != volume.getAccountId()) {
+      throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find volume with ID: " + volumeId + " for account: "+ account.getAccountName());
+    }
   }
  else   if (account != null) {
     if (!_domainDao.isChildDomain(account.getDomainId(),volume.getDomainId())) {
@@ -51,7 +55,9 @@
   AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
   if (asyncExecutor != null) {
     AsyncJobVO job=asyncExecutor.getJob();
-    if (s_logger.isInfoEnabled())     s_logger.info("Trying to attaching volume " + volumeId + "to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Trying to attaching volume " + volumeId + "to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
+    }
     _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
     _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,volumeId);
   }
@@ -59,7 +65,7 @@
   boolean sendCommand=(vm.getState() == State.Running);
   Answer answer=null;
   if (sendCommand) {
-    AttachVolumeCommand cmd=new AttachVolumeCommand(false,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),cmmd.getDeviceId() != null ? cmmd.getDeviceId() : volume.getDeviceId());
+    AttachVolumeCommand cmd=new AttachVolumeCommand(false,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),cmmd.getDeviceId() != null ? cmmd.getDeviceId() : volume.getDeviceId(),volume.getChainInfo());
     StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
     cmd.setPoolUuid(volumePool.getUuid());
     try {
@@ -77,8 +83,16 @@
   event.setStartId(eventId);
   if (!sendCommand || (answer != null && answer.getResult())) {
     _volsDao.detachVolume(volume.getId());
-    if (!vm.getHostName().equals(vm.getDisplayName()))     event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getHostName()+ "("+ vm.getDisplayName()+ ")");
- else     event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getHostName());
+    if (answer != null && answer instanceof AttachVolumeAnswer) {
+      volume.setChainInfo(((AttachVolumeAnswer)answer).getChainInfo());
+      _volsDao.update(volume.getId(),volume);
+    }
+    if (!vm.getHostName().equals(vm.getDisplayName())) {
+      event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getHostName()+ "("+ vm.getDisplayName()+ ")");
+    }
+ else {
+      event.setDescription("Volume: " + volume.getName() + " successfully detached from VM: "+ vm.getHostName());
+    }
     event.setLevel(EventVO.LEVEL_INFO);
     _eventDao.persist(event);
     return _volsDao.findById(volumeId);
@@ -86,7 +100,9 @@
  else {
     if (answer != null) {
       String details=answer.getDetails();
-      if (details != null && !details.isEmpty())       errorMsg+="; " + details;
+      if (details != null && !details.isEmpty()) {
+        errorMsg+="; " + details;
+      }
     }
     throw new CloudRuntimeException(errorMsg);
   }

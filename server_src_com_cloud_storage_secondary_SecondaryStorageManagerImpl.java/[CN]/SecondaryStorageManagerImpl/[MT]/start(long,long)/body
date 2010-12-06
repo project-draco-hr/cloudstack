@@ -6,7 +6,9 @@
   AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
   if (asyncExecutor != null) {
     AsyncJobVO job=asyncExecutor.getJob();
-    if (s_logger.isInfoEnabled())     s_logger.info("Start secondary storage vm " + secStorageVmId + ", update async job-"+ job.getId());
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Start secondary storage vm " + secStorageVmId + ", update async job-"+ job.getId());
+    }
     _asyncMgr.updateAsyncJobAttachment(job.getId(),"sec_storage_vm",secStorageVmId);
   }
   SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findById(secStorageVmId);
@@ -21,15 +23,23 @@
   for (int i=0; i < 2; i++) {
     State state=secStorageVm.getState();
     if (state == State.Starting) {
-      if (s_logger.isDebugEnabled())       s_logger.debug("Waiting secondary storage vm to be ready, secondary storage vm id : " + secStorageVmId + " secStorageVm VM state : "+ state.toString());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Waiting secondary storage vm to be ready, secondary storage vm id : " + secStorageVmId + " secStorageVm VM state : "+ state.toString());
+      }
       if (secStorageVm.getPrivateIpAddress() == null || connect(secStorageVm.getPrivateIpAddress(),_secStorageVmCmdPort) != null) {
-        if (secStorageVm.getPrivateIpAddress() == null)         s_logger.warn("Retruning a secondary storage vm that is being started but private IP has not been allocated yet, secondary storage vm id : " + secStorageVmId);
- else         s_logger.warn("Waiting secondary storage vm to be ready timed out, secondary storage vm id : " + secStorageVmId);
+        if (secStorageVm.getPrivateIpAddress() == null) {
+          s_logger.warn("Retruning a secondary storage vm that is being started but private IP has not been allocated yet, secondary storage vm id : " + secStorageVmId);
+        }
+ else {
+          s_logger.warn("Waiting secondary storage vm to be ready timed out, secondary storage vm id : " + secStorageVmId);
+        }
       }
       return secStorageVm;
     }
     if (state == State.Running) {
-      if (s_logger.isTraceEnabled())       s_logger.trace("Secondary storage vm is already started: " + secStorageVm.getHostName());
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("Secondary storage vm is already started: " + secStorageVm.getHostName());
+      }
       saveFailedEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,EventTypes.EVENT_SSVM_START,"Secondary storage vm is already started",startEventId);
       return secStorageVm;
     }
@@ -45,7 +55,7 @@
         throw new CloudRuntimeException(msg);
       }
     }
-    if (!_secStorageVmDao.updateIf(secStorageVm,VirtualMachine.Event.StartRequested,routingHost.getId())) {
+    if (!_itMgr.stateTransitTo(secStorageVm,VirtualMachine.Event.StartRequested,routingHost.getId())) {
       if (s_logger.isDebugEnabled()) {
         SecondaryStorageVmVO temp=_secStorageVmDao.findById(secStorageVmId);
         s_logger.debug("Unable to start secondary storage vm " + secStorageVm.getHostName() + " because it is not in a startable state : "+ ((temp != null) ? temp.getState().toString() : "null"));
@@ -68,7 +78,7 @@
         secStorageVm.setPrivateIpAddress(privateIpAddress);
         String guestIpAddress=_dcDao.allocateLinkLocalIpAddress(secStorageVm.getDataCenterId(),routingHost.getPodId(),secStorageVm.getId(),null);
         secStorageVm.setGuestIpAddress(guestIpAddress);
-        _secStorageVmDao.updateIf(secStorageVm,VirtualMachine.Event.OperationRetry,routingHost.getId());
+        _itMgr.stateTransitTo(secStorageVm,VirtualMachine.Event.OperationRetry,routingHost.getId());
         secStorageVm=_secStorageVmDao.findById(secStorageVm.getId());
         List<VolumeVO> vols=_storageMgr.prepare(secStorageVm,routingHost);
         if (vols == null || vols.size() == 0) {
@@ -88,11 +98,15 @@
           guestOSDescription=guestOS.getDisplayName();
         }
         StartSecStorageVmCommand cmdStart=new StartSecStorageVmCommand(_networkRate,_multicastRate,_secStorageVmCmdPort,secStorageVm,secStorageVm.getHostName(),"",vols,_mgmt_host,_mgmt_port,_useSSlCopy,guestOSDescription);
-        if (s_logger.isDebugEnabled())         s_logger.debug("Sending start command for secondary storage vm " + secStorageVm.getHostName() + " to "+ routingHost.getName());
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Sending start command for secondary storage vm " + secStorageVm.getHostName() + " to "+ routingHost.getName());
+        }
         try {
           answer=_agentMgr.send(routingHost.getId(),cmdStart);
           s_logger.debug("StartSecStorageVmCommand Answer: " + (answer != null ? answer : "null"));
-          if (s_logger.isDebugEnabled())           s_logger.debug("Received answer on starting secondary storage vm " + secStorageVm.getHostName() + " on "+ routingHost.getName());
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Received answer on starting secondary storage vm " + secStorageVm.getHostName() + " on "+ routingHost.getName());
+          }
           if (answer != null && answer.getResult()) {
             if (s_logger.isDebugEnabled()) {
               s_logger.debug("Secondary storage vm " + secStorageVm.getHostName() + " started on "+ routingHost.getName());
@@ -149,7 +163,7 @@ catch (        AgentUnavailableException e) {
         _eventDao.persist(event);
         throw new ExecutionException("Couldn't find a routingHost to run secondary storage vm");
       }
-      _secStorageVmDao.updateIf(secStorageVm,VirtualMachine.Event.OperationSucceeded,routingHost.getId());
+      _itMgr.stateTransitTo(secStorageVm,VirtualMachine.Event.OperationSucceeded,routingHost.getId());
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Secondary storage vm is now started, vm id : " + secStorageVm.getId());
       }
@@ -175,7 +189,7 @@ catch (        AgentUnavailableException e) {
           secStorageVm.setPrivateIpAddress(null);
           freePrivateIpAddress(privateIpAddress,secStorageVm.getDataCenterId(),secStorageVm.getId());
         }
-        _secStorageVmDao.updateIf(secStorageVm,VirtualMachine.Event.OperationFailed,null);
+        _itMgr.stateTransitTo(secStorageVm,VirtualMachine.Event.OperationFailed,null);
         txn.commit();
       }
  catch (      Exception e) {
