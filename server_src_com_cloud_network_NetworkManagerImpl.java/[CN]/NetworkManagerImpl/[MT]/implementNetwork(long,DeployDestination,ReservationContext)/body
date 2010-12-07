@@ -1,0 +1,52 @@
+{
+  Transaction.currentTxn();
+  Pair<NetworkGuru,NetworkVO> implemented=new Pair<NetworkGuru,NetworkVO>(null,null);
+  NetworkVO config=_networksDao.acquireInLockTable(networkId);
+  if (config == null) {
+    throw new ConcurrentOperationException("Unable to acquire network configuration: " + networkId);
+  }
+  try {
+    NetworkGuru guru=_networkGurus.get(config.getGuruName());
+    Network.State state=config.getState();
+    if (state == Network.State.Implemented || state == Network.State.Setup) {
+      if (state == Network.State.Setup) {
+        config.setState(Network.State.Implemented);
+        _networkConfigDao.update(configId,config);
+      }
+      implemented.set(guru,config);
+      return implemented;
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Asking " + guru + " to implement "+ config);
+    }
+    NetworkOfferingVO offering=_networkOfferingDao.findById(config.getNetworkOfferingId());
+    Network result=guru.implement(config,offering,dest,context);
+    config.setCidr(result.getCidr());
+    config.setBroadcastUri(result.getBroadcastUri());
+    config.setGateway(result.getGateway());
+    config.setDns1(result.getDns1());
+    config.setDns2(result.getDns2());
+    config.setMode(result.getMode());
+    config.setState(Network.State.Implemented);
+    _networksDao.update(networkId,config);
+    for (    NetworkElement element : _networkElements) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Asking " + element.getName() + " to implmenet "+ config);
+      }
+      try {
+        element.implement(config,offering,dest,context);
+      }
+ catch (      InsufficientCapacityException e) {
+        throw new ResourceUnavailableException("Unable to start domain router for this VM",e);
+      }
+    }
+    implemented.set(guru,config);
+    return implemented;
+  }
+  finally {
+    if (implemented.first() == null) {
+      s_logger.debug("Cleaning up because we're unable to implement network " + config);
+    }
+    _networksDao.releaseFromLockTable(networkId);
+  }
+}
