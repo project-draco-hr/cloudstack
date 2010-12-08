@@ -1,38 +1,49 @@
 {
-  List<NetworkVO> configs=_networksDao.listBy(owner.getId(),offering.getId(),plan.getDataCenterId());
-  if (predefined == null || (predefined.getBroadcastUri() == null && predefined.getBroadcastDomainType() != BroadcastDomainType.Vlan)) {
-    if (configs.size() > 0) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Found existing network configuration for offering " + offering + ": "+ configs.get(0));
-      }
-      return configs;
-    }
+  Transaction.currentTxn();
+  Account locked=_accountDao.acquireInLockTable(owner.getId());
+  if (locked == null) {
+    throw new ConcurrentOperationException("Unable to acquire lock on " + owner);
   }
-  configs=new ArrayList<NetworkVO>();
-  long related=-1;
-  for (  NetworkGuru guru : _networkGurus) {
-    Network config=guru.design(offering,plan,predefined,owner);
-    if (config == null) {
-      continue;
-    }
-    if (config.getId() != -1) {
-      if (config instanceof NetworkVO) {
-        configs.add((NetworkVO)config);
+  try {
+    List<NetworkVO> configs=_networksDao.listBy(owner.getId(),offering.getId(),plan.getDataCenterId());
+    if (predefined == null || (predefined.getBroadcastUri() == null && predefined.getBroadcastDomainType() != BroadcastDomainType.Vlan)) {
+      if (configs.size() > 0) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Found existing network configuration for offering " + offering + ": "+ configs.get(0));
+        }
+        return configs;
       }
+    }
+    configs=new ArrayList<NetworkVO>();
+    long related=-1;
+    for (    NetworkGuru guru : _networkGurus) {
+      Network config=guru.design(offering,plan,predefined,owner);
+      if (config == null) {
+        continue;
+      }
+      if (config.getId() != -1) {
+        if (config instanceof NetworkVO) {
+          configs.add((NetworkVO)config);
+        }
  else {
-        configs.add(_networksDao.findById(config.getId()));
+          configs.add(_networksDao.findById(config.getId()));
+        }
+        continue;
       }
-      continue;
+      long id=_networksDao.getNextInSequence(Long.class,"id");
+      if (related == -1) {
+        related=id;
+      }
+      NetworkVO vo=new NetworkVO(id,config,offering.getId(),plan.getDataCenterId(),guru.getName(),owner.getDomainId(),owner.getId(),related,name,displayText,isShared);
+      configs.add(_networksDao.persist(vo));
     }
-    long id=_networksDao.getNextInSequence(Long.class,"id");
-    if (related == -1) {
-      related=id;
+    if (configs.size() < 1) {
+      throw new CloudRuntimeException("Unable to convert network offering to network profile: " + offering.getId());
     }
-    NetworkVO vo=new NetworkVO(id,config,offering.getId(),plan.getDataCenterId(),guru.getName(),owner.getDomainId(),owner.getId(),related,name,displayText,isShared);
-    configs.add(_networksDao.persist(vo));
+    return configs;
   }
-  if (configs.size() < 1) {
-    throw new CloudRuntimeException("Unable to convert network offering to network profile: " + offering.getId());
+  finally {
+    s_logger.debug("Releasing lock for " + locked);
+    _accountDao.releaseFromLockTable(locked.getId());
   }
-  return configs;
 }

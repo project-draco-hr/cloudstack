@@ -4,12 +4,12 @@
   Long zoneId=cmd.getZoneId();
   Account caller=UserContext.current().getAccount();
   long userId=UserContext.current().getUserId();
-  Long accountId=null;
   Account owner=_accountDao.findActiveAccount(accountName,domainId);
   if (owner == null) {
     throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId+ ", permission denied");
   }
   _accountMgr.checkAccess(caller,owner);
+  long ownerId=owner.getId();
   Long networkId=cmd.getNetworkId();
   Network network=null;
   if (networkId != null) {
@@ -20,7 +20,7 @@
   }
   EventVO event=new EventVO();
   event.setUserId(userId);
-  event.setAccountId(accountId);
+  event.setAccountId(ownerId);
   event.setType(EventTypes.EVENT_NET_IP_ASSIGN);
   PublicIp ip=null;
   boolean success=false;
@@ -28,11 +28,11 @@
   Account accountToLock=null;
   try {
     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Associate IP address called for user " + userId + " account "+ accountId);
+      s_logger.debug("Associate IP address called for user " + userId + " account "+ ownerId);
     }
-    accountToLock=_accountDao.acquireInLockTable(accountId);
+    accountToLock=_accountDao.acquireInLockTable(ownerId);
     if (accountToLock == null) {
-      s_logger.warn("Unable to lock account: " + accountId);
+      s_logger.warn("Unable to lock account: " + ownerId);
       throw new ConcurrentOperationException("Unable to acquire account lock");
     }
     if (s_logger.isDebugEnabled()) {
@@ -44,22 +44,17 @@
       throw rae;
     }
     txn.start();
-    ip=fetchNewPublicIp(zoneId,VlanType.VirtualNetwork,owner,false);
+    ip=fetchNewPublicIp(zoneId,VlanType.VirtualNetwork,owner,network.getId(),false);
     if (ip == null) {
       throw new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zoneId);
     }
-    _accountMgr.incrementResourceCount(accountId,ResourceType.public_ip);
+    _accountMgr.incrementResourceCount(ownerId,ResourceType.public_ip);
     String ipAddress=ip.getAddress();
     event.setParameters("address=" + ipAddress + "\nsourceNat="+ false+ "\ndcId="+ zoneId);
     event.setDescription("Assigned a public IP address: " + ipAddress);
     _eventDao.persist(event);
     txn.commit();
-    if (network != null) {
-      for (      NetworkElement element : _networkElements) {
-        element.associate(network,ip);
-      }
-    }
-    success=true;
+    success=applyIpAssociations(network,false);
     return ip;
   }
  catch (  ResourceUnavailableException e) {
@@ -68,15 +63,21 @@
   }
  finally {
     if (caller != null) {
-      _accountDao.releaseFromLockTable(accountId);
+      _accountDao.releaseFromLockTable(ownerId);
       s_logger.debug("Associate IP address lock released");
     }
     if (!success) {
       if (ip != null) {
-        Transaction.currentTxn();
+        try {
+          _ipAddressDao.markAsUnavailable(ip.getAddress(),ip.getAccountId());
+          applyIpAssociations(network,true);
+        }
+ catch (        Exception e) {
+          s_logger.warn("Unable to disassociate ip address for recovery",e);
+        }
         txn.start();
         _ipAddressDao.unassignIpAddress(ip.getAddress());
-        _accountMgr.decrementResourceCount(accountId,ResourceType.public_ip);
+        _accountMgr.decrementResourceCount(ownerId,ResourceType.public_ip);
         event.setLevel(EventVO.LEVEL_ERROR);
         event.setDescription("");
         _eventDao.persist(event);
