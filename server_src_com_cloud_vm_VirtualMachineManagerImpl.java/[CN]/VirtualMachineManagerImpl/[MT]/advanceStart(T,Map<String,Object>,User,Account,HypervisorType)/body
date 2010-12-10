@@ -30,6 +30,7 @@
   if (!stateTransitTo(vm,Event.StartRequested,null)) {
     throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
   }
+  VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params,hyperType);
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
   DeployDestination dest=null;
@@ -37,7 +38,6 @@
     if (retry < (_retry - 1)) {
       stateTransitTo(vm,Event.OperationRetry,dest.getHost().getId());
     }
-    VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params,hyperType);
     for (    DeploymentPlanner planner : _planners) {
       dest=planner.plan(vmProfile,plan,avoids);
       if (dest != null) {
@@ -54,17 +54,21 @@
     vm.setPodId(dest.getPod().getId());
     try {
       _storageMgr.prepare(vmProfile,dest);
+      _networkMgr.prepare(vmProfile,dest,context);
     }
  catch (    ConcurrentOperationException e) {
       stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
       throw e;
     }
-catch (    StorageUnavailableException e) {
+catch (    ResourceUnavailableException e) {
       s_logger.warn("Unable to contact storage.",e);
       avoids.addCluster(dest.getCluster().getId());
       continue;
     }
-    _networkMgr.prepare(vmProfile,dest,context);
+catch (    InsufficientCapacityException e) {
+      s_logger.warn("Insufficient capacity ",e);
+      avoids.add(e);
+    }
     vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,context);
     VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
     Commands cmds=new Commands(OnError.Revert);
