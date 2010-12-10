@@ -1,3 +1,57 @@
 {
-  return null;
+  Account account=UserContext.current().getAccount();
+  Long loadBalancerId=cmd.getId();
+  Boolean applied=cmd.isApplied();
+  if (applied == null) {
+    applied=Boolean.TRUE;
+  }
+  LoadBalancerVO loadBalancer=_lbDao.findById(loadBalancerId);
+  if (loadBalancer == null) {
+    return null;
+  }
+  if (account != null) {
+    long lbAcctId=loadBalancer.getAccountId();
+    if (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+      Account userAccount=_accountDao.findById(lbAcctId);
+      if (!_domainDao.isChildDomain(account.getDomainId(),userAccount.getDomainId())) {
+        throw new PermissionDeniedException("Invalid load balancer rule id (" + loadBalancerId + ") given, unable to list load balancer instances.");
+      }
+    }
+ else     if (account.getId() != lbAcctId) {
+      throw new PermissionDeniedException("Unable to list load balancer instances, account " + account.getAccountName() + " does not own load balancer rule "+ loadBalancer.getName());
+    }
+  }
+  List<UserVmVO> loadBalancerInstances=new ArrayList<UserVmVO>();
+  List<LoadBalancerVMMapVO> vmLoadBalancerMappings=null;
+  if (applied) {
+    vmLoadBalancerMappings=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId,false);
+  }
+ else {
+    vmLoadBalancerMappings=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
+  }
+  List<Long> appliedInstanceIdList=new ArrayList<Long>();
+  if ((vmLoadBalancerMappings != null) && !vmLoadBalancerMappings.isEmpty()) {
+    for (    LoadBalancerVMMapVO vmLoadBalancerMapping : vmLoadBalancerMappings) {
+      appliedInstanceIdList.add(vmLoadBalancerMapping.getInstanceId());
+    }
+  }
+  IPAddressVO addr=_ipAddressDao.findById(loadBalancer.getSourceIpAddress().toString());
+  List<UserVmVO> userVms=_vmDao.listVirtualNetworkInstancesByAcctAndZone(loadBalancer.getAccountId(),addr.getDataCenterId());
+  for (  UserVmVO userVm : userVms) {
+switch (userVm.getState()) {
+case Destroyed:
+case Expunging:
+case Error:
+case Unknown:
+      continue;
+  }
+  boolean isApplied=appliedInstanceIdList.contains(userVm.getId());
+  if (!applied && !isApplied) {
+    loadBalancerInstances.add(userVm);
+  }
+ else   if (applied && isApplied) {
+    loadBalancerInstances.add(userVm);
+  }
+}
+return loadBalancerInstances;
 }

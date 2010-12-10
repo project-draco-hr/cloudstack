@@ -1,3 +1,69 @@
 {
-  return null;
+  Account caller=UserContext.current().getAccount();
+  Account owner=null;
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=null;
+  String ipString=cmd.getPublicIp();
+  Ip ipAddress=null;
+  if (ipString != null) {
+    ipAddress=new Ip(cmd.getPublicIp());
+  }
+  if (accountName != null && domainId != null) {
+    owner=_accountDao.findActiveAccount(accountName,domainId);
+    if (owner == null) {
+      accountId=-1L;
+    }
+  }
+  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    accountId=caller.getAccountId();
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && owner != null) {
+    accountId=owner.getId();
+  }
+ else   if (owner != null && caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    _accountMgr.checkAccess(caller,owner);
+  }
+  Filter searchFilter=new Filter(LoadBalancerVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object id=cmd.getId();
+  Object name=cmd.getLoadBalancerRuleName();
+  Object keyword=cmd.getKeyword();
+  Object instanceId=cmd.getVirtualMachineId();
+  SearchBuilder<LoadBalancerVO> sb=_lbDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("sourceIpAddress",sb.entity().getSourceIpAddress(),SearchCriteria.Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  if (instanceId != null) {
+    SearchBuilder<LoadBalancerVMMapVO> lbVMSearch=_lb2VmMapDao.createSearchBuilder();
+    lbVMSearch.and("instanceId",lbVMSearch.entity().getInstanceId(),SearchCriteria.Op.EQ);
+    sb.join("lbVMSearch",lbVMSearch,sb.entity().getId(),lbVMSearch.entity().getLoadBalancerId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<LoadBalancerVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<LoadBalancerVO> ssc=_lbDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (ipAddress != null) {
+    sc.setParameters("sourceIpAddress",ipAddress);
+  }
+  if (instanceId != null) {
+    sc.setJoinParameters("lbVMSearch","instanceId",instanceId);
+  }
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+ else   if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+  }
+  return _lbDao.search(sc,searchFilter);
 }
