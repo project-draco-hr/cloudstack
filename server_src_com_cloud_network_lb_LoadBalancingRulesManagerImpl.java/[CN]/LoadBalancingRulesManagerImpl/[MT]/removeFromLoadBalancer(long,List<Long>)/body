@@ -5,6 +5,22 @@
     throw new InvalidParameterException("Invalid load balancer value: " + loadBalancerId);
   }
   _accountMgr.checkAccess(caller.getAccount(),loadBalancer);
-  _lb2VmMapDao.remove(loadBalancerId,instanceIds,null);
+  try {
+    loadBalancer.setState(FirewallRule.State.Add);
+    _lbDao.persist(loadBalancer);
+    for (    long instanceId : instanceIds) {
+      LoadBalancerVMMapVO map=_lb2VmMapDao.findByLoadBalancerIdAndVmId(loadBalancerId,instanceId);
+      map.setRevoke(true);
+      _lb2VmMapDao.persist(map);
+      s_logger.debug("Set load balancer rule for revoke: rule id " + loadBalancerId + ", vmId "+ instanceId);
+    }
+    applyLoadBalancerConfig(loadBalancerId);
+    _lb2VmMapDao.remove(loadBalancerId,instanceIds,null);
+    s_logger.debug("Load balancer rule id " + loadBalancerId + " is removed for vms "+ instanceIds);
+  }
+ catch (  ResourceUnavailableException e) {
+    s_logger.warn("Unable to apply the load balancer config because resource is unavaliable.",e);
+    return false;
+  }
   return true;
 }
