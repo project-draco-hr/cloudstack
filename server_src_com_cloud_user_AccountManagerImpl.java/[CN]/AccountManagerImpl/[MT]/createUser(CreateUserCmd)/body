@@ -1,82 +1,39 @@
 {
-  Long accountId=null;
-  String username=cmd.getUsername();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  String userName=cmd.getUsername();
   String password=cmd.getPassword();
   String firstName=cmd.getFirstname();
   String lastName=cmd.getLastname();
-  Long domainId=cmd.getDomainId();
   String email=cmd.getEmail();
-  String timezone=cmd.getTimezone();
-  String accountName=cmd.getAccountName();
-  short userType=cmd.getAccountType().shortValue();
-  String networkDomain=cmd.getNetworkdomain();
-  try {
-    if (accountName == null) {
-      accountName=username;
-    }
-    if (domainId == null) {
-      domainId=DomainVO.ROOT_DOMAIN;
-    }
-    Account account=_accountDao.findActiveAccount(accountName,domainId);
-    if (account != null) {
-      if (account.getType() != userType) {
-        throw new CloudRuntimeException("Account " + accountName + " is not the correct account type for user "+ username);
-      }
-      accountId=account.getId();
-    }
-    if (!_userAccountDao.validateUsernameInDomain(username,domainId)) {
-      throw new CloudRuntimeException("The user " + username + " already exists in domain "+ domainId);
-    }
-    if (accountId == null) {
-      if ((userType < Account.ACCOUNT_TYPE_NORMAL) || (userType > Account.ACCOUNT_TYPE_READ_ONLY_ADMIN)) {
-        throw new CloudRuntimeException("Invalid account type " + userType + " given; unable to create user");
-      }
-      AccountVO newAccount=new AccountVO();
-      if (domainId == null) {
-        domainId=DomainVO.ROOT_DOMAIN;
-      }
-      if ((domainId != DomainVO.ROOT_DOMAIN) && (userType == Account.ACCOUNT_TYPE_ADMIN)) {
-        throw new CloudRuntimeException("Invalid account type " + userType + " given for an account in domain "+ domainId+ "; unable to create user.");
-      }
-      newAccount.setAccountName(accountName);
-      newAccount.setDomainId(domainId);
-      newAccount.setType(userType);
-      newAccount.setState("enabled");
-      newAccount.setNetworkDomain(networkDomain);
-      newAccount=_accountDao.persist(newAccount);
-      accountId=newAccount.getId();
-    }
-    if (accountId == null) {
-      throw new CloudRuntimeException("Failed to create account for user: " + username + "; unable to create user");
-    }
-    UserVO user=new UserVO();
-    user.setUsername(username);
-    user.setPassword(password);
-    user.setState("enabled");
-    user.setFirstname(firstName);
-    user.setLastname(lastName);
-    user.setAccountId(accountId.longValue());
-    user.setEmail(email);
-    user.setTimezone(timezone);
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Creating user: " + username + ", account: "+ accountName+ " (id:"+ accountId+ "), domain: "+ domainId+ " timezone:"+ timezone);
-    }
-    UserVO dbUser=_userDao.persist(user);
-    _networkGroupMgr.createDefaultNetworkGroup(accountId);
-    if (!user.getPassword().equals(dbUser.getPassword())) {
-      throw new CloudRuntimeException("The user " + username + " being creating is using a password that is different than what's in the db");
-    }
-    EventUtils.saveEvent(new Long(1),new Long(1),EventVO.LEVEL_INFO,EventTypes.EVENT_USER_CREATE,"User, " + username + " for accountId = "+ accountId+ " and domainId = "+ domainId+ " was created.");
-    return _userAccountDao.findById(dbUser.getId());
+  String timeZone=cmd.getTimezone();
+  Long accountId=null;
+  Account account=_accountDao.findActiveAccount(accountName,domainId);
+  if (account == null) {
+    throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to find account to create user");
   }
- catch (  Exception e) {
-    EventUtils.saveEvent(new Long(1),new Long(1),EventVO.LEVEL_ERROR,EventTypes.EVENT_USER_CREATE,"Error creating user, " + username + " for accountId = "+ accountId+ " and domainId = "+ domainId);
-    if (e instanceof CloudRuntimeException) {
-      s_logger.info("unable to create user: " + e);
-    }
  else {
-      s_logger.warn("unknown exception creating user",e);
-    }
-    throw new CloudRuntimeException(e.getMessage());
+    accountId=account.getAccountId();
   }
+  if (!_userAccountDao.validateUsernameInDomain(userName,domainId)) {
+    throw new CloudRuntimeException("The user " + userName + " already exists in domain "+ domainId);
+  }
+  UserVO user=new UserVO();
+  user.setUsername(userName);
+  user.setPassword(password);
+  user.setState("enabled");
+  user.setFirstname(firstName);
+  user.setLastname(lastName);
+  user.setAccountId(accountId.longValue());
+  user.setEmail(email);
+  user.setTimezone(timeZone);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating user: " + userName + ", account: "+ accountName+ " (id:"+ accountId+ "), domain: "+ domainId+ " timezone:"+ timeZone);
+  }
+  UserVO dbUser=_userDao.persist(user);
+  if (!user.getPassword().equals(dbUser.getPassword())) {
+    throw new CloudRuntimeException("The user " + userName + " being creating is using a password that is different than what's in the db");
+  }
+  EventUtils.saveEvent(new Long(1),new Long(1),EventVO.LEVEL_INFO,EventTypes.EVENT_USER_CREATE,"User, " + userName + " for accountId = "+ accountId+ " and domainId = "+ domainId+ " was created.");
+  return dbUser;
 }
