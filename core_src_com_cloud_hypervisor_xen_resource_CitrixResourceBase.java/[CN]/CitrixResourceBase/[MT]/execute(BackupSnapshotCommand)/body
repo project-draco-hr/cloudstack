@@ -1,4 +1,5 @@
 {
+  Connection conn=getConnection();
   String primaryStorageNameLabel=cmd.getPrimaryStoragePoolNameLabel();
   Long dcId=cmd.getDataCenterId();
   Long accountId=cmd.getAccountId();
@@ -10,8 +11,7 @@
   boolean success=false;
   String snapshotBackupUuid=null;
   try {
-    Connection conn=getConnection();
-    SR primaryStorageSR=getSRByNameLabelandHost(primaryStorageNameLabel);
+    SR primaryStorageSR=getSRByNameLabelandHost(conn,primaryStorageNameLabel);
     if (primaryStorageSR == null) {
       throw new InternalErrorException("Could not backup snapshot because the primary Storage SR could not be created from the name label: " + primaryStorageNameLabel);
     }
@@ -21,7 +21,7 @@
     String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
     if (prevBackupUuid == null) {
       String folder="snapshots/" + accountId + "/"+ volumeId;
-      if (!createSecondaryStorageFolder(secondaryStorageMountPath,folder)) {
+      if (!createSecondaryStorageFolder(conn,secondaryStorageMountPath,folder)) {
         details=" Filed to create folder " + folder + " in secondary storage";
         s_logger.warn(details);
         return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid);
@@ -29,26 +29,26 @@
       String snapshotMountpoint=secondaryStoragePoolURL + "/" + folder;
       SR snapshotSr=null;
       try {
-        snapshotSr=createNfsSRbyURI(new URI(snapshotMountpoint),false);
-        VDI snapshotVdi=getVDIbyUuid(snapshotUuid);
+        snapshotSr=createNfsSRbyURI(conn,new URI(snapshotMountpoint),false);
+        VDI snapshotVdi=getVDIbyUuid(conn,snapshotUuid);
         VDI backedVdi=snapshotVdi.copy(conn,snapshotSr);
         snapshotBackupUuid=backedVdi.getUuid(conn);
         success=true;
       }
   finally {
         if (snapshotSr != null) {
-          removeSR(snapshotSr);
+          removeSR(conn,snapshotSr);
         }
       }
     }
  else {
-      snapshotBackupUuid=backupSnapshot(primaryStorageSRUuid,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotUuid,prevBackupUuid,isISCSI);
+      snapshotBackupUuid=backupSnapshot(conn,primaryStorageSRUuid,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotUuid,prevBackupUuid,isISCSI);
       success=(snapshotBackupUuid != null);
     }
     if (success) {
       details="Successfully backedUp the snapshotUuid: " + snapshotUuid + " to secondary storage.";
       String volumeUuid=cmd.getVolumePath();
-      destroySnapshotOnPrimaryStorageExceptThis(volumeUuid,snapshotUuid);
+      destroySnapshotOnPrimaryStorageExceptThis(conn,volumeUuid,snapshotUuid);
     }
   }
  catch (  XenAPIException e) {
