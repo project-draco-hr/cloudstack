@@ -1,0 +1,101 @@
+{
+  Account account=UserContext.current().getAccount();
+  Long domainId=cmd.getDomainId();
+  String accountName=cmd.getAccountName();
+  Long accountId=null;
+  Long instanceId=cmd.getVirtualMachineId();
+  String networkGroup=cmd.getSecurityGroupName();
+  Boolean recursive=Boolean.FALSE;
+  if ((account == null) || isAdmin(account.getType())) {
+    if (domainId != null) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Unable to list network groups for account " + accountName + " in domain "+ domainId+ "; permission denied.");
+      }
+      if (accountName != null) {
+        Account acct=_accountDao.findActiveAccount(accountName,domainId);
+        if (acct != null) {
+          accountId=acct.getId();
+        }
+ else {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+      }
+    }
+ else     if (instanceId != null) {
+      UserVmVO userVM=_userVMDao.findById(instanceId);
+      if (userVM == null) {
+        throw new InvalidParameterValueException("Unable to list network groups for virtual machine instance " + instanceId + "; instance not found.");
+      }
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),userVM.getDomainId())) {
+        throw new PermissionDeniedException("Unable to list network groups for virtual machine instance " + instanceId + "; permission denied.");
+      }
+    }
+ else     if (account != null) {
+      if (networkGroup != null) {
+        accountId=account.getId();
+      }
+ else       if (account.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+        domainId=account.getDomainId();
+        recursive=Boolean.TRUE;
+      }
+    }
+  }
+ else {
+    if (instanceId != null) {
+      UserVmVO userVM=_userVMDao.findById(instanceId);
+      if (userVM == null) {
+        throw new InvalidParameterValueException("Unable to list network groups for virtual machine instance " + instanceId + "; instance not found.");
+      }
+      if (account != null) {
+        if (account.getId() != userVM.getAccountId()) {
+          throw new PermissionDeniedException("Unable to list network groups for virtual machine instance " + instanceId + "; permission denied.");
+        }
+      }
+    }
+ else {
+      accountId=((account != null) ? account.getId() : null);
+    }
+  }
+  Filter searchFilter=new Filter(SecurityGroupVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object keyword=cmd.getKeyword();
+  SearchBuilder<SecurityGroupVO> sb=_securityGroupDao.createSearchBuilder();
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  if ((accountId == null) && (instanceId == null) && (domainId != null)&& Boolean.TRUE.equals(recursive)) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<SecurityGroupVO> sc=sb.create();
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+    if (networkGroup != null) {
+      sc.setParameters("name",networkGroup);
+    }
+ else     if (keyword != null) {
+      SearchCriteria<SecurityGroupRulesVO> ssc=_securityGroupRulesDao.createSearchCriteria();
+      ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+      ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+      sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+    }
+  }
+ else   if (domainId != null) {
+    if (Boolean.TRUE.equals(recursive)) {
+      DomainVO domain=_domainDao.findById(domainId);
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+ else {
+      sc.setParameters("domainId",domainId);
+    }
+  }
+  List<SecurityGroupVO> networkGroups=_securityGroupDao.search(sc,searchFilter);
+  List<SecurityGroupRulesVO> networkRulesList=new ArrayList<SecurityGroupRulesVO>();
+  for (  SecurityGroupVO group : networkGroups) {
+    networkRulesList.addAll(_securityGroupRulesDao.listSecurityRulesByGroupId(group.getId()));
+  }
+  if (instanceId != null) {
+    return listNetworkGroupRulesByVM(instanceId.longValue());
+  }
+  return networkRulesList;
+}
