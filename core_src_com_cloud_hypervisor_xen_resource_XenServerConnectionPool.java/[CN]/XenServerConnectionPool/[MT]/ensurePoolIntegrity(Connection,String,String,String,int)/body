@@ -1,15 +1,14 @@
 {
   try {
-    Set<Host> slaves=Pool.recoverSlaves(conn);
+    Set<Host> rcSlaves=Pool.recoverSlaves(conn);
     forceSleep(10);
-    for (    Host slave : slaves) {
+    for (    Host slave : rcSlaves) {
       for (int i=0; i < 30; i++) {
         Connection slaveConn=null;
         try {
           String slaveIp=slave.getAddress(conn);
           s_logger.debug("Logging on as the slave to " + slaveIp);
-          URL slaveUrl=new URL("http://" + slaveIp);
-          slaveConn=new Connection(slaveUrl,10);
+          slaveConn=new Connection(getURL(slaveIp),10);
           Session.slaveLocalLoginWithPassword(slaveConn,username,password);
           Pool.Record pr=getPoolRecord(slaveConn);
           String mIp=pr.master.getAddress(slaveConn);
@@ -28,39 +27,38 @@
         forceSleep(2);
       }
     }
+    Set<Host> slaves=Host.getAll(conn);
+    for (    Host slave : slaves) {
+      String slaveIp=slave.getAddress(conn);
+      Connection slaveConn=null;
+      try {
+        s_logger.debug("Logging on as the slave to " + slaveIp);
+        slaveConn=new Connection(getURL(slaveIp),10);
+        Session.slaveLocalLoginWithPassword(slaveConn,username,password);
+        Pool.Record slavePoolr=getPoolRecord(slaveConn);
+        String ip=slavePoolr.master.getAddress(slaveConn);
+        if (!masterIp.trim().equals(ip.trim())) {
+          PoolEmergencyResetMaster(slaveIp,masterIp,username,password);
+        }
+      }
+ catch (      Exception e) {
+        s_logger.debug("Unable to login to slave " + slaveIp + " error "+ e.getMessage());
+      }
+ finally {
+        if (slaveConn != null) {
+          try {
+            Session.localLogout(slaveConn);
+          }
+ catch (          Exception e) {
+          }
+          slaveConn.dispose();
+        }
+      }
+    }
   }
  catch (  Exception e) {
-  }
-  Set<Host> slaves=Host.getAll(conn);
-  for (  Host slave : slaves) {
-    String slaveIp=slave.getAddress(conn);
-    Connection slaveConn=null;
-    try {
-      s_logger.debug("Logging on as the slave to " + slaveIp);
-      URL slaveUrl=new URL("http://" + slaveIp);
-      slaveConn=new Connection(slaveUrl,10);
-      Session.slaveLocalLoginWithPassword(slaveConn,username,password);
-      Pool.Record slavePoolr=getPoolRecord(slaveConn);
-      String ip=slavePoolr.master.getAddress(slaveConn);
-      if (!masterIp.trim().equals(ip.trim())) {
-        PoolEmergencyResetMaster(slaveIp,masterIp,username,password);
-      }
-    }
- catch (    MalformedURLException e) {
-      throw new CloudRuntimeException("Bad URL" + slaveIp,e);
-    }
-catch (    Exception e) {
-      s_logger.debug("Unable to login to slave " + slaveIp + " error "+ e.getMessage());
-    }
- finally {
-      if (slaveConn != null) {
-        try {
-          Session.localLogout(slaveConn);
-        }
- catch (        Exception e) {
-        }
-        slaveConn.dispose();
-      }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Catch " + e.getClass().getName() + " due to "+ e.toString());
     }
   }
 }
