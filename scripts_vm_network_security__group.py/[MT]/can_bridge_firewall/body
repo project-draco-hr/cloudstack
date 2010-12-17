@@ -1,0 +1,52 @@
+def can_bridge_firewall(privnic):
+    try:
+        execute('which iptables')
+    except:
+        print 'no iptables on your host machine'
+        exit(1)
+    try:
+        execute('which ebtables')
+    except:
+        print 'no ebtables on your host machine'
+        exit(2)
+    try:
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-arptables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-arptables 1\n                        save'
+            (augtool < script)
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-iptables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-iptables 1\n                        save'
+            (augtool < script)
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-ip6tables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-ip6tables 1\n                        save'
+            (augtool < script)
+        execute('sysctl -p /etc/sysctl.conf')
+    except:
+        print 'failed to turn on bridge netfilter'
+        exit(3)
+    try:
+        execute('iptables -N BRIDGE-FIREWALL')
+        execute('iptables -N BRIDGE-FIREWALL')
+        execute('iptables -I BRIDGE-FIREWALL -m state --state RELATED,ESTABLISHED -j ACCEPT')
+        execute('iptables -D FORWARD -j RH-Firewall-1-INPUT')
+    except:
+        logging.exception('Chain BRIDGE-FIREWALL already exists: ')
+    result = 0
+    try:
+        execute('iptables -n -L FORWARD | grep BRIDGE-FIREWALL')
+    except:
+        try:
+            execute('iptables -I FORWARD -m physdev --physdev-is-bridged -j BRIDGE-FIREWALL')
+            execute((('iptables -A FORWARD -m physdev --physdev-is-bridged --physdev-out ' + privnic) + ' -j ACCEPT'))
+            execute('iptables -A FORWARD -j DROP')
+        except:
+            result = 1
+    if (result == 1):
+        print 'br firewall is not supported'
+    if (not os.path.exists('/var/run/cloud')):
+        os.makedirs('/var/run/cloud')
+    cleanup_rules_for_dead_vms()
+    cleanup_rules()
+    return result
