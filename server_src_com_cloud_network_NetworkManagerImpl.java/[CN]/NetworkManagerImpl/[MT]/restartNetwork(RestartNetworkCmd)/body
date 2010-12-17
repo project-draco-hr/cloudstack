@@ -15,12 +15,38 @@
       throw new InvalidParameterValueException("Network id is invalid: " + networkId);
     }
   }
-  boolean success=applyIpAssociations(network,false);
-  if (!success) {
-    s_logger.warn("Failed to reapply the ip addresses for the account " + owner.getId() + " in zone "+ network.getDataCenterId()+ ", in network "+ network.getId());
+  boolean success=true;
+  if (!applyIpAssociations(network,false)) {
+    s_logger.warn("Failed to apply ips as a part of network " + networkId + " restart");
+    success=false;
   }
  else {
-    s_logger.debug("Ip addresses are reapplied successfully for the account " + owner.getId() + " in zone "+ network.getDataCenterId()+ ", in network "+ network.getId());
+    s_logger.debug("Ip addresses are reapplied successfully as a part of network " + networkId + " restart");
+  }
+  List<LoadBalancerVO> lbs=_lbDao.listByNetworkId(networkId);
+  List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+  for (  LoadBalancerVO lb : lbs) {
+    List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+    LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+    lbRules.add(loadBalancing);
+  }
+  if (!applyRules(lbRules,true)) {
+    s_logger.warn("Failed to apply load balancing rules as a part of network " + network.getId() + " restart");
+    success=false;
+  }
+ else {
+    s_logger.debug("Load balancing rules are reapplied successfully as a part of network " + networkId + " restart");
+  }
+  List<PortForwardingRuleVO> pfRules=_pfRulesDao.listByNetworkId(networkId);
+  if (!applyRules(pfRules,true)) {
+    s_logger.warn("Failed to apply port forwarding rules as a part of network " + network.getId() + " restart");
+    success=false;
+  }
+ else {
+    s_logger.debug("Port forwarding rules are reapplied successfully as a part of network " + networkId + " restart");
+  }
+  if (success) {
+    s_logger.debug("Network " + networkId + " is restarted successfully.");
   }
   return success;
 }
