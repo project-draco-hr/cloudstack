@@ -1,24 +1,43 @@
 {
-  Collections.sort(ipAddrList,new Comparator<IpAddress>(){
-    @Override public int compare(    IpAddress o1,    IpAddress o2){
-      return o1.getAddress().compareTo(o2.getAddress());
+  Map<String,ArrayList<PublicIpAddress>> vlanIpMap=new HashMap<String,ArrayList<PublicIpAddress>>();
+  for (  final PublicIpAddress ipAddress : ips) {
+    String vlanTag=ipAddress.getVlanTag();
+    ArrayList<PublicIpAddress> ipList=vlanIpMap.get(vlanTag);
+    if (ipList == null) {
+      ipList=new ArrayList<PublicIpAddress>();
     }
+    ipList.add(ipAddress);
+    vlanIpMap.put(vlanTag,ipList);
   }
-);
-  boolean firstIP=true;
-  for (  final PublicIpAddress ip : ipAddrList) {
-    boolean add=(ip.getState() == IpAddress.State.Releasing ? false : true);
-    boolean sourceNat=ip.isSourceNat();
-    String vlanId=ip.getVlanTag();
-    String vlanGateway=ip.getGateway();
-    String vlanNetmask=ip.getNetmask();
-    String vifMacAddress=ip.getMacAddress();
-    String vmGuestAddress=null;
-    if (vmId != 0) {
-      vmGuestAddress=_vmDao.findById(vmId).getGuestIpAddress();
+  for (  Map.Entry<String,ArrayList<PublicIpAddress>> vlanAndIp : vlanIpMap.entrySet()) {
+    List<PublicIpAddress> ipAddrList=vlanAndIp.getValue();
+    Collections.sort(ipAddrList,new Comparator<PublicIpAddress>(){
+      @Override public int compare(      PublicIpAddress o1,      PublicIpAddress o2){
+        boolean s1=o1.isSourceNat();
+        boolean s2=o2.isSourceNat();
+        return (s1 ^ s2) ? ((s1 ^ true) ? 1 : -1) : 0;
+      }
     }
-    cmds.addCommand("IPAssocCommand",new IPAssocCommand(router.getInstanceName(),router.getPrivateIpAddress(),ip.getAddress(),add,firstIP,sourceNat,vlanId,vlanGateway,vlanNetmask,vifMacAddress,vmGuestAddress));
-    firstIP=false;
+);
+    IpAddressTO[] ipsToSend=new IpAddressTO[ipAddrList.size()];
+    int i=0;
+    boolean firstIP=true;
+    for (    final PublicIpAddress ipAddr : ipAddrList) {
+      boolean add=(ipAddr.getState() == IpAddress.State.Releasing ? false : true);
+      boolean sourceNat=ipAddr.isSourceNat();
+      String vlanId=ipAddr.getVlanTag();
+      String vlanGateway=ipAddr.getGateway();
+      String vlanNetmask=ipAddr.getNetmask();
+      String vifMacAddress=ipAddr.getMacAddress();
+      String vmGuestAddress=null;
+      if (vmId != 0) {
+        vmGuestAddress=_vmDao.findById(vmId).getGuestIpAddress();
+      }
+      IpAddressTO ip=new IpAddressTO(ipAddr.getAddress(),add,firstIP,sourceNat,vlanId,vlanGateway,vlanNetmask,vifMacAddress,vmGuestAddress);
+      ipsToSend[i++]=ip;
+      firstIP=false;
+    }
+    cmds.addCommand("IPAssocCommand",new IPAssocCommand(router.getInstanceName(),router.getPrivateIpAddress(),ipsToSend));
   }
   return cmds;
 }
