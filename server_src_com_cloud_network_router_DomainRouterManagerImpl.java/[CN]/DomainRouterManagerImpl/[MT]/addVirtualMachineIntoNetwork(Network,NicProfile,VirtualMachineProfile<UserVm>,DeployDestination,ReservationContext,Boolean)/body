@@ -1,23 +1,5 @@
 {
-  DomainRouterVO router=_routerDao.findByNetworkConfiguration(config.getId());
-  try {
-    if (startDhcp) {
-      router=this.deployDhcp(config,dest,profile.getOwner());
-    }
- else {
-      router=this.deployVirtualRouter(config,dest,profile.getOwner());
-    }
-  }
- catch (  InsufficientNetworkCapacityException e) {
-    throw e;
-  }
-catch (  InsufficientCapacityException e) {
-    throw new ResourceUnavailableException("Unable to start router for " + config,e);
-  }
-  if (router == null) {
-    s_logger.error("Can't find a domain router to start VM: " + profile);
-    throw new ResourceUnavailableException("Can't find a domain router to start " + profile + " in "+ config);
-  }
+  VirtualRouter router=startDhcp ? deployDhcp(network,dest,profile.getOwner()) : deployVirtualRouter(network,dest,profile.getOwner());
   String password=profile.getVirtualMachine().getPassword();
   String userData=profile.getVirtualMachine().getUserData();
   Commands cmds=new Commands(OnError.Stop);
@@ -25,7 +7,7 @@ catch (  InsufficientCapacityException e) {
   String routerControlIpAddress=null;
   List<NicVO> nics=_nicDao.listBy(router.getId());
   for (  NicVO n : nics) {
-    NetworkVO nc=_networkConfigurationDao.findById(n.getNetworkId());
+    NetworkVO nc=_networksDao.findById(n.getNetworkId());
     if (n.getIp4Address() != null && nc.getTrafficType() == TrafficType.Public) {
       routerPublicIpAddress=nic.getIp4Address();
     }
@@ -39,31 +21,28 @@ catch (  InsufficientCapacityException e) {
     cmds.addCommand("password",new SavePasswordCommand(encodedPassword,nic.getIp4Address(),routerControlIpAddress,profile.getVirtualMachine().getName()));
   }
   String serviceOffering=_serviceOfferingDao.findById(profile.getServiceOfferingId()).getDisplayText();
-  String zoneName=_dcDao.findById(config.getDataCenterId()).getName();
+  String zoneName=_dcDao.findById(network.getDataCenterId()).getName();
   cmds.addCommand("vmdata",generateVmDataCommand(routerControlIpAddress,routerPublicIpAddress,nic.getIp4Address(),userData,serviceOffering,zoneName,nic.getIp4Address(),profile.getVirtualMachine().getName(),profile.getVirtualMachine().getInstanceName(),profile.getId()));
   try {
     _agentMgr.send(router.getHostId(),cmds);
   }
- catch (  AgentUnavailableException e) {
-    throw new ResourceUnavailableException("Unable to reach the agent ",e);
-  }
-catch (  OperationTimedoutException e) {
-    throw new ResourceUnavailableException("Unable to reach the agent ",e);
+ catch (  OperationTimedoutException e) {
+    throw new AgentUnavailableException("Unable to reach the agent ",router.getHostId(),e);
   }
   Answer answer=cmds.getAnswer("dhcp");
   if (!answer.getResult()) {
     s_logger.error("Unable to set dhcp entry for " + profile + " on domR: "+ router.getName()+ " due to "+ answer.getDetails());
-    throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails());
+    throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterId());
   }
   answer=cmds.getAnswer("password");
   if (answer != null && !answer.getResult()) {
     s_logger.error("Unable to set password for " + profile + " due to "+ answer.getDetails());
-    throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails());
+    throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails(),DataCenter.class,router.getDataCenterId());
   }
   answer=cmds.getAnswer("vmdata");
   if (answer != null && !answer.getResult()) {
     s_logger.error("Unable to set VM data for " + profile + " due to "+ answer.getDetails());
-    throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails());
+    throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails(),DataCenter.class,router.getDataCenterId());
   }
   return router;
 }
