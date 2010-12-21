@@ -1,2 +1,37 @@
 {
+  DomainRouterVO router=_routerDao.findByNetworkConfiguration(network.getId());
+  if (router == null) {
+    s_logger.warn("Unable to apply lb rules, virtual router doesn't exist in the network " + network.getId());
+    throw new ResourceUnavailableException("Unable to apply lb rules");
+  }
+  String routerControlIpAddress=router.getPrivateIpAddress();
+  if (router.getState() == State.Running || router.getState() == State.Starting) {
+    Commands cmds=new Commands(OnError.Continue);
+    LoadBalancerTO[] lbs=new LoadBalancerTO[rules.size()];
+    int i=0;
+    for (    FirewallRule fwRule : rules) {
+      LoadBalancingRule rule=(LoadBalancingRule)fwRule;
+      boolean revoked=(rule.getState().equals(FirewallRule.State.Revoke));
+      String protocol=rule.getProtocol();
+      String algorithm=rule.getAlgorithm();
+      String srcIp=rule.getSourceIpAddress().addr();
+      int srcPort=rule.getSourcePortStart();
+      List<LbDestination> destinations=rule.getDestinations();
+      LoadBalancerTO lb=new LoadBalancerTO(srcIp,srcPort,protocol,algorithm,revoked,false,destinations);
+      lbs[i++]=lb;
+    }
+    LoadBalancerConfigCommand cmd=new LoadBalancerConfigCommand(lbs);
+    cmd.setAccessDetail(RoutingCommand.ROUTER_IP,router.getPrivateIpAddress());
+    cmd.setAccessDetail(RoutingCommand.ROUTER_NAME,router.getInstanceName());
+    cmds.addCommand(cmd);
+    return sendCommandsToRouter(router,cmds);
+  }
+ else   if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
+    s_logger.debug("Router is in " + router.getState() + ", so not sending apply LB rules commands to the backend");
+    return true;
+  }
+ else {
+    s_logger.warn("Unable to apply load balancer rules, virtual router is not in the right state " + router.getState());
+    throw new ResourceUnavailableException("Unable to apply load balancer rules, domR is not in right state " + router.getState());
+  }
 }
