@@ -1,0 +1,35 @@
+{
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Reboot secondary storage vm " + secStorageVmId + ", update async job-"+ job.getId());
+    }
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"secstorage_vm",secStorageVmId);
+  }
+  final SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findById(secStorageVmId);
+  if (secStorageVm == null || secStorageVm.getState() == State.Destroyed) {
+    return false;
+  }
+  if (secStorageVm.getState() == State.Running && secStorageVm.getHostId() != null) {
+    final RebootCommand cmd=new RebootCommand(secStorageVm.getInstanceName());
+    final Answer answer=_agentMgr.easySend(secStorageVm.getHostId(),cmd);
+    if (answer != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Successfully reboot secondary storage vm " + secStorageVm.getName());
+      }
+      SubscriptionMgr.getInstance().notifySubscribers(ALERT_SUBJECT,this,new SecStorageVmAlertEventArgs(SecStorageVmAlertEventArgs.SSVM_REBOOTED,secStorageVm.getDataCenterId(),secStorageVm.getId(),secStorageVm,null));
+      return true;
+    }
+ else {
+      String msg="Rebooting Secondary Storage VM failed - " + secStorageVm.getName();
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(msg);
+      }
+      return false;
+    }
+  }
+ else {
+    return startSecStorageVm(secStorageVmId) != null;
+  }
+}

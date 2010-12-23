@@ -1,0 +1,46 @@
+{
+  State state=vm.getState();
+  if (state == State.Stopped) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM is already stopped: " + vm.toString());
+    }
+    return true;
+  }
+  if (state == State.Creating || state == State.Destroyed || state == State.Expunging || state == State.Error) {
+    s_logger.warn("Stopped called on " + vm.toString() + " but the state is "+ state.toString());
+    return true;
+  }
+  if (!_itMgr.stateTransitTo(vm,VirtualMachine.Event.StopRequested,vm.getHostId())) {
+    s_logger.debug("VM is not in a state to stop: " + vm.getState().toString());
+    return false;
+  }
+  if (vm.getHostId() == null) {
+    s_logger.debug("Host id is null so we can't stop it.  How did we get into here?");
+    return false;
+  }
+  StopCommand stop=new StopCommand(vm,vm.getInstanceName(),vm.getVnet());
+  boolean stopped=false;
+  try {
+    Answer answer=_agentMgr.send(vm.getHostId(),stop);
+    if (!answer.getResult()) {
+      s_logger.warn("Unable to stop vm " + vm.getName() + " due to "+ answer.getDetails());
+    }
+ else {
+      stopped=true;
+    }
+  }
+ catch (  AgentUnavailableException e) {
+    s_logger.warn("Agent is not available to stop vm " + vm.toString());
+  }
+catch (  OperationTimedoutException e) {
+    s_logger.warn("operation timed out " + vm.toString());
+  }
+  if (stopped) {
+    completeStopCommand(userId,vm,VirtualMachine.Event.OperationSucceeded);
+  }
+ else {
+    _itMgr.stateTransitTo(vm,VirtualMachine.Event.OperationFailed,vm.getHostId());
+    s_logger.error("Unable to stop vm " + vm.getName());
+  }
+  return stopped;
+}

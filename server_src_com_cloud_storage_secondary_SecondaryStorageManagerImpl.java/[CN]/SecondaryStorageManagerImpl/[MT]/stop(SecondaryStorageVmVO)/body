@@ -1,0 +1,50 @@
+{
+  if (!_itMgr.stateTransitTo(secStorageVm,VirtualMachine.Event.StopRequested,secStorageVm.getHostId())) {
+    String msg="Unable to stop secondary storage vm: " + secStorageVm.toString();
+    s_logger.debug(msg);
+    return false;
+  }
+  if (secStorageVm.getHostId() != null) {
+    GlobalLock secStorageVmLock=GlobalLock.getInternLock(getSecStorageVmLockName(secStorageVm.getId()));
+    try {
+      if (secStorageVmLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+        try {
+          StopCommand cmd=new StopCommand(secStorageVm,true,Integer.toString(0),Integer.toString(0),secStorageVm.getPublicIpAddress());
+          try {
+            StopAnswer answer=(StopAnswer)_agentMgr.send(secStorageVm.getHostId(),cmd);
+            if (answer == null || !answer.getResult()) {
+              String msg="Unable to stop due to " + (answer == null ? "answer is null" : answer.getDetails());
+              s_logger.debug(msg);
+              return false;
+            }
+            completeStopCommand(secStorageVm,VirtualMachine.Event.OperationSucceeded);
+            SubscriptionMgr.getInstance().notifySubscribers(SecStorageVmAlertEventArgs.ALERT_SUBJECT,this,new SecStorageVmAlertEventArgs(SecStorageVmAlertEventArgs.SSVM_DOWN,secStorageVm.getDataCenterId(),secStorageVm.getId(),secStorageVm,null));
+            final EventVO event=new EventVO();
+            event.setUserId(User.UID_SYSTEM);
+            event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+            event.setType(EventTypes.EVENT_SSVM_STOP);
+            event.setLevel(EventVO.LEVEL_INFO);
+            event.setDescription("Secondary Storage Vm stopped - " + secStorageVm.getName());
+            _eventDao.persist(event);
+            return true;
+          }
+ catch (          OperationTimedoutException e) {
+            throw new AgentUnavailableException(secStorageVm.getHostId());
+          }
+        }
+  finally {
+          secStorageVmLock.unlock();
+        }
+      }
+ else {
+        String msg="Unable to acquire secondary storage vm lock : " + secStorageVm.toString();
+        s_logger.debug(msg);
+        return false;
+      }
+    }
+  finally {
+      secStorageVmLock.releaseRef();
+    }
+  }
+  return true;
+}

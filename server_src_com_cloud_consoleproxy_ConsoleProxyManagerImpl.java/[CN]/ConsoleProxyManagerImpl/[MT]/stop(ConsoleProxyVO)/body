@@ -1,0 +1,63 @@
+{
+  if (!_itMgr.stateTransitTo(proxy,VirtualMachine.Event.StopRequested,proxy.getHostId())) {
+    s_logger.debug("Unable to stop console proxy: " + proxy.toString());
+    return false;
+  }
+  GlobalLock proxyLock=GlobalLock.getInternLock(getProxyLockName(proxy.getId()));
+  try {
+    if (proxyLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+      try {
+        StopCommand cmd=new StopCommand(proxy,true,Integer.toString(_consoleProxyPort),Integer.toString(_consoleProxyUrlPort),proxy.getPublicIpAddress());
+        try {
+          Long proxyHostId=proxy.getHostId();
+          if (proxyHostId == null) {
+            s_logger.debug("Unable to stop due to proxy " + proxy.getId() + " as host is no longer available, proxy may already have been stopped");
+            return false;
+          }
+          StopAnswer answer=(StopAnswer)_agentMgr.send(proxyHostId,cmd);
+          if (answer == null || !answer.getResult()) {
+            s_logger.debug("Unable to stop due to " + (answer == null ? "answer is null" : answer.getDetails()));
+            final EventVO event=new EventVO();
+            event.setUserId(User.UID_SYSTEM);
+            event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+            event.setType(EventTypes.EVENT_PROXY_STOP);
+            event.setLevel(EventVO.LEVEL_ERROR);
+            event.setDescription("Stopping console proxy failed due to negative answer from agent - " + proxy.getName());
+            _eventDao.persist(event);
+            return false;
+          }
+          completeStopCommand(proxy,VirtualMachine.Event.OperationSucceeded);
+          SubscriptionMgr.getInstance().notifySubscribers(ConsoleProxyManager.ALERT_SUBJECT,this,new ConsoleProxyAlertEventArgs(ConsoleProxyAlertEventArgs.PROXY_DOWN,proxy.getDataCenterId(),proxy.getId(),proxy,null));
+          final EventVO event=new EventVO();
+          event.setUserId(User.UID_SYSTEM);
+          event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+          event.setType(EventTypes.EVENT_PROXY_STOP);
+          event.setLevel(EventVO.LEVEL_INFO);
+          event.setDescription("Console proxy stopped - " + proxy.getName());
+          _eventDao.persist(event);
+          return true;
+        }
+ catch (        OperationTimedoutException e) {
+          final EventVO event=new EventVO();
+          event.setUserId(User.UID_SYSTEM);
+          event.setAccountId(Account.ACCOUNT_ID_SYSTEM);
+          event.setType(EventTypes.EVENT_PROXY_STOP);
+          event.setLevel(EventVO.LEVEL_ERROR);
+          event.setDescription("Stopping console proxy failed due to operation time out - " + proxy.getName());
+          _eventDao.persist(event);
+          throw new AgentUnavailableException(proxy.getHostId());
+        }
+      }
+  finally {
+        proxyLock.unlock();
+      }
+    }
+ else {
+      s_logger.debug("Unable to acquire console proxy lock : " + proxy.toString());
+      return false;
+    }
+  }
+  finally {
+    proxyLock.releaseRef();
+  }
+}

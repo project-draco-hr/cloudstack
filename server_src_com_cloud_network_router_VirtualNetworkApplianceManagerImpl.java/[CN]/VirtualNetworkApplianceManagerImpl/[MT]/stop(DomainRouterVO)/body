@@ -1,0 +1,78 @@
+{
+  long routerId=router.getId();
+  router=_routerDao.acquireInLockTable(routerId);
+  if (router == null) {
+    s_logger.debug("Unable to acquire lock on router " + routerId);
+    return false;
+  }
+  try {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Lock on router " + routerId + " for stop is acquired");
+    }
+    if (router.getRemoved() != null) {
+      s_logger.debug("router " + routerId + " is removed");
+      return false;
+    }
+    final Long hostId=router.getHostId();
+    final State state=router.getState();
+    if (state == State.Stopped || state == State.Destroyed || state == State.Expunging || router.getRemoved() != null) {
+      s_logger.debug("Router was either not found or the host id is null");
+      return true;
+    }
+    EventVO event=new EventVO();
+    event.setUserId(1L);
+    event.setAccountId(router.getAccountId());
+    event.setType(EventTypes.EVENT_ROUTER_STOP);
+    if (!_itMgr.stateTransitTo(router,VirtualMachine.Event.StopRequested,hostId)) {
+      s_logger.debug("VM " + router.toString() + " is not in a state to be stopped.");
+      return false;
+    }
+    if (hostId == null) {
+      s_logger.debug("VM " + router.toString() + " doesn't have a host id");
+      return false;
+    }
+    final StopCommand stop=new StopCommand(router,router.getInstanceName(),router.getVnet(),router.getPrivateIpAddress());
+    Answer answer=null;
+    boolean stopped=false;
+    try {
+      answer=_agentMgr.send(hostId,stop);
+      if (!answer.getResult()) {
+        s_logger.error("Unable to stop router");
+        event.setDescription("failed to stop Domain Router : " + router.getName());
+        event.setLevel(EventVO.LEVEL_ERROR);
+        _eventDao.persist(event);
+      }
+ else {
+        stopped=true;
+      }
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.warn("Unable to reach agent to stop vm: " + router.getId());
+    }
+catch (    OperationTimedoutException e) {
+      s_logger.warn("Unable to reach agent to stop vm: " + router.getId());
+      s_logger.error("Unable to stop router");
+    }
+    if (!stopped) {
+      event.setDescription("failed to stop Domain Router : " + router.getName());
+      event.setLevel(EventVO.LEVEL_ERROR);
+      _eventDao.persist(event);
+      _itMgr.stateTransitTo(router,VirtualMachine.Event.OperationFailed,router.getHostId());
+      return false;
+    }
+    completeStopCommand(router,VirtualMachine.Event.OperationSucceeded);
+    event.setDescription("successfully stopped Domain Router : " + router.getName());
+    _eventDao.persist(event);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Router " + router.toString() + " is stopped");
+    }
+    processStopOrRebootAnswer(router,answer);
+  }
+  finally {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Release lock on router " + routerId + " for stop");
+    }
+    _routerDao.releaseFromLockTable(routerId);
+  }
+  return true;
+}
