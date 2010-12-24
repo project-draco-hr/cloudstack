@@ -1,16 +1,24 @@
 {
-  UserContext context=UserContext.current();
-  Account account=context.getAccount();
-  long accountId=account.getId();
-  long userId=context.getUserId();
+  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
+  if (asyncExecutor != null) {
+    AsyncJobVO job=asyncExecutor.getJob();
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Stop router " + routerId + ", update async job-"+ job.getId());
+    }
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"domain_router",routerId);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Stopping router " + routerId);
+  }
   DomainRouterVO router=_routerDao.findById(routerId);
-  if (router == null) {
-    throw new PermissionDeniedException("Unable to stop router with id " + routerId + ". Permission denied.");
+  long startEventId=EventUtils.saveStartedEvent(User.UID_SYSTEM,router.getAccountId(),EventTypes.EVENT_ROUTER_STOP,"Starting to stop router : " + router.getName());
+  if (!stop(router)) {
+    s_logger.debug("Unable to stop the router: " + routerId);
+    EventUtils.saveEvent(User.UID_SYSTEM,router.getAccountId(),EventVO.LEVEL_ERROR,EventTypes.EVENT_ROUTER_STOP,"Unable to stop router: " + router.getName(),startEventId);
+    return false;
   }
-  _accountMgr.checkAccess(account,router);
-  UserVO user=_userDao.findById(context.getUserId());
-  if (!_itMgr.stop(router,user,account)) {
-    return null;
+ else {
+    EventUtils.saveEvent(User.UID_SYSTEM,router.getAccountId(),EventVO.LEVEL_INFO,EventTypes.EVENT_ROUTER_STOP,"successfully stopped router : " + router.getName(),startEventId);
+    return true;
   }
-  return router;
 }
