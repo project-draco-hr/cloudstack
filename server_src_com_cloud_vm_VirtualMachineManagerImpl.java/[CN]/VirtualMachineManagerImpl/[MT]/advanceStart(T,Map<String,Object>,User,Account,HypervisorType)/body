@@ -27,16 +27,10 @@
   }
   @SuppressWarnings("unchecked") VirtualMachineGuru<T> vmGuru=(VirtualMachineGuru<T>)_vmGurus.get(vm.getType());
   vm.setReservationId(work.getId());
-  if (!stateTransitTo(vm,Event.StartRequested,null)) {
-    throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
-  }
   ExcludeList avoids=new ExcludeList();
   int retry=_retry;
   DeployDestination dest=null;
   while (retry-- != 0) {
-    if (retry < (_retry - 1)) {
-      stateTransitTo(vm,Event.OperationRetry,dest.getHost().getId());
-    }
     VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params,hyperType);
     for (    DeploymentPlanner planner : _planners) {
       dest=planner.plan(vmProfile,plan,avoids);
@@ -47,8 +41,18 @@
       }
     }
     if (dest == null) {
-      stateTransitTo(vm,Event.OperationFailed,null);
+      if (retry != (_retry - 1)) {
+        stateTransitTo(vm,Event.OperationFailed,null);
+      }
       throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId());
+    }
+    if (retry == (_retry - 1)) {
+      if (!stateTransitTo(vm,Event.StartRequested,dest.getHost().getId())) {
+        throw new ConcurrentOperationException("Unable to start vm " + vm + " due to concurrent operations");
+      }
+    }
+ else {
+      stateTransitTo(vm,Event.OperationRetry,dest.getHost().getId());
     }
     vm.setDataCenterId(dest.getDataCenter().getId());
     vm.setPodId(dest.getPod().getId());
@@ -57,7 +61,7 @@
       _networkMgr.prepare(vmProfile,dest,context);
     }
  catch (    ConcurrentOperationException e) {
-      stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
+      stateTransitTo(vm,Event.OperationFailed,null);
       throw e;
     }
 catch (    ResourceUnavailableException e) {
@@ -71,7 +75,7 @@ catch (    InsufficientCapacityException e) {
       continue;
     }
 catch (    RuntimeException e) {
-      stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
+      stateTransitTo(vm,Event.OperationFailed,null);
       return null;
     }
     vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,context);
@@ -102,7 +106,7 @@ catch (    OperationTimedoutException e) {
       continue;
     }
   }
-  stateTransitTo(vm,Event.OperationFailed,dest.getHost().getId());
+  stateTransitTo(vm,Event.OperationFailed,null);
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Creation complete for VM " + vm);
   }
