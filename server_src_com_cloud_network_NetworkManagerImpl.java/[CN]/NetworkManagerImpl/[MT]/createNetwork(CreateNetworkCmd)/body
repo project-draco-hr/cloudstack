@@ -6,10 +6,10 @@
   String gateway=cmd.getGateway();
   String startIP=cmd.getStartIp();
   String endIP=cmd.getEndIp();
-  String vlanNetmask=cmd.getNetmask();
+  String netmask=cmd.getNetmask();
   String cidr=null;
-  if (gateway != null && vlanNetmask != null) {
-    cidr=NetUtils.ipAndNetMaskToCidr(gateway,vlanNetmask);
+  if (gateway != null && netmask != null) {
+    cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
   }
   String accountName=cmd.getAccountName();
   Long domainId=cmd.getDomainId();
@@ -18,6 +18,7 @@
   String displayText=cmd.getDisplayText();
   Boolean isShared=cmd.getIsShared();
   Account owner=null;
+  Long ownerId=null;
   if (endIP == null && startIP != null) {
     endIP=startIP;
   }
@@ -47,6 +48,7 @@
  else {
     owner=ctxAccount;
   }
+  ownerId=owner.getId();
   if (networkOffering.getGuestIpType() == GuestIpType.Direct && vlanId != null) {
     String uri="vlan://" + vlanId;
     List<NetworkVO> networks=_networksDao.listBy(zoneId,uri);
@@ -119,13 +121,17 @@
       owner=null;
     }
     if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && networkOffering.getGuestIpType() == GuestIpType.Direct && startIP != null && endIP != null && gateway != null) {
-      Vlan vlan=_configMgr.createVlanAndPublicIpRange(userId,zoneId,null,startIP,endIP,gateway,vlanNetmask,false,vlanId,owner,networkId);
+      Vlan vlan=_configMgr.createVlanAndPublicIpRange(userId,zoneId,null,startIP,endIP,gateway,netmask,false,vlanId,owner,networkId);
       if (vlan == null) {
         txn.rollback();
         throw new CloudRuntimeException("Failed to create a vlan");
       }
     }
     txn.commit();
+    String eventMsg="Successfully created network " + name + " (networkOfferingId="+ networkOfferingId+ ", isShared="+ isShared+ ", ownerId="+ ownerId+ ", netmask="+ netmask+ ", startIP="+ startIP+ ", endIP="+ endIP+ ", gateway="+ gateway+ ", vlan="+ vlanId+ ")";
+    if (networks != null && !networks.isEmpty()) {
+      _configMgr.saveConfigurationEvent(userId,ownerId,EventTypes.EVENT_NETWORK_CREATE,eventMsg,"dcId=" + zoneId,"networkOfferingId=" + networkOfferingId,"name=" + name,"isShared=" + isShared,"ownerId=" + ownerId,"networkGateway=" + gateway,"networkNetmask=" + netmask,"startIP=" + startIP,"endIP=" + endIP,"vlan=" + vlanId);
+    }
     return networks.get(0);
   }
  catch (  Exception ex) {
