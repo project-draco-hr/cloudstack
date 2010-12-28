@@ -37,18 +37,28 @@
       sb.insert(0,"(userId=" + User.UID_SYSTEM + " accountId="+ Account.ACCOUNT_ID_SYSTEM+ " sessionId="+ null+ ") ");
       String responseText=handleRequest(parameterMap,true,responseType,sb);
       sb.append(" 200 " + ((responseText == null) ? 0 : responseText.length()));
-      writeResponse(response,responseText,false,responseType);
+      writeResponse(response,responseText,HttpStatus.SC_OK,responseType,null);
     }
  catch (    ServerApiException se) {
+      String responseName=null;
+      String cmdClassName=null;
       try {
-        response.setStatusCode(se.getErrorCode());
-        response.setReasonPhrase(se.getDescription());
-        BasicHttpEntity body=new BasicHttpEntity();
-        body.setContentType("text/xml");
-        String responseStr="<error>" + se.getErrorCode() + " : "+ se.getDescription()+ "</error>";
-        body.setContent(new ByteArrayInputStream(responseStr.getBytes("UTF-8")));
-        response.setEntity(body);
-        sb.append(" " + se.getErrorCode() + " "+ responseStr.length());
+        if (se.getErrorCode() == BaseCmd.UNSUPPORTED_ACTION_ERROR) {
+          responseName="errorresponse";
+        }
+ else {
+          String cmdName=((String[])parameterMap.get("command"))[0];
+          cmdClassName=_apiCommands.getProperty(cmdName);
+          Class claz=Class.forName(cmdClassName);
+          responseName=((BaseCmd)claz.newInstance()).getCommandName();
+        }
+        ExceptionResponse apiResponse=new ExceptionResponse();
+        apiResponse.setErrorCode(se.getErrorCode());
+        apiResponse.setErrorText(se.getDescription());
+        apiResponse.setResponseName(responseName);
+        String responseText=ApiResponseSerializer.toSerializedString(apiResponse,responseType);
+        writeResponse(response,responseText,se.getErrorCode(),responseType,se.getDescription());
+        sb.append(" " + se.getErrorCode() + " "+ responseText.length());
       }
  catch (      Exception e) {
         s_logger.error("IO Exception responding to http request",e);
