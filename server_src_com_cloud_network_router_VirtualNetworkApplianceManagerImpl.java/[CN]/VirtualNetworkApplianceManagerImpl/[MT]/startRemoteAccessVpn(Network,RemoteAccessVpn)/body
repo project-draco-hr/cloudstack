@@ -1,0 +1,49 @@
+{
+  DomainRouterVO router=_routerDao.findByNetworkConfiguration(network.getId());
+  if (router == null) {
+    s_logger.warn("Failed to start remote access VPN: no router found for account and zone");
+    throw new ResourceUnavailableException("Unable to apply lb rules",DataCenter.class,network.getDataCenterId());
+  }
+  if (router.getState() != State.Running && router.getState() != State.Starting) {
+    s_logger.warn("Failed to start remote access VPN: router not in running state");
+    throw new ResourceUnavailableException("Unable to assign ip addresses, domR is not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
+  }
+  List<VpnUserVO> vpnUsers=_vpnUsersDao.listByAccount(vpn.getAccountId());
+  List<VpnUser> addUsers=new ArrayList<VpnUser>();
+  List<VpnUser> removeUsers=new ArrayList<VpnUser>();
+  for (  VpnUser user : vpnUsers) {
+    if (user.getState() == VpnUser.State.Add) {
+      addUsers.add(user);
+    }
+ else     if (user.getState() == VpnUser.State.Revoke) {
+      removeUsers.add(user);
+    }
+  }
+  VpnUsersCfgCommand addUsersCmd=new VpnUsersCfgCommand(addUsers,removeUsers);
+  addUsersCmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+  addUsersCmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+  RemoteAccessVpnCfgCommand startVpnCmd=new RemoteAccessVpnCfgCommand(true,vpn.getServerAddress().addr(),vpn.getLocalIp(),vpn.getIpRange(),vpn.getIpsecPresharedKey());
+  startVpnCmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+  startVpnCmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+  Commands cmds=new Commands(OnError.Stop);
+  cmds.addCommand("users",addUsersCmd);
+  cmds.addCommand("startVpn",startVpnCmd);
+  try {
+    _agentMgr.send(router.getHostId(),cmds);
+  }
+ catch (  OperationTimedoutException e) {
+    s_logger.debug("Failed to start remote access VPN: ",e);
+    throw new AgentUnavailableException("Unable to send commands to virtual router ",router.getHostId(),e);
+  }
+  Answer answer=cmds.getAnswer("users");
+  if (!answer.getResult()) {
+    s_logger.error("Unable to start vpn: unable add users to vpn in zone " + router.getDataCenterId() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails());
+    throw new ResourceUnavailableException("Unable to start vpn: Unable to add users to vpn in zone " + router.getDataCenterId() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterId());
+  }
+  answer=cmds.getAnswer("startVpn");
+  if (!answer.getResult()) {
+    s_logger.error("Unable to start vpn in zone " + router.getDataCenterId() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails());
+    throw new ResourceUnavailableException("Unable to start vpn in zone " + router.getDataCenterId() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterId());
+  }
+  return true;
+}
