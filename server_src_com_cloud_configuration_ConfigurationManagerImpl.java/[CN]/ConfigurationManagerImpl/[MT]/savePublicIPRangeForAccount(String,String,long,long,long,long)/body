@@ -1,27 +1,23 @@
 {
+  IPRangeConfig config=new IPRangeConfig();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
   long startIPLong=NetUtils.ip2Long(startIP);
   long endIPLong=NetUtils.ip2Long(endIP);
-  Transaction txn=Transaction.currentTxn();
-  String insertSql="INSERT INTO `cloud`.`user_ip_address` (public_ip_address, data_center_id, vlan_db_id, account_id, domain_id, allocated) VALUES (?, ?, ?, ?, ?, ?)";
-  txn.start();
-  PreparedStatement stmt=null;
-  while (startIPLong <= endIPLong) {
-    try {
-      stmt=txn.prepareAutoCloseStatement(insertSql);
-      stmt.setString(1,NetUtils.long2Ip(startIPLong));
-      stmt.setLong(2,zoneId);
-      stmt.setLong(3,vlanDbId);
-      stmt.setLong(4,accountId);
-      stmt.setLong(5,domainId);
-      stmt.setDate(6,new java.sql.Date(new java.util.Date().getTime()));
-      stmt.executeUpdate();
-      stmt.close();
+  Vector<String> ips=config.savePublicIPRange(txn,startIPLong,endIPLong,zoneId,vlanDbId);
+  List<Long> skip=new ArrayList<Long>(ips.size());
+  for (  String ip : ips) {
+    skip.add(NetUtils.ip2Long(ip));
+  }
+  for (long ip=startIPLong; ip <= endIPLong; ip++) {
+    if (skip.contains(ip)) {
+      continue;
     }
- catch (    Exception ex) {
-      s_logger.warn("Exception saving public IP range: ",ex);
-      return false;
-    }
-    startIPLong+=1;
+    IPAddressVO addr=_publicIpAddressDao.findById(new Ip(ip));
+    addr.setAllocatedInDomainId(domainId);
+    addr.setAllocatedTime(new Date());
+    addr.setAllocatedToAccountId(accountId);
+    _publicIpAddressDao.update(addr.getAddress(),addr);
   }
   txn.commit();
   return true;
