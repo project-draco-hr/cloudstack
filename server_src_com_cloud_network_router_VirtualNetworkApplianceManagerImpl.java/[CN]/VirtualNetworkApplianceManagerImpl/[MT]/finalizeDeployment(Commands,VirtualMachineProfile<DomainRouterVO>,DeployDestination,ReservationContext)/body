@@ -22,7 +22,10 @@
   }
   _routerDao.update(router.getId(),router);
   if (router.getRole() == VirtualRouter.Role.DHCP_FIREWALL_LB_PASSWD_USERDATA) {
-    final List<IPAddressVO> userIps=_networkMgr.listPublicIpAddressesInVirtualNetwork(router.getAccountId(),router.getDataCenterId(),null);
+    long networkId=router.getNetworkId();
+    long ownerId=router.getAccountId();
+    long zoneId=router.getDataCenterId();
+    final List<IPAddressVO> userIps=_networkMgr.listPublicIpAddressesInVirtualNetwork(ownerId,zoneId,null);
     List<PublicIpAddress> publicIps=new ArrayList<PublicIpAddress>();
     if (userIps != null && !userIps.isEmpty()) {
       for (      IPAddressVO userIp : userIps) {
@@ -30,8 +33,42 @@
         publicIps.add(publicIp);
       }
     }
+    s_logger.debug("Found " + publicIps.size() + " ip(s) to apply as a part of domR "+ router.getId()+ " start.");
     if (!publicIps.isEmpty()) {
-      cmds=getAssociateIPCommands(router,publicIps,cmds,0);
+      createAssociateIPCommands(router,publicIps,cmds,0);
+      List<PortForwardingRuleVO> rulesToReapply=new ArrayList<PortForwardingRuleVO>();
+      List<RemoteAccessVpn> vpns=new ArrayList<RemoteAccessVpn>();
+      for (      PublicIpAddress ip : publicIps) {
+        List<PortForwardingRuleVO> rules=_pfRulesDao.listForApplication(ip.getAddress());
+        rulesToReapply.addAll(rules);
+        RemoteAccessVpn vpn=_vpnDao.findById(ip.getAddress());
+        if (vpn != null) {
+          vpns.add(vpn);
+        }
+      }
+      s_logger.debug("Found " + rulesToReapply.size() + " port forwarding rule(s) to apply as a part of domR "+ router.getId()+ " start.");
+      if (!rulesToReapply.isEmpty()) {
+        createApplyPortForwardingRulesCommands(rulesToReapply,router,cmds);
+      }
+      s_logger.debug("Found " + vpns.size() + " vpn(s) to apply as a part of domR "+ router.getId()+ " start.");
+      if (!vpns.isEmpty()) {
+        for (        RemoteAccessVpn vpn : vpns) {
+          createApplyVpnCommands(vpn,router,cmds);
+        }
+      }
+      List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(networkId);
+      List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+      for (      LoadBalancerVO lb : lbs) {
+        List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+        LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+        lbRules.add(loadBalancing);
+      }
+      s_logger.debug("Found " + lbRules.size() + " load balancing rule(s) to apply as a part of domR "+ router.getId()+ " start.");
+      if (!lbRules.isEmpty()) {
+        createApplyLoadBalancingRulesCommands(lbRules,router,cmds);
+      }
+      createDhcpEntriesCommands(router,cmds);
+      createUserDataCommands(router,cmds);
     }
   }
   return true;

@@ -1,15 +1,21 @@
 {
-  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
-  if (asyncExecutor != null) {
-    AsyncJobVO job=asyncExecutor.getJob();
-    if (s_logger.isInfoEnabled()) {
-      s_logger.info("Reboot router " + routerId + ", update async job-"+ job.getId());
-    }
-    _asyncMgr.updateAsyncJobAttachment(job.getId(),"domain_router",routerId);
+  Account account=UserContext.current().getCaller();
+  DomainRouterVO router=_routerDao.findById(routerId);
+  if (router == null) {
+    throw new InvalidParameterValueException("Unable to find domain router with id " + routerId + ".");
   }
-  final DomainRouterVO router=_routerDao.findById(routerId);
-  if (router == null || router.getState() == State.Destroyed) {
-    return false;
+  if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),router.getDomainId())) {
+    throw new PermissionDeniedException("Unable to reboot domain router with id " + routerId + ". Permission denied");
   }
-  return false;
+  if (router == null || router.getState() != State.Running) {
+    s_logger.warn("Unable to reboot, virtual router is not in the right state " + router.getState());
+    throw new ResourceUnavailableException("Unable to reboot domR, it is not in right state " + router.getState(),DataCenter.class,router.getDataCenterId());
+  }
+  s_logger.debug("Stopping and starting router id=" + router.getId() + " as a part of router reboot");
+  if (stopRouter(routerId) != null) {
+    return startRouter(routerId);
+  }
+ else {
+    throw new CloudRuntimeException("Failed to reboot router id=" + router.getId());
+  }
 }
