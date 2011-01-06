@@ -17,8 +17,6 @@
   String name=cmd.getNetworkName();
   String displayText=cmd.getDisplayText();
   Boolean isShared=cmd.getIsShared();
-  Account owner=null;
-  Long ownerId=null;
   if (endIP == null && startIP != null) {
     endIP=startIP;
   }
@@ -29,51 +27,17 @@
   if (zoneId == null || ((_dcDao.findById(zoneId)) == null)) {
     throw new InvalidParameterValueException("Please specify a valid zone.");
   }
-  if (isAdmin(ctxAccount.getType())) {
-    if (domainId != null) {
-      if ((ctxAccount != null) && !_domainDao.isChildDomain(ctxAccount.getDomainId(),domainId)) {
-        throw new PermissionDeniedException("Failed to create a newtwork, invalid domain id (" + domainId + ") given.");
-      }
-      if (accountName != null) {
-        owner=_accountDao.findActiveAccount(accountName,domainId);
-        if (owner == null) {
-          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
-        }
-      }
-    }
- else {
-      owner=ctxAccount;
-    }
+  DataCenter zone=_dcDao.findById(zoneId);
+  if (zone.getNetworkType() == NetworkType.Basic) {
+    throw new InvalidParameterValueException("Network creation is not allowed in zone with network type " + NetworkType.Basic);
   }
- else {
-    owner=ctxAccount;
-  }
-  ownerId=owner.getId();
-  if (networkOffering.getGuestIpType() == GuestIpType.Direct && vlanId != null) {
+  Account owner=_accountMgr.finalizeOwner(ctxAccount,accountName,domainId);
+  if (vlanId != null) {
     String uri="vlan://" + vlanId;
     List<NetworkVO> networks=_networksDao.listBy(zoneId,uri);
     if ((networks != null && !networks.isEmpty())) {
       throw new InvalidParameterValueException("Network with vlan " + vlanId + " already exists in zone "+ zoneId);
     }
-  }
-  if (networkOffering.getGuestIpType() == GuestIpType.DirectPodBased && vlanId != null && vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
-    SearchBuilder<NetworkVO> sb=_networksDao.createSearchBuilder();
-    sb.and("broadcastDomainType",sb.entity().getBroadcastDomainType(),SearchCriteria.Op.EQ);
-    sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
-    SearchBuilder<NetworkOfferingVO> networkSearch=_networkOfferingDao.createSearchBuilder();
-    networkSearch.and("guestIpType",networkSearch.entity().getGuestIpType(),SearchCriteria.Op.EQ);
-    sb.join("networkSearch",networkSearch,sb.entity().getNetworkOfferingId(),networkSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-    SearchCriteria<NetworkVO> sc=sb.create();
-    sc.setParameters("broadcastDomainType",BroadcastDomainType.Native);
-    sc.setParameters("dataCenterId",zoneId);
-    sc.setJoinParameters("networkSearch","guestIpType",GuestIpType.DirectPodBased);
-    List<NetworkVO> networks=_networksDao.search(sc,null);
-    if (networks != null && !networks.isEmpty()) {
-      throw new InvalidParameterValueException("Network with untagged vlan already exists for the zone " + zoneId);
-    }
-  }
-  if (ctxAccount.getType() == Account.ACCOUNT_TYPE_NORMAL && networkOffering.getGuestIpType() != GuestIpType.Virtual) {
-    throw new InvalidParameterValueException("Regular user can create only networ of type " + GuestIpType.Virtual);
   }
   if (ctxAccount.getType() == Account.ACCOUNT_TYPE_NORMAL && vlanId != null && !networkOffering.getSpecifyVlan()) {
     throw new InvalidParameterValueException("Can't specify vlan because network offering doesn't support it");
@@ -101,14 +65,14 @@
     }
     List<NetworkVO> networks=setupNetwork(owner,networkOffering,userNetwork,plan,name,displayText,isShared);
     Long networkId=null;
+    Network network=null;
     if (networks == null || networks.isEmpty()) {
       txn.rollback();
       throw new CloudRuntimeException("Fail to create a network");
     }
  else {
+      network=networks.get(0);
       networkId=networks.get(0).getId();
-    }
-    for (    Network network : networks) {
       if (network.getGuestType() == GuestIpType.Virtual) {
         s_logger.debug("Creating a source natp ip for " + network);
         PublicIp ip=assignSourceNatIpAddress(owner,network,userId);
@@ -117,10 +81,11 @@
         }
       }
     }
-    if (networkOffering.getGuestIpType() == GuestIpType.Direct) {
+    Long ownerId=owner.getId();
+    if (network.getGuestType() == GuestIpType.Direct) {
       owner=null;
     }
-    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && networkOffering.getGuestIpType() == GuestIpType.Direct && startIP != null && endIP != null && gateway != null) {
+    if (ctxAccount.getType() == Account.ACCOUNT_TYPE_ADMIN && network.getGuestType() == GuestIpType.Direct && startIP != null && endIP != null && gateway != null) {
       Vlan vlan=_configMgr.createVlanAndPublicIpRange(userId,zoneId,null,startIP,endIP,gateway,netmask,false,vlanId,owner,networkId);
       if (vlan == null) {
         txn.rollback();

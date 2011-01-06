@@ -1,24 +1,20 @@
 {
   Long userId=UserContext.current().getCallerUserId();
-  Account account=UserContext.current().getCaller();
+  Account caller=UserContext.current().getCaller();
   Ip ipAddress=cmd.getIpAddress();
   Account accountByIp=findAccountByIpAddress(ipAddress);
   if (accountByIp == null) {
-    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find account owner for ip " + ipAddress);
+    throw new InvalidParameterValueException("Unable to find account owner for ip " + ipAddress);
   }
   Long accountId=accountByIp.getId();
-  if (account != null) {
-    if (!isAdmin(account.getType())) {
-      if (account.getId() != accountId.longValue()) {
-        throw new ServerApiException(BaseCmd.PARAM_ERROR,"account " + account.getAccountName() + " doesn't own ip address "+ ipAddress);
-      }
-    }
- else     if (!_domainDao.isChildDomain(account.getDomainId(),accountByIp.getDomainId())) {
-      throw new ServerApiException(BaseCmd.ACCOUNT_ERROR,"Unable to disassociate IP address " + ipAddress + ", permission denied.");
+  if (!_accountMgr.isAdmin(caller.getType())) {
+    if (caller.getId() != accountId.longValue()) {
+      throw new PermissionDeniedException("account " + caller.getAccountName() + " doesn't own ip address "+ ipAddress);
     }
   }
-  if (userId == null) {
-    userId=Long.valueOf(1);
+ else {
+    Domain domain=_domainDao.findById(accountByIp.getDomainId());
+    _accountMgr.checkAccess(caller,domain);
   }
   try {
     IPAddressVO ipVO=_ipAddressDao.findById(ipAddress);
@@ -28,7 +24,7 @@
     if (ipVO.getAllocatedTime() == null) {
       return true;
     }
-    Account Account=_accountDao.findById(accountId);
+    Account Account=_accountMgr.getAccount(accountId);
     if (Account == null) {
       return false;
     }
