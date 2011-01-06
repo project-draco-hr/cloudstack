@@ -1,0 +1,38 @@
+{
+  if (!_isEnabled) {
+    return;
+  }
+  if (instance.getType() != VirtualMachine.Type.User && instance.getType() != VirtualMachine.Type.DomainRouter) {
+    return;
+  }
+  long hostId=dest.getHost().getId();
+  long accountId=instance.getAccountId();
+  List<UserVmVO> vms=_userVmDao.listByAccountIdAndHostId(accountId,hostId);
+  if (vms.size() > 1 || (vms.size() == 1 && vms.get(0).getId() != instance.getId())) {
+    s_logger.debug("Already has GRE tunnel for account " + accountId + " for host "+ hostId);
+    return;
+  }
+  vms=_userVmDao.listByAccountId(accountId);
+  List<Long> remoteHostIds=new ArrayList<Long>();
+  for (  UserVmVO v : vms) {
+    Long rh=v.getHostId();
+    if (rh == null || rh.longValue() == hostId) {
+      continue;
+    }
+    if (!remoteHostIds.contains(rh)) {
+      remoteHostIds.add(rh);
+    }
+  }
+  try {
+    String myIp=dest.getHost().getPrivateIpAddress();
+    for (    Long i : remoteHostIds) {
+      HostVO rHost=_hostDao.findById(i.longValue());
+      cmds.addCommand(0,new OvsCreateGreTunnelCommand(rHost.getPrivateIpAddress(),"1"));
+      _agentMgr.send(i.longValue(),new OvsCreateGreTunnelCommand(myIp,"1"));
+      s_logger.debug("Ask host " + i.longValue() + " to create gre tunnel to "+ hostId);
+    }
+  }
+ catch (  Exception e) {
+    e.printStackTrace();
+  }
+}

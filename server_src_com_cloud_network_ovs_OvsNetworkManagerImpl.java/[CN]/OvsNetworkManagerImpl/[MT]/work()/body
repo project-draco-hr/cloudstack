@@ -1,0 +1,51 @@
+{
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Checking the database");
+  }
+  final OvsWorkVO work=_workDao.take(_serverId);
+  if (work == null) {
+    return;
+  }
+  Long userVmId=work.getInstanceId();
+  UserVm vm=null;
+  Long seqnum=null;
+  s_logger.info("Ovs working on " + work.toString());
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    vm=_userVMDao.acquireInLockTable(work.getInstanceId());
+    if (vm == null) {
+      s_logger.warn("Ovs unable to acquire lock on vm id=" + userVmId);
+      return;
+    }
+    String vlans=getVlanMapping(vm.getAccountId());
+    Long agentId=null;
+    VmFlowLogVO log=_flowLogDao.findByVmId(userVmId);
+    if (log == null) {
+      s_logger.warn("Ovs cannot find log record for vm id=" + userVmId);
+      return;
+    }
+    seqnum=log.getLogsequence();
+    if (vm != null && vm.getState() == State.Running) {
+      agentId=vm.getHostId();
+      if (agentId != null) {
+        OvsSetTagAndFlowCommand cmd=new OvsSetTagAndFlowCommand(vm.getName(),vlans);
+        Commands cmds=new Commands(cmd);
+        try {
+          _agentMgr.send(agentId,cmds,null);
+        }
+ catch (        AgentUnavailableException e) {
+          s_logger.debug("Unable to send updates for vm: " + userVmId + "(agentid="+ agentId+ ")");
+          _workDao.updateStep(work.getInstanceId(),seqnum,Step.Done);
+        }
+      }
+    }
+  }
+  finally {
+    if (vm != null) {
+      _userVMDao.releaseFromLockTable(userVmId);
+      _workDao.updateStep(work.getId(),Step.Done);
+    }
+    txn.commit();
+  }
+}
