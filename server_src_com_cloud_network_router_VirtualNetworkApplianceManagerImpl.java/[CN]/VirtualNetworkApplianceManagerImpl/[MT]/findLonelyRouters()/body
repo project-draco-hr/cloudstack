@@ -1,0 +1,30 @@
+{
+  List<Long> routersToStop=new ArrayList<Long>();
+  List<VMInstanceVO> runningRouters=_instanceDao.listByTypeAndState(State.Running,VirtualMachine.Type.DomainRouter);
+  for (  VMInstanceVO router : runningRouters) {
+    DataCenter dc=_configMgr.getZone(router.getDataCenterId());
+    if (dc.getNetworkType() == NetworkType.Advanced) {
+      List<NetworkVO> routerNetworks=_networkMgr.listNetworksUsedByVm(router.getId(),false);
+      List<Network> networksToCheck=new ArrayList<Network>();
+      for (      Network routerNetwork : routerNetworks) {
+        if ((routerNetwork.getGuestType() == GuestIpType.Direct && routerNetwork.getTrafficType() == TrafficType.Public) || (routerNetwork.getGuestType() == GuestIpType.Virtual && routerNetwork.getTrafficType() == TrafficType.Guest)) {
+          networksToCheck.add(routerNetwork);
+        }
+      }
+      boolean toStop=true;
+      for (      Network network : networksToCheck) {
+        int count=_networkMgr.getActiveNicsInNetwork(network.getId());
+        if (count > 1) {
+          s_logger.trace("Network id=" + network.getId() + " used by router "+ router+ " has more than 1 active nic (number of nics is "+ count+ ")");
+          toStop=false;
+          break;
+        }
+      }
+      if (toStop) {
+        s_logger.trace("Adding router " + router + " to stop list of Router Monitor");
+        routersToStop.add(router.getId());
+      }
+    }
+  }
+  return routersToStop;
+}
