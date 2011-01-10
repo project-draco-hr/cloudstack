@@ -1,6 +1,6 @@
 {
   Properties preProcessedCommands=new Properties();
-  Enumeration command=null;
+  Enumeration<?> command=null;
   String[] fileNames=null;
   List<String> argsList=Arrays.asList(args);
   Iterator<String> iter=argsList.iterator();
@@ -49,12 +49,21 @@ catch (    IOException ex1) {
     XStream xs=new XStream();
     xs.alias("command",Command.class);
     xs.alias("arg",Argument.class);
+    String xmlDocDir=dirName + "/xmldoc";
+    String rootAdminDirName=xmlDocDir + "/root_admin";
+    String domainAdminDirName=xmlDocDir + "/domain_admin";
+    String regularUserDirName=xmlDocDir + "/regular_user";
+    (new File(rootAdminDirName)).mkdirs();
+    (new File(domainAdminDirName)).mkdirs();
+    (new File(regularUserDirName)).mkdirs();
     ObjectOutputStream out=xs.createObjectOutputStream(new FileWriter(dirName + "/commands.xml"),"commands");
-    ObjectOutputStream outDomainAdmin=xs.createObjectOutputStream(new FileWriter(dirName + "/commandsDomainAdmin.xml"),"commands");
-    ObjectOutputStream regularUser=xs.createObjectOutputStream(new FileWriter(dirName + "/commandsRegularUser.xml"),"commands");
+    ObjectOutputStream rootAdmin=xs.createObjectOutputStream(new FileWriter(rootAdminDirName + "/" + "rootAdminSummary.xml"),"commands");
+    ObjectOutputStream outDomainAdmin=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + "domainAdminSummary.xml"),"commands");
+    ObjectOutputStream regularUser=xs.createObjectOutputStream(new FileWriter(regularUserDirName + "/regularUserSummary.xml"),"commands");
     while (command.hasMoreElements()) {
+      ObjectOutputStream singleCommandOs=null;
       String key=(String)command.nextElement();
-      Class clas=Class.forName(all_api_commands.getProperty(key));
+      Class<?> clas=Class.forName(all_api_commands.getProperty(key));
       ArrayList<Argument> request=new ArrayList<Argument>();
       ArrayList<Argument> response=new ArrayList<Argument>();
       Command apiCommand=new Command();
@@ -88,7 +97,7 @@ catch (    IOException ex1) {
           request.add(reqArg);
         }
       }
-      Class responseClas=impl.responseObject();
+      Class<?> responseClas=impl.responseObject();
       Field[] responseFields=responseClas.getDeclaredFields();
       for (      Field responseField : responseFields) {
         SerializedName nameAnnotation=responseField.getAnnotation(SerializedName.class);
@@ -100,16 +109,25 @@ catch (    IOException ex1) {
       apiCommand.setRequest(request);
       apiCommand.setResponse(response);
       out.writeObject(apiCommand);
+      rootAdmin.writeObject(apiCommand);
+      singleCommandOs=xs.createObjectOutputStream(new FileWriter(rootAdminDirName + "/" + key+ ".xml"),"command");
       if (domain_admin_api_commands.containsKey(key)) {
         outDomainAdmin.writeObject(apiCommand);
+        singleCommandOs=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + key+ ".xml"),"command");
       }
       if (regular_user_api_commands.containsKey(key)) {
+        singleCommandOs=xs.createObjectOutputStream(new FileWriter(regularUserDirName + "/" + key+ ".xml"),"command");
         regularUser.writeObject(apiCommand);
       }
+      singleCommandOs.writeObject(apiCommand);
+      singleCommandOs.close();
     }
     out.close();
+    rootAdmin.close();
     outDomainAdmin.close();
     regularUser.close();
+    zipDir(dirName + "xmldoc.zip",xmlDocDir);
+    deleteDir(new File(xmlDocDir));
   }
  catch (  Exception ex) {
     ex.printStackTrace();
