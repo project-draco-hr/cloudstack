@@ -1,6 +1,5 @@
 {
-  Properties preProcessedCommands=new Properties();
-  Enumeration<?> command=null;
+  LinkedProperties preProcessedCommands=new LinkedProperties();
   String[] fileNames=null;
   List<String> argsList=Arrays.asList(args);
   Iterator<String> iter=argsList.iterator();
@@ -31,8 +30,10 @@ catch (    IOException ex1) {
       System.exit(2);
     }
   }
-  for (  Object key : preProcessedCommands.keySet()) {
-    String preProcessedCommand=preProcessedCommands.getProperty((String)key);
+  Iterator<?> propertiesIterator=preProcessedCommands.keys.iterator();
+  while (propertiesIterator.hasNext()) {
+    String key=(String)propertiesIterator.next();
+    String preProcessedCommand=preProcessedCommands.getProperty(key);
     String[] commandParts=preProcessedCommand.split(";");
     String commandName=commandParts[0];
     all_api_commands.put(key,commandName);
@@ -44,7 +45,9 @@ catch (    IOException ex1) {
       regular_user_api_commands.put(key,commandName);
     }
   }
-  command=all_api_commands.propertyNames();
+  all_api_commands_sorted.putAll(all_api_commands);
+  domain_admin_api_commands_sorted.putAll(domain_admin_api_commands);
+  regular_user_api_commands_sorted.putAll(regular_user_api_commands);
   try {
     XStream xs=new XStream();
     xs.alias("command",Command.class);
@@ -58,74 +61,47 @@ catch (    IOException ex1) {
     (new File(regularUserDirName)).mkdirs();
     ObjectOutputStream out=xs.createObjectOutputStream(new FileWriter(dirName + "/commands.xml"),"commands");
     ObjectOutputStream rootAdmin=xs.createObjectOutputStream(new FileWriter(rootAdminDirName + "/" + "rootAdminSummary.xml"),"commands");
-    ObjectOutputStream outDomainAdmin=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + "domainAdminSummary.xml"),"commands");
+    ObjectOutputStream rootAdminSorted=xs.createObjectOutputStream(new FileWriter(rootAdminDirName + "/" + "rootAdminSummarySorted.xml"),"commands");
+    ObjectOutputStream domainAdmin=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + "domainAdminSummary.xml"),"commands");
+    ObjectOutputStream outDomainAdminSorted=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + "domainAdminSummarySorted.xml"),"commands");
     ObjectOutputStream regularUser=xs.createObjectOutputStream(new FileWriter(regularUserDirName + "/regularUserSummary.xml"),"commands");
-    while (command.hasMoreElements()) {
+    ObjectOutputStream regularUserSorted=xs.createObjectOutputStream(new FileWriter(regularUserDirName + "/regularUserSummarySorted.xml"),"commands");
+    Iterator<?> it=all_api_commands.keySet().iterator();
+    while (it.hasNext()) {
       ObjectOutputStream singleCommandOs=null;
-      String key=(String)command.nextElement();
-      Class<?> clas=Class.forName(all_api_commands.getProperty(key));
-      ArrayList<Argument> request=new ArrayList<Argument>();
-      ArrayList<Argument> response=new ArrayList<Argument>();
-      Command apiCommand=new Command();
-      apiCommand.setName(key);
-      Implementation impl=(Implementation)clas.getAnnotation(Implementation.class);
-      if (impl == null)       impl=(Implementation)clas.getSuperclass().getAnnotation(Implementation.class);
-      String commandDescription=impl.description();
-      if (commandDescription != null)       apiCommand.setDescription(commandDescription);
- else       System.out.println("Command " + apiCommand.getName() + " misses description");
-      Field[] fields=clas.getDeclaredFields();
-      Class<?> superClass=clas.getSuperclass();
-      String superName=superClass.getName();
-      if (!superName.equals(BaseCmd.class.getName()) && !superName.equals(BaseAsyncCmd.class.getName()) && !superName.equals(BaseAsyncCreateCmd.class.getName())) {
-        Field[] superClassFields=superClass.getDeclaredFields();
-        if (superClassFields != null && !superClass.getName().equals(BaseListCmd.class.getName())) {
-          Field[] tmpFields=new Field[fields.length + superClassFields.length];
-          System.arraycopy(fields,0,tmpFields,0,fields.length);
-          System.arraycopy(superClassFields,0,tmpFields,fields.length,superClassFields.length);
-          fields=tmpFields;
-        }
-        superClass=superClass.getSuperclass();
-      }
-      for (      Field f : fields) {
-        Parameter parameterAnnotation=f.getAnnotation(Parameter.class);
-        if (parameterAnnotation != null) {
-          Argument reqArg=new Argument(parameterAnnotation.name());
-          reqArg.setRequired(parameterAnnotation.required());
-          if (!parameterAnnotation.description().isEmpty() && parameterAnnotation.expose())           reqArg.setDescription(parameterAnnotation.description());
- else           if (parameterAnnotation.expose()) {
-          }
-          request.add(reqArg);
-        }
-      }
-      Class<?> responseClas=impl.responseObject();
-      Field[] responseFields=responseClas.getDeclaredFields();
-      for (      Field responseField : responseFields) {
-        SerializedName nameAnnotation=responseField.getAnnotation(SerializedName.class);
-        Param descAnnotation=responseField.getAnnotation(Param.class);
-        Argument respArg=new Argument(nameAnnotation.value());
-        if (descAnnotation != null)         respArg.setDescription(descAnnotation.description());
-        response.add(respArg);
-      }
-      apiCommand.setRequest(request);
-      apiCommand.setResponse(response);
-      out.writeObject(apiCommand);
-      rootAdmin.writeObject(apiCommand);
+      String key=(String)it.next();
+      writeCommand(out,key);
+      writeCommand(rootAdmin,key);
       singleCommandOs=xs.createObjectOutputStream(new FileWriter(rootAdminDirName + "/" + key+ ".xml"),"command");
       if (domain_admin_api_commands.containsKey(key)) {
-        outDomainAdmin.writeObject(apiCommand);
+        writeCommand(domainAdmin,key);
         singleCommandOs=xs.createObjectOutputStream(new FileWriter(domainAdminDirName + "/" + key+ ".xml"),"command");
       }
       if (regular_user_api_commands.containsKey(key)) {
         singleCommandOs=xs.createObjectOutputStream(new FileWriter(regularUserDirName + "/" + key+ ".xml"),"command");
-        regularUser.writeObject(apiCommand);
+        writeCommand(regularUser,key);
       }
-      singleCommandOs.writeObject(apiCommand);
+      writeCommand(singleCommandOs,key);
       singleCommandOs.close();
+    }
+    it=all_api_commands_sorted.keySet().iterator();
+    while (it.hasNext()) {
+      String key=(String)it.next();
+      writeCommand(rootAdminSorted,key);
+      if (domain_admin_api_commands.containsKey(key)) {
+        writeCommand(outDomainAdminSorted,key);
+      }
+      if (regular_user_api_commands.containsKey(key)) {
+        writeCommand(regularUserSorted,key);
+      }
     }
     out.close();
     rootAdmin.close();
-    outDomainAdmin.close();
+    rootAdminSorted.close();
+    domainAdmin.close();
+    outDomainAdminSorted.close();
     regularUser.close();
+    regularUserSorted.close();
     zipDir(dirName + "xmldoc.zip",xmlDocDir);
     deleteDir(new File(xmlDocDir));
   }
