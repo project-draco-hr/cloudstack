@@ -1,2 +1,104 @@
 {
+  long vmId=vm.getId();
+  VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
+  Ternary<T,ReservationContext,ItWorkVO> start=changeToStartState(vmGuru,vm,caller,account);
+  if (start == null) {
+    return vmGuru.findById(vmId);
+  }
+  vm=start.first();
+  ReservationContext ctx=start.second();
+  ItWorkVO work=start.third();
+  T startedVm=null;
+  try {
+    ServiceOfferingVO offering=_offeringDao.findById(vm.getServiceOfferingId());
+    VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
+    DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),null,null);
+    HypervisorGuru hvGuru=_hvGurus.get(vm.getHypervisorType());
+    VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,null,params);
+    Journal journal=start.second().getJournal();
+    ExcludeList avoids=new ExcludeList();
+    int retry=_retry;
+    while (retry-- != 0) {
+      DeployDestination dest=null;
+      for (      DeploymentPlanner planner : _planners) {
+        dest=planner.plan(vmProfile,plan,avoids);
+        if (dest != null) {
+          avoids.addHost(dest.getHost().getId());
+          journal.record("Deployment found ",vmProfile,dest);
+          break;
+        }
+      }
+      if (dest == null) {
+        throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId());
+      }
+      stateTransitTo(vm,Event.OperationRetry,dest.getHost().getId());
+      try {
+        _storageMgr.prepare(vmProfile,dest);
+        _networkMgr.prepare(vmProfile,dest,ctx);
+      }
+ catch (      ResourceUnavailableException e) {
+        if (!avoids.add(e)) {
+          if (e.getScope() == Volume.class || e.getScope() == Nic.class) {
+            throw e;
+          }
+ else {
+            throw new CloudRuntimeException("Resource is not available to start the VM.",e);
+          }
+        }
+        s_logger.info("Unable to contact resource.",e);
+        continue;
+      }
+catch (      InsufficientCapacityException e) {
+        if (!avoids.add(e)) {
+          if (e.getScope() == Volume.class || e.getScope() == Nic.class) {
+            throw e;
+          }
+ else {
+            throw new CloudRuntimeException("Insufficient capacity to start the VM.",e);
+          }
+        }
+        s_logger.info("Insufficient capacity ",e);
+        continue;
+      }
+catch (      RuntimeException e) {
+        s_logger.warn("Failed to start instance " + vm,e);
+        throw new CloudRuntimeException("Failed to start " + vm,e);
+      }
+      vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,ctx);
+      VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
+      Commands cmds=new Commands(OnError.Revert);
+      cmds.addCommand(new StartCommand(vmTO));
+      vmGuru.finalizeDeployment(cmds,vmProfile,dest,ctx);
+      try {
+        Answer[] answers=_agentMgr.send(dest.getHost().getId(),cmds);
+        if (getStartAnswer(answers).getResult() && vmGuru.finalizeStart(cmds,vmProfile,dest,ctx)) {
+          if (!stateTransitTo(vm,Event.OperationSucceeded,dest.getHost().getId())) {
+            throw new CloudRuntimeException("Unable to transition to a new state.");
+          }
+          startedVm=vm;
+          break;
+        }
+        s_logger.info("Unable to start VM on " + dest.getHost() + " due to "+ answers[0].getDetails());
+      }
+ catch (      AgentUnavailableException e) {
+        s_logger.debug("Unable to send the start command to host " + dest.getHost());
+        continue;
+      }
+catch (      OperationTimedoutException e) {
+        s_logger.debug("Unable to send the start command to host " + dest.getHost());
+        continue;
+      }
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Creation complete for VM " + vm);
+    }
+  }
+  finally {
+    if (startedVm == null) {
+      stateTransitTo(vm,Event.OperationFailed,null);
+    }
+    work.setStep(Step.Done);
+    _workDao.update(work.getId(),work);
+  }
+  return startedVm;
 }
