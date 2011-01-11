@@ -1,0 +1,60 @@
+{
+  if (!_isEnabled) {
+    return;
+  }
+  if (instance.getType() != VirtualMachine.Type.User && instance.getType() != VirtualMachine.Type.DomainRouter) {
+    return;
+  }
+  long hostId=dest.getHost().getId();
+  long accountId=instance.getAccountId();
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  List<UserVmVO> vms=_userVmDao.listByAccountId(accountId);
+  List<Long> toHostIds=new ArrayList<Long>();
+  List<Long> fromHostIds=new ArrayList<Long>();
+  GreTunnelVO tvo=_tunnelDao.acquireInLockTable(new Long(1));
+  if (tvo == null) {
+    throw new GreTunnelException("can't lock gre tunnel table for: from=" + hostId);
+  }
+  for (  UserVmVO v : vms) {
+    Long rh=v.getHostId();
+    if (rh == null || rh.longValue() == hostId) {
+      continue;
+    }
+    GreTunnelVO tunnel=_tunnelDao.getByFromAndTo(hostId,rh.longValue());
+    if (tunnel == null) {
+      tunnel=new GreTunnelVO(hostId,rh.longValue());
+      _tunnelDao.persist(tunnel);
+      if (!toHostIds.contains(rh)) {
+        toHostIds.add(rh);
+      }
+    }
+    tunnel=_tunnelDao.getByFromAndTo(rh.longValue(),hostId);
+    if (tunnel == null) {
+      tunnel=new GreTunnelVO(rh.longValue(),hostId);
+      _tunnelDao.persist(tunnel);
+      if (!fromHostIds.contains(rh)) {
+        fromHostIds.add(rh);
+      }
+    }
+  }
+  _tunnelDao.releaseFromLockTable(new Long(1));
+  txn.commit();
+  try {
+    String myIp=dest.getHost().getPrivateIpAddress();
+    for (    Long i : toHostIds) {
+      HostVO rHost=_hostDao.findById(i.longValue());
+      Commands cmds=new Commands(new OvsCreateGreTunnelCommand(rHost.getPrivateIpAddress(),"1",hostId,i.longValue()));
+      _agentMgr.send(hostId,cmds,_ovsListener);
+      s_logger.debug("Ask host " + hostId + " to create gre tunnel to "+ i.longValue());
+    }
+    for (    Long i : fromHostIds) {
+      Commands cmd2s=new Commands(new OvsCreateGreTunnelCommand(myIp,"1",i.longValue(),hostId));
+      _agentMgr.send(i.longValue(),cmd2s,_ovsListener);
+      s_logger.debug("Ask host " + i.longValue() + " to create gre tunnel to "+ hostId);
+    }
+  }
+ catch (  Exception e) {
+    e.printStackTrace();
+  }
+}
