@@ -1,0 +1,38 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Expunging " + vol);
+  }
+  String vmName=null;
+  if (vol.getVolumeType() == VolumeType.ROOT && vol.getInstanceId() != null) {
+    VirtualMachine vm=_vmInstanceDao.findByIdIncludingRemoved(vol.getInstanceId());
+    if (vm != null) {
+      vmName=vm.getInstanceName();
+    }
+  }
+  String volumePath=vol.getPath();
+  Long poolId=vol.getPoolId();
+  if (poolId == null || volumePath == null || volumePath.trim().isEmpty()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Marking volume that was never created as destroyed: " + vol);
+    }
+    _volsDao.remove(vol.getId());
+    return;
+  }
+  StoragePoolVO pool=_storagePoolDao.findById(poolId);
+  if (pool == null) {
+    s_logger.debug("Removing volume as storage pool is gone: " + poolId);
+    _volsDao.remove(vol.getId());
+    return;
+  }
+  DestroyCommand cmd=new DestroyCommand(pool,vol,vmName);
+  Answer answer=this.sendToPool(pool,cmd);
+  if (answer != null && answer.getResult()) {
+    _volsDao.remove(vol.getId());
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Volume successfully expunged from " + poolId);
+    }
+  }
+ else {
+    s_logger.info("Will retry delete of " + vol + " from "+ poolId);
+  }
+}

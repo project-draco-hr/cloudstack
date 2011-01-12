@@ -6,18 +6,24 @@
   Long domainId=cmd.getDomainId();
   String accountName=cmd.getAccountName();
   String type=cmd.getType();
+  String trafficType=cmd.getTrafficType();
   Boolean isSystem=cmd.getIsSystem();
+  Boolean isShared=cmd.getIsShared();
+  Boolean isDefault=cmd.isDefault();
   Long accountId=null;
   if (isSystem == null) {
     isSystem=false;
   }
-  if (isAdmin(account.getType())) {
+  if (isSystem && (accountName != null || domainId != null)) {
+    throw new InvalidParameterValueException("System network belongs to system, account and domainId parameters can't be specified");
+  }
+  if (_accountMgr.isAdmin(account.getType())) {
     if (domainId != null) {
       if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
         throw new PermissionDeniedException("Invalid domain id (" + domainId + ") given, unable to list networks");
       }
       if (accountName != null) {
-        account=_accountDao.findActiveAccount(accountName,domainId);
+        account=_accountMgr.getActiveAccount(accountName,domainId);
         if (account == null) {
           throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
         }
@@ -29,6 +35,8 @@
     }
   }
  else {
+    accountName=account.getAccountName();
+    domainId=account.getDomainId();
     accountId=account.getId();
   }
   Filter searchFilter=new Filter(NetworkVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
@@ -48,7 +56,6 @@
   }
  else {
     sc.setJoinParameters("networkOfferingSearch","systemOnly",true);
-    sc.setJoinParameters("networkOfferingSearch","trafficType",TrafficType.Public);
     sc.setJoinParameters("zoneSearch","networkType",NetworkType.Advanced.toString());
   }
   if (keyword != null) {
@@ -65,8 +72,18 @@
   if (type != null) {
     sc.addAnd("guestType",SearchCriteria.Op.EQ,type);
   }
-  if (account.getType() != Account.ACCOUNT_TYPE_ADMIN || (accountName != null && domainId != null)) {
+  if (!isSystem && (isShared == null || !isShared) && accountName != null && domainId != null) {
     sc.addAnd("accountId",SearchCriteria.Op.EQ,accountId);
+    sc.addAnd("isShared",SearchCriteria.Op.EQ,false);
+  }
+  if (isShared != null) {
+    sc.addAnd("isShared",SearchCriteria.Op.EQ,isShared);
+  }
+  if (isDefault != null) {
+    sc.addAnd("isDefault",SearchCriteria.Op.EQ,isDefault);
+  }
+  if (trafficType != null) {
+    sc.addAnd("trafficType",SearchCriteria.Op.EQ,trafficType);
   }
   List<NetworkVO> networks=_networksDao.search(sc,searchFilter);
   return networks;

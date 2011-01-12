@@ -2,10 +2,11 @@
   List<DataCenterVO> zones=_dataCenterDao.listAll();
   long id=1;
   HashMap<TrafficType,String> guruNames=new HashMap<TrafficType,String>();
-  guruNames.put(TrafficType.Public,"PublicNetworkGuru-com.cloud.network.guru.PublicNetworkGuru");
-  guruNames.put(TrafficType.Management,"PodBasedNetworkGuru-com.cloud.network.guru.PodBasedNetworkGuru");
-  guruNames.put(TrafficType.Control,"ControlNetworkGuru-com.cloud.network.guru.ControlNetworkGuru");
-  guruNames.put(TrafficType.Storage,"PodBasedNetworkGuru-com.cloud.network.guru.PodBasedNetworkGuru");
+  guruNames.put(TrafficType.Public,PublicNetworkGuru.class.getSimpleName());
+  guruNames.put(TrafficType.Management,PodBasedNetworkGuru.class.getSimpleName());
+  guruNames.put(TrafficType.Control,ControlNetworkGuru.class.getSimpleName());
+  guruNames.put(TrafficType.Storage,PodBasedNetworkGuru.class.getSimpleName());
+  guruNames.put(TrafficType.Guest,DirectPodBasedNetworkGuru.class.getSimpleName());
   for (  DataCenterVO zone : zones) {
     long zoneId=zone.getId();
     long accountId=1L;
@@ -21,23 +22,32 @@
         Mode mode=Mode.Static;
         BroadcastDomainType broadcastDomainType=null;
         TrafficType trafficType=offering.getTrafficType();
-        GuestIpType guestIpType=offering.getGuestIpType();
-        if (offering.getGuestIpType() != GuestIpType.DirectPodBased) {
-          if (trafficType == TrafficType.Management || trafficType == TrafficType.Storage) {
-            broadcastDomainType=BroadcastDomainType.Native;
-          }
- else           if (trafficType == TrafficType.Public) {
+        boolean isNetworkDefault=false;
+        if (trafficType == TrafficType.Management || trafficType == TrafficType.Storage) {
+          broadcastDomainType=BroadcastDomainType.Native;
+        }
+ else         if (trafficType == TrafficType.Control) {
+          broadcastDomainType=BroadcastDomainType.LinkLocal;
+        }
+ else         if (offering.getTrafficType() == TrafficType.Public) {
+          if (zone.getNetworkType() == NetworkType.Advanced) {
             broadcastDomainType=BroadcastDomainType.Vlan;
           }
- else           if (trafficType == TrafficType.Control) {
-            broadcastDomainType=BroadcastDomainType.LinkLocal;
+ else {
+            continue;
           }
         }
- else         if (zone.getNetworkType() == NetworkType.Basic && offering.getGuestIpType() == GuestIpType.DirectPodBased) {
-          broadcastDomainType=BroadcastDomainType.Vlan;
+ else         if (offering.getTrafficType() == TrafficType.Guest) {
+          if (zone.getNetworkType() == NetworkType.Basic) {
+            isNetworkDefault=true;
+            broadcastDomainType=BroadcastDomainType.Native;
+          }
+ else {
+            continue;
+          }
         }
         if (broadcastDomainType != null) {
-          NetworkVO network=new NetworkVO(id,trafficType,guestIpType,mode,broadcastDomainType,networkOfferingId,zoneId,domainId,accountId,related,null,null,true);
+          NetworkVO network=new NetworkVO(id,trafficType,null,mode,broadcastDomainType,networkOfferingId,zoneId,domainId,accountId,related,null,null,true,isNetworkDefault);
           network.setGuruName(guruNames.get(network.getTrafficType()));
           network.setDns1(zone.getDns1());
           network.setDns2(zone.getDns2());
