@@ -5,41 +5,40 @@
   if (instance.getType() != VirtualMachine.Type.User && instance.getType() != VirtualMachine.Type.DomainRouter) {
     return;
   }
+  final Transaction txn=Transaction.currentTxn();
   long hostId=dest.getHost().getId();
   long accountId=instance.getAccountId();
-  final Transaction txn=Transaction.currentTxn();
-  txn.start();
   List<UserVmVO> vms=_userVmDao.listByAccountId(accountId);
+  DomainRouterVO router=_routerDao.findBy(accountId,instance.getDataCenterId());
+  List<VMInstanceVO> ins=new ArrayList<VMInstanceVO>();
+  ins.addAll(vms);
+  ins.add(router);
   List<Long> toHostIds=new ArrayList<Long>();
   List<Long> fromHostIds=new ArrayList<Long>();
-  GreTunnelVO tvo=_tunnelDao.acquireInLockTable(new Long(1));
-  if (tvo == null) {
-    throw new GreTunnelException("can't lock gre tunnel table for: from=" + hostId);
-  }
-  for (  UserVmVO v : vms) {
+  for (  VMInstanceVO v : ins) {
     Long rh=v.getHostId();
     if (rh == null || rh.longValue() == hostId) {
       continue;
     }
-    GreTunnelVO tunnel=_tunnelDao.getByFromAndTo(hostId,rh.longValue());
+    txn.start();
+    GreTunnelVO tunnel=_tunnelDao.lockByFromAndTo(hostId,rh.longValue());
+    txn.commit();
     if (tunnel == null) {
-      tunnel=new GreTunnelVO(hostId,rh.longValue());
-      _tunnelDao.persist(tunnel);
-      if (!toHostIds.contains(rh)) {
-        toHostIds.add(rh);
-      }
+      throw new GreTunnelException(String.format("No entity(from=%1$s, to=%2$s) of failed to lock",hostId,rh.longValue()));
     }
-    tunnel=_tunnelDao.getByFromAndTo(rh.longValue(),hostId);
+    if (tunnel.getInPort() == 0 && !toHostIds.contains(rh)) {
+      toHostIds.add(rh);
+    }
+    txn.start();
+    tunnel=_tunnelDao.lockByFromAndTo(rh.longValue(),hostId);
+    txn.commit();
     if (tunnel == null) {
-      tunnel=new GreTunnelVO(rh.longValue(),hostId);
-      _tunnelDao.persist(tunnel);
-      if (!fromHostIds.contains(rh)) {
-        fromHostIds.add(rh);
-      }
+      throw new GreTunnelException(String.format("No entity(from=%1$s, to=%2$s) of failed to lock",rh.longValue(),hostId));
+    }
+    if (tunnel.getInPort() == 0 && !fromHostIds.contains(rh)) {
+      fromHostIds.add(rh);
     }
   }
-  _tunnelDao.releaseFromLockTable(new Long(1));
-  txn.commit();
   try {
     String myIp=dest.getHost().getPrivateIpAddress();
     for (    Long i : toHostIds) {
