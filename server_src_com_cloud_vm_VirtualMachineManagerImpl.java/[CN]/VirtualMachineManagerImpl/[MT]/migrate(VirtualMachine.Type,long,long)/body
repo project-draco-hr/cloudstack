@@ -1,0 +1,45 @@
+{
+  VirtualMachineGuru<? extends VMInstanceVO> vmGuru=_vmGurus.get(vmType);
+  VMInstanceVO vm=vmGuru.findById(vmId);
+  if (vm == null) {
+    s_logger.debug("Unable to find a VM for " + vmId);
+    return true;
+  }
+  VirtualMachineProfile<VMInstanceVO> profile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
+  Long hostId=vm.getHostId();
+  if (hostId == null) {
+    s_logger.debug("Unable to migrate because the VM doesn't have a host id: " + vm);
+  }
+  Host host=_hostDao.findById(hostId);
+  DataCenterDeployment plan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),null);
+  ExcludeList excludes=new ExcludeList();
+  excludes.addHost(hostId);
+  DeployDestination dest=null;
+  while (true) {
+    for (    DeploymentPlanner planner : _planners) {
+      dest=planner.plan(profile,plan,excludes);
+      if (dest != null) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Planner " + planner + " found "+ dest+ " for migrating to.");
+        }
+        break;
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Planner " + planner + " was unable to find anything.");
+      }
+    }
+    if (dest == null) {
+      throw new InsufficientServerCapacityException("Unable to find a server to migrate to.",host.getClusterId());
+    }
+    excludes.addHost(dest.getHost().getId());
+    try {
+      vm=migrate(vm,srcHostId,dest);
+    }
+ catch (    ResourceUnavailableException e) {
+      s_logger.debug("Unable to migrate to unavailable " + dest);
+    }
+    if (vm != null) {
+      return true;
+    }
+  }
+}

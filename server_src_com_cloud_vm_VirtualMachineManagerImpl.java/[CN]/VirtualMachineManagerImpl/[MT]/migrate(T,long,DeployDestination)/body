@@ -1,0 +1,83 @@
+{
+  s_logger.info("Migrating " + vm + " to "+ dest);
+  long dstHostId=dest.getHost().getId();
+  Host fromHost=_hostDao.findById(srcHostId);
+  if (fromHost == null) {
+    s_logger.info("Unable to find the host to migrate from: " + srcHostId);
+    return null;
+  }
+  VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
+  vm=vmGuru.findById(vm.getId());
+  if (vm == null || vm.getRemoved() != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Unable to find the vm " + vm);
+    }
+    return null;
+  }
+  short alertType=AlertManager.ALERT_TYPE_USERVM_MIGRATE;
+  if (VirtualMachine.Type.DomainRouter.equals(vm.getType())) {
+    alertType=AlertManager.ALERT_TYPE_DOMAIN_ROUTER_MIGRATE;
+  }
+ else   if (VirtualMachine.Type.ConsoleProxy.equals(vm.getType())) {
+    alertType=AlertManager.ALERT_TYPE_CONSOLE_PROXY_MIGRATE;
+  }
+  VirtualMachineProfile<VMInstanceVO> profile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
+  HypervisorGuru hvGuru=_hvGurus.get(vm.getHypervisorType());
+  VirtualMachineTO to=hvGuru.implement(profile);
+  PrepareForMigrationCommand pfmc=new PrepareForMigrationCommand(to);
+  PrepareForMigrationAnswer pfma;
+  try {
+    pfma=(PrepareForMigrationAnswer)_agentMgr.send(dstHostId,pfmc);
+  }
+ catch (  OperationTimedoutException e1) {
+    throw new AgentUnavailableException("Operation timed out",dstHostId);
+  }
+  if (!pfma.getResult()) {
+    throw new AgentUnavailableException(pfma.getDetails(),dstHostId);
+  }
+  boolean migrated=false;
+  try {
+    vm.setLastHostId(srcHostId);
+    if (vm == null || vm.getRemoved() != null || vm.getHostId() == null || vm.getHostId() != srcHostId || !stateTransitTo(vm,Event.MigrationRequested,dstHostId)) {
+      s_logger.info("Migration cancelled because state has changed: " + vm);
+      return null;
+    }
+    boolean isWindows=_guestOsCategoryDao.findById(_guestOsDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
+    MigrateCommand mc=new MigrateCommand(vm.getInstanceName(),dest.getHost().getPrivateIpAddress(),isWindows);
+    MigrateAnswer ma=(MigrateAnswer)_agentMgr.send(vm.getHostId(),mc);
+    if (!ma.getResult()) {
+      return null;
+    }
+    CheckVirtualMachineCommand cvm=new CheckVirtualMachineCommand(vm.getInstanceName());
+    CheckVirtualMachineAnswer answer=(CheckVirtualMachineAnswer)_agentMgr.send(dstHostId,cvm);
+    if (!answer.getResult()) {
+      s_logger.debug("Unable to complete migration for " + vm.toString());
+      stateTransitTo(vm,VirtualMachine.Event.AgentReportStopped,null);
+      return null;
+    }
+    State state=answer.getState();
+    if (state == State.Stopped) {
+      s_logger.warn("Unable to complete migration as we can not detect it on " + dest.getHost());
+      stateTransitTo(vm,VirtualMachine.Event.AgentReportStopped,null);
+      return null;
+    }
+    stateTransitTo(vm,VirtualMachine.Event.OperationSucceeded,dstHostId);
+    migrated=true;
+    return vm;
+  }
+ catch (  final OperationTimedoutException e) {
+    s_logger.debug("operation timed out");
+    if (e.isActive()) {
+    }
+    throw new AgentUnavailableException("Operation timed out: ",dstHostId);
+  }
+ finally {
+    if (!migrated) {
+      s_logger.info("Migration was unsuccessful.  Cleaning up: " + vm.toString());
+      _alertMgr.sendAlert(alertType,fromHost.getDataCenterId(),fromHost.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHost.getName()+ " in zone "+ dest.getDataCenter().getName()+ " and pod "+ dest.getPod().getName(),"Migrate Command failed.  Please check logs.");
+      stateTransitTo(vm,Event.MigrationFailedOnSource,srcHostId);
+      Command cleanup=vmGuru.cleanup(vm,null);
+      _agentMgr.easySend(dstHostId,cleanup);
+    }
+  }
+}
