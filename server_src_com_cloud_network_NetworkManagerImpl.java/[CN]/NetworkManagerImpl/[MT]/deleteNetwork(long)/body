@@ -5,9 +5,6 @@
   if (network == null) {
     throw new InvalidParameterValueException("unable to find network " + networkId);
   }
-  Long ownerId=network.getAccountId();
-  Long zoneId=network.getDataCenterId();
-  String name=network.getName();
   if (!_accountMgr.isAdmin(caller.getType())) {
     if (network.getAccountId() != caller.getId()) {
       throw new PermissionDeniedException("Account " + caller.getAccountName() + " does not own network id="+ networkId+ ", permission denied");
@@ -17,36 +14,5 @@
     Account owner=_accountMgr.getAccount(network.getAccountId());
     _accountMgr.checkAccess(caller,owner);
   }
-  List<NicVO> nics=_nicDao.listByNetworkId(networkId);
-  for (  NicVO nic : nics) {
-    UserVm vm=_vmDao.findById(nic.getId());
-    if (vm != null && (vm.getState() != State.Destroyed || vm.getState() != State.Expunging || vm.getState() != State.Error)) {
-      throw new CloudRuntimeException("Can't delete a network; make sure that all vms using the network are destroyed");
-    }
-  }
-  Transaction txn=Transaction.currentTxn();
-  try {
-    txn.start();
-    List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(networkId);
-    for (    VlanVO vlan : vlans) {
-      boolean result=_configMgr.deleteVlanAndPublicIpRange(userId,vlan.getId());
-      if (result == false) {
-        txn.rollback();
-        throw new CloudRuntimeException("Unable to delete a network: failed to delete corresponding vlan with id " + vlan.getId());
-      }
-    }
-    _networksDao.remove(networkId);
-    txn.commit();
-    String eventMsg="Successfully deleted network " + name + " (id="+ networkId+ ")";
-    _configMgr.saveConfigurationEvent(userId,ownerId,EventTypes.EVENT_NETWORK_DELETE,eventMsg,"id=" + networkId,"dcId=" + zoneId,"accountId=" + ownerId);
-    return true;
-  }
- catch (  Exception ex) {
-    txn.rollback();
-    s_logger.warn("Unexpected exception during deleting a network ",ex);
-    return false;
-  }
- finally {
-    txn.close();
-  }
+  return this.destroyNetwork(networkId,userId);
 }
