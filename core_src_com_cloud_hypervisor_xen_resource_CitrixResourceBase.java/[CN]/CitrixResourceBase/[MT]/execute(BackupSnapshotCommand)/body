@@ -7,9 +7,11 @@
   String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
   String snapshotUuid=cmd.getSnapshotUuid();
   String prevBackupUuid=cmd.getPrevBackupUuid();
+  String prevSnapshotUuid=cmd.getPrevSnapshotUuid();
   String details=null;
   boolean success=false;
   String snapshotBackupUuid=null;
+  boolean fullbackup=true;
   try {
     SR primaryStorageSR=getSRByNameLabelandHost(conn,primaryStorageNameLabel);
     if (primaryStorageSR == null) {
@@ -17,18 +19,28 @@
     }
     URI uri=new URI(secondaryStoragePoolURL);
     String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
-    if (prevBackupUuid == null) {
+    VDI snapshotVdi=getVDIbyUuid(conn,snapshotUuid);
+    if (prevBackupUuid != null) {
+      try {
+        VDI preSnapshotVdi=getVDIbyUuid(conn,prevSnapshotUuid);
+        if (snapshotVdi.getParent(conn).getParent(conn) == preSnapshotVdi.getParent(conn)) {
+          fullbackup=false;
+        }
+      }
+ catch (      Exception e) {
+      }
+    }
+    if (fullbackup) {
       String folder="snapshots/" + accountId + "/"+ volumeId;
       if (!createSecondaryStorageFolder(conn,secondaryStorageMountPath,folder)) {
         details=" Filed to create folder " + folder + " in secondary storage";
         s_logger.warn(details);
-        return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid);
+        return new BackupSnapshotAnswer(cmd,false,details,null,false);
       }
       String snapshotMountpoint=secondaryStoragePoolURL + "/" + folder;
       SR snapshotSr=null;
       try {
         snapshotSr=createNfsSRbyURI(conn,new URI(snapshotMountpoint),false);
-        VDI snapshotVdi=getVDIbyUuid(conn,snapshotUuid);
         VDI backedVdi=cloudVDIcopy(conn,snapshotVdi,snapshotSr);
         snapshotBackupUuid=backedVdi.getUuid(conn);
         success=true;
@@ -59,5 +71,5 @@ catch (  Exception e) {
     details="BackupSnapshot Failed due to " + e.getMessage();
     s_logger.warn(details,e);
   }
-  return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid);
+  return new BackupSnapshotAnswer(cmd,success,details,snapshotBackupUuid,fullbackup);
 }
