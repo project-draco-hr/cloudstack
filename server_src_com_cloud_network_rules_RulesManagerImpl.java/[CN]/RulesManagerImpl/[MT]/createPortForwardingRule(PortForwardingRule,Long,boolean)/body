@@ -36,19 +36,11 @@
   networkId=network.getId();
   long accountId=network.getAccountId();
   long domainId=network.getDomainId();
-  checkIpAndUserVm(ipAddress,vm,caller);
-  if (isNat && (ipAddress.isSourceNat())) {
+  if (isNat && (ipAddress.isSourceNat() || !ipAddress.isOneToOneNat() || ipAddress.getVmId() == null)) {
     throw new NetworkRuleConflictException("Can't do one to one NAT on ip address: " + ipAddress.getAddress());
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
   PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddress(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol(),networkId,accountId,domainId,vmId,isNat);
   newRule=_forwardingDao.persist(newRule);
-  if (isNat && !ipAddress.isOneToOneNat()) {
-    ipAddress.setOneToOneNat(true);
-    _ipAddressDao.update(ipAddress.getAddress(),ipAddress);
-  }
-  txn.commit();
   try {
     detectRulesConflict(newRule,ipAddress);
     if (!_firewallDao.setStateToAdd(newRule)) {
@@ -59,13 +51,7 @@
     return newRule;
   }
  catch (  Exception e) {
-    txn.start();
     _forwardingDao.remove(newRule.getId());
-    if (isNat) {
-      ipAddress.setOneToOneNat(false);
-      _ipAddressDao.update(ipAddress.getAddress(),ipAddress);
-    }
-    txn.commit();
     if (e instanceof NetworkRuleConflictException) {
       throw (NetworkRuleConflictException)e;
     }
