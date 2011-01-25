@@ -4,6 +4,8 @@
   String accountName=cmd.getAccountName();
   Long accountId=null;
   boolean isAdmin=false;
+  Boolean isRecursive=cmd.isRecursive();
+  if (isRecursive == null)   isRecursive=false;
   if ((account == null) || isAdmin(account.getType())) {
     isAdmin=true;
     if (domainId != null) {
@@ -22,6 +24,7 @@
     }
  else {
       domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+      isRecursive=true;
     }
   }
  else {
@@ -55,10 +58,15 @@
   sb.and("domPNameLabel",sb.entity().getName(),SearchCriteria.Op.NLIKE);
   sb.and("domSNameLabel",sb.entity().getName(),SearchCriteria.Op.NLIKE);
   sb.and("status",sb.entity().getStatus(),SearchCriteria.Op.EQ);
-  sb.and("destroyed",sb.entity().getDestroyed(),SearchCriteria.Op.EQ);
-  if ((accountId == null) && (domainId != null)) {
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.NEQ);
+  if (((accountId == null) && (domainId != null) && isRecursive)) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+ else   if ((accountId == null) && (domainId != null) && !isRecursive) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.EQ);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
   SearchCriteria<VolumeVO> sc=sb.create();
@@ -79,7 +87,8 @@
   }
  else   if (domainId != null) {
     DomainVO domain=_domainDao.findById(domainId);
-    sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    if (isRecursive)     sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+ else     sc.setJoinParameters("domainSearch","path",domain.getPath());
   }
   if (type != null) {
     sc.setParameters("volumeType","%" + type + "%");
@@ -93,7 +102,7 @@
   if (pod != null) {
     sc.setParameters("podId",pod);
   }
-  sc.setParameters("destroyed",false);
+  sc.setParameters("state",Volume.State.Destroy);
   List<VolumeVO> allVolumes=_volumeDao.search(sc,searchFilter);
   List<VolumeVO> returnableVolumes=new ArrayList<VolumeVO>();
   for (  VolumeVO v : allVolumes) {
@@ -101,7 +110,22 @@
     if (template != null && (template.getTemplateType() == TemplateType.SYSTEM)) {
     }
  else {
-      returnableVolumes.add(v);
+      if (v.getInstanceId() == null) {
+        returnableVolumes.add(v);
+      }
+ else {
+        if (account.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+          VMInstanceVO owningVm=_vmInstanceDao.findById(v.getInstanceId());
+          if (owningVm != null && owningVm.getType().equals(VirtualMachine.Type.User) && owningVm.getState().equals(VirtualMachine.State.Destroyed)) {
+          }
+ else {
+            returnableVolumes.add(v);
+          }
+        }
+ else {
+          returnableVolumes.add(v);
+        }
+      }
     }
   }
   return returnableVolumes;

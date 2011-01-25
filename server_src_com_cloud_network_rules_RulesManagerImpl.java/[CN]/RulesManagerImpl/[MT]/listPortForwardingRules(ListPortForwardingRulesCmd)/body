@@ -1,17 +1,32 @@
 {
   Account caller=UserContext.current().getCaller();
-  List<PortForwardingRuleVO> rules=null;
+  String ip=cmd.getIpAddress();
+  Pair<String,Long> accountDomainPair=_accountMgr.finalizeAccountDomainForList(caller,cmd.getAccountName(),cmd.getDomainId());
+  String accountName=accountDomainPair.first();
+  Long domainId=accountDomainPair.second();
   if (cmd.getIpAddress() != null) {
     Ip ipAddress=new Ip(cmd.getIpAddress());
     IPAddressVO ipAddressVO=_ipAddressDao.findById(ipAddress);
     if (ipAddressVO == null || !ipAddressVO.readyToUse()) {
       throw new InvalidParameterValueException("Ip address not ready for port forwarding rules yet: " + ipAddress);
     }
-    rules=_forwardingDao.listByIp(ipAddress);
-    _accountMgr.checkAccess(caller,rules.toArray(new PortForwardingRuleVO[rules.size()]));
+    _accountMgr.checkAccess(caller,ipAddressVO);
   }
- else {
-    rules=_forwardingDao.listByAccount(caller.getAccountId());
+  Filter filter=new Filter(PortForwardingRuleVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<PortForwardingRuleVO> sb=_forwardingDao.createSearchBuilder();
+  sb.and("ip",sb.entity().getSourceIpAddress(),Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),Op.EQ);
+  SearchCriteria<PortForwardingRuleVO> sc=sb.create();
+  if (ip != null) {
+    sc.setParameters("ip",ip);
   }
-  return rules;
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    if (accountName != null) {
+      Account account=_accountMgr.getActiveAccount(accountName,domainId);
+      sc.setParameters("accountId",account.getId());
+    }
+  }
+  return _forwardingDao.search(sc,filter);
 }

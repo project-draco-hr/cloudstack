@@ -1,0 +1,41 @@
+{
+  if (!_enabled) {
+    return true;
+  }
+  if (groups != null && !groups.isEmpty()) {
+    final Transaction txn=Transaction.currentTxn();
+    txn.start();
+    UserVm userVm=_userVMDao.acquireInLockTable(userVmId);
+    List<SecurityGroupVO> sgs=new ArrayList<SecurityGroupVO>();
+    for (    String sg : groups) {
+      sgs.add(_securityGroupDao.findByAccountAndName(userVm.getAccountId(),sg));
+    }
+    final Set<SecurityGroupVO> uniqueGroups=new TreeSet<SecurityGroupVO>(new SecurityGroupVOComparator());
+    uniqueGroups.addAll(sgs);
+    if (userVm == null) {
+      s_logger.warn("Failed to acquire lock on user vm id=" + userVmId);
+    }
+    try {
+      for (      SecurityGroupVO securityGroup : uniqueGroups) {
+        SecurityGroupVO ngrpLock=_securityGroupDao.lockRow(securityGroup.getId(),false);
+        if (ngrpLock == null) {
+          s_logger.warn("Failed to acquire lock on network group id=" + securityGroup.getId() + " name="+ securityGroup.getName());
+          txn.rollback();
+          return false;
+        }
+        if (_securityGroupVMMapDao.findByVmIdGroupId(userVmId,securityGroup.getId()) == null) {
+          SecurityGroupVMMapVO groupVmMapVO=new SecurityGroupVMMapVO(securityGroup.getId(),userVmId);
+          _securityGroupVMMapDao.persist(groupVmMapVO);
+        }
+      }
+      txn.commit();
+      return true;
+    }
+  finally {
+      if (userVm != null) {
+        _userVMDao.releaseFromLockTable(userVmId);
+      }
+    }
+  }
+  return false;
+}

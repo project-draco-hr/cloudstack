@@ -1,16 +1,39 @@
 {
+  Task task=null;
   try {
-    vm.cleanShutdown(conn);
+    task=vm.cleanShutdownAsync(conn);
+    try {
+      waitForTask(conn,task,1000,10 * 60 * 1000);
+      checkForSuccess(conn,task);
+    }
+ catch (    Types.HandleInvalid e) {
+      if (vm.getPowerState(conn) == Types.VmPowerState.HALTED) {
+        task=null;
+        return;
+      }
+      throw new CloudRuntimeException("Shutdown VM catch HandleInvalid and VM is not in HALTED state");
+    }
   }
- catch (  Types.XenAPIException e) {
-    s_logger.debug("Unable to cleanShutdown VM(" + vmName + ") on host("+ _host.uuid+ ") due to "+ e.toString()+ ", try hard shutdown");
+ catch (  XenAPIException e) {
+    s_logger.debug("Unable to cleanShutdown VM(" + vmName + ") on host("+ _host.uuid+ ") due to "+ e.toString());
     try {
       vm.hardShutdown(conn);
+      return;
     }
  catch (    Exception e1) {
       String msg="Unable to hardShutdown VM(" + vmName + ") on host("+ _host.uuid+ ") due to "+ e.toString();
       s_logger.warn(msg,e1);
       throw new CloudRuntimeException(msg);
+    }
+  }
+ finally {
+    if (task != null) {
+      try {
+        task.destroy(conn);
+      }
+ catch (      Exception e1) {
+        s_logger.debug("unable to destroy task(" + task.toString() + ") on host("+ _host.uuid+ ") due to "+ e1.toString());
+      }
     }
   }
 }

@@ -30,12 +30,6 @@
       }
     }
   }
-  if (!vlanId.equals(Vlan.UNTAGGED)) {
-    VlanVO vlanHandle=_vlanDao.findByZoneAndVlanId(zoneId,vlanId);
-    if (vlanHandle != null && !vlanHandle.getVlanType().equals(vlanType)) {
-      throw new InvalidParameterValueException("This vlan id is already associated with the vlan type " + vlanHandle.getVlanType().toString() + ",whilst you are trying to associate it with vlan type "+ vlanType.toString());
-    }
-  }
   checkAccess(account,zone);
   boolean associateIpRangeToAccount=false;
   if (vlanType.equals(VlanType.VirtualNetwork)) {
@@ -148,14 +142,7 @@
   }
   VlanVO vlan=new VlanVO(vlanType,vlanId,vlanGateway,vlanNetmask,zone.getId(),ipRange,networkId);
   vlan=_vlanDao.persist(vlan);
-  if (account != null && vlanType.equals(VlanType.VirtualNetwork)) {
-    if (!savePublicIPRangeForAccount(startIP,endIP,zoneId,vlan.getId(),account.getId(),account.getDomainId())) {
-      deletePublicIPRange(vlan.getId());
-      _vlanDao.expunge(vlan.getId());
-      throw new CloudRuntimeException("Failed to save IP range. Please contact Cloud Support.");
-    }
-  }
- else   if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId())) {
+  if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId())) {
     deletePublicIPRange(vlan.getId());
     _vlanDao.expunge(vlan.getId());
     throw new CloudRuntimeException("Failed to save IP range. Please contact Cloud Support.");
@@ -173,10 +160,11 @@
     eventMsg+=", end IP = " + endIP;
   }
   eventMsg+=".";
-  Long accountId=((account == null) ? Account.ACCOUNT_ID_SYSTEM : account.getId());
-  saveConfigurationEvent(userId,accountId,EventTypes.EVENT_VLAN_IP_RANGE_CREATE,eventMsg,"vlanType=" + vlanType,"dcId=" + zoneId,"accountId=" + accountId,"podId=" + podId,"vlanId=" + vlanId,"vlanGateway=" + vlanGateway,"vlanNetmask=" + vlanNetmask,"startIP=" + startIP,"endIP=" + endIP);
   if (associateIpRangeToAccount) {
-    associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId());
+    long ipCount=_publicIpAddressDao.countIPs(zoneId,vlan.getId(),false);
+    _accountMgr.incrementResourceCount(account.getId(),ResourceType.public_ip,ipCount);
+    s_logger.trace("Updated " + ResourceType.public_ip + " resource count on "+ ipCount+ " for account "+ account);
+    _networkMgr.associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId());
   }
   return vlan;
 }
