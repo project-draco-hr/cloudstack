@@ -1,0 +1,57 @@
+{
+  ServiceOfferingVO svo=_offeringsDao.findById(vm.getServiceOfferingId());
+  CapacityVO capacityCpu=_capacityDao.findByHostIdType(hostId,CapacityVO.CAPACITY_TYPE_CPU);
+  CapacityVO capacityMemory=_capacityDao.findByHostIdType(hostId,CapacityVO.CAPACITY_TYPE_MEMORY);
+  if (capacityCpu == null || capacityMemory == null || svo == null) {
+    return false;
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    int vmCPU=svo.getCpu() * svo.getSpeed();
+    long vmMem=svo.getRamSize() * 1024L * 1024L;
+    capacityCpu=_capacityDao.lockRow(capacityCpu.getId(),true);
+    capacityMemory=_capacityDao.lockRow(capacityMemory.getId(),true);
+    long usedCpu=capacityCpu.getUsedCapacity();
+    long usedMem=capacityMemory.getUsedCapacity();
+    long reservedCpu=capacityCpu.getReservedCapacity();
+    long reservedMem=capacityMemory.getReservedCapacity();
+    long totalCpu=capacityCpu.getTotalCapacity();
+    long totalMem=capacityMemory.getTotalCapacity();
+    if (!moveFromReserved) {
+      if (usedCpu >= vmCPU) {
+        capacityCpu.setUsedCapacity(usedCpu - vmCPU);
+      }
+      if (usedMem >= vmMem) {
+        capacityMemory.setUsedCapacity(usedMem - vmMem);
+      }
+      if (moveToReservered) {
+        if (reservedCpu + vmCPU <= totalCpu) {
+          capacityCpu.setReservedCapacity(reservedCpu + vmCPU);
+        }
+        if (reservedMem + vmMem <= totalMem) {
+          capacityMemory.setReservedCapacity(reservedMem + vmMem);
+        }
+      }
+    }
+ else {
+      if (reservedCpu >= vmCPU) {
+        capacityCpu.setReservedCapacity(reservedCpu - vmCPU);
+      }
+      if (reservedMem >= vmMem) {
+        capacityMemory.setReservedCapacity(reservedMem - vmMem);
+      }
+    }
+    s_logger.debug("release cpu from host: " + hostId + ", old used: "+ usedCpu+ ",reserved: "+ reservedCpu+ ", total: "+ totalCpu+ "; new used: "+ capacityCpu.getUsedCapacity()+ ",reserved:"+ capacityCpu.getReservedCapacity()+ ",total: "+ capacityCpu.getTotalCapacity()+ "; movedfromreserved: "+ moveFromReserved+ ",moveToReservered"+ moveToReservered);
+    s_logger.debug("release mem from host: " + hostId + ", old used: "+ usedMem+ ",reserved: "+ reservedMem+ ", total: "+ totalMem+ "; new used: "+ capacityMemory.getUsedCapacity()+ ",reserved:"+ capacityMemory.getReservedCapacity()+ ",total: "+ capacityMemory.getTotalCapacity()+ "; movedfromreserved: "+ moveFromReserved+ ",moveToReservered"+ moveToReservered);
+    _capacityDao.update(capacityCpu.getId(),capacityCpu);
+    _capacityDao.update(capacityMemory.getId(),capacityMemory);
+    txn.commit();
+    return true;
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to transit vm's state, due to " + e.getMessage());
+    txn.rollback();
+    return false;
+  }
+}
