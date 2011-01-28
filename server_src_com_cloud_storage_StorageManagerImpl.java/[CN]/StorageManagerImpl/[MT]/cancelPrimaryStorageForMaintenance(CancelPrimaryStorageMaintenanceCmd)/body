@@ -1,69 +1,97 @@
 {
   Long primaryStorageId=cmd.getId();
   Long userId=UserContext.current().getCallerUserId();
+  User user=_userDao.findById(userId);
+  Account account=UserContext.current().getCaller();
   StoragePoolVO primaryStorage=null;
   try {
-    Transaction.currentTxn();
-    primaryStorage=_storagePoolDao.acquireInLockTable(primaryStorageId);
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    primaryStorage=_storagePoolDao.lockRow(primaryStorageId,true);
     if (primaryStorage == null) {
       String msg="Unable to obtain lock on the storage pool in cancelPrimaryStorageForMaintenance()";
       s_logger.error(msg);
       throw new ExecutionException(msg);
     }
-    if (primaryStorage.getStatus().equals(Status.Up) || primaryStorage.getStatus().equals(Status.PrepareForMaintenance)) {
+    if (primaryStorage.getStatus().equals(StoragePoolStatus.Up) || primaryStorage.getStatus().equals(StoragePoolStatus.PrepareForMaintenance)) {
       throw new StorageUnavailableException("Primary storage with id " + primaryStorageId + " is not ready to complete migration, as the status is:"+ primaryStorage.getStatus().toString(),primaryStorageId);
     }
-    primaryStorage.setStatus(Status.CancelMaintenance);
-    _storagePoolDao.persist(primaryStorage);
-    List<VolumeVO> allVolumes=_volsDao.findByPoolId(primaryStorageId);
-    for (    VolumeVO volume : allVolumes) {
-      if ((volume.getState() != Volume.State.Destroy) && (volume.getRemoved() == null)) {
-        VMInstanceVO vmInstance=_vmInstanceDao.findById(volume.getInstanceId());
-        if (vmInstance.getState().equals(State.Stopping) || vmInstance.getState().equals(State.Stopped)) {
-          if (vmInstance.getType().equals(VirtualMachine.Type.ConsoleProxy)) {
-            if (_consoleProxyMgr.startProxy(vmInstance.getId()) == null) {
-              String msg="There was an error starting the console proxy id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg);
-              throw new ExecutionException(msg);
-            }
+    primaryStorage.setStatus(StoragePoolStatus.CancelMaintenance);
+    _storagePoolDao.update(primaryStorageId,primaryStorage);
+    txn.commit();
+    txn.close();
+    List<StoragePoolWorkVO> pendingWork=_storagePoolWorkDao.listPendingWorkForCancelMaintenanceByPoolId(primaryStorageId);
+    for (    StoragePoolWorkVO work : pendingWork) {
+      VMInstanceVO vmInstance=_vmInstanceDao.findById(work.getVmId());
+      if (vmInstance == null)       continue;
+      if (vmInstance.getType().equals(VirtualMachine.Type.ConsoleProxy)) {
+        ConsoleProxyVO consoleProxy=_consoleProxyDao.findById(vmInstance.getId());
+        if (_vmMgr.advanceStart(consoleProxy,null,user,account) == null) {
+          String msg="There was an error starting the console proxy id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
+        SecondaryStorageVmVO ssVm=_secStrgDao.findById(vmInstance.getId());
+        if (_vmMgr.advanceStart(ssVm,null,user,account) == null) {
+          String msg="There was an error starting the ssvm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.DomainRouter)) {
+        DomainRouterVO domR=_domrDao.findById(vmInstance.getId());
+        if (_vmMgr.advanceStart(domR,null,user,account) == null) {
+          String msg="There was an error starting the domR id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.User)) {
+        UserVmVO userVm=_userVmDao.findById(vmInstance.getId());
+        try {
+          if (_vmMgr.advanceStart(userVm,null,user,account) == null) {
+            String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+            s_logger.warn(msg);
+            throw new ExecutionException(msg);
           }
-          if (vmInstance.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
-            if (_secStorageMgr.startSecStorageVm(vmInstance.getId()) == null) {
-              String msg="There was an error starting the ssvm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg);
-              throw new ExecutionException(msg);
-            }
+ else {
+            work.setStartedAfterMaintenance(true);
+            _storagePoolWorkDao.update(work.getId(),work);
           }
-          if (vmInstance.getType().equals(VirtualMachine.Type.User)) {
-            try {
-              if (_userVmMgr.startUserVm(vmInstance.getId()) == null) {
-                String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-                s_logger.warn(msg);
-                throw new ExecutionException(msg);
-              }
-            }
- catch (            StorageUnavailableException e) {
-              String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg,e);
-              throw new ExecutionException(msg);
-            }
-catch (            InsufficientCapacityException e) {
-              String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg,e);
-              throw new ExecutionException(msg);
-            }
-catch (            ConcurrentOperationException e) {
-              String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg,e);
-              setPoolStateToError(primaryStorage);
-              throw new ExecutionException(msg);
-            }
-catch (            ExecutionException e) {
-              String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
-              s_logger.warn(msg,e);
-              throw new ExecutionException(msg);
-            }
-          }
+        }
+ catch (        StorageUnavailableException e) {
+          String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg,e);
+          throw new ExecutionException(msg);
+        }
+catch (        InsufficientCapacityException e) {
+          String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg,e);
+          throw new ExecutionException(msg);
+        }
+catch (        ConcurrentOperationException e) {
+          String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg,e);
+          throw new ExecutionException(msg);
+        }
+catch (        ExecutionException e) {
+          String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg,e);
+          throw new ExecutionException(msg);
         }
       }
     }
@@ -80,8 +108,8 @@ catch (    CloudRuntimeException e) {
       s_logger.warn(msg,e);
       throw new ExecutionException(msg);
     }
-    primaryStorage.setStatus(Status.Up);
-    _storagePoolDao.persist(primaryStorage);
+    primaryStorage.setStatus(StoragePoolStatus.Up);
+    _storagePoolDao.update(primaryStorageId,primaryStorage);
     return primaryStorage;
   }
  catch (  Exception e) {
@@ -95,8 +123,5 @@ catch (    CloudRuntimeException e) {
  else {
       throw new ServerApiException(BaseCmd.INTERNAL_ERROR,e.getMessage());
     }
-  }
- finally {
-    _storagePoolDao.releaseFromLockTable(primaryStorage.getId());
   }
 }
