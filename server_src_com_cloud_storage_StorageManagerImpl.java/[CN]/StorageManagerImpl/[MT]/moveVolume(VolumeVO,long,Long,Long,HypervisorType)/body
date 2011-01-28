@@ -11,22 +11,25 @@
   StoragePoolVO srcPool=_storagePoolDao.findById(volume.getPoolId());
   String secondaryStorageURL=getSecondaryStorageURL(volume.getDataCenterId());
   String secondaryStorageVolumePath=null;
-  Long sourceHostId=findHostIdForStoragePool(srcPool);
-  Long destHostId=findHostIdForStoragePool(destPool);
-  if (sourceHostId == null) {
-    throw new CloudRuntimeException("Failed to find a host where the source storage pool is visible.");
-  }
- else   if (destHostId == null) {
-    throw new CloudRuntimeException("Failed to find a host where the dest storage pool is visible.");
-  }
   CopyVolumeCommand cvCmd=new CopyVolumeCommand(volume.getId(),volume.getPath(),srcPool,secondaryStorageURL,true);
-  CopyVolumeAnswer cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(sourceHostId,cvCmd);
+  CopyVolumeAnswer cvAnswer;
+  try {
+    cvAnswer=(CopyVolumeAnswer)sendToPool(srcPool,cvCmd);
+  }
+ catch (  StorageUnavailableException e1) {
+    throw new CloudRuntimeException("Failed to copy the volume from the source primary storage pool to secondary storage.",e1);
+  }
   if (cvAnswer == null || !cvAnswer.getResult()) {
     throw new CloudRuntimeException("Failed to copy the volume from the source primary storage pool to secondary storage.");
   }
   secondaryStorageVolumePath=cvAnswer.getVolumePath();
   cvCmd=new CopyVolumeCommand(volume.getId(),secondaryStorageVolumePath,destPool,secondaryStorageURL,false);
-  cvAnswer=(CopyVolumeAnswer)_agentMgr.easySend(destHostId,cvCmd);
+  try {
+    cvAnswer=(CopyVolumeAnswer)sendToPool(destPool,cvCmd);
+  }
+ catch (  StorageUnavailableException e1) {
+    throw new CloudRuntimeException("Failed to copy the volume from secondary storage to the destination primary storage pool.");
+  }
   if (cvAnswer == null || !cvAnswer.getResult()) {
     throw new CloudRuntimeException("Failed to copy the volume from secondary storage to the destination primary storage pool.");
   }
