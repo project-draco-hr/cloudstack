@@ -11,16 +11,12 @@
   StorageVol tmplVol=null;
   StorageVol primaryVol=null;
   String result;
+  Connect conn=null;
   try {
-    Connect conn=LibvirtConnection.getConnection();
-    secondaryPool=getNfsSPbyURI(conn,new URI(mountpoint));
-    if (secondaryPool == null) {
-      return new PrimaryStorageDownloadAnswer(" Failed to create storage pool");
-    }
+    conn=LibvirtConnection.getConnection();
+    secondaryPool=_storageResource.getStoragePoolbyURI(conn,new URI(mountpoint));
     if (tmpltname == null) {
-synchronized (getStoragePool(secondaryPool.getUUIDString())) {
-        secondaryPool.refresh(0);
-      }
+      _storageResource.storagePoolRefresh(secondaryPool);
       String[] volumes=secondaryPool.listVolumes();
       if (volumes == null) {
         return new PrimaryStorageDownloadAnswer("Failed to get volumes from pool: " + secondaryPool.getName());
@@ -35,24 +31,18 @@ synchronized (getStoragePool(secondaryPool.getUUIDString())) {
         return new PrimaryStorageDownloadAnswer("Failed to get template from pool: " + secondaryPool.getName());
       }
     }
-    tmplVol=getVolume(conn,secondaryPool,getPathOfStoragePool(secondaryPool) + tmpltname);
-    if (tmplVol == null) {
-      return new PrimaryStorageDownloadAnswer(" Can't find volume");
-    }
-    primaryPool=getStoragePool(conn,cmd.getPoolUuid());
+    LibvirtStoragePoolDef poolDef=_storageResource.getStoragePoolDef(conn,secondaryPool);
+    tmplVol=_storageResource.getVolume(conn,secondaryPool,poolDef.getTargetPath() + File.separator + tmpltname);
+    primaryPool=_storageResource.getStoragePool(conn,cmd.getPoolUuid());
     LibvirtStorageVolumeDef vol=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),tmplVol.getInfo().capacity,volFormat.QCOW2,null,null);
     s_logger.debug(vol.toString());
-    primaryVol=copyVolume(primaryPool,vol,tmplVol);
-    if (primaryVol == null) {
-      return new PrimaryStorageDownloadAnswer(" Can't create storage volume on storage pool");
-    }
+    primaryVol=_storageResource.copyVolume(primaryPool,vol,tmplVol);
     StorageVolInfo priVolInfo=primaryVol.getInfo();
     return new PrimaryStorageDownloadAnswer(primaryVol.getKey(),priVolInfo.allocation);
   }
  catch (  LibvirtException e) {
-    result="Failed to download template: " + e.toString();
-    s_logger.debug(result);
-    return new PrimaryStorageDownloadAnswer(result);
+    s_logger.debug(e.toString());
+    return new PrimaryStorageDownloadAnswer(e.toString());
   }
 catch (  URISyntaxException e) {
     return new PrimaryStorageDownloadAnswer(e.toString());
@@ -68,15 +58,7 @@ catch (  URISyntaxException e) {
       if (tmplVol != null) {
         tmplVol.free();
       }
-      if (secondaryPool != null) {
-        String uuid=secondaryPool.getUUIDString();
-synchronized (getStoragePool(uuid)) {
-          secondaryPool.destroy();
-          secondaryPool.undefine();
-          secondaryPool.free();
-        }
-        rmStoragePool(uuid);
-      }
+      _storageResource.deleteStoragePool(conn,secondaryPool);
     }
  catch (    LibvirtException l) {
     }
