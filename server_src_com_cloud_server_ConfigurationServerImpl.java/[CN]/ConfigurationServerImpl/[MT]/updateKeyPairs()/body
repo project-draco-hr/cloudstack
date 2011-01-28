@@ -3,18 +3,19 @@
     s_logger.info("Processing updateKeyPairs");
   }
   String already=_configDao.getValue("ssh.privatekey");
+  String homeDir=Script.runSimpleBashScript("echo ~");
+  String userid=System.getProperty("user.name");
+  if (homeDir == "~") {
+    s_logger.error("No home directory was detected.  Set the HOME environment variable to point to your user profile or home directory.");
+    throw new CloudRuntimeException("No home directory was detected.  Set the HOME environment variable to point to your user profile or home directory.");
+  }
+  File privkeyfile=new File(homeDir + "/.ssh/id_rsa");
+  File pubkeyfile=new File(homeDir + "/.ssh/id_rsa.pub");
   if (already == null || already.isEmpty()) {
     if (s_logger.isInfoEnabled()) {
       s_logger.info("Need to store in the database");
     }
-    String homeDir=Script.runSimpleBashScript("echo ~");
-    if (homeDir == "~") {
-      s_logger.error("No home directory was detected.  Set the HOME environment variable to point to your user profile or home directory.");
-      throw new RuntimeException("No home directory was detected.  Set the HOME environment variable to point to your user profile or home directory.");
-    }
-    String keygenOutput=Script.runSimpleBashScript("if [ -f ~/.ssh/id_rsa ] ; then true ; else yes '' | ssh-keygen -t rsa -q ; fi");
-    File privkeyfile=new File(homeDir + "/.ssh/id_rsa");
-    File pubkeyfile=new File(homeDir + "/.ssh/id_rsa.pub");
+    Script.runSimpleBashScript("if [ -f ~/.ssh/id_rsa ] ; then true ; else yes '' | ssh-keygen -t rsa -q ; fi");
     byte[] arr1=new byte[4094];
     try {
       new DataInputStream(new FileInputStream(privkeyfile)).readFully(arr1);
@@ -23,7 +24,7 @@
     }
 catch (    Exception e) {
       s_logger.error("Cannot read the private key file",e);
-      throw new RuntimeException("Cannot read the private key file");
+      throw new CloudRuntimeException("Cannot read the private key file");
     }
     String privateKey=new String(arr1).trim();
     byte[] arr2=new byte[4094];
@@ -34,7 +35,7 @@ catch (    Exception e) {
     }
 catch (    Exception e) {
       s_logger.warn("Cannot read the public key file",e);
-      throw new RuntimeException("Cannot read the public key file");
+      throw new CloudRuntimeException("Cannot read the public key file");
     }
     String publicKey=new String(arr2).trim();
     String insertSql1="INSERT INTO `cloud`.`configuration` (category, instance, component, name, value, description) " + "VALUES ('Hidden','DEFAULT', 'management-server','ssh.privatekey', '" + privateKey + "','Private key for the entire CloudStack')";
@@ -49,7 +50,7 @@ catch (    Exception e) {
     }
  catch (    SQLException ex) {
       s_logger.error("SQL of the private key failed",ex);
-      throw new RuntimeException("SQL of the private key failed");
+      throw new CloudRuntimeException("SQL of the private key failed");
     }
     try {
       PreparedStatement stmt2=txn.prepareAutoCloseStatement(insertSql2);
@@ -60,14 +61,21 @@ catch (    Exception e) {
     }
  catch (    SQLException ex) {
       s_logger.error("SQL of the public key failed",ex);
-      throw new RuntimeException("SQL of the public key failed");
+      throw new CloudRuntimeException("SQL of the public key failed");
     }
-    injectSshKeyIntoSystemVmIsoPatch(pubkeyfile.getAbsolutePath());
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Public key inserted into systemvm iso");
     }
   }
  else {
     s_logger.info("Keypairs already in database");
+    if (userid.startsWith("cloud")) {
+      s_logger.info("Keypairs already in database, updating local copy");
+      updateKeyPairsOnDisk(homeDir);
+    }
+  }
+  if (userid.startsWith("cloud")) {
+    s_logger.info("Going to update systemvm iso with generated keypairs if needed");
+    injectSshKeysIntoSystemVmIsoPatch(pubkeyfile.getAbsolutePath(),privkeyfile.getAbsolutePath());
   }
 }
