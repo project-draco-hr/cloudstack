@@ -1,0 +1,50 @@
+def __init__(self, session_ref=None, cache_file=None):
+    if (session_ref and cache_file):
+        raise Error("can't specify session reference and cache file")
+    if (cache_file == None):
+        import XenAPI
+        session = XenAPI.xapi_local()
+        if (not session_ref):
+            log('No session ref given on command line, logging in.')
+            session.xenapi.login_with_password('root', '')
+        else:
+            session._session = session_ref
+        try:
+            inventory = self.__read_xensource_inventory()
+            assert inventory.has_key('INSTALLATION_UUID')
+            log(('host uuid is %s' % inventory['INSTALLATION_UUID']))
+            host = session.xenapi.host.get_by_uuid(inventory['INSTALLATION_UUID'])
+            self.__get_pif_records_from_xapi(session, host)
+            self.__get_vlan_records_from_xapi(session)
+            self.__get_bond_records_from_xapi(session)
+            self.__get_network_records_from_xapi(session)
+        finally:
+            if (not session_ref):
+                session.xenapi.session.logout()
+    else:
+        log(('Loading xapi database cache from %s' % cache_file))
+        xml = parseXML((root_prefix() + cache_file))
+        self.__pifs = {}
+        self.__bonds = {}
+        self.__vlans = {}
+        self.__networks = {}
+        assert (len(xml.childNodes) == 1)
+        toplevel = xml.childNodes[0]
+        assert (toplevel.nodeName == 'xenserver-network-configuration')
+        for n in toplevel.childNodes:
+            if (n.nodeName == '#text'):
+                pass
+            elif (n.nodeName == _PIF_XML_TAG):
+                (ref, rec) = self.__from_xml(n, _PIF_ATTRS)
+                self.__pifs[ref] = rec
+            elif (n.nodeName == _BOND_XML_TAG):
+                (ref, rec) = self.__from_xml(n, _BOND_ATTRS)
+                self.__bonds[ref] = rec
+            elif (n.nodeName == _VLAN_XML_TAG):
+                (ref, rec) = self.__from_xml(n, _VLAN_ATTRS)
+                self.__vlans[ref] = rec
+            elif (n.nodeName == _NETWORK_XML_TAG):
+                (ref, rec) = self.__from_xml(n, _NETWORK_ATTRS)
+                self.__networks[ref] = rec
+            else:
+                raise Error(('Unknown XML element %s' % n.nodeName))
