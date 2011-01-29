@@ -1,0 +1,94 @@
+{
+  Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+  try {
+    if (task.getType() != Task.Type.DATA) {
+      super.doTask(task);
+      return;
+    }
+    final byte[] data=task.getData();
+    Version ver=Request.getVersion(data);
+    if (ver.ordinal() < Version.v3.ordinal()) {
+      super.doTask(task);
+      return;
+    }
+    long hostId=Request.getAgentId(data);
+    Link link=task.getLink();
+    if (Request.fromServer(data)) {
+      AgentAttache agent=findAgent(hostId);
+      if (Request.isControl(data)) {
+        if (agent == null) {
+          logD(data,"No attache to process cancellation");
+          return;
+        }
+        Request req=Request.parse(data);
+        Command[] cmds=req.getCommands();
+        CancelCommand cancel=(CancelCommand)cmds[0];
+        if (s_logger.isDebugEnabled()) {
+          logD(data,"Cancel request received");
+        }
+        agent.cancel(cancel.getSequence());
+        return;
+      }
+      try {
+        if (agent == null || agent.isClosed()) {
+          throw new AgentUnavailableException("Unable to route to agent ",hostId);
+        }
+        if (Request.isRequest(data) && Request.requiresSequentialExecution(data)) {
+          Request req=Request.parse(data);
+          agent.send(req,null);
+          return;
+        }
+ else {
+          if (agent instanceof Routable) {
+            Routable cluster=(Routable)agent;
+            cluster.routeToAgent(data);
+          }
+ else {
+            agent.send(Request.parse(data));
+          }
+          return;
+        }
+      }
+ catch (      AgentUnavailableException e) {
+        logD(data,e.getMessage());
+        cancel(Long.toString(Request.getManagementServerId(data)),hostId,Request.getSequence(data),e.getMessage());
+      }
+    }
+ else {
+      long mgmtId=Request.getManagementServerId(data);
+      if (mgmtId != -1 && mgmtId != _nodeId) {
+        routeToPeer(Long.toString(mgmtId),data);
+        if (Request.requiresSequentialExecution(data)) {
+          AgentAttache attache=(AgentAttache)link.attachment();
+          if (attache != null) {
+            attache.sendNext(Request.getSequence(data));
+          }
+ else           if (s_logger.isDebugEnabled()) {
+            logD(data,"No attache to process " + Request.parse(data).toString());
+          }
+        }
+        return;
+      }
+ else {
+        if (Request.isRequest(data)) {
+          super.doTask(task);
+        }
+ else {
+          final Response response=Response.parse(data);
+          AgentAttache attache=findAttache(response.getAgentId());
+          if (attache == null) {
+            s_logger.info("SeqA " + response.getAgentId() + "-"+ response.getSequence()+ "Unable to find attache to forward "+ response.toString());
+            return;
+          }
+          if (!attache.processAnswers(response.getSequence(),response)) {
+            s_logger.info("SeqA " + attache.getId() + "-"+ response.getSequence()+ ": Response is not processed: "+ response.toString());
+          }
+        }
+        return;
+      }
+    }
+  }
+  finally {
+    txn.close();
+  }
+}

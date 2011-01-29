@@ -1,0 +1,55 @@
+{
+  try {
+    s_logger.info("Start initializing SSL");
+    char[] passphrase="vmops.com".toCharArray();
+    KeyStore ks=KeyStore.getInstance("JKS");
+    ks.load(ConsoleProxy.class.getResourceAsStream("/realhostip.keystore"),passphrase);
+    try {
+      String certPath="/etc/cloud/consoleproxy/cert/customcert";
+      FileInputStream fis=new FileInputStream(certPath);
+      BufferedInputStream bis=new BufferedInputStream(fis);
+      CertificateFactory cf=CertificateFactory.getInstance("X.509");
+      while (bis.available() > 1) {
+        Certificate cert=cf.generateCertificate(bis);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("The custom certificate generated is:" + cert.toString());
+        }
+        Certificate[] chain=ks.getCertificateChain("realhostip");
+        Certificate[] newChain=new Certificate[chain.length + 1];
+        newChain[0]=cert;
+        System.arraycopy(chain,0,newChain,1,chain.length);
+        Key key=ks.getKey("realhostip",passphrase);
+        ks.setKeyEntry("realhostip",key,passphrase,newChain);
+        if (s_logger.isDebugEnabled())         s_logger.debug("Custom SSL cert added successfully to the keystore cert chain");
+      }
+    }
+ catch (    FileNotFoundException fnf) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to find the custom cert file at /etc/cloud/consoleproxy/cert/customcert",fnf);
+    }
+catch (    IOException ioe) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to read the custom cert file at /etc/cloud/consoleproxy/cert/customcert",ioe);
+    }
+catch (    KeyStoreException kse) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to add custom cert file at /etc/cloud/consoleproxy/cert/customcert to the keystore",kse);
+    }
+catch (    CertificateException ce) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to generate certificate from the file /etc/cloud/consoleproxy/cert/customcert",ce);
+    }
+catch (    Exception e) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to add custom cert file at /etc/cloud/consoleproxy/cert/customcert to the keystore",e);
+    }
+    s_logger.info("SSL certificate loaded");
+    KeyManagerFactory kmf=KeyManagerFactory.getInstance("SunX509");
+    kmf.init(ks,passphrase);
+    s_logger.info("Key manager factory is initialized");
+    TrustManagerFactory tmf=TrustManagerFactory.getInstance("SunX509");
+    tmf.init(ks);
+    s_logger.info("Trust manager factory is initialized");
+    sslContext=SSLContext.getInstance("TLS");
+    sslContext.init(kmf.getKeyManagers(),tmf.getTrustManagers(),null);
+    s_logger.info("SSL context is initialized");
+  }
+ catch (  Exception ioe) {
+    s_logger.error(ioe.toString(),ioe);
+  }
+}

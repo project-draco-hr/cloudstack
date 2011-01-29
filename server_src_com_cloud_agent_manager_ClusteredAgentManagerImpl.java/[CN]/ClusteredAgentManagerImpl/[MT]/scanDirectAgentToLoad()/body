@@ -1,0 +1,52 @@
+{
+  if (s_logger.isTraceEnabled())   s_logger.trace("Begin scanning directly connected hosts");
+  long cutSeconds=(System.currentTimeMillis() >> 10) - (_pingInterval * 3);
+  List<HostVO> hosts=_hostDao.findDirectAgentToLoad(_clusterMgr.getId(),cutSeconds,LOAD_SIZE);
+  if (hosts != null && hosts.size() == LOAD_SIZE) {
+    Long clusterId=hosts.get((int)(LOAD_SIZE - 1)).getClusterId();
+    if (clusterId != null) {
+      for (int i=(int)(LOAD_SIZE - 1); i > 0; i--) {
+        if (hosts.get(i).getClusterId() == clusterId) {
+          hosts.remove(i);
+        }
+ else {
+          break;
+        }
+      }
+    }
+  }
+  if (hosts != null && hosts.size() > 0) {
+    for (    HostVO host : hosts) {
+      AgentAttache agentattache=findAttache(host.getId());
+      if (agentattache != null) {
+        if (agentattache.forForward()) {
+          if (s_logger.isInfoEnabled())           s_logger.info("Host " + host.getName() + " is detected down, but we have a forward attache running, disconnect this one before launching the host");
+          removeAgent(agentattache,Status.Disconnected);
+        }
+ else {
+          continue;
+        }
+      }
+synchronized (_pendingDirectAttache) {
+        if (_pendingDirectAttache.contains(host.getId())) {
+          continue;
+        }
+      }
+      if (s_logger.isDebugEnabled())       s_logger.debug("Loading directly connected host " + host.getId() + "("+ host.getName()+ ")");
+synchronized (_pendingDirectAttache) {
+        _pendingDirectAttache.add(host.getId());
+      }
+      host.setLastPinged(System.currentTimeMillis() >> 10);
+      _hostDao.update(host.getId(),host);
+      loadDirectlyConnectedHost(host,new ActionDelegate<Long>(){
+        @Override public void action(        Long param){
+synchronized (_pendingDirectAttache) {
+            _pendingDirectAttache.remove(param);
+          }
+        }
+      }
+);
+    }
+  }
+  if (s_logger.isTraceEnabled())   s_logger.trace("End scanning directly connected hosts");
+}

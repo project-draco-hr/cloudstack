@@ -1,0 +1,38 @@
+{
+  if (s_logger.isInfoEnabled())   s_logger.info("Starting cluster manager, msid : " + _id);
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    final Class<?> c=this.getClass();
+    String version=c.getPackage().getImplementationVersion();
+    ManagementServerHostVO mshost=_mshostDao.findByMsid(_id);
+    if (mshost == null) {
+      mshost=new ManagementServerHostVO();
+      mshost.setMsid(_id);
+      mshost.setName(NetUtils.getHostName());
+      mshost.setVersion(version);
+      mshost.setServiceIP(_clusterNodeIP);
+      mshost.setServicePort(_currentServiceAdapter.getServicePort());
+      mshost.setLastUpdateTime(DateUtil.currentGMTTime());
+      mshost.setRemoved(null);
+      mshost.setAlertCount(0);
+      _mshostDao.persist(mshost);
+      if (s_logger.isInfoEnabled())       s_logger.info("New instance of management server msid " + _id + " is being started");
+    }
+ else {
+      if (s_logger.isInfoEnabled())       s_logger.info("Management server " + _id + " is being started");
+      _mshostDao.update(mshost.getId(),NetUtils.getHostName(),version,_clusterNodeIP,_currentServiceAdapter.getServicePort(),DateUtil.currentGMTTime());
+    }
+    txn.commit();
+    _mshostId=mshost.getId();
+    if (s_logger.isInfoEnabled())     s_logger.info("Management server (host id : " + _mshostId + ") is available at "+ _clusterNodeIP+ ":"+ _currentServiceAdapter.getServicePort());
+    _heartbeatScheduler.scheduleAtFixedRate(getHeartbeatTask(),heartbeatInterval,heartbeatInterval,TimeUnit.MILLISECONDS);
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception : ",e);
+    txn.rollback();
+    throw new CloudRuntimeException("Unable to initialize cluster info into database");
+  }
+  if (s_logger.isInfoEnabled())   s_logger.info("Cluster manager is started");
+  return true;
+}

@@ -1,0 +1,36 @@
+{
+  String tmplturl=cmd.getUrl();
+  int index=tmplturl.lastIndexOf("/");
+  String tmplpath=tmplturl.substring(0,index);
+  String poolName=cmd.getPoolUuid();
+  try {
+    URI uri=new URI(tmplpath);
+    String mountpoint=uri.getHost() + ":" + uri.getPath();
+    Connection conn=getConnection();
+    SR poolsr=null;
+    Set<SR> srs=SR.getByNameLabel(conn,poolName);
+    if (srs.size() != 1) {
+      String msg="There are " + srs.size() + " SRs with same name: "+ poolName;
+      s_logger.warn(msg);
+      return new PrimaryStorageDownloadAnswer(msg);
+    }
+ else {
+      poolsr=srs.iterator().next();
+    }
+    String pUuid=poolsr.getUuid(conn);
+    String uuid=copy_vhd_from_secondarystorage(conn,mountpoint,pUuid);
+    VDI tmpl=getVDIbyUuid(conn,uuid);
+    VDI snapshotvdi=tmpl.snapshot(conn,new HashMap<String,String>());
+    snapshotvdi.setNameLabel(conn,"Template " + cmd.getName());
+    tmpl.destroy(conn);
+    String parentuuid=snapshotvdi.getSmConfig(conn).get("vhd-parent");
+    VDI parent=getVDIbyUuid(conn,parentuuid);
+    Long phySize=parent.getPhysicalUtilisation(conn);
+    return new PrimaryStorageDownloadAnswer(snapshotvdi.getUuid(conn),phySize);
+  }
+ catch (  Exception e) {
+    String msg="Catch Exception " + e.getClass().getName() + " on host:"+ _host.uuid+ " for template: "+ tmplturl+ " due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new PrimaryStorageDownloadAnswer(msg);
+  }
+}
