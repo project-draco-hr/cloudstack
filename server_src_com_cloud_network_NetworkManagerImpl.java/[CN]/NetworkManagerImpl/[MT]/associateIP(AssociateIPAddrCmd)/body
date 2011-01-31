@@ -1,59 +1,25 @@
 {
-  String accountName=cmd.getAccountName();
-  long domainId=cmd.getDomainId();
-  Long zoneId=cmd.getZoneId();
   Account caller=UserContext.current().getCaller();
-  long userId=UserContext.current().getCallerUserId();
-  Account owner=_accountMgr.getActiveAccount(accountName,domainId);
-  if (owner == null) {
-    throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId+ ", permission denied");
+  Account owner=null;
+  IpAddress ipToAssoc=getIp(cmd.getEntityId());
+  if (ipToAssoc != null) {
+    _accountMgr.checkAccess(caller,ipToAssoc);
+    owner=_accountMgr.getAccount(ipToAssoc.getAccountId());
   }
-  _accountMgr.checkAccess(caller,owner);
-  long ownerId=owner.getId();
-  Long networkId=cmd.getNetworkId();
-  Network network=null;
-  if (networkId != null) {
-    network=_networksDao.findById(networkId);
-    if (network == null) {
-      throw new InvalidParameterValueException("Network id is invalid: " + networkId);
-    }
+ else {
+    s_logger.debug("Unable to find ip address by id: " + cmd.getEntityId());
+    return null;
   }
-  PublicIp ip=null;
+  Network network=_networksDao.findById(ipToAssoc.getAssociatedWithNetworkId());
+  IpAddress ip=_ipAddressDao.findById(cmd.getEntityId());
   boolean success=false;
-  Transaction txn=Transaction.currentTxn();
-  Account accountToLock=null;
   try {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Associate IP address called for user " + userId + " account "+ ownerId);
-    }
-    accountToLock=_accountDao.acquireInLockTable(ownerId);
-    if (accountToLock == null) {
-      s_logger.warn("Unable to lock account: " + ownerId);
-      throw new ConcurrentOperationException("Unable to acquire account lock");
-    }
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Associate IP address lock acquired");
-    }
-    if (_accountMgr.resourceLimitExceeded(accountToLock,ResourceType.public_ip)) {
-      ResourceAllocationException rae=new ResourceAllocationException("Maximum number of public IP addresses for account: " + accountToLock.getAccountName() + " has been exceeded.");
-      rae.setResourceType("ip");
-      throw rae;
-    }
-    txn.start();
-    ip=fetchNewPublicIp(zoneId,null,null,owner,VlanType.VirtualNetwork,network.getId(),false,false);
-    if (ip == null) {
-      throw new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zoneId);
-    }
-    _accountMgr.incrementResourceCount(ownerId,ResourceType.public_ip);
-    Ip ipAddress=ip.getAddress();
-    s_logger.debug("Got " + ipAddress + " to assign for account "+ owner.getId()+ " in zone "+ network.getDataCenterId());
-    txn.commit();
     success=applyIpAssociations(network,false);
     if (success) {
-      s_logger.debug("Successfully associated ip address " + ip + " for account "+ owner.getId()+ " in zone "+ network.getDataCenterId());
+      s_logger.debug("Successfully associated ip address " + ip.getAddress().addr() + " for account "+ owner.getId()+ " in zone "+ network.getDataCenterId());
     }
  else {
-      s_logger.warn("Failed to associate ip address " + ip + " for account "+ owner.getId()+ " in zone "+ network.getDataCenterId());
+      s_logger.warn("Failed to associate ip address " + ip.getAddress().addr() + " for account "+ owner.getId()+ " in zone "+ network.getDataCenterId());
     }
     return ip;
   }
@@ -62,23 +28,20 @@
     return null;
   }
  finally {
-    if (accountToLock != null) {
-      _accountDao.releaseFromLockTable(ownerId);
-      s_logger.debug("Associate IP address lock released");
-    }
+    Transaction txn=Transaction.currentTxn();
     if (!success) {
       if (ip != null) {
         try {
           s_logger.warn("Failed to associate ip address " + ip);
-          _ipAddressDao.markAsUnavailable(ip.getAddress(),ip.getAccountId());
+          _ipAddressDao.markAsUnavailable(ip.getId());
           applyIpAssociations(network,true);
         }
  catch (        Exception e) {
           s_logger.warn("Unable to disassociate ip address for recovery",e);
         }
         txn.start();
-        _ipAddressDao.unassignIpAddress(ip.getAddress());
-        _accountMgr.decrementResourceCount(ownerId,ResourceType.public_ip);
+        _ipAddressDao.unassignIpAddress(ip.getId());
+        _accountMgr.decrementResourceCount(owner.getId(),ResourceType.public_ip);
         txn.commit();
       }
     }
