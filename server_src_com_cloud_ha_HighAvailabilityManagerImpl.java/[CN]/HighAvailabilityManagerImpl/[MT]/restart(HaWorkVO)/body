@@ -1,11 +1,6 @@
 {
   final long vmId=work.getInstanceId();
-  final VirtualMachineGuru<VMInstanceVO> mgr=findManager(work.getType());
-  if (mgr == null) {
-    s_logger.warn("Unable to find a handler for " + work.getType().toString() + ", throwing out "+ vmId);
-    return null;
-  }
-  VMInstanceVO vm=mgr.findById(vmId);
+  VMInstanceVO vm=_itMgr.findById(work.getType(),work.getInstanceId());
   if (vm == null) {
     s_logger.info("Unable to find vm: " + vmId);
     return null;
@@ -16,7 +11,7 @@
     return null;
   }
   final HostVO host=_hostDao.findById(work.getHostId());
-  boolean nativeHA=isHostClusterNativeHAEnabled(work.getHostId());
+  boolean nativeHA=_agentMgr.isHostNativeHAEnabled(work.getHostId());
   DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
   HostPodVO podVO=_podDao.findById(host.getPodId());
   String hostDesc="name: " + host.getName() + "(id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
@@ -49,7 +44,6 @@
     if (alive != null && alive) {
       s_logger.debug("VM " + vm.getName() + " is found to be alive by "+ investigator.getName());
       if (host.getStatus() == Status.Up) {
-        compareState(vm,new AgentVmInfo(vm.getInstanceName(),mgr,State.Running),false,nativeHA);
         return null;
       }
  else {
@@ -75,13 +69,20 @@
       _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"Unable to restart " + vm.getName() + " which was running on host "+ hostDesc,"Insufficient capacity to restart VM, name: " + vm.getName() + ", id: "+ vmId+ " which was running on host "+ hostDesc);
       return (System.currentTimeMillis() >> 10) + _restartRetryInterval;
     }
-    _itMgr.stateTransitTo(vm,Event.AgentReportStopped,null);
-    mgr.finalizeStop(new VirtualMachineProfileImpl<VMInstanceVO>(vm),null);
+    try {
+      _itMgr.advanceStop(vm,true,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount());
+    }
+ catch (    ResourceUnavailableException e) {
+    }
+catch (    OperationTimedoutException e) {
+    }
+catch (    ConcurrentOperationException e) {
+    }
     work.setStep(Step.Scheduled);
     _haDao.update(work.getId(),work);
   }
   _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"VM (name: " + vm.getName() + ", id: "+ vmId+ ") stopped unexpectedly on host "+ hostDesc,"Virtual Machine " + vm.getName() + " (id: "+ vm.getId()+ ") running on host ["+ hostDesc+ "] stopped unexpectedly.");
-  vm=mgr.findById(vm.getId());
+  vm=_itMgr.findById(vm.getType(),vm.getId());
   if (!_forceHA && !vm.isHaEnabled()) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is not HA enabled so we're done.");
@@ -99,7 +100,7 @@
     return null;
   }
   try {
-    VMInstanceVO started=mgr.start(vm.getId());
+    VMInstanceVO started=_itMgr.advanceStart(vm,new HashMap<VirtualMachineProfile.Param,Object>(),_accountMgr.getSystemUser(),_accountMgr.getSystemAccount());
     if (started != null) {
       s_logger.info("VM is now restarted: " + vmId + " on "+ started.getHostId());
       return null;
@@ -107,7 +108,7 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Rescheduling VM " + vm.toString() + " to try again in "+ _restartRetryInterval);
     }
-    vm=mgr.findById(vm.getId());
+    vm=_itMgr.findById(vm.getType(),vm.getId());
     work.setUpdateTime(vm.getUpdated());
     work.setPreviousState(vm.getState());
     return (System.currentTimeMillis() >> 10) + _restartRetryInterval;
@@ -125,6 +126,9 @@ catch (  final ResourceUnavailableException e) {
 catch (  ConcurrentOperationException e) {
     s_logger.warn("Unable to restart " + vm.toString() + " due to "+ e.getMessage());
     _alertMgr.sendAlert(alertType,vm.getDataCenterId(),vm.getPodId(),"Unable to restart " + vm.getName() + " which was running on host "+ hostDesc,"The Storage is unavailable for trying to restart VM, name: " + vm.getName() + ", id: "+ vmId+ " which was running on host "+ hostDesc);
+    return null;
+  }
+catch (  OperationTimedoutException e) {
     return null;
   }
 }

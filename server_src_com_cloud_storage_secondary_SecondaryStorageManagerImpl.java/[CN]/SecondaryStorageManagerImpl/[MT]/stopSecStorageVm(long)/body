@@ -1,12 +1,4 @@
 {
-  AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
-  if (asyncExecutor != null) {
-    AsyncJobVO job=asyncExecutor.getJob();
-    if (s_logger.isInfoEnabled()) {
-      s_logger.info("Stop secondary storage vm " + secStorageVmId + ", update async job-"+ job.getId());
-    }
-    _asyncMgr.updateAsyncJobAttachment(job.getId(),"secStorageVm",secStorageVmId);
-  }
   SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findById(secStorageVmId);
   if (secStorageVm == null) {
     String msg="Stopping secondary storage vm failed: secondary storage vm " + secStorageVmId + " no longer exists";
@@ -16,7 +8,31 @@
     return false;
   }
   try {
-    return stop(secStorageVm);
+    if (secStorageVm.getHostId() != null) {
+      GlobalLock secStorageVmLock=GlobalLock.getInternLock(getSecStorageVmLockName(secStorageVm.getId()));
+      try {
+        if (secStorageVmLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+          try {
+            boolean result=_itMgr.stop(secStorageVm,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount());
+            if (result) {
+            }
+            return result;
+          }
+  finally {
+            secStorageVmLock.unlock();
+          }
+        }
+ else {
+          String msg="Unable to acquire secondary storage vm lock : " + secStorageVm.toString();
+          s_logger.debug(msg);
+          return false;
+        }
+      }
+  finally {
+        secStorageVmLock.releaseRef();
+      }
+    }
+    return true;
   }
  catch (  ResourceUnavailableException e) {
     if (s_logger.isDebugEnabled()) {

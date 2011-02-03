@@ -1,0 +1,41 @@
+{
+  Commands commands=new Commands(OnError.Continue);
+  final List<? extends VMInstanceVO> vms=_vmDao.listByHostId(hostId);
+  s_logger.debug("Found " + vms.size() + " VMs for host "+ hostId);
+  Map<Long,AgentVmInfo> states=convertToIds(newStates);
+  boolean nativeHA=_agentMgr.isHostNativeHAEnabled(hostId);
+  for (  final VMInstanceVO vm : vms) {
+    AgentVmInfo info=states.remove(vm.getId());
+    if (info == null) {
+      info=new AgentVmInfo(vm.getInstanceName(),null,State.Stopped);
+    }
+    VirtualMachineGuru<? extends VMInstanceVO> vmGuru=getVmGuru(vm);
+    VMInstanceVO castedVm=vmGuru.findById(vm.getId());
+    final Command command=compareState(castedVm,info,true,nativeHA);
+    if (command != null) {
+      commands.addCommand(command);
+    }
+  }
+  for (  final AgentVmInfo left : states.values()) {
+    if (nativeHA) {
+      for (      VirtualMachineGuru<? extends VMInstanceVO> vmGuru : _vmGurus.values()) {
+        VMInstanceVO vm=vmGuru.findByName(left.name);
+        if (vm == null) {
+          s_logger.warn("Stopping a VM that we have no record of: " + left.name);
+          commands.addCommand(cleanup(left.name));
+        }
+ else {
+          Command command=compareState(vm,left,true,nativeHA);
+          if (command != null) {
+            commands.addCommand(command);
+          }
+        }
+      }
+    }
+ else {
+      s_logger.warn("Stopping a VM that we have no record of: " + left.name);
+      commands.addCommand(cleanup(left.name));
+    }
+  }
+  return commands;
+}
