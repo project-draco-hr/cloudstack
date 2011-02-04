@@ -18,7 +18,7 @@
       throw new ServerApiException(BaseCmd.PARAM_ERROR,"Please specify a valid account.");
     }
   }
-  NetworkVO network=null;
+  Network network=null;
   if (networkId != null) {
     network=_networkDao.findById(networkId);
     if (network == null) {
@@ -83,5 +83,44 @@
       vlanId=vlan[1];
     }
   }
-  return createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,vlanGateway,vlanNetmask,forVirtualNetwork,vlanId,account,networkId);
+  boolean associateIpRangeToAccount=false;
+  if (forVirtualNetwork) {
+    if (account != null) {
+      long ipResourceLimit=_accountMgr.findCorrectResourceLimit((AccountVO)account,ResourceType.public_ip);
+      long accountIpRange=NetUtils.ip2Long(endIP) - NetUtils.ip2Long(startIP) + 1;
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(" IPResourceLimit " + ipResourceLimit + " accountIpRange "+ accountIpRange);
+      }
+      if (ipResourceLimit != -1 && accountIpRange > ipResourceLimit) {
+        throw new InvalidParameterValueException(" Public IP Resource Limit is set to " + ipResourceLimit + " which is less than the IP range of "+ accountIpRange+ " provided");
+      }
+      associateIpRangeToAccount=true;
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  Vlan vlan=createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,vlanGateway,vlanNetmask,forVirtualNetwork,vlanId,account,networkId);
+  if (associateIpRangeToAccount) {
+    _networkMgr.associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId(),network);
+    if (network == null) {
+      List<? extends Network> networks=_networkMgr.getVirtualNetworksOwnedByAccountInZone(account.getAccountName(),account.getDomainId(),zoneId);
+      network=networks.get(0);
+    }
+    if (network == null) {
+      throw new CloudRuntimeException("Failed to associate vlan to the account id=" + account.getId() + ", default network failed to create");
+    }
+  }
+  txn.commit();
+  if (associateIpRangeToAccount) {
+    if (network.getState() == Network.State.Implemented) {
+      s_logger.debug("Applying ip associations for vlan id=" + vlanId + " in network "+ network);
+      if (!_networkMgr.applyIpAssociations(network,false)) {
+        s_logger.warn("Failed to apply ip associations for vlan id=1 as a part of add vlan range for account id=" + account.getId());
+      }
+    }
+ else {
+      s_logger.trace("Network id=" + network.getId() + " is not Implemented, no need to apply ipAssociations");
+    }
+  }
+  return vlan;
 }

@@ -23,21 +23,7 @@
   }
   VlanType vlanType=forVirtualNetwork ? VlanType.VirtualNetwork : VlanType.DirectAttached;
   checkAccess(account,zone);
-  boolean associateIpRangeToAccount=false;
-  if (vlanType.equals(VlanType.VirtualNetwork)) {
-    if (account != null) {
-      long ipResourceLimit=_accountMgr.findCorrectResourceLimit((AccountVO)account,ResourceType.public_ip);
-      long accountIpRange=NetUtils.ip2Long(endIP) - NetUtils.ip2Long(startIP) + 1;
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(" IPResourceLimit " + ipResourceLimit + " accountIpRange "+ accountIpRange);
-      }
-      if (ipResourceLimit != -1 && accountIpRange > ipResourceLimit) {
-        throw new InvalidParameterValueException(" Public IP Resource Limit is set to " + ipResourceLimit + " which is less than the IP range of "+ accountIpRange+ " provided");
-      }
-      associateIpRangeToAccount=true;
-    }
-  }
- else   if (vlanType.equals(VlanType.DirectAttached)) {
+  if (vlanType.equals(VlanType.DirectAttached)) {
     if (account != null) {
       if (vlanId.equals(Vlan.UNTAGGED)) {
         throw new InvalidParameterValueException("Direct Attached IP ranges for an account must be tagged.");
@@ -61,9 +47,6 @@
         }
       }
     }
-  }
- else {
-    throw new InvalidParameterValueException("Please specify a valid IP range type. Valid types are: " + VlanType.values().toString());
   }
   if (!NetUtils.isValidIp(vlanGateway)) {
     throw new InvalidParameterValueException("Please specify a valid gateway");
@@ -132,11 +115,11 @@
   if (endIP != null) {
     ipRange+="-" + endIP;
   }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
   VlanVO vlan=new VlanVO(vlanType,vlanId,vlanGateway,vlanNetmask,zone.getId(),ipRange,networkId);
   vlan=_vlanDao.persist(vlan);
   if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId(),networkId)) {
-    deletePublicIPRange(vlan.getId());
-    _vlanDao.expunge(vlan.getId());
     throw new CloudRuntimeException("Failed to save IP range. Please contact Cloud Support.");
   }
   if (account != null) {
@@ -147,13 +130,6 @@
     PodVlanMapVO podVlanMapVO=new PodVlanMapVO(podId,vlan.getId());
     _podVlanMapDao.persist(podVlanMapVO);
   }
-  String eventMsg="Successfully created new IP range (tag = " + vlanId + ", gateway = "+ vlanGateway+ ", netmask = "+ vlanNetmask+ ", start IP = "+ startIP;
-  if (endIP != null) {
-    eventMsg+=", end IP = " + endIP;
-  }
-  eventMsg+=".";
-  if (associateIpRangeToAccount) {
-    _networkMgr.associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId());
-  }
+  txn.commit();
   return vlan;
 }
