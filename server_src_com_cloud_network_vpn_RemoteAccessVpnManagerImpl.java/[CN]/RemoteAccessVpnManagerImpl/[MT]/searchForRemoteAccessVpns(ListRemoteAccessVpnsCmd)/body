@@ -1,7 +1,13 @@
 {
   Account caller=UserContext.current().getCaller();
-  String accountName=cmd.getAccountName();
-  Long domainId=cmd.getDomainId();
+  String path=null;
+  Pair<String,Long> accountDomainPair=_accountMgr.finalizeAccountDomainForList(caller,cmd.getAccountName(),cmd.getDomainId());
+  String accountName=accountDomainPair.first();
+  Long domainId=accountDomainPair.second();
+  if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    Domain domain=_accountMgr.getDomain(caller.getDomainId());
+    path=domain.getPath();
+  }
   Long ipAddressId=cmd.getPublicIpId();
   if (ipAddressId != null) {
     PublicIpAddress publicIp=_networkMgr.getPublicIpAddress(ipAddressId);
@@ -15,23 +21,32 @@
       }
     }
     _accountMgr.checkAccess(caller,publicIp);
-    List<RemoteAccessVpnVO> vpns=new ArrayList<RemoteAccessVpnVO>(1);
-    RemoteAccessVpnVO remoteVpn=_remoteAccessVpnDao.findById(ipAddressId);
-    if (remoteVpn != null) {
-      vpns.add(remoteVpn);
-    }
-    return vpns;
   }
-  Account owner=null;
-  if (accountName != null) {
-    owner=_accountDao.findAccount(accountName,domainId);
+  Filter filter=new Filter(RemoteAccessVpnVO.class,"serverAddressId",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<RemoteAccessVpnVO> sb=_remoteAccessVpnDao.createSearchBuilder();
+  sb.and("serverAddressId",sb.entity().getServerAddressId(),Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),Op.EQ);
+  sb.and("state",sb.entity().getState(),Op.EQ);
+  if (path != null) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
-  _accountMgr.checkAccess(caller,owner);
-  Filter searchFilter=new Filter(RemoteAccessVpnVO.class,"serverAddress",true,cmd.getStartIndex(),cmd.getPageSizeVal());
-  SearchCriteria<RemoteAccessVpnVO> sc=VpnSearch.create();
-  sc.setParameters("accountId",owner.getId());
+  SearchCriteria<RemoteAccessVpnVO> sc=sb.create();
   sc.setParameters("state",RemoteAccessVpn.State.Running);
-  DomainVO domain=_domainDao.findById(domainId);
-  sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
-  return _remoteAccessVpnDao.search(sc,searchFilter);
+  if (ipAddressId != null) {
+    sc.setParameters("serverAddressId",ipAddressId);
+  }
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    if (accountName != null) {
+      Account account=_accountMgr.getActiveAccount(accountName,domainId);
+      sc.setParameters("accountId",account.getId());
+    }
+  }
+  if (path != null) {
+    sc.setJoinParameters("domainSearch","path",path + "%");
+  }
+  return _remoteAccessVpnDao.search(sc,filter);
 }
