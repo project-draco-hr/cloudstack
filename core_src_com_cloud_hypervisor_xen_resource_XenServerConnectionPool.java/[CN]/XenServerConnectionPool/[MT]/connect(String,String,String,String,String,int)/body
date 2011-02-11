@@ -11,7 +11,8 @@ synchronized (poolUuid.intern()) {
     mConn=getConnect(poolUuid);
     if (mConn != null) {
       try {
-        Host.getByUuid(mConn,hostUuid);
+        Host host=Host.getByUuid(mConn,hostUuid);
+        host.enable(mConn);
         return mConn;
       }
  catch (      Types.SessionInvalid e) {
@@ -26,6 +27,27 @@ synchronized (poolUuid.intern()) {
           removeConnect(poolUuid);
           mConn=null;
         }
+      }
+catch (      Types.CannotContactHost e) {
+        String msg="Can't connect host " + ipAddress + " due to "+ e.toString();
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(msg);
+        }
+        throw new CloudRuntimeException(msg,e);
+      }
+catch (      Types.HostOffline e) {
+        String msg="Can't connect host " + ipAddress + " due to "+ e.toString();
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(msg);
+        }
+        throw new CloudRuntimeException(msg,e);
+      }
+catch (      Types.HostNotLive e) {
+        String msg="Can't connect host " + ipAddress + " due to "+ e.toString();
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(msg);
+        }
+        throw new CloudRuntimeException(msg,e);
       }
 catch (      UuidInvalid e) {
         String msg="Host(" + hostUuid + ") doesn't belong to pool("+ poolUuid+ "), please execute 'xe pool-join master-address="+ mConn.getIp()+ " master-username="+ mConn.getUsername()+ " master-password="+ mConn.getPassword();
@@ -46,33 +68,47 @@ catch (      Exception e) {
       s_logger.debug("Logging on as the slave to " + ipAddress);
     }
     try {
-      sConn=new Connection(getURL(ipAddress));
-      Session.slaveLocalLoginWithPassword(sConn,username,password);
-    }
- catch (    Exception e) {
-      String msg="Unable to create slave connection to host(" + hostUuid + ") due to "+ e.toString();
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(msg);
-      }
-      throw new CloudRuntimeException(msg,e);
-    }
-    Pool.Record pr=null;
-    try {
-      pr=getPoolRecord(sConn);
-    }
- catch (    Exception e) {
-      PoolEmergencyTransitionToMaster(ipAddress,username,password);
-      mConn=new XenServerConnection(getURL(ipAddress),ipAddress,username,password,_retries,_interval,wait);
       try {
-        Session.loginWithPassword(mConn,username,password,APIVersion.latest().toString());
-        pr=getPoolRecord(mConn);
+        sConn=new Connection(getURL(ipAddress),5);
+        Session.slaveLocalLoginWithPassword(sConn,username,password);
       }
- catch (      Exception e1) {
-        String msg="Unable to create master connection to host(" + hostUuid + ") after transition it to master, due to "+ e1.toString();
+ catch (      Exception e) {
+        String msg="Unable to create slave connection to host(" + hostUuid + ") due to "+ e.toString();
         if (s_logger.isDebugEnabled()) {
           s_logger.debug(msg);
         }
-        throw new CloudRuntimeException(msg,e1);
+        throw new CloudRuntimeException(msg,e);
+      }
+      Pool.Record pr=null;
+      try {
+        pr=getPoolRecord(sConn);
+      }
+ catch (      Exception e) {
+        PoolEmergencyTransitionToMaster(ipAddress,username,password);
+        mConn=new XenServerConnection(getURL(ipAddress),ipAddress,username,password,_retries,_interval,wait);
+        try {
+          Session.loginWithPassword(mConn,username,password,APIVersion.latest().toString());
+          pr=getPoolRecord(mConn);
+        }
+ catch (        Exception e1) {
+          String msg="Unable to create master connection to host(" + hostUuid + ") after transition it to master, due to "+ e1.toString();
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug(msg);
+          }
+          throw new CloudRuntimeException(msg,e1);
+        }
+        if (!pr.uuid.equals(poolUuid)) {
+          String msg="host(" + hostUuid + ") should be in pool("+ poolUuid+ "), but it is actually in pool("+ pr.uuid+ ")";
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug(msg);
+          }
+          throw new CloudRuntimeException(msg);
+        }
+ else {
+          ensurePoolIntegrity(mConn,ipAddress,username,password,wait);
+          addConnect(poolUuid,mConn);
+          return mConn;
+        }
       }
       if (!pr.uuid.equals(poolUuid)) {
         String msg="host(" + hostUuid + ") should be in pool("+ poolUuid+ "), but it is actually in pool("+ pr.uuid+ ")";
@@ -81,32 +117,24 @@ catch (      Exception e) {
         }
         throw new CloudRuntimeException(msg);
       }
- else {
-        ensurePoolIntegrity(mConn,ipAddress,username,password,wait);
+      try {
+        masterIp=pr.master.getAddress(sConn);
+        mConn=new XenServerConnection(getURL(masterIp),masterIp,username,password,_retries,_interval,wait);
+        Session.loginWithPassword(mConn,username,password,APIVersion.latest().toString());
         addConnect(poolUuid,mConn);
         return mConn;
       }
-    }
-    if (!pr.uuid.equals(poolUuid)) {
-      String msg="host(" + hostUuid + ") should be in pool("+ poolUuid+ "), but it is actually in pool("+ pr.uuid+ ")";
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(msg);
+ catch (      Exception e) {
+        String msg="Unable to logon in " + masterIp + " as master in pool("+ poolUuid+ ")";
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(msg);
+        }
+        throw new CloudRuntimeException(msg);
       }
-      throw new CloudRuntimeException(msg);
     }
-    try {
-      masterIp=pr.master.getAddress(sConn);
-      mConn=new XenServerConnection(getURL(masterIp),masterIp,username,password,_retries,_interval,wait);
-      Session.loginWithPassword(mConn,username,password,APIVersion.latest().toString());
-      addConnect(poolUuid,mConn);
-      return mConn;
-    }
- catch (    Exception e) {
-      String msg="Unable to logon in " + masterIp + " as master in pool("+ poolUuid+ ")";
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(msg);
-      }
-      throw new CloudRuntimeException(msg);
+  finally {
+      localLogout(sConn);
+      sConn=null;
     }
   }
 }
