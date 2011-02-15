@@ -1,0 +1,71 @@
+{
+  UserContext ctx=UserContext.current();
+  Account caller=ctx.getCaller();
+  Long ipAddrId=rule.getSourceIpAddressId();
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddrId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " doesn't exist in the system");
+  }
+ else   if (ipAddress.isOneToOneNat()) {
+    throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " has static nat enabled");
+  }
+ else {
+    _accountMgr.checkAccess(caller,ipAddress);
+  }
+  Ip dstIp=rule.getDestinationIpAddress();
+  long networkId;
+  UserVmVO vm=null;
+  Network network=null;
+  if (vmId != null) {
+    vm=_vmDao.findById(vmId);
+    if (vm == null) {
+      throw new InvalidParameterValueException("Unable to create port forwarding rule on address " + ipAddress + ", invalid virtual machine id specified ("+ vmId+ ").");
+    }
+ else {
+      checkRuleAndUserVm(rule,vm,caller);
+    }
+    Pair<Network,Ip> guestNic=getUserVmGuestIpAddress(vm,false);
+    dstIp=guestNic.second();
+    network=guestNic.first();
+    if (network == null) {
+      throw new CloudRuntimeException("Unable to find ip address to map to in vm id=" + vmId);
+    }
+  }
+ else {
+    network=_networkMgr.getNetwork(rule.getNetworkId());
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to get the network " + rule.getNetworkId());
+    }
+  }
+  _accountMgr.checkAccess(caller,network);
+  networkId=network.getId();
+  long accountId=network.getAccountId();
+  long domainId=network.getDomainId();
+  Map<Network.Capability,String> firewallCapability=_networkMgr.getServiceCapability(network.getDataCenterId(),Service.Firewall);
+  String supportedProtocols=firewallCapability.get(Capability.SupportedProtocols).toLowerCase();
+  if (!supportedProtocols.contains(rule.getProtocol().toLowerCase())) {
+    throw new InvalidParameterValueException("Protocol " + rule.getProtocol() + " is not supported in zone "+ network.getDataCenterId());
+  }
+  if (rule.getDestinationPortStart() > rule.getDestinationPortEnd() || rule.getSourcePortStart() > rule.getSourcePortEnd()) {
+    throw new InvalidParameterValueException("Start port can't be bigger than end port");
+  }
+  PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol().toLowerCase(),networkId,accountId,domainId,vmId);
+  newRule=_forwardingDao.persist(newRule);
+  try {
+    detectRulesConflict(newRule,ipAddress);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    UserContext.current().setEventDetails("Rule Id: " + newRule.getId());
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NET_RULE_ADD,newRule.getAccountId(),0,newRule.getId(),null);
+    _usageEventDao.persist(usageEvent);
+    return newRule;
+  }
+ catch (  Exception e) {
+    _forwardingDao.remove(newRule.getId());
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add rule for the ip id=" + newRule.getSourceIpAddressId(),e);
+  }
+}

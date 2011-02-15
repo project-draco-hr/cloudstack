@@ -1,0 +1,60 @@
+{
+  UserContext ctx=UserContext.current();
+  Account caller=ctx.getCaller();
+  Long ipAddrId=rule.getSourceIpAddressId();
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddrId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to create static nat rule; ip id=" + ipAddrId + " doesn't exist in the system");
+  }
+ else   if (ipAddress.isSourceNat() || !ipAddress.isOneToOneNat() || ipAddress.getAssociatedWithVmId() == null) {
+    throw new NetworkRuleConflictException("Can't do static nat on ip address: " + ipAddress.getAddress());
+  }
+ else {
+    _accountMgr.checkAccess(caller,ipAddress);
+  }
+  long vmId=ipAddress.getAssociatedWithVmId();
+  UserVmVO vm=_vmDao.findById(vmId);
+  if (vm == null) {
+    throw new InvalidParameterValueException("Unable to create ip forwarding rule on address " + ipAddress + ", invalid virtual machine id specified ("+ vmId+ ").");
+  }
+ else {
+    checkRuleAndUserVm(rule,vm,caller);
+  }
+  Pair<Network,Ip> guestNic=getUserVmGuestIpAddress(vm,false);
+  Ip dstIp=guestNic.second();
+  Network guestNetwork=guestNic.first();
+  if (guestNetwork == null) {
+    throw new CloudRuntimeException("Unable to find ip address to map to in vm id=" + vmId);
+  }
+  _accountMgr.checkAccess(caller,guestNetwork);
+  long accountId=guestNetwork.getAccountId();
+  long domainId=guestNetwork.getDomainId();
+  Map<Network.Capability,String> firewallCapability=_networkMgr.getServiceCapability(guestNetwork.getDataCenterId(),Service.Firewall);
+  String supportedProtocols=firewallCapability.get(Capability.SupportedProtocols).toLowerCase();
+  if (!supportedProtocols.contains(rule.getProtocol().toLowerCase())) {
+    throw new InvalidParameterValueException("Protocol " + rule.getProtocol() + " is not supported in zone "+ guestNetwork.getDataCenterId());
+  }
+  if (rule.getSourcePortStart() > rule.getSourcePortEnd()) {
+    throw new InvalidParameterValueException("Start port can't be bigger than end port");
+  }
+  FirewallRuleVO newRule=new FirewallRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol().toLowerCase(),guestNetwork.getId(),accountId,domainId,rule.getPurpose());
+  newRule=_firewallDao.persist(newRule);
+  try {
+    detectRulesConflict(newRule,ipAddress);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    UserContext.current().setEventDetails("Rule Id: " + newRule.getId());
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NET_RULE_ADD,newRule.getAccountId(),0,newRule.getId(),null);
+    _usageEventDao.persist(usageEvent);
+    StaticNatRule staticNatRule=new StaticNatRuleImpl(newRule,dstIp.addr());
+    return staticNatRule;
+  }
+ catch (  Exception e) {
+    _forwardingDao.remove(newRule.getId());
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add static nat rule for the ip id=" + newRule.getSourceIpAddressId(),e);
+  }
+}

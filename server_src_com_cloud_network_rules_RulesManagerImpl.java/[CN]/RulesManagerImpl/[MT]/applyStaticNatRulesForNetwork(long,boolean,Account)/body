@@ -1,0 +1,32 @@
+{
+  List<FirewallRuleVO> rules=_firewallDao.listByNetworkIdAndPurpose(networkId,Purpose.StaticNat);
+  List<StaticNatRule> staticNatRules=new ArrayList<StaticNatRule>();
+  if (rules.size() == 0) {
+    s_logger.debug("There are no static nat rules to apply for network id=" + networkId);
+    return true;
+  }
+  if (caller != null) {
+    _accountMgr.checkAccess(caller,rules.toArray(new FirewallRule[rules.size()]));
+  }
+  for (  FirewallRuleVO rule : rules) {
+    IpAddress sourceIp=_ipAddressDao.findById(rule.getSourceIpAddressId());
+    UserVmVO vm=_vmDao.findById(sourceIp.getAssociatedWithVmId());
+    Pair<Network,Ip> guestNic=getUserVmGuestIpAddress(vm,true);
+    Ip dstIp=guestNic.second();
+    Network network=guestNic.first();
+    if (network == null) {
+      throw new CloudRuntimeException("Unable to find ip address to map to in vm id=" + vm.getId());
+    }
+    staticNatRules.add(new StaticNatRuleImpl(rule,dstIp.addr()));
+  }
+  try {
+    if (!applyRules(staticNatRules,continueOnError)) {
+      return false;
+    }
+  }
+ catch (  ResourceUnavailableException ex) {
+    s_logger.warn("Failed to apply firewall rules due to ",ex);
+    return false;
+  }
+  return true;
+}
