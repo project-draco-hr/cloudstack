@@ -1,0 +1,56 @@
+{
+  HostPodVO pod=_podDao.findById(id);
+  ;
+  if (pod == null) {
+    throw new ServerApiException(BaseCmd.PARAM_ERROR,"Unable to find pod by id " + id);
+  }
+  if (gateway != null || startIp != null || endIp != null) {
+    if (podHasAllocatedPrivateIPs(id)) {
+      throw new CloudRuntimeException("The specified pod has allocated private IP addresses, so its CIDR and IP address range cannot be changed.");
+    }
+  }
+  if (gateway == null) {
+    gateway=pod.getGateway();
+  }
+  String[] podIpRange=pod.getDescription().split("-");
+  if (startIp == null) {
+    startIp=podIpRange[0];
+  }
+  if (endIp == null) {
+    endIp=podIpRange[1];
+  }
+  if (netmask == null) {
+    netmask=NetUtils.getCidrNetmask(pod.getCidrSize());
+  }
+  String oldPodName=pod.getName();
+  if (name == null) {
+    name=oldPodName;
+  }
+  if (gateway == null) {
+    gateway=pod.getGateway();
+  }
+  String cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
+  boolean checkForDuplicates=!oldPodName.equals(name);
+  checkPodAttributes(id,name,pod.getDataCenterId(),gateway,cidr,startIp,endIp,checkForDuplicates);
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    long zoneId=pod.getDataCenterId();
+    _zoneDao.deletePrivateIpAddressByPod(pod.getId());
+    _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
+    pod.setName(name);
+    pod.setDataCenterId(zoneId);
+    pod.setGateway(gateway);
+    pod.setCidrAddress(getCidrAddress(cidr));
+    pod.setCidrSize(getCidrSize(cidr));
+    String ipRange=startIp + "-" + endIp;
+    pod.setDescription(ipRange);
+    _podDao.update(id,pod);
+    txn.commit();
+  }
+ catch (  Exception e) {
+    s_logger.error("Unable to edit pod due to " + e.getMessage(),e);
+    throw new CloudRuntimeException("Failed to edit pod. Please contact Cloud Support.");
+  }
+  return pod;
+}

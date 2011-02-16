@@ -1,5 +1,7 @@
 {
-  checkPodAttributes(-1,podName,zoneId,gateway,cidr,startIp,endIp,true);
+  if (!validZone(zoneId)) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
   String cidrAddress=getCidrAddress(cidr);
   int cidrSize=getCidrSize(cidr);
   if (startIp != null) {
@@ -7,37 +9,25 @@
       endIp=NetUtils.getIpRangeEndIpFromCidr(cidrAddress,cidrSize);
     }
   }
+  checkPodAttributes(-1,podName,zoneId,gateway,cidr,startIp,endIp,true);
   String ipRange;
   if (startIp != null) {
-    ipRange=startIp + "-";
-    if (endIp != null) {
-      ipRange+=endIp;
-    }
+    ipRange=startIp + "-" + endIp;
   }
  else {
-    ipRange="";
+    throw new InvalidParameterValueException("Start ip is required parameter");
   }
   HostPodVO pod=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
   Transaction txn=Transaction.currentTxn();
-  try {
-    txn.start();
-    if (_podDao.persist(pod) == null) {
-      txn.rollback();
-      throw new CloudRuntimeException("Failed to create new pod. Please contact Cloud Support.");
-    }
-    if (startIp != null) {
-      _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
-    }
-    String[] linkLocalIpRanges=getLinkLocalIPRange();
-    if (linkLocalIpRanges != null) {
-      _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
-    }
-    txn.commit();
+  txn.start();
+  pod=_podDao.persist(pod);
+  if (startIp != null) {
+    _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
   }
- catch (  Exception e) {
-    txn.rollback();
-    s_logger.error("Unable to create new pod due to " + e.getMessage(),e);
-    throw new CloudRuntimeException("Failed to create new pod. Please contact Cloud Support.");
+  String[] linkLocalIpRanges=getLinkLocalIPRange();
+  if (linkLocalIpRanges != null) {
+    _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
   }
+  txn.commit();
   return pod;
 }
