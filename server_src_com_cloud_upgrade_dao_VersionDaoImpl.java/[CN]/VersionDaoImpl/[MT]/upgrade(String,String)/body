@@ -1,0 +1,37 @@
+{
+  s_logger.info("Database upgrade must be performed from " + dbVersion + " to "+ currentVersion);
+  DbUpgrade[] upgrades=s_upgradeMap.get(new Pair<String,String>(dbVersion,currentVersion));
+  if (upgrades == null) {
+    throw new ConfigurationException("There is no upgrade path from " + dbVersion + " to "+ currentVersion);
+  }
+  boolean supportsRollingUpgrade=true;
+  for (  DbUpgrade upgrade : upgrades) {
+    if (!upgrade.supportsRollingUpgrade()) {
+      supportsRollingUpgrade=false;
+      break;
+    }
+  }
+  if (!supportsRollingUpgrade) {
+  }
+  for (  DbUpgrade upgrade : upgrades) {
+    s_logger.info("Running upgrade " + upgrade.getClass().getSimpleName() + " to upgrade from "+ upgrade.getUpgradableVersionRange()[0]+ "-"+ upgrade.getUpgradableVersionRange()[1]+ " to "+ upgrade.getUpgradedVersion());
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    upgrade.prepare();
+    upgrade.upgrade();
+    VersionVO version=new VersionVO(upgrade.getUpgradedVersion());
+    persist(version);
+    txn.commit();
+  }
+  for (  DbUpgrade upgrade : upgrades) {
+    s_logger.info("Cleanup upgrade " + upgrade.getClass().getSimpleName() + " to upgrade from "+ upgrade.getUpgradableVersionRange()[0]+ "-"+ upgrade.getUpgradableVersionRange()[1]+ " to "+ upgrade.getUpgradedVersion());
+    VersionVO version=findByVersion(upgrade.getUpgradedVersion(),Step.Upgrade);
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    upgrade.cleanup();
+    version.setStep(Step.Complete);
+    version.setUpdated(new Date());
+    update(version.getId(),version);
+    txn.commit();
+  }
+}
