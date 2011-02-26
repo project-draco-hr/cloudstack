@@ -13,27 +13,28 @@
       throw new InvalidParameterValueException("Failed to create snapshot policy, snapshots of volumes attached to System or router VM are not allowed");
     }
   }
-  IntervalType type=DateUtil.IntervalType.getIntervalType(cmd.getIntervalType());
-  if (type == null) {
+  IntervalType intvType=DateUtil.IntervalType.getIntervalType(cmd.getIntervalType());
+  if (intvType == null) {
     throw new InvalidParameterValueException("Unsupported interval type " + cmd.getIntervalType());
   }
+  Type type=getSnapshotType(intvType);
   TimeZone timeZone=TimeZone.getTimeZone(cmd.getTimezone());
   String timezoneId=timeZone.getID();
   if (!timezoneId.equals(cmd.getTimezone())) {
     s_logger.warn("Using timezone: " + timezoneId + " for running this snapshot policy as an equivalent of "+ cmd.getTimezone());
   }
   try {
-    DateUtil.getNextRunTime(type,cmd.getSchedule(),timezoneId,null);
+    DateUtil.getNextRunTime(intvType,cmd.getSchedule(),timezoneId,null);
   }
  catch (  Exception e) {
     throw new InvalidParameterValueException("Invalid schedule: " + cmd.getSchedule() + " for interval type: "+ cmd.getIntervalType());
   }
+  if (cmd.getMaxSnaps() <= 0) {
+    throw new InvalidParameterValueException("maxSnaps should be greater than 0");
+  }
   int intervalMaxSnaps=type.getMax();
   if (cmd.getMaxSnaps() > intervalMaxSnaps) {
     throw new InvalidParameterValueException("maxSnaps exceeds limit: " + intervalMaxSnaps + " for interval type: "+ cmd.getIntervalType());
-  }
-  if (cmd.getMaxSnaps() <= 0) {
-    throw new InvalidParameterValueException("maxSnaps should be greater than 0");
   }
   long accountLimit=_accountMgr.findCorrectResourceLimit(owner,ResourceType.snapshot);
   long domainLimit=_accountMgr.findCorrectResourceLimit(domain,ResourceType.snapshot);
@@ -41,12 +42,13 @@
   if (owner.getType() != Account.ACCOUNT_TYPE_ADMIN && ((accountLimit != -1 && max > accountLimit) || (domainLimit != -1 && max > domainLimit))) {
     throw new InvalidParameterValueException("Max number of snapshots shouldn't exceed the domain/account level snapshot limit");
   }
-  SnapshotPolicyVO policy=new SnapshotPolicyVO(volumeId,cmd.getSchedule(),timezoneId,(short)type.ordinal(),cmd.getMaxSnaps());
-  try {
+  SnapshotPolicyVO policy=_snapshotPolicyDao.findOneByVolumeInterval(volumeId,intvType);
+  if (policy == null) {
+    policy=new SnapshotPolicyVO(volumeId,cmd.getSchedule(),timezoneId,intvType,cmd.getMaxSnaps());
     policy=_snapshotPolicyDao.persist(policy);
+    _snapSchedMgr.scheduleNextSnapshotJob(policy);
   }
- catch (  EntityExistsException e) {
-    policy=_snapshotPolicyDao.findOneByVolume(volumeId);
+ else {
     try {
       policy=_snapshotPolicyDao.acquireInLockTable(policy.getId());
       policy.setSchedule(cmd.getSchedule());
@@ -62,6 +64,5 @@
       }
     }
   }
-  _snapSchedMgr.scheduleNextSnapshotJob(policy);
   return policy;
 }

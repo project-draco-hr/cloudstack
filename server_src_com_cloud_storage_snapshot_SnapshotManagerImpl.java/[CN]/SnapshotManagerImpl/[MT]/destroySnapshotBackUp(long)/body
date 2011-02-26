@@ -1,0 +1,34 @@
+{
+  boolean success=false;
+  String details;
+  SnapshotVO snapshot=_snapshotDao.findByIdIncludingRemoved(snapshotId);
+  if (snapshot == null) {
+    throw new CloudRuntimeException("Destroying snapshot " + snapshotId + " backup failed due to unable to find snapshot ");
+  }
+  String secondaryStoragePoolUrl=_storageMgr.getSecondaryStorageURL(snapshot.getDataCenterId());
+  Long dcId=snapshot.getDataCenterId();
+  Long accountId=snapshot.getAccountId();
+  Long volumeId=snapshot.getVolumeId();
+  HypervisorType hvType=snapshot.getHypervisorType();
+  String backupOfSnapshot=snapshot.getBackupSnapshotId();
+  if (backupOfSnapshot == null) {
+    return true;
+  }
+  DeleteSnapshotBackupCommand cmd=new DeleteSnapshotBackupCommand(null,secondaryStoragePoolUrl,dcId,accountId,volumeId,backupOfSnapshot,snapshot.getName());
+  snapshot.setBackupSnapshotId(null);
+  _snapshotDao.update(snapshotId,snapshot);
+  Answer answer=_agentMgr.sendTo(dcId,hvType,cmd);
+  if ((answer != null) && answer.getResult()) {
+    success=true;
+    details="Successfully deleted snapshot " + snapshotId + " for volumeId: "+ volumeId;
+    s_logger.debug(details);
+  }
+ else   if (answer != null) {
+    details="Failed to destroy snapshot id:" + snapshotId + " for volume: "+ volumeId+ " due to ";
+    if (answer.getDetails() != null) {
+      details+=answer.getDetails();
+    }
+    s_logger.error(details);
+  }
+  return success;
+}

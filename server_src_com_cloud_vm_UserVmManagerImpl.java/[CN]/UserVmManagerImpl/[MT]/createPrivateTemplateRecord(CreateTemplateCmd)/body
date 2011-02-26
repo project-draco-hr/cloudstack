@@ -10,91 +10,97 @@
   if (user == null) {
     throw new InvalidParameterValueException("User " + userId + " does not exist");
   }
-  Long volumeId=cmd.getVolumeId();
-  Long snapshotId=cmd.getSnapshotId();
-  if (volumeId == null) {
-    if (snapshotId == null) {
-      throw new InvalidParameterValueException("Failed to create private template record, neither volume ID nor snapshot ID were specified.");
-    }
-    SnapshotVO snapshot=_snapshotDao.findById(snapshotId);
-    if (snapshot == null) {
-      throw new InvalidParameterValueException("Failed to create private template record, unable to find snapshot " + snapshotId);
-    }
-    volumeId=snapshot.getVolumeId();
-  }
- else {
-    if (snapshotId != null) {
-      throw new InvalidParameterValueException("Failed to create private template record, please specify only one of volume ID (" + volumeId + ") and snapshot ID ("+ snapshotId+ ")");
-    }
-  }
-  VolumeVO volume=_volsDao.findById(volumeId);
-  if (volume == null) {
-    throw new InvalidParameterValueException("Volume with ID: " + volumeId + " does not exist");
-  }
-  if (!isAdmin) {
-    if (account.getId() != volume.getAccountId()) {
-      throw new PermissionDeniedException("Unable to create a template from volume with id " + volumeId + ", permission denied.");
-    }
-  }
- else   if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),volume.getDomainId())) {
-    throw new PermissionDeniedException("Unable to create a template from volume with id " + volumeId + ", permission denied.");
-  }
   String name=cmd.getTemplateName();
   if ((name == null) || (name.length() > 32)) {
     throw new InvalidParameterValueException("Template name cannot be null and should be less than 32 characters");
-  }
-  String uniqueName=Long.valueOf((userId == null) ? 1 : userId).toString() + Long.valueOf(volumeId).toString() + UUID.nameUUIDFromBytes(name.getBytes()).toString();
-  VMTemplateVO existingTemplate=_templateDao.findByTemplateNameAccountId(name,volume.getAccountId());
-  if (existingTemplate != null) {
-    throw new InvalidParameterValueException("Failed to create private template " + name + ", a template with that name already exists.");
-  }
-  AccountVO ownerAccount=_accountDao.findById(volume.getAccountId());
-  if (_accountMgr.resourceLimitExceeded(ownerAccount,ResourceType.template)) {
-    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of templates and ISOs for account: " + account.getAccountName() + " has been exceeded.");
-    rae.setResourceType("template");
-    throw rae;
   }
   Integer bits=cmd.getBits();
   Boolean requiresHvm=cmd.getRequiresHvm();
   Boolean passwordEnabled=cmd.isPasswordEnabled();
   Boolean isPublic=cmd.isPublic();
   Boolean featured=cmd.isFeatured();
-  HypervisorType hyperType=_volsDao.getHypervisorType(volumeId);
   int bitsValue=((bits == null) ? 64 : bits.intValue());
   boolean requiresHvmValue=((requiresHvm == null) ? true : requiresHvm.booleanValue());
   boolean passwordEnabledValue=((passwordEnabled == null) ? false : passwordEnabled.booleanValue());
   if (isPublic == null) {
     isPublic=Boolean.FALSE;
   }
-  if (!isAdmin || featured == null) {
-    featured=Boolean.FALSE;
-  }
   boolean allowPublicUserTemplates=Boolean.parseBoolean(_configDao.getValue("allow.public.user.templates"));
   if (!isAdmin && !allowPublicUserTemplates && isPublic) {
     throw new PermissionDeniedException("Failed to create template " + name + ", only private templates can be created.");
   }
-  if (Volume.VolumeType.ROOT.equals(volume.getVolumeType())) {
-    Long instanceId=volume.getInstanceId();
-    if (instanceId != null) {
-      UserVm vm=_vmDao.findById(instanceId);
-      if (vm != null) {
-        VMTemplateVO origTemplate=_templateDao.findById(vm.getTemplateId());
-        if (!ImageFormat.ISO.equals(origTemplate.getFormat()) && !ImageFormat.RAW.equals(origTemplate.getFormat())) {
-          bitsValue=origTemplate.getBits();
-          requiresHvmValue=origTemplate.requiresHvm();
-        }
-      }
+  Long volumeId=cmd.getVolumeId();
+  Long snapshotId=cmd.getSnapshotId();
+  if ((volumeId == null) && (snapshotId == null)) {
+    throw new InvalidParameterValueException("Failed to create private template record, neither volume ID nor snapshot ID were specified.");
+  }
+  if ((volumeId != null) && (snapshotId != null)) {
+    throw new InvalidParameterValueException("Failed to create private template record, please specify only one of volume ID (" + volumeId + ") and snapshot ID ("+ snapshotId+ ")");
+  }
+  long domainId;
+  long accountId;
+  HypervisorType hyperType;
+  VolumeVO volume=null;
+  if (volumeId != null) {
+    volume=_volsDao.findById(volumeId);
+    if (volume == null) {
+      throw new InvalidParameterValueException("Failed to create private template record, unable to find volume " + volumeId);
     }
+    if (!_storageMgr.volumeInactive(volume)) {
+      String msg="Unable to create private template for volume: " + volume.getName() + "; volume is attached to a non-stopped VM, please stop the VM first";
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info(msg);
+      }
+      throw new CloudRuntimeException(msg);
+    }
+    domainId=volume.getDomainId();
+    accountId=volume.getAccountId();
+    hyperType=_volsDao.getHypervisorType(volumeId);
+  }
+ else {
+    SnapshotVO snapshot=_snapshotDao.findById(snapshotId);
+    if (snapshot == null) {
+      throw new InvalidParameterValueException("Failed to create private template record, unable to find snapshot " + snapshotId);
+    }
+    domainId=snapshot.getDomainId();
+    accountId=snapshot.getAccountId();
+    hyperType=snapshot.getHypervisorType();
+    volume=_volsDao.findById(snapshot.getVolumeId());
+  }
+  if (!isAdmin) {
+    if (account.getId() != accountId) {
+      throw new PermissionDeniedException("Unable to create a template permission denied.");
+    }
+  }
+ else   if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+    throw new PermissionDeniedException("Unable to create a template permission denied.");
+  }
+  VMTemplateVO existingTemplate=_templateDao.findByTemplateNameAccountId(name,accountId);
+  if (existingTemplate != null) {
+    throw new InvalidParameterValueException("Failed to create private template " + name + ", a template with that name already exists.");
+  }
+  AccountVO ownerAccount=_accountDao.findById(accountId);
+  if (_accountMgr.resourceLimitExceeded(ownerAccount,ResourceType.template)) {
+    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of templates and ISOs for account: " + account.getAccountName() + " has been exceeded.");
+    rae.setResourceType("template");
+    throw rae;
+  }
+  if (!isAdmin || featured == null) {
+    featured=Boolean.FALSE;
   }
   Long guestOSId=cmd.getOsTypeId();
   GuestOSVO guestOS=_guestOSDao.findById(guestOSId);
   if (guestOS == null) {
     throw new InvalidParameterValueException("GuestOS with ID: " + guestOSId + " does not exist.");
   }
+  String uniqueName=Long.valueOf((userId == null) ? 1 : userId).toString() + UUID.nameUUIDFromBytes(name.getBytes()).toString();
   Long nextTemplateId=_templateDao.getNextInSequence(Long.class,"id");
   String description=cmd.getDisplayText();
-  VMTemplateVO template=ApiDBUtils.findTemplateById(volume.getTemplateId());
-  boolean isExtractable=template != null && template.isExtractable() && template.getTemplateType() != Storage.TemplateType.SYSTEM;
-  privateTemplate=new VMTemplateVO(nextTemplateId,uniqueName,name,ImageFormat.RAW,isPublic,featured,isExtractable,TemplateType.USER,null,null,requiresHvmValue,bitsValue,volume.getAccountId(),null,description,passwordEnabledValue,guestOS.getId(),true,hyperType);
+  boolean isExtractable=false;
+  if (volume != null) {
+    VMTemplateVO template=ApiDBUtils.findTemplateById(volume.getTemplateId());
+    isExtractable=template != null && template.isExtractable() && template.getTemplateType() != Storage.TemplateType.SYSTEM;
+  }
+  privateTemplate=new VMTemplateVO(nextTemplateId,uniqueName,name,ImageFormat.RAW,isPublic,featured,isExtractable,TemplateType.USER,null,null,requiresHvmValue,bitsValue,accountId,null,description,passwordEnabledValue,guestOS.getId(),true,hyperType);
   return _templateDao.persist(privateTemplate);
 }
