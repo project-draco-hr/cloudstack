@@ -5,82 +5,130 @@
   DataCenter dc=_dcDao.findById(vm.getDataCenterId());
   int cpu_requested=offering.getCpu() * offering.getSpeed();
   long ram_requested=offering.getRamSize() * 1024L * 1024L;
-  s_logger.debug("try to allocate a host from dc:" + plan.getDataCenterId() + ", pod:"+ plan.getPodId()+ ",cluster:"+ plan.getClusterId()+ ", requested cpu: "+ cpu_requested+ ", requested ram: "+ ram_requested);
+  s_logger.debug("In FirstFitPlanner:: plan");
+  s_logger.debug("Trying to allocate a host and storage pools from dc:" + plan.getDataCenterId() + ", pod:"+ plan.getPodId()+ ",cluster:"+ plan.getClusterId()+ ", requested cpu: "+ cpu_requested+ ", requested ram: "+ ram_requested);
+  s_logger.debug("Is ROOT volume READY (pool already allocated)?: " + (plan.getPoolId() != null ? "Yes" : "No"));
   if (vm.getLastHostId() != null) {
+    s_logger.debug("This VM has last host_id specified, trying to choose the same host: " + vm.getLastHostId());
     HostVO host=_hostDao.findById(vm.getLastHostId());
-    if (host != null && host.getStatus() == Status.Up) {
-      boolean canDepployToLastHost=deployToHost(host,cpu_requested,ram_requested,true,avoid);
-      if (canDepployToLastHost) {
-        Pod pod=_podDao.findById(vm.getPodId());
-        Cluster cluster=_clusterDao.findById(host.getClusterId());
-        return new DeployDestination(dc,pod,cluster,host);
-      }
-    }
-  }
-  List<HostPodVO> pods=null;
-  if (plan.getPodId() != null) {
-    HostPodVO pod=_podDao.findById(plan.getPodId());
-    if (pod != null && dc.getId() == pod.getDataCenterId()) {
-      pods=new ArrayList<HostPodVO>(1);
-      pods.add(pod);
+    if (host == null) {
+      s_logger.debug("The last host of this VM cannot be found");
     }
  else {
-      s_logger.debug("Can't enforce the pod selector");
+      if (host.getStatus() == Status.Up) {
+        if (_capacityMgr.checkIfHostHasCapacity(host.getId(),cpu_requested,ram_requested,true)) {
+          s_logger.debug("The last host of this VM is UP and has enough capacity");
+          s_logger.debug("Now checking for suitable pools under zone: " + vm.getDataCenterId() + ", pod: "+ vm.getPodId()+ ", cluster: "+ host.getClusterId());
+          DataCenterDeployment lastPlan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),host.getClusterId(),null);
+          Map<Volume,List<StoragePool>> suitableVolumeStoragePools=findSuitablePoolsForVolumes(vmProfile,lastPlan,avoid,RETURN_UPTO_ALL);
+          if (!suitableVolumeStoragePools.isEmpty()) {
+            List<Host> suitableHosts=new ArrayList<Host>();
+            suitableHosts.add(host);
+            Pair<Host,Map<Volume,StoragePool>> potentialResources=findPotentialDeploymentResources(suitableHosts,suitableVolumeStoragePools);
+            if (potentialResources != null) {
+              Pod pod=_podDao.findById(vm.getPodId());
+              Cluster cluster=_clusterDao.findById(host.getClusterId());
+              DeployDestination dest=new DeployDestination(dc,pod,cluster,host,potentialResources.second());
+              s_logger.debug("Returning Deployment Destination: " + dest);
+              return dest;
+            }
+          }
+        }
+ else {
+          s_logger.debug("The last host of this VM does not have enough capacity");
+        }
+      }
+ else {
+        s_logger.debug("The last host of this VM is not UP, host status is: " + host.getStatus().name());
+      }
+    }
+    s_logger.debug("Cannot choose the last host to deploy this VM ");
+  }
+  List<Long> clusterList=new ArrayList<Long>();
+  if (plan.getClusterId() != null) {
+    Long clusterIdSpecified=plan.getClusterId();
+    s_logger.debug("Searching resources only under specified Cluster: " + clusterIdSpecified);
+    ClusterVO cluster=_clusterDao.findById(plan.getClusterId());
+    if (cluster != null) {
+      clusterList.add(clusterIdSpecified);
+      return checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
+    }
+ else {
+      s_logger.debug("The specified cluster cannot be found, returning.");
+      avoid.addPod(plan.getClusterId());
       return null;
     }
   }
-  if (pods == null)   pods=_podDao.listByDataCenterId(plan.getDataCenterId());
-  if (_allocationAlgorithm != null && _allocationAlgorithm.equalsIgnoreCase("random")) {
-    Collections.shuffle(pods);
-  }
-  for (  HostPodVO hostPod : pods) {
-    if (avoid.shouldAvoid(hostPod)) {
-      continue;
-    }
-    List<ClusterVO> clusters=null;
-    if (plan.getClusterId() != null) {
-      ClusterVO cluster=_clusterDao.findById(plan.getClusterId());
-      if (cluster != null && hostPod.getId() == cluster.getPodId()) {
-        clusters=new ArrayList<ClusterVO>(1);
-        clusters.add(cluster);
+ else   if (plan.getPodId() != null) {
+    Long podIdSpecified=plan.getPodId();
+    s_logger.debug("Searching resources only under specified Pod: " + podIdSpecified);
+    HostPodVO pod=_podDao.findById(podIdSpecified);
+    if (pod != null) {
+      clusterList=listClustersByCapacity(podIdSpecified,cpu_requested,ram_requested,avoid,false);
+      if (!clusterList.isEmpty()) {
+        if (avoid.getClustersToAvoid() != null) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Removing from the clusterId list these clusters from avoid set: " + avoid.getClustersToAvoid());
+          }
+          clusterList.removeAll(avoid.getClustersToAvoid());
+        }
+        DeployDestination dest=checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
+        if (dest == null) {
+          avoid.addPod(plan.getPodId());
+        }
+        return dest;
       }
  else {
-        s_logger.debug("Can't enforce the cluster selector");
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("No clusters found under this pod, having a host with enough capacity, returning.");
+        }
+        avoid.addPod(plan.getPodId());
         return null;
       }
     }
-    if (clusters == null) {
-      clusters=_clusterDao.listByPodId(hostPod.getId());
+ else {
+      s_logger.debug("The specified Pod cannot be found, returning.");
+      avoid.addPod(plan.getPodId());
+      return null;
     }
-    if (_allocationAlgorithm != null && _allocationAlgorithm.equalsIgnoreCase("random")) {
-      Collections.shuffle(clusters);
-    }
-    for (    ClusterVO clusterVO : clusters) {
-      if (avoid.shouldAvoid(clusterVO)) {
-        continue;
-      }
-      if (clusterVO.getHypervisorType() != vmProfile.getHypervisorType()) {
-        avoid.addCluster(clusterVO.getId());
-        continue;
-      }
-      List<HostVO> hosts=_hostDao.listBy(Host.Type.Routing,clusterVO.getId(),hostPod.getId(),dc.getId());
-      if (_allocationAlgorithm != null && _allocationAlgorithm.equalsIgnoreCase("random")) {
-        Collections.shuffle(hosts);
-      }
-      hosts=prioritizeHosts(vmProfile.getTemplate(),hosts);
-      for (      HostVO hostVO : hosts) {
-        boolean canDeployToHost=deployToHost(hostVO,cpu_requested,ram_requested,false,avoid);
-        if (canDeployToHost) {
-          Pod pod=_podDao.findById(hostPod.getId());
-          Cluster cluster=_clusterDao.findById(clusterVO.getId());
-          Host host=_hostDao.findById(hostVO.getId());
-          return new DeployDestination(dc,pod,cluster,host);
-        }
-        avoid.addHost(hostVO.getId());
-      }
-      avoid.addCluster(clusterVO.getId());
-    }
-    avoid.addPod(hostPod.getId());
   }
-  return null;
+ else {
+    s_logger.debug("Searching all possible resources under this Zone: " + plan.getDataCenterId());
+    List<Long> prioritizedClusterIds=listClustersByCapacity(plan.getDataCenterId(),cpu_requested,ram_requested,avoid,true);
+    if (!prioritizedClusterIds.isEmpty()) {
+      if (avoid.getClustersToAvoid() != null) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Removing from the clusterId list these clusters from avoid set: " + avoid.getClustersToAvoid());
+        }
+        prioritizedClusterIds.removeAll(avoid.getClustersToAvoid());
+      }
+      boolean applyUserConcentrationPodHeuristic=Boolean.parseBoolean(_configDao.getValue(Config.UseUserConcentratedPodAllocation.key()));
+      if (applyUserConcentrationPodHeuristic && vmProfile.getOwner() != null) {
+        long accountId=vmProfile.getOwner().getAccountId();
+        List<Long> podIds=listPodsByUserConcentration(plan.getDataCenterId(),accountId);
+        if (!podIds.isEmpty()) {
+          if (avoid.getPodsToAvoid() != null) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Removing from the pod list these pods from avoid set: " + avoid.getPodsToAvoid());
+            }
+            podIds.removeAll(avoid.getPodsToAvoid());
+          }
+          clusterList=reorderClustersByPods(prioritizedClusterIds,podIds);
+        }
+ else {
+          clusterList=prioritizedClusterIds;
+        }
+      }
+ else {
+        clusterList=prioritizedClusterIds;
+      }
+      return checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("No clusters found having a host with enough capacity, returning.");
+      }
+      return null;
+    }
+  }
 }

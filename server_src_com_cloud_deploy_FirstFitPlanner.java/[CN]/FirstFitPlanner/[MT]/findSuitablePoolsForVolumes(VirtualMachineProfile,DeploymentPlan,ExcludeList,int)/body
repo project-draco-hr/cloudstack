@@ -1,0 +1,38 @@
+{
+  List<VolumeVO> volumesTobeCreated=_volsDao.findUsableVolumesForInstance(vmProfile.getId());
+  Map<Volume,List<StoragePool>> suitableVolumeStoragePools=new HashMap<Volume,List<StoragePool>>();
+  s_logger.debug("Calling StoragePoolAllocators to find suitable pools");
+  for (  VolumeVO toBeCreated : volumesTobeCreated) {
+    s_logger.debug("Checking suitable pools for volume (Id, Type): (" + toBeCreated.getId() + ","+ toBeCreated.getVolumeType().name()+ ")");
+    if (plan.getPoolId() != null) {
+      if (toBeCreated.getPoolId() != null && toBeCreated.getPoolId().longValue() == plan.getPoolId().longValue()) {
+        s_logger.debug("Volume is in READY state and has pool already allocated.");
+        List<StoragePool> suitablePools=new ArrayList<StoragePool>();
+        StoragePoolVO pool=_storagePoolDao.findById(toBeCreated.getPoolId());
+        suitablePools.add(pool);
+        suitableVolumeStoragePools.put(toBeCreated,suitablePools);
+        continue;
+      }
+    }
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(toBeCreated.getDiskOfferingId());
+    DiskProfile diskProfile=new DiskProfile(toBeCreated,diskOffering,vmProfile.getHypervisorType());
+    boolean foundPotentialPools=false;
+    Enumeration<StoragePoolAllocator> enPool=_storagePoolAllocators.enumeration();
+    while (enPool.hasMoreElements()) {
+      final StoragePoolAllocator allocator=enPool.nextElement();
+      final List<StoragePool> suitablePools=allocator.allocateToPool(diskProfile,vmProfile,plan,avoid,returnUpTo);
+      if (suitablePools != null && !suitablePools.isEmpty()) {
+        suitableVolumeStoragePools.put(toBeCreated,suitablePools);
+        foundPotentialPools=true;
+        break;
+      }
+    }
+    if (!foundPotentialPools) {
+      break;
+    }
+  }
+  if (suitableVolumeStoragePools.isEmpty()) {
+    s_logger.debug("No suitable pools found");
+  }
+  return suitableVolumeStoragePools;
+}

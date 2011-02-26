@@ -1,0 +1,38 @@
+{
+  for (  Long clusterId : clusterList) {
+    Cluster clusterVO=_clusterDao.findById(clusterId);
+    if (clusterVO.getHypervisorType() != vmProfile.getHypervisorType()) {
+      s_logger.debug("Cluster: " + clusterId + " has HyperVisorType that does not match the VM, skipping this cluster");
+      avoid.addCluster(clusterVO.getId());
+      continue;
+    }
+    s_logger.debug("Checking resources in Cluster: " + clusterId + " under Pod: "+ clusterVO.getPodId());
+    DataCenterDeployment potentialPlan=new DataCenterDeployment(plan.getDataCenterId(),clusterVO.getPodId(),clusterVO.getId(),plan.getPoolId());
+    List<Host> suitableHosts=findSuitableHosts(vmProfile,potentialPlan,avoid,RETURN_UPTO_ALL);
+    if (suitableHosts != null && !suitableHosts.isEmpty()) {
+      if (_allocationAlgorithm != null && _allocationAlgorithm.equalsIgnoreCase("random")) {
+        Collections.shuffle(suitableHosts);
+      }
+      Map<Volume,List<StoragePool>> suitableVolumeStoragePools=findSuitablePoolsForVolumes(vmProfile,potentialPlan,avoid,RETURN_UPTO_ALL);
+      if (!suitableVolumeStoragePools.isEmpty()) {
+        Pair<Host,Map<Volume,StoragePool>> potentialResources=findPotentialDeploymentResources(suitableHosts,suitableVolumeStoragePools);
+        if (potentialResources != null) {
+          Pod pod=_podDao.findById(clusterVO.getPodId());
+          Host host=_hostDao.findById(potentialResources.first().getId());
+          DeployDestination dest=new DeployDestination(dc,pod,clusterVO,host,potentialResources.second());
+          s_logger.debug("Returning Deployment Destination: " + dest);
+          return dest;
+        }
+      }
+ else {
+        s_logger.debug("No suitable storagePools found under this Cluster: " + clusterId);
+      }
+    }
+ else {
+      s_logger.debug("No suitable hosts found under this Cluster: " + clusterId);
+    }
+    avoid.addCluster(clusterVO.getId());
+  }
+  s_logger.debug("Could not find suitable Deployment Destination for this VM under any clusters, returning. ");
+  return null;
+}
