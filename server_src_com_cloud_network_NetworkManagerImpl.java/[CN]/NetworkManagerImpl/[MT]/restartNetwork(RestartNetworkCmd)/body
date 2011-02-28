@@ -1,44 +1,16 @@
 {
   Long networkId=cmd.getNetworkId();
-  NetworkVO network=_networksDao.findById(networkId);
-  Account owner=_accountMgr.getAccount(network.getAccountId());
   User caller=_accountMgr.getActiveUser(UserContext.current().getCallerUserId());
   Account callerAccount=_accountMgr.getActiveAccount(caller.getAccountId());
+  NetworkVO network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Network with id=" + networkId + " doesn't exist");
+  }
+  Account owner=_accountMgr.getAccount(network.getAccountId());
   ReservationContext context=new ReservationContextImpl(null,null,caller,owner);
   _accountMgr.checkAccess(callerAccount,network);
   boolean success=true;
-  s_logger.debug("Restarting network " + networkId + "...");
-  for (  NetworkElement element : _networkElements) {
-    if (!element.restart(network,context)) {
-      s_logger.warn("Failed to restart network element(s) as a part of network id" + networkId + " restart");
-      success=false;
-    }
-  }
-  if (!applyIpAssociations(network,false)) {
-    s_logger.warn("Failed to apply ip addresses as a part of network id" + networkId + " restart");
-    success=false;
-  }
-  if (!_rulesMgr.applyPortForwardingRulesForNetwork(networkId,false,context.getAccount())) {
-    s_logger.warn("Failed to reapply port forwarding rule(s) as a part of network id=" + networkId + " restart");
-    success=false;
-  }
-  if (!_rulesMgr.applyStaticNatRulesForNetwork(networkId,false,context.getAccount())) {
-    s_logger.warn("Failed to reapply static nat rule(s) as a part of network id=" + networkId + " restart");
-    success=false;
-  }
-  if (!_lbMgr.applyLoadBalancersForNetwork(networkId)) {
-    s_logger.warn("Failed to reapply load balancer rules as a part of network id=" + networkId + " restart");
-    success=false;
-  }
-  List<? extends RemoteAccessVpn> vpnsToReapply=_vpnMgr.listRemoteAccessVpns(networkId);
-  if (vpnsToReapply != null) {
-    for (    RemoteAccessVpn vpn : vpnsToReapply) {
-      if (_vpnMgr.startRemoteAccessVpn(vpn.getServerAddressId()) == null) {
-        s_logger.warn("Failed to reapply vpn rules as a part of network id=" + networkId + " restart");
-        success=false;
-      }
-    }
-  }
+  success=restartNetwork(networkId,true,context);
   if (success) {
     s_logger.debug("Network id=" + networkId + " is restarted successfully.");
   }
