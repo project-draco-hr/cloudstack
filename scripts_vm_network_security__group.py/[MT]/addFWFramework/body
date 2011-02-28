@@ -1,9 +1,36 @@
 def addFWFramework(brname):
-    brfw = ('BRIDGE-FIREWALL-' + brname)
+    try:
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-arptables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-arptables 1\n                        save'
+            (augtool < script)
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-iptables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-iptables 1\n                        save'
+            (augtool < script)
+        alreadySetup = augtool.match('/files/etc/sysctl.conf/net.bridge.bridge-nf-call-ip6tables', '1').stdout.strip()
+        if (len(alreadySetup) == 0):
+            script = '\n                        set /files/etc/sysctl.conf/net.bridge.bridge-nf-call-ip6tables 1\n                        save'
+            (augtool < script)
+        execute('sysctl -p /etc/sysctl.conf')
+    except:
+        logging.debug('failed to turn on bridge netfilter')
+        return False
+    brfw = ('BF-' + brname)
     try:
         execute(('iptables -L ' + brfw))
     except:
         execute(('iptables -N ' + brfw))
+    brfwout = (brfw + '-OUT')
+    try:
+        execute(('iptables -L ' + brfwout))
+    except:
+        execute(('iptables -N ' + brfwout))
+    brfwin = (brfw + '-IN')
+    try:
+        execute(('iptables -L ' + brfwin))
+    except:
+        execute(('iptables -N ' + brfwin))
     try:
         refs = execute((((('iptables -n -L  ' + brfw) + ' |grep ') + brfw) + " | cut -d \\( -f2 | awk '{print $1}'")).strip()
         if (refs == '0'):
@@ -12,6 +39,8 @@ def addFWFramework(brname):
             phydev = execute((('brctl show |grep ' + brname) + " | awk '{print $4}'")).strip()
             execute((((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-out ') + phydev) + ' -j ACCEPT'))
             execute((('iptables -A ' + brfw) + ' -m state --state RELATED,ESTABLISHED -j ACCEPT'))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-out -j ') + brfwout))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-in -j ') + brfwin))
             execute((('iptables -A FORWARD -i ' + brname) + ' -j DROP'))
             execute((('iptables -A FORWARD -o ' + brname) + ' -j DROP'))
         return True
