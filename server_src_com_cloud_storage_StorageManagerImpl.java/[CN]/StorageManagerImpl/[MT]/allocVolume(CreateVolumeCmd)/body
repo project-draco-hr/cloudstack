@@ -1,2 +1,130 @@
 {
+  Account account=UserContext.current().getCaller();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  Account targetAccount=null;
+  if ((account == null) || isAdmin(account.getType())) {
+    if ((domainId != null) && (accountName != null)) {
+      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Unable to create volume in domain " + domainId + ", permission denied.");
+      }
+      targetAccount=_accountDao.findActiveAccount(accountName,domainId);
+    }
+ else {
+      targetAccount=account;
+    }
+    if (targetAccount == null) {
+      throw new InvalidParameterValueException("Unable to find account with name: " + accountName + " and domain ID: "+ domainId);
+    }
+  }
+ else {
+    targetAccount=account;
+  }
+  if (_accountMgr.resourceLimitExceeded(targetAccount,ResourceType.volume)) {
+    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of volumes for account: " + targetAccount.getAccountName() + " has been exceeded.");
+    rae.setResourceType("volume");
+    throw rae;
+  }
+  Long zoneId=null;
+  Long diskOfferingId=null;
+  Long size=null;
+  if ((cmd.getSnapshotId() == null && cmd.getDiskOfferingId() == null) || (cmd.getSnapshotId() != null && cmd.getDiskOfferingId() != null)) {
+    throw new InvalidParameterValueException("Either disk Offering Id or snapshot Id must be passed whilst creating volume");
+  }
+  if (cmd.getSnapshotId() == null) {
+    zoneId=cmd.getZoneId();
+    if ((zoneId == null)) {
+      throw new InvalidParameterValueException("Missing parameter, zoneid must be specified.");
+    }
+    diskOfferingId=cmd.getDiskOfferingId();
+    size=cmd.getSize();
+    if (diskOfferingId == null) {
+      throw new InvalidParameterValueException("Missing parameter(s),either a positive volume size or a valid disk offering id must be specified.");
+    }
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+    if ((diskOffering == null) || !DiskOfferingVO.Type.Disk.equals(diskOffering.getType())) {
+      throw new InvalidParameterValueException("Please specify a valid disk offering.");
+    }
+    if ((diskOffering.isCustomized() && size == null)) {
+      throw new InvalidParameterValueException("This disk offering requires a custom size specified");
+    }
+    if (!diskOffering.isCustomized() && size != null) {
+      throw new InvalidParameterValueException("This disk offering does not allow custom size");
+    }
+    if (diskOffering.getDomainId() == null) {
+    }
+ else {
+      _configMgr.checkDiskOfferingAccess(account,diskOffering);
+    }
+    if (!validateVolumeSizeRange(diskOffering.getDiskSize() / 1024)) {
+      throw new InvalidParameterValueException("Invalid size for custom volume creation: " + size + " ,max volume size is:"+ _maxVolumeSizeInGb);
+    }
+    if (diskOffering.getDiskSize() > 0) {
+      size=(diskOffering.getDiskSize() * 1024 * 1024);
+    }
+ else {
+      if (!validateVolumeSizeRange(size)) {
+        throw new InvalidParameterValueException("Invalid size for custom volume creation: " + size + " ,max volume size is:"+ _maxVolumeSizeInGb);
+      }
+      size=(size * 1024 * 1024* 1024);
+    }
+  }
+ else {
+    Long snapshotId=cmd.getSnapshotId();
+    SnapshotVO snapshotCheck=_snapshotDao.findById(snapshotId);
+    diskOfferingId=cmd.getDiskOfferingId();
+    if (snapshotCheck == null) {
+      throw new InvalidParameterValueException("unable to find a snapshot with id " + snapshotId);
+    }
+    zoneId=snapshotCheck.getDataCenterId();
+    size=snapshotCheck.getSize();
+    if (account != null) {
+      if (isAdmin(account.getType())) {
+        Account snapshotOwner=_accountDao.findById(snapshotCheck.getAccountId());
+        if (!_domainDao.isChildDomain(account.getDomainId(),snapshotOwner.getDomainId())) {
+          throw new PermissionDeniedException("Unable to create volume from snapshot with id " + snapshotId + ", permission denied.");
+        }
+      }
+ else       if (account.getId() != snapshotCheck.getAccountId()) {
+        throw new InvalidParameterValueException("unable to find a snapshot with id " + snapshotId + " for this account");
+      }
+    }
+  }
+  List<StoragePoolVO> storagePools=_storagePoolDao.listByDataCenterId(zoneId);
+  boolean sharedPoolExists=false;
+  for (  StoragePoolVO storagePool : storagePools) {
+    if (storagePool.isShared()) {
+      sharedPoolExists=true;
+    }
+  }
+  List<HostVO> hosts=_hostDao.listByDataCenter(zoneId);
+  if (hosts.isEmpty()) {
+    throw new InvalidParameterValueException("Please add a host in the specified zone before creating a new volume.");
+  }
+  if (!sharedPoolExists) {
+    throw new InvalidParameterValueException("Please specify a zone that has at least one shared primary storage pool.");
+  }
+  String userSpecifiedName=cmd.getVolumeName();
+  if (userSpecifiedName == null) {
+    userSpecifiedName=getRandomVolumeName();
+  }
+  VolumeVO volume=new VolumeVO(userSpecifiedName,-1,-1,-1,-1,new Long(-1),null,null,0,Volume.VolumeType.DATADISK);
+  volume.setPoolId(null);
+  volume.setDataCenterId(zoneId);
+  volume.setPodId(null);
+  volume.setAccountId(targetAccount.getId());
+  volume.setDomainId(((account == null) ? Domain.ROOT_DOMAIN : account.getDomainId()));
+  volume.setDiskOfferingId(diskOfferingId);
+  volume.setSize(size);
+  volume.setStorageResourceType(StorageResourceType.STORAGE_POOL);
+  volume.setInstanceId(null);
+  volume.setUpdated(new Date());
+  volume.setStatus(AsyncInstanceCreateStatus.Creating);
+  volume.setDomainId((account == null) ? Domain.ROOT_DOMAIN : account.getDomainId());
+  volume.setState(Volume.State.Allocated);
+  volume=_volsDao.persist(volume);
+  UserContext.current().setEventDetails("Volume Id: " + volume.getId());
+  UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),diskOfferingId,null,size);
+  _usageEventDao.persist(usageEvent);
+  return volume;
 }
