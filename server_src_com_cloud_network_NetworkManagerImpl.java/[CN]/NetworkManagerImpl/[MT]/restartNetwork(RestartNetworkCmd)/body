@@ -6,36 +6,44 @@
   Account callerAccount=_accountMgr.getActiveAccount(caller.getAccountId());
   ReservationContext context=new ReservationContextImpl(null,null,caller,owner);
   _accountMgr.checkAccess(callerAccount,network);
+  boolean success=true;
   s_logger.debug("Restarting network " + networkId + "...");
   for (  NetworkElement element : _networkElements) {
     if (!element.restart(network,context)) {
       s_logger.warn("Failed to restart network element(s) as a part of network id" + networkId + " restart");
-      return false;
+      success=false;
     }
   }
   if (!applyIpAssociations(network,false)) {
     s_logger.warn("Failed to apply ip addresses as a part of network id" + networkId + " restart");
-    return false;
+    success=false;
   }
   if (!_rulesMgr.applyPortForwardingRulesForNetwork(networkId,false,context.getAccount())) {
     s_logger.warn("Failed to reapply port forwarding rule(s) as a part of network id=" + networkId + " restart");
+    success=false;
   }
   if (!_rulesMgr.applyStaticNatRulesForNetwork(networkId,false,context.getAccount())) {
     s_logger.warn("Failed to reapply static nat rule(s) as a part of network id=" + networkId + " restart");
+    success=false;
   }
   if (!_lbMgr.applyLoadBalancersForNetwork(networkId)) {
     s_logger.warn("Failed to reapply load balancer rules as a part of network id=" + networkId + " restart");
-    return false;
+    success=false;
   }
   List<? extends RemoteAccessVpn> vpnsToReapply=_vpnMgr.listRemoteAccessVpns(networkId);
   if (vpnsToReapply != null) {
     for (    RemoteAccessVpn vpn : vpnsToReapply) {
       if (_vpnMgr.startRemoteAccessVpn(vpn.getServerAddressId()) == null) {
-        s_logger.warn("Failed to reapply load balancer rules as a part of network id=" + networkId + " restart");
-        return false;
+        s_logger.warn("Failed to reapply vpn rules as a part of network id=" + networkId + " restart");
+        success=false;
       }
     }
   }
-  s_logger.debug("Network id=" + networkId + " is restarted successfully.");
-  return true;
+  if (success) {
+    s_logger.debug("Network id=" + networkId + " is restarted successfully.");
+  }
+ else {
+    s_logger.warn("Network id=" + networkId + " failed to restart.");
+  }
+  return success;
 }

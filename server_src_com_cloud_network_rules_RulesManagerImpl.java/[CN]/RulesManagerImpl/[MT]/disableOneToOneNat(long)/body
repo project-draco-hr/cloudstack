@@ -1,20 +1,16 @@
 {
+  boolean success=true;
   Account caller=UserContext.current().getCaller();
   IPAddressVO ipAddress=_ipAddressDao.findById(ipId);
   checkIpAndUserVm(ipAddress,null,caller);
   if (!ipAddress.isOneToOneNat()) {
     throw new InvalidParameterValueException("One to one nat is not enabled for the ip id=" + ipId);
   }
-  List<FirewallRuleVO> rules=_firewallDao.listByIpAndNotRevoked(ipId,Purpose.StaticNat);
-  if (rules != null) {
-    for (    FirewallRuleVO rule : rules) {
-      rule.setState(State.Revoke);
-      _firewallDao.update(rule.getId(),rule);
-      UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NET_RULE_DELETE,rule.getAccountId(),0,rule.getId(),null);
-      _usageEventDao.persist(usageEvent);
-    }
+  if (!revokeAllRulesForIp(ipId,UserContext.current().getCallerUserId(),caller)) {
+    s_logger.warn("Unable to revoke all static nat rules for ip " + ipAddress);
+    success=false;
   }
-  if (applyStaticNatRules(ipId,true,caller)) {
+  if (success) {
     ipAddress.setOneToOneNat(false);
     ipAddress.setAssociatedWithVmId(null);
     _ipAddressDao.update(ipAddress.getId(),ipAddress);
