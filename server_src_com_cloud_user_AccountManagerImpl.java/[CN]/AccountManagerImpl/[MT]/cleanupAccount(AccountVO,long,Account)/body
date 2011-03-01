@@ -43,10 +43,16 @@
     List<VolumeVO> volumes=_volumeDao.findDetachedByAccount(accountId);
     for (    VolumeVO volume : volumes) {
       if (!volume.getState().equals(Volume.State.Destroy)) {
-        _storageMgr.destroyVolume(volume);
-        if (volume.getPoolId() != null) {
-          UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName());
-          _usageEventDao.persist(usageEvent);
+        try {
+          _storageMgr.destroyVolume(volume);
+          if (volume.getPoolId() != null) {
+            UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName());
+            _usageEventDao.persist(usageEvent);
+          }
+        }
+ catch (        ConcurrentOperationException ex) {
+          s_logger.warn("Failed to cleanup volumes as a part of account id=" + accountId + " cleanup due to Exception: ",ex);
+          accountCleanupNeeded=true;
         }
       }
     }
@@ -55,8 +61,14 @@
     for (    VpnUserVO vpnUser : vpnUsers) {
       _remoteAccessVpnMgr.removeVpnUser(accountId,vpnUser.getUsername());
     }
-    for (    RemoteAccessVpnVO vpn : remoteAccessVpns) {
-      _remoteAccessVpnMgr.destroyRemoteAccessVpn(vpn.getServerAddressId());
+    try {
+      for (      RemoteAccessVpnVO vpn : remoteAccessVpns) {
+        _remoteAccessVpnMgr.destroyRemoteAccessVpn(vpn.getServerAddressId());
+      }
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to cleanup remote access vpn resources as a part of account id=" + accountId + " cleanup due to Exception: ",ex);
+      accountCleanupNeeded=true;
     }
     int numRemoved=_securityGroupDao.removeByAccountId(accountId);
     s_logger.info("deleteAccount: Deleted " + numRemoved + " network groups for account "+ accountId);
@@ -66,7 +78,7 @@
     if (networks != null) {
       for (      NetworkVO network : networks) {
         ReservationContext context=new ReservationContextImpl(null,null,getActiveUser(callerUserId),account);
-        if (!_networkMgr.deleteNetworkInternal(network.getId(),context)) {
+        if (!_networkMgr.destroyNetwork(network.getId(),context)) {
           s_logger.warn("Unable to destroy network " + network + " as a part of account id="+ accountId+ " cleanup.");
           accountCleanupNeeded=true;
           networksDeleted=false;
