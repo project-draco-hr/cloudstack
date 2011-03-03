@@ -1,8 +1,43 @@
 {
   try {
-    UserVm result=_userVmService.createVirtualMachine(this);
-    if (result != null) {
-      setEntityId(result.getId());
+    Account owner=_accountService.getActiveAccount(getAccountName(),getDomainId());
+    if (owner == null) {
+      throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+    }
+    DataCenter zone=_configService.getZone(zoneId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("Unable to find zone by id=" + zoneId);
+    }
+    ServiceOffering serviceOffering=_configService.getServiceOffering(serviceOfferingId);
+    if (serviceOffering == null) {
+      throw new InvalidParameterValueException("Unable to find service offering: " + serviceOfferingId);
+    }
+    VirtualMachineTemplate template=_templateService.getTemplate(templateId);
+    if (template == null) {
+      throw new InvalidParameterValueException("Unable to use template " + templateId);
+    }
+    UserVm vm=null;
+    if (zone.getNetworkType() == NetworkType.Basic) {
+      if (getNetworkIds() != null) {
+        throw new InvalidParameterValueException("Can't specify network Ids in Basic zone");
+      }
+ else {
+        vm=_userVmService.createBasicSecurityGroupVirtualMachine(zone,serviceOffering,template,securityGroupIdList,owner,name,displayName,diskOfferingId,size,group,getHypervisor(),userData,sshKeyPairName);
+      }
+    }
+ else {
+      if (zone.isSecurityGroupEnabled()) {
+        vm=_userVmService.createAdvancedSecurityGroupVirtualMachine(zone,serviceOffering,template,getNetworkIds(),securityGroupIdList,owner,name,displayName,diskOfferingId,size,group,getHypervisor(),userData,sshKeyPairName);
+      }
+ else {
+        if (securityGroupIdList != null && !securityGroupIdList.isEmpty()) {
+          throw new InvalidParameterValueException("Can't create vm with security groups; security group feature is not enabled per zone");
+        }
+        vm=_userVmService.createAdvancedVirtualMachine(zone,serviceOffering,template,getNetworkIds(),owner,name,displayName,diskOfferingId,size,group,getHypervisor(),userData,sshKeyPairName);
+      }
+    }
+    if (vm != null) {
+      setEntityId(vm.getId());
     }
  else {
       throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Failed to deploy vm");
