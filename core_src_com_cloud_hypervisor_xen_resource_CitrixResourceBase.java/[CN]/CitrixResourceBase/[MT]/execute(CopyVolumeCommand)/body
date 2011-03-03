@@ -3,70 +3,51 @@
   String volumeUUID=cmd.getVolumePath();
   StorageFilerTO poolTO=cmd.getPool();
   String secondaryStorageURL=cmd.getSecondaryStorageURL();
-  URI uri=null;
-  try {
-    uri=new URI(secondaryStorageURL);
-  }
- catch (  URISyntaxException e) {
-    return new CopyVolumeAnswer(cmd,false,"Invalid secondary storage URL specified.",null,null);
-  }
-  String remoteVolumesMountPath=uri.getHost() + ":" + uri.getPath()+ "/volumes/";
-  String volumeFolder=String.valueOf(cmd.getVolumeId()) + "/";
   boolean toSecondaryStorage=cmd.toSecondaryStorage();
-  String errorMsg="Failed to copy volume";
-  SR primaryStoragePool=null;
-  SR secondaryStorage=null;
-  VDI srcVolume=null;
-  VDI destVolume=null;
   try {
+    URI uri=new URI(secondaryStorageURL);
+    String remoteVolumesMountPath=uri.getHost() + ":" + uri.getPath()+ "/volumes/";
+    String volumeFolder=String.valueOf(cmd.getVolumeId()) + "/";
+    String mountpoint=remoteVolumesMountPath + volumeFolder;
+    SR primaryStoragePool=getStorageRepository(conn,poolTO);
+    String srUuid=primaryStoragePool.getUuid(conn);
     if (toSecondaryStorage) {
-      if (!createSecondaryStorageFolder(conn,remoteVolumesMountPath,volumeFolder)) {
-        throw new InternalErrorException("Failed to create the volume folder.");
-      }
-      secondaryStorage=createNfsSRbyURI(conn,new URI(secondaryStorageURL + "/volumes/" + volumeFolder),false);
-      srcVolume=getVDIbyUuid(conn,volumeUUID);
-      destVolume=cloudVDIcopy(conn,srcVolume,secondaryStorage);
-    }
- else {
-      secondaryStorage=createNfsSRbyURI(conn,new URI(secondaryStorageURL + "/volumes/" + volumeFolder),false);
-      Set<VDI> vdis=secondaryStorage.getVDIs(conn);
-      for (      VDI vdi : vdis) {
-        if (vdi.getUuid(conn).equals(volumeUUID)) {
-          srcVolume=vdi;
-          break;
+      VDI vdi=VDI.getByUuid(conn,volumeUUID);
+      String pUuid=getVhdParent(conn,srUuid,vdi.getUuid(conn),IsISCSI(primaryStoragePool.getType(conn)));
+      if (pUuid != null) {
+        SR secondaryStorage=null;
+        try {
+          secondaryStorage=createNfsSRbyURI(conn,new URI(secondaryStorageURL + "/volumes/" + volumeFolder),false);
+          VDI srcVolume=getVDIbyUuid(conn,volumeUUID);
+          VDI destVolume=cloudVDIcopy(conn,srcVolume,secondaryStorage);
+          String destVolumeUUID=destVolume.getUuid(conn);
+          return new CopyVolumeAnswer(cmd,true,null,null,destVolumeUUID);
+        }
+  finally {
+          removeSR(conn,secondaryStorage);
         }
       }
-      if (srcVolume == null) {
-        throw new InternalErrorException("Failed to find volume on secondary storage.");
+ else {
+        if (!createSecondaryStorageFolder(conn,remoteVolumesMountPath,volumeFolder)) {
+          throw new InternalErrorException("Failed to create the volume folder.");
+        }
+        String uuid=copy_vhd_to_secondarystorage(conn,mountpoint,volumeUUID,srUuid);
+        return new CopyVolumeAnswer(cmd,true,null,null,uuid);
       }
-      primaryStoragePool=getStorageRepository(conn,poolTO);
-      destVolume=cloudVDIcopy(conn,srcVolume,primaryStoragePool);
-    }
-    String srUUID;
-    if (primaryStoragePool == null) {
-      srUUID=secondaryStorage.getUuid(conn);
     }
  else {
-      srUUID=primaryStoragePool.getUuid(conn);
+      try {
+        String uuid=copy_vhd_from_secondarystorage(conn,mountpoint,srUuid);
+        return new CopyVolumeAnswer(cmd,true,null,srUuid,uuid);
+      }
+  finally {
+        deleteSecondaryStorageFolder(conn,remoteVolumesMountPath,volumeFolder);
+      }
     }
-    String destVolumeUUID=destVolume.getUuid(conn);
-    return new CopyVolumeAnswer(cmd,true,null,srUUID,destVolumeUUID);
   }
- catch (  XenAPIException e) {
-    s_logger.warn(errorMsg + ": " + e.toString(),e);
-    return new CopyVolumeAnswer(cmd,false,e.toString(),null,null);
-  }
-catch (  Exception e) {
-    s_logger.warn(errorMsg + ": " + e.toString(),e);
-    return new CopyVolumeAnswer(cmd,false,e.getMessage(),null,null);
-  }
- finally {
-    if (!toSecondaryStorage && srcVolume != null) {
-      destroyVDI(conn,srcVolume);
-    }
-    removeSR(conn,secondaryStorage);
-    if (!toSecondaryStorage) {
-      deleteSecondaryStorageFolder(conn,remoteVolumesMountPath,volumeFolder);
-    }
+ catch (  Exception e) {
+    String msg="Catch Exception " + e.getClass().getName() + " due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new CopyVolumeAnswer(cmd,false,msg,null,null);
   }
 }
