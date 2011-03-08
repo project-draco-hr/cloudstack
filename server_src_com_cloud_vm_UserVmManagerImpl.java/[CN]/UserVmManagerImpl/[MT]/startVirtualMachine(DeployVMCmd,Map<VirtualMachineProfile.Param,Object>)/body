@@ -1,0 +1,40 @@
+{
+  long vmId=cmd.getEntityId();
+  UserVmVO vm=_vmDao.findById(vmId);
+  _vmDao.loadDetails(vm);
+  VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
+  String password="saved_password";
+  if (template.getEnablePassword()) {
+    password=generateRandomPassword();
+  }
+  if (!validPassword(password)) {
+    throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
+  }
+  String sshPublicKey=vm.getDetail("SSH.PublicKey");
+  if (sshPublicKey != null && !sshPublicKey.equals("") && password != null && !password.equals("saved_password")) {
+    String encryptedPasswd=RSAHelper.encryptWithSSHPublicKey(sshPublicKey,password);
+    if (encryptedPasswd == null) {
+      throw new CloudRuntimeException("Error encrypting password");
+    }
+    vm.setDetail("Encrypted.Password",encryptedPasswd);
+    _vmDao.saveDetails(vm);
+  }
+  long userId=UserContext.current().getCallerUserId();
+  UserVO caller=_userDao.findById(userId);
+  AccountVO owner=_accountDao.findById(vm.getAccountId());
+  try {
+    Map<VirtualMachineProfile.Param,Object> params=new HashMap<VirtualMachineProfile.Param,Object>();
+    if (additonalParams != null) {
+      params.putAll(additonalParams);
+    }
+    params.put(VirtualMachineProfile.Param.VmPassword,password);
+    vm=_itMgr.start(vm,params,caller,owner);
+  }
+  finally {
+    updateVmStateForFailedVmCreation(vm.getId());
+  }
+  if (template.getEnablePassword()) {
+    vm.setPassword(password);
+  }
+  return vm;
+}

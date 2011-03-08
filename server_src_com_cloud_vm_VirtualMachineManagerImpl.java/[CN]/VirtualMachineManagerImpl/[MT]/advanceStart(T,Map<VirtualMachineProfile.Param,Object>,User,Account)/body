@@ -1,6 +1,12 @@
 {
   long vmId=vm.getId();
-  VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
+  VirtualMachineGuru<T> vmGuru;
+  if (vm.getHypervisorType() == HypervisorType.BareMetal) {
+    vmGuru=getBareMetalVmGuru(vm);
+  }
+ else {
+    vmGuru=getVmGuru(vm);
+  }
   vm=vmGuru.findById(vm.getId());
   Ternary<T,ReservationContext,ItWorkVO> start=changeToStartState(vmGuru,vm,caller,account);
   if (start == null) {
@@ -38,7 +44,12 @@
       VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,account,params);
       DeployDestination dest=null;
       for (      DeploymentPlanner planner : _planners) {
-        dest=planner.plan(vmProfile,plan,avoids);
+        if (planner.canHandle(vmProfile,plan,avoids)) {
+          dest=planner.plan(vmProfile,plan,avoids);
+        }
+ else {
+          continue;
+        }
         if (dest != null) {
           avoids.addHost(dest.getHost().getId());
           journal.record("Deployment found ",vmProfile,dest);
@@ -54,7 +65,9 @@
         throw new ConcurrentOperationException("Unable to update the state of the Virtual Machine");
       }
       try {
-        _storageMgr.prepare(vmProfile,dest);
+        if (vm.getHypervisorType() != HypervisorType.BareMetal) {
+          _storageMgr.prepare(vmProfile,dest);
+        }
         _networkMgr.prepare(vmProfile,dest,ctx);
         vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,ctx);
         VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
