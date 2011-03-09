@@ -26,31 +26,25 @@
     network.setGateway(result.getGateway());
     network.setMode(result.getMode());
     _networksDao.update(networkId,network);
-    boolean success=true;
     for (    NetworkElement element : _networkElements) {
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Asking " + element.getName() + " to implmenet "+ network);
       }
       element.implement(network,offering,dest,context);
-      s_logger.debug("Applying network rules as a part of network " + network + " implement...");
-      if (!restartNetwork(networkId,false,context)) {
-        success=false;
-        s_logger.warn("Failed to reapply network rules as a part of network " + network + " implement");
-      }
     }
-    if (success) {
-      network.setState(Network.State.Implemented);
-      _networksDao.update(network.getId(),network);
-      implemented.set(guru,network);
+    s_logger.debug("Applying network rules as a part of network " + network + " implement...");
+    if (!restartNetwork(networkId,false,context.getAccount())) {
+      s_logger.warn("Failed to reapply network rules as a part of network " + network + " implement");
+      throw new ResourceUnavailableException("Unable to apply network rules as a part of network " + network + " implement",DataCenter.class,network.getDataCenterId());
     }
- else {
-      s_logger.warn("Failed to implement the network " + network + " as some network rules failed to reapply");
-    }
+    network.setState(Network.State.Implemented);
+    _networksDao.update(network.getId(),network);
+    implemented.set(guru,network);
     return implemented;
   }
   finally {
     if (implemented.first() == null) {
-      s_logger.debug("Cleaning up because we're unable to implement network " + network);
+      s_logger.debug("Cleaning up because we're unable to implement the network " + network);
       network.setState(Network.State.Shutdown);
       _networksDao.update(networkId,network);
       shutdownNetwork(networkId,context);
