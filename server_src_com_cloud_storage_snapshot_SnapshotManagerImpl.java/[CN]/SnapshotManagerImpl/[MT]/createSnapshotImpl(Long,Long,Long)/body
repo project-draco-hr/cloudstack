@@ -1,73 +1,79 @@
 {
   VolumeVO v=_volsDao.findById(volumeId);
-  AccountVO account=_accountDao.findById(v.getAccountId());
-  if (_accountMgr.resourceLimitExceeded(account,ResourceType.snapshot)) {
-    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of snapshots for account: " + account.getAccountName() + " has been exceeded.");
-    rae.setResourceType("snapshot");
-    throw rae;
-  }
-  if (v != null && _volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
-    UserVmVO uservm=_vmDao.findById(v.getInstanceId());
-    if (uservm != null) {
-      UserVmVO vm=_vmDao.acquireInLockTable(uservm.getId(),10);
-      if (vm == null) {
+  Account owner=_accountMgr.getAccount(v.getAccountId());
+  SnapshotVO snapshot=null;
+  boolean backedUp=false;
+  try {
+    if (v != null && _volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
+      UserVmVO uservm=_vmDao.findById(v.getInstanceId());
+      if (uservm != null) {
+        UserVmVO vm=_vmDao.acquireInLockTable(uservm.getId(),10);
+        if (vm == null) {
+          throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is being used, try it later ");
+        }
+      }
+    }
+    Long poolId=v.getPoolId();
+    if (poolId == null) {
+      throw new CloudRuntimeException("You cannot take a snapshot of a volume until it has been attached to an instance");
+    }
+    if (_volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
+      StoragePoolVO storagePool=_storagePoolDao.findById(v.getPoolId());
+      ClusterVO cluster=_clusterDao.findById(storagePool.getClusterId());
+      List<HostVO> hosts=_hostDao.listByCluster(cluster.getId());
+      if (hosts != null && !hosts.isEmpty()) {
+        HostVO host=hosts.get(0);
+        if (!hostSupportSnapsthot(host)) {
+          _snapshotDao.expunge(snapshotId);
+          throw new CloudRuntimeException("KVM Snapshot is not supported on cluster: " + host.getId());
+        }
+      }
+    }
+    if (v.getInstanceId() != null) {
+      UserVmVO userVm=_vmDao.findById(v.getInstanceId());
+      if (userVm != null) {
+        if (userVm.getState().equals(State.Destroyed) || userVm.getState().equals(State.Expunging)) {
+          _snapshotDao.expunge(snapshotId);
+          throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is associated with vm:"+ userVm.getInstanceName()+ " is in "+ userVm.getState().toString()+ " state");
+        }
+      }
+    }
+    VolumeVO volume=_volsDao.acquireInLockTable(volumeId,10);
+    if (volume == null) {
+      _snapshotDao.expunge(snapshotId);
+      volume=_volsDao.findById(volumeId);
+      if (volume == null) {
+        throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " doesn't exist");
+      }
+ else {
         throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is being used, try it later ");
       }
     }
-  }
-  Long poolId=v.getPoolId();
-  if (poolId == null) {
-    throw new CloudRuntimeException("You cannot take a snapshot of a volume until it has been attached to an instance");
-  }
-  if (_volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
-    StoragePoolVO storagePool=_storagePoolDao.findById(v.getPoolId());
-    ClusterVO cluster=_clusterDao.findById(storagePool.getClusterId());
-    List<HostVO> hosts=_hostDao.listByCluster(cluster.getId());
-    if (hosts != null && !hosts.isEmpty()) {
-      HostVO host=hosts.get(0);
-      if (!hostSupportSnapsthot(host)) {
-        _snapshotDao.expunge(snapshotId);
-        throw new CloudRuntimeException("KVM Snapshot is not supported on cluster: " + host.getId());
-      }
-    }
-  }
-  if (v.getInstanceId() != null) {
-    UserVmVO userVm=_vmDao.findById(v.getInstanceId());
-    if (userVm != null) {
-      if (userVm.getState().equals(State.Destroyed) || userVm.getState().equals(State.Expunging)) {
-        _snapshotDao.expunge(snapshotId);
-        throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is associated with vm:"+ userVm.getInstanceName()+ " is in "+ userVm.getState().toString()+ " state");
-      }
-    }
-  }
-  SnapshotVO snapshot=null;
-  boolean backedUp=false;
-  VolumeVO volume=_volsDao.acquireInLockTable(volumeId,10);
-  if (volume == null) {
-    _snapshotDao.expunge(snapshotId);
-    volume=_volsDao.findById(volumeId);
-    if (volume == null) {
-      throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " doesn't exist");
-    }
- else {
-      throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is being used, try it later ");
-    }
-  }
-  try {
     snapshot=createSnapshotOnPrimary(volume,policyId,snapshotId);
-    if (snapshot != null && snapshot.getStatus() == Snapshot.Status.CreatedOnPrimary) {
-      snapshotId=snapshot.getId();
-      backedUp=backupSnapshotToSecondaryStorage(snapshot);
+    if (snapshot != null) {
+      if (snapshot.getStatus() == Snapshot.Status.CreatedOnPrimary) {
+        backedUp=backupSnapshotToSecondaryStorage(snapshot);
+      }
+ else       if (snapshot.getStatus() == Snapshot.Status.BackedUp) {
+        backedUp=true;
+      }
       if (!backedUp) {
-        throw new CloudRuntimeException("Created snapshot: " + snapshotId + " on primary but failed to backup on secondary");
+        throw new CloudRuntimeException("Created snapshot: " + snapshot + " on primary but failed to backup on secondary");
       }
     }
   }
   finally {
-    if (snapshotId != null) {
-      postCreateSnapshot(volumeId,snapshotId,policyId,backedUp);
+    if (snapshot != null) {
+      postCreateSnapshot(volumeId,snapshot.getId(),policyId,backedUp);
+      _volsDao.releaseFromLockTable(volumeId);
+      if (backedUp) {
+        UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,v.getSize());
+        _usageEventDao.persist(usageEvent);
+      }
     }
-    _volsDao.releaseFromLockTable(volumeId);
+ else     if (snapshot == null || !backedUp) {
+      _accountMgr.decrementResourceCount(owner.getId(),ResourceType.snapshot);
+    }
   }
   return snapshot;
 }
