@@ -14,13 +14,22 @@
       }
     }
   }
-  for (  ManagementServerHostVO mshost : removedNodeList) {
-    activePeers.remove(mshost.getId());
-    try {
-      JmxUtil.unregisterMBean("ClusterManager","Node " + mshost.getId());
+  Iterator<ManagementServerHostVO> it=removedNodeList.iterator();
+  while (it.hasNext()) {
+    ManagementServerHostVO mshost=it.next();
+    if (!pingManagementNode(mshost.getId())) {
+      s_logger.warn("Management node " + mshost.getId() + " is detected inactive by timestamp and also not pingable");
+      activePeers.remove(mshost.getId());
+      try {
+        JmxUtil.unregisterMBean("ClusterManager","Node " + mshost.getId());
+      }
+ catch (      Exception e) {
+        s_logger.warn("Unable to deregiester cluster node from JMX monitoring due to exception " + e.toString());
+      }
     }
- catch (    Exception e) {
-      s_logger.warn("Unable to deregiester cluster node from JMX monitoring due to exception " + e.toString());
+ else {
+      s_logger.info("Management node " + mshost.getId() + " is detected inactive by timestamp but is pingable");
+      it.remove();
     }
   }
   List<ManagementServerHostVO> newNodeList=new ArrayList<ManagementServerHostVO>();
@@ -40,9 +49,27 @@
     }
   }
   if (newNodeList.size() > 0) {
+    Profiler profiler=new Profiler();
+    profiler.start();
     notifyNodeJoined(newNodeList);
+    profiler.stop();
+    if (profiler.getDuration() > 1000) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Notifying management server join event took " + profiler.getDuration() + " ms");
+    }
+ else {
+      s_logger.warn("Notifying management server join event took " + profiler.getDuration() + " ms");
+    }
   }
   if (removedNodeList.size() > 0) {
+    Profiler profiler=new Profiler();
+    profiler.start();
     notifyNodeLeft(removedNodeList);
+    profiler.stop();
+    if (profiler.getDuration() > 1000) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Notifying management server leave event took " + profiler.getDuration() + " ms");
+    }
+ else {
+      s_logger.warn("Notifying management server leave event took " + profiler.getDuration() + " ms");
+    }
   }
 }
