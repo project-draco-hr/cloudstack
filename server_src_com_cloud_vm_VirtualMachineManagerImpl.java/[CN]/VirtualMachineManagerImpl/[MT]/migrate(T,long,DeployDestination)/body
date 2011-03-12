@@ -4,7 +4,11 @@
   Host fromHost=_hostDao.findById(srcHostId);
   if (fromHost == null) {
     s_logger.info("Unable to find the host to migrate from: " + srcHostId);
-    return null;
+    throw new ManagementServerException("Unable to find the host to migrate from: " + srcHostId);
+  }
+  if (fromHost.getClusterId().longValue() != dest.getCluster().getId()) {
+    s_logger.info("Source and destination host are not in same cluster, unable to migrate to host: " + dest.getHost().getId());
+    throw new ManagementServerException("Source and destination host are not in same cluster, unable to migrate to host: " + dest.getHost().getId());
   }
   VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
   vm=vmGuru.findById(vm.getId());
@@ -12,7 +16,13 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Unable to find the vm " + vm);
     }
-    return null;
+    throw new ManagementServerException("Unable to find a virtual machine with id " + vm.getId());
+  }
+  if (vm.getState() != State.Running) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM is not Running, unable to migrate the vm " + vm);
+    }
+    throw new ManagementServerException("VM is not Running, unable to migrate the vm " + vm);
   }
   short alertType=AlertManager.ALERT_TYPE_USERVM_MIGRATE;
   if (VirtualMachine.Type.DomainRouter.equals(vm.getType())) {
@@ -53,7 +63,7 @@
   vm.setLastHostId(srcHostId);
   if (vm == null || vm.getHostId() == null || vm.getHostId() != srcHostId || !changeState(vm,Event.MigrationRequested,dstHostId,work,Step.Migrating)) {
     s_logger.info("Migration cancelled because state has changed: " + vm);
-    return null;
+    throw new ConcurrentOperationException("Migration cancelled because state has changed: " + vm);
   }
   boolean migrated=false;
   try {

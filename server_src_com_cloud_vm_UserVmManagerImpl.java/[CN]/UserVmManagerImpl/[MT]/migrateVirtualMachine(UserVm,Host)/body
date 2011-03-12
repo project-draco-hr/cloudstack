@@ -1,0 +1,35 @@
+{
+  Account caller=UserContext.current().getCaller();
+  if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Caller is not a root admin, permission denied to migrate the VM");
+    }
+    throw new PermissionDeniedException("No permission to migrate VM, Only Root Admin can migrate a VM!");
+  }
+  if (vm.getState() != State.Running) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM is not Running, unable to migrate the vm " + vm);
+    }
+    throw new InvalidParameterValueException("VM is not Running, unable to migrate the vm " + vm);
+  }
+  if (!vm.getHypervisorType().equals(HypervisorType.XenServer)) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug(vm + " is not XenServer, cannot migrate this VM.");
+    }
+    throw new InvalidParameterValueException("Unsupported Hypervisor Type for VM migration, we support XenServer only");
+  }
+  ServiceOfferingVO svcOffering=_serviceOfferingDao.findById(vm.getServiceOfferingId());
+  if (svcOffering.getUseLocalStorage()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug(vm + " is using Local Storage, cannot migrate this VM.");
+    }
+    throw new InvalidParameterValueException("Unsupported operation, VM uses Local storage, cannot migrate");
+  }
+  DataCenterVO dcVO=_dcDao.findById(destinationHost.getDataCenterId());
+  HostPodVO pod=_podDao.findById(destinationHost.getPodId());
+  long srcHostId=vm.getHostId();
+  Cluster cluster=_clusterDao.findById(destinationHost.getClusterId());
+  DeployDestination dest=new DeployDestination(dcVO,pod,cluster,destinationHost);
+  UserVmVO migratedVm=_itMgr.migrate((UserVmVO)vm,srcHostId,dest);
+  return migratedVm;
+}
