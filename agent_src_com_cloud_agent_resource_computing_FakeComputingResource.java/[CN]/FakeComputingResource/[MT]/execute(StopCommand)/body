@@ -1,0 +1,41 @@
+{
+  VmMgr vmMgr=getVmManager();
+  StopAnswer answer=null;
+  String vmName=cmd.getVmName();
+  Integer port=vmMgr.getVncPort(vmName);
+  Long bytesReceived=null;
+  Long bytesSent=null;
+  State state=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  try {
+    String result=vmMgr.stopVM(vmName,false);
+    if (result != null) {
+      s_logger.info("Trying destroy on " + vmName);
+      if (result == Script.ERR_TIMEOUT) {
+        result=vmMgr.stopVM(vmName,true);
+      }
+      s_logger.warn("Couldn't stop " + vmName);
+      if (result != null) {
+        return new StopAnswer(cmd,result);
+      }
+    }
+    answer=new StopAnswer(cmd,null,port,bytesSent,bytesReceived);
+    String result2=vmMgr.cleanupVnet(cmd.getVnet());
+    if (result2 != null) {
+      result=result2 + (result != null ? ("\n" + result) : "");
+      answer=new StopAnswer(cmd,result,port,bytesSent,bytesReceived);
+    }
+    _dhcpSnooper.cleanup(vmName,null);
+    return answer;
+  }
+  finally {
+    if (answer == null || !answer.getResult()) {
+synchronized (_vms) {
+        _vms.put(vmName,state);
+      }
+    }
+  }
+}
