@@ -3,18 +3,46 @@
   List<NetworkVO> networkList=new ArrayList<NetworkVO>();
   _accountMgr.checkAccess(caller,owner);
   if (networkIdList == null || networkIdList.isEmpty()) {
-    List<NetworkVO> networks=_networkDao.listByOwner(owner.getId());
-    NetworkVO guestVirtualNetwork=null;
-    for (    NetworkVO network : networks) {
-      if (!network.isShared() && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == GuestIpType.Virtual) {
-        guestVirtualNetwork=network;
-        break;
+    NetworkVO defaultNetwork=null;
+    List<NetworkOfferingVO> defaultVirtualOffering=_networkOfferingDao.listByTrafficTypeAndGuestType(false,TrafficType.Guest,GuestIpType.Virtual);
+    if (defaultVirtualOffering.get(0).getAvailability() == Availability.Required) {
+      List<NetworkVO> virtualNetworks=_networkMgr.listNetworksForAccount(owner.getId(),zone.getId(),GuestIpType.Virtual,true);
+      if (virtualNetworks.isEmpty()) {
+        s_logger.debug("Creating default Virtual network for account " + owner + " as a part of deployVM process");
+        Network newNetwork=_networkMgr.createNetwork(defaultVirtualOffering.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",false,null,zone.getId(),null,null,null,null,owner,false);
+        defaultNetwork=_networkDao.findById(newNetwork.getId());
+      }
+ else       if (virtualNetworks.size() > 1) {
+        throw new InvalidParameterValueException("More than 1 default Virtaul networks are found for account " + owner + "; please specify networkIds");
+      }
+ else {
+        defaultNetwork=virtualNetworks.get(0);
       }
     }
-    if (guestVirtualNetwork == null) {
-      throw new InvalidParameterValueException("Unable to find Guest Virtual network for account id=" + owner.getId() + "; please specify networkId(s)");
+ else {
+      List<NetworkVO> defaultNetworks=_networkMgr.listNetworksForAccount(owner.getId(),zone.getId(),null,true);
+      if (defaultNetworks.isEmpty()) {
+        if (defaultVirtualOffering.get(0).getAvailability() == Availability.Optional) {
+          s_logger.debug("Creating default Virtual network for account " + owner + " as a part of deployVM process");
+          Network newNetwork=_networkMgr.createNetwork(defaultVirtualOffering.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",false,null,zone.getId(),null,null,null,null,owner,false);
+          defaultNetwork=_networkDao.findById(newNetwork.getId());
+        }
+ else {
+          throw new InvalidParameterValueException("Unable to find default networks for account " + owner);
+        }
+      }
+ else       if (defaultNetworks.size() > 1) {
+        throw new InvalidParameterValueException("More than 1 default network is found for accoun " + owner);
+      }
+ else {
+        defaultNetwork=defaultNetworks.get(0);
+      }
     }
-    networkList.add(guestVirtualNetwork);
+    NetworkOffering networkOffering=_configMgr.getNetworkOffering(defaultNetwork.getNetworkOfferingId());
+    if (networkOffering.getAvailability() == Availability.Unavailable) {
+      throw new InvalidParameterValueException("Unable to find default network; please specify networkOfferingIds");
+    }
+    networkList.add(defaultNetwork);
   }
  else {
     boolean requiredNetworkOfferingIsPresent=false;
@@ -33,6 +61,10 @@
         if (networkMap == null || networkMap.isEmpty()) {
           throw new PermissionDeniedException("Unable to create a vm using network with id " + network.getId() + ", permission denied");
         }
+      }
+      NetworkOffering networkOffering=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+      if (networkOffering.getAvailability() == Availability.Unavailable) {
+        throw new InvalidParameterValueException("Network id=" + network.getId() + " can't be used; corresponding network offering is "+ Availability.Unavailable);
       }
       if (requiredOfferingId != null && network.getNetworkOfferingId() == requiredOfferingId.longValue()) {
         requiredNetworkOfferingIsPresent=true;
