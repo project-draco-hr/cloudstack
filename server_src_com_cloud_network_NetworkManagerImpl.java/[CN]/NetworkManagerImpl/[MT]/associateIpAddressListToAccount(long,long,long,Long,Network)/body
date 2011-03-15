@@ -1,12 +1,9 @@
 {
   Account owner=_accountMgr.getActiveAccount(accountId);
-  boolean createNetwork=true;
+  boolean createNetwork=false;
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  if (network != null) {
-    createNetwork=false;
-  }
- else {
+  if (network == null) {
     List<? extends Network> networks=getVirtualNetworksOwnedByAccountInZone(owner.getAccountName(),owner.getDomainId(),zoneId);
     if (networks.size() == 0) {
       createNetwork=true;
@@ -17,17 +14,29 @@
   }
   if (createNetwork) {
     List<? extends NetworkOffering> offerings=_configMgr.listNetworkOfferings(TrafficType.Guest,false);
-    network=createNetwork(offerings.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",false,true,zoneId,null,null,null,null,owner,false);
+    network=createNetwork(offerings.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",false,null,zoneId,null,null,null,null,owner,false);
     if (network == null) {
       s_logger.warn("Failed to create default Virtual network for the account " + accountId + "in zone "+ zoneId);
       return false;
     }
   }
+  boolean allocateSourceNat=false;
+  List<IPAddressVO> sourceNat=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+  if (sourceNat.isEmpty()) {
+    allocateSourceNat=true;
+  }
   List<IPAddressVO> ips=_ipAddressDao.listByVlanId(vlanId);
+  boolean isSourceNatAllocated=false;
   for (  IPAddressVO addr : ips) {
-    if (!addr.isSourceNat() && addr.getState() != State.Allocated) {
+    if (addr.getState() != State.Allocated) {
+      if (!isSourceNatAllocated && allocateSourceNat) {
+        addr.setSourceNat(true);
+        isSourceNatAllocated=true;
+      }
+ else {
+        addr.setSourceNat(false);
+      }
       addr.setAssociatedWithNetworkId(network.getId());
-      addr.setSourceNat(false);
       addr.setAllocatedTime(new Date());
       addr.setAllocatedInDomainId(owner.getDomainId());
       addr.setAllocatedToAccountId(owner.getId());
