@@ -3,16 +3,23 @@
     _accountMgr.checkAccess(caller,rule);
   }
   Transaction txn=Transaction.currentTxn();
+  boolean generateUsageEvent=false;
   txn.start();
   if (rule.getState() == State.Staged) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Found a rule that is still in stage state so just removing it: " + rule);
     }
     _firewallDao.remove(rule.getId());
+    generateUsageEvent=true;
   }
  else   if (rule.getState() == State.Add || rule.getState() == State.Active) {
     rule.setState(State.Revoke);
     _firewallDao.update(rule.getId(),rule);
+    generateUsageEvent=true;
+  }
+  if (generateUsageEvent) {
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NET_RULE_DELETE,rule.getAccountId(),0,rule.getId(),null);
+    _usageEventDao.persist(usageEvent);
   }
   String ruleName=rule.getPurpose() == Purpose.Firewall ? "Firewall" : (rule.getPurpose() == FirewallRule.Purpose.StaticNat ? "ip forwarding" : "port forwarding");
   StringBuilder description=new StringBuilder("deleted ").append(ruleName).append(" rule [ipAddressId=").append(rule.getSourceIpAddressId()).append(":").append(rule.getSourcePortStart()).append("-").append(rule.getSourcePortEnd()).append("]");

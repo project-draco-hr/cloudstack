@@ -2,63 +2,26 @@
   Long userId=UserContext.current().getCallerUserId();
   Account caller=UserContext.current().getCaller();
   Long ipAddressId=cmd.getIpAddressId();
-  Account accountByIp=findAccountByIpAddress(ipAddressId);
-  if (accountByIp == null) {
-    throw new InvalidParameterValueException("Unable to find account owner for ip " + ipAddressId);
+  IPAddressVO ipVO=_ipAddressDao.findById(ipAddressId);
+  if (ipVO == null) {
+    throw new InvalidParameterValueException("Unable to find ip address by id " + ipAddressId);
   }
-  Long accountId=accountByIp.getId();
-  if (!_accountMgr.isAdmin(caller.getType())) {
-    if (caller.getId() != accountId.longValue()) {
-      throw new PermissionDeniedException("account " + caller.getAccountName() + " doesn't own ip address id="+ ipAddressId);
-    }
+  if (ipVO.getAllocatedTime() == null) {
+    s_logger.debug("Ip Address id= " + ipAddressId + " is not allocated, so do nothing.");
+    return true;
   }
- else {
-    Domain domain=_domainDao.findById(accountByIp.getDomainId());
-    _accountMgr.checkAccess(caller,domain);
+  if (ipVO.getAllocatedToAccountId() != null) {
+    _accountMgr.checkAccess(caller,ipVO);
   }
-  try {
-    IPAddressVO ipVO=_ipAddressDao.findById(ipAddressId);
-    if (ipVO == null) {
-      return false;
-    }
-    if (ipVO.getAllocatedTime() == null) {
-      return true;
-    }
-    Account account=_accountMgr.getAccount(accountId);
-    if (account == null) {
-      return false;
-    }
-    if ((ipVO.getAllocatedToAccountId() == null) || (ipVO.getAllocatedToAccountId().longValue() != accountId)) {
-      if (!BaseCmd.isAdmin(account.getType())) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("permission denied disassociating IP address id=" + ipAddressId + "; acct: "+ accountId+ "; ip (acct / dc / dom / alloc): "+ ipVO.getAllocatedToAccountId()+ " / "+ ipVO.getDataCenterId()+ " / "+ ipVO.getAllocatedInDomainId()+ " / "+ ipVO.getAllocatedTime());
-        }
-        throw new PermissionDeniedException("User/account does not own supplied address");
-      }
-    }
-    if (ipVO.getAllocatedTime() == null) {
-      return true;
-    }
-    if (ipVO.isSourceNat()) {
-      throw new IllegalArgumentException("ip address is used for source nat purposes and can not be disassociated.");
-    }
-    VlanVO vlan=_vlanDao.findById(ipVO.getVlanId());
-    if (!vlan.getVlanType().equals(VlanType.VirtualNetwork)) {
-      throw new IllegalArgumentException("only ip addresses that belong to a virtual network may be disassociated.");
-    }
-    if (_accountVlanMapDao.findAccountVlanMap(accountId,ipVO.getVlanId()) != null) {
-      throw new PermissionDeniedException("Ip address id=" + ipAddressId + " belongs to Account wide IP pool and cannot be disassociated");
-    }
-    return releasePublicIpAddress(ipAddressId,userId,caller);
+  if (ipVO.isSourceNat()) {
+    throw new IllegalArgumentException("ip address is used for source nat purposes and can not be disassociated.");
   }
- catch (  PermissionDeniedException pde) {
-    throw pde;
+  VlanVO vlan=_vlanDao.findById(ipVO.getVlanId());
+  if (!vlan.getVlanType().equals(VlanType.VirtualNetwork)) {
+    throw new IllegalArgumentException("only ip addresses that belong to a virtual network may be disassociated.");
   }
-catch (  IllegalArgumentException iae) {
-    throw iae;
+  if (_accountVlanMapDao.findAccountVlanMap(ipVO.getAccountId(),ipVO.getVlanId()) != null) {
+    throw new InvalidParameterValueException("Ip address id=" + ipAddressId + " belongs to Account wide IP pool and cannot be disassociated");
   }
-catch (  Throwable t) {
-    s_logger.error("Disassociate IP address threw an exception.",t);
-    throw new IllegalArgumentException("Disassociate IP address threw an exception");
-  }
+  return releasePublicIpAddress(ipAddressId,userId,caller);
 }
