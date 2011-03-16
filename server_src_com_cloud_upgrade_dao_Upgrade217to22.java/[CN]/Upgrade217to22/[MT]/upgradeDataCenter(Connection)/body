@@ -83,29 +83,51 @@
     if (_basicZone) {
       for (      Object[] dc : dcs) {
         Long dcId=(Long)dc[0];
-        insertNetwork(conn,"ManagementNetwork" + dcId,"Management Network created for Zone " + dcId,"Management","Native",null,null,null,"Static",managementNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
-        insertNetwork(conn,"StorageNetwork" + dcId,"Storage Network created for Zone " + dcId,"Storage","Native",null,null,null,"Static",storageNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
-        insertNetwork(conn,"ControlNetwork" + dcId,"Control Network created for Zone " + dcId,"Control","Native",null,null,null,"Static",controlNetworkOfferingId,dcId,"ControlNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long mgmtNetworkId=insertNetwork(conn,"ManagementNetwork" + dcId,"Management Network created for Zone " + dcId,"Management","Native",null,null,null,"Static",managementNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long storageNetworkId=insertNetwork(conn,"StorageNetwork" + dcId,"Storage Network created for Zone " + dcId,"Storage","Native",null,null,null,"Static",storageNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long controlNetworkId=insertNetwork(conn,"ControlNetwork" + dcId,"Control Network created for Zone " + dcId,"Control","Native",null,null,null,"Static",controlNetworkOfferingId,dcId,"ControlNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
         upgradeManagementIpAddress(conn,dcId);
         long basicDefaultDirectNetworkId=insertNetwork(conn,"BasicZoneDirectNetwork" + dcId,"Basic Zone Direct Network created for Zone " + dcId,"Guest","Native",null,null,null,"Dhcp",5,dcId,"DirectPodBasedNetworkGuru","Setup",1,1,null,null,"Direct",true,null,true,null);
-        upgradePublicUserIpAddress(conn,dcId,basicDefaultDirectNetworkId,"DirectAttached");
-        pstmt=conn.prepareStatement("SELECT vm_instance.id, vm_instance.domain_id, vm_instance.account_id, domain_router.guest_ip_address, domain_router.domain, domain_router.dns1, domain_router.dns2, domain_router.vnet FROM vm_instance INNER JOIN domain_router ON vm_instance.id=domain_router.id WHERE vm_instance.removed IS NULL AND vm_instance.type='DomainRouter' AND vm_instance.data_center_id=?");
+        pstmt=conn.prepareStatement("SELECT id FROM vlan WHERE vlan_type='DirectAttached' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          long vlanId=rs.getLong(1);
+          pstmt=conn.prepareStatement("UPDATE vlan SET network_id=? WHERE id=?");
+          pstmt.setLong(1,basicDefaultDirectNetworkId);
+          pstmt.setLong(2,vlanId);
+          pstmt.executeUpdate();
+          pstmt.close();
+          upgradeDirectUserIpAddress(conn,dcId,basicDefaultDirectNetworkId,"DirectAttached");
+        }
+        pstmt=conn.prepareStatement("SELECT vm_instance.id, vm_instance.domain_id, vm_instance.account_id, domain_router.gateway, domain_router.guest_ip_address, domain_router.domain, domain_router.dns1, domain_router.dns2, domain_router.vnet FROM vm_instance INNER JOIN domain_router ON vm_instance.id=domain_router.id WHERE vm_instance.removed IS NULL AND vm_instance.type='DomainRouter' AND vm_instance.data_center_id=?");
         pstmt.setLong(1,dcId);
         rs=pstmt.executeQuery();
         ArrayList<Object[]> routers=new ArrayList<Object[]>();
         while (rs.next()) {
           Object[] router=new Object[40];
           router[0]=rs.getLong(1);
+          router[1]=rs.getString(4);
           routers.add(router);
         }
         rs.close();
         pstmt.close();
         for (        Object[] router : routers) {
+          s_logger.debug("Updating domR with network id in basic zone id=" + dcId);
           pstmt=conn.prepareStatement("UPDATE domain_router SET network_id = ? wHERE id = ? ");
           pstmt.setLong(1,basicDefaultDirectNetworkId);
           pstmt.setLong(2,(Long)router[0]);
           pstmt.executeUpdate();
           pstmt.close();
+          upgradeBasicUserVms(conn,(Long)router[0],basicDefaultDirectNetworkId,(String)router[1],"untagged");
+          upgradeDomR(conn,(Long)router[0],null,basicDefaultDirectNetworkId,controlNetworkId,"Basic");
+        }
+        upgradeSsvm(conn,dcId,basicDefaultDirectNetworkId,storageNetworkId,controlNetworkId,"Basic");
+        pstmt=conn.prepareStatement("SELECT vm_instance.id FROM vm_instance WHERE removed IS NULL AND type='ConsoleProxy' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          upgradeConsoleProxy(conn,rs.getLong(1),basicDefaultDirectNetworkId,mgmtNetworkId,controlNetworkId,"Basic");
         }
       }
     }
@@ -151,7 +173,7 @@
           pstmt.close();
           s_logger.debug("Network inserted for " + router[0] + " id = "+ virtualNetworkId);
           upgradeVirtualUserVms(conn,(Long)router[0],virtualNetworkId,(String)router[3],vnet);
-          upgradeDomR(conn,(Long)router[0],publicNetworkId,virtualNetworkId,controlNetworkId);
+          upgradeDomR(conn,(Long)router[0],publicNetworkId,virtualNetworkId,controlNetworkId,"Advanced");
         }
         upgradePublicUserIpAddress(conn,dcId,publicNetworkId,"VirtualNetwork");
         pstmt=conn.prepareStatement("SELECT id, vlan_id, vlan_gateway, vlan_netmask FROM vlan WHERE vlan_type='DirectAttached' AND data_center_id=?");
@@ -171,12 +193,12 @@
           pstmt.close();
           upgradeDirectUserIpAddress(conn,dcId,directNetworkId,"DirectAttached");
         }
-        upgradeSsvm(conn,dcId,publicNetworkId,storageNetworkId,controlNetworkId);
+        upgradeSsvm(conn,dcId,publicNetworkId,storageNetworkId,controlNetworkId,"Advanced");
         pstmt=conn.prepareStatement("SELECT vm_instance.id FROM vm_instance WHERE removed IS NULL AND type='ConsoleProxy' AND data_center_id=?");
         pstmt.setLong(1,dcId);
         rs=pstmt.executeQuery();
         while (rs.next()) {
-          upgradeConsoleProxy(conn,rs.getLong(1),publicNetworkId,mgmtNetworkId,controlNetworkId);
+          upgradeConsoleProxy(conn,rs.getLong(1),publicNetworkId,mgmtNetworkId,controlNetworkId,"Advanced");
         }
       }
     }

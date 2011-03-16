@@ -1,0 +1,45 @@
+{
+  s_logger.debug("Upgrading ssvm in " + dataCenterId);
+  PreparedStatement pstmt=conn.prepareStatement("SELECT vm_instance.id, vm_instance.state, vm_instance.private_mac_address, vm_instance.private_ip_address, vm_instance.private_netmask, secondary_storage_vm.public_mac_address, secondary_storage_vm.public_ip_address, secondary_storage_vm.public_netmask, secondary_storage_vm.guest_mac_address, secondary_storage_vm.guest_ip_address, secondary_storage_vm.guest_netmask, secondary_storage_vm.gateway, vm_instance.type FROM vm_instance INNER JOIN secondary_storage_vm ON vm_instance.id=secondary_storage_vm.id WHERE vm_instance.removed is NULL AND vm_instance.data_center_id=? AND vm_instance.type='SecondaryStorageVm'");
+  pstmt.setLong(1,dataCenterId);
+  ResultSet rs=pstmt.executeQuery();
+  if (!rs.next()) {
+    s_logger.debug("Unable to find ssvm in data center " + dataCenterId);
+    return;
+  }
+  long ssvmId=rs.getLong(1);
+  String state=rs.getString(2);
+  boolean running=state.equals("Running") | state.equals("Starting") | state.equals("Stopping");
+  String privateMac=rs.getString(3);
+  String privateIp=rs.getString(4);
+  String privateNetmask=rs.getString(5);
+  String publicMac=rs.getString(6);
+  String publicIp=rs.getString(7);
+  String publicNetmask=rs.getString(8);
+  String guestMac=rs.getString(9);
+  String guestIp=rs.getString(10);
+  String guestNetmask=rs.getString(11);
+  String gateway=rs.getString(12);
+  String type=rs.getString(13);
+  rs.close();
+  pstmt.close();
+  pstmt=conn.prepareStatement("SELECT host_pod_ref.gateway from host_pod_ref INNER JOIN vm_instance ON vm_instance.pod_id=host_pod_ref.id WHERE vm_instance.removed is NULL AND vm_instance.data_center_id=? AND vm_instance.type='SecondaryStorageVm'");
+  pstmt.setLong(1,dataCenterId);
+  rs=pstmt.executeQuery();
+  if (!rs.next()) {
+    s_logger.debug("Unable to find ssvm in data center " + dataCenterId);
+    return;
+  }
+  String podGateway=rs.getString(1);
+  rs.close();
+  pstmt.close();
+  s_logger.debug("Gateway is " + podGateway);
+  if (zoneType.equalsIgnoreCase("Basic")) {
+    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Start",gateway,null,"DirectPodBasedNetworkGuru",true,2,"Static",null,type);
+  }
+ else {
+    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Create",gateway,null,"PublicNetworkGuru",true,2,"Static",null,type);
+  }
+  insertNic(conn,controlNetworkId,ssvmId,running,guestMac,guestIp,guestNetmask,"Start","169.254.0.1",null,"ControlNetworkGuru",false,0,"Static",guestIp != null ? (ssvmId + guestIp) : null,type);
+  insertNic(conn,managementNetworkId,ssvmId,running,privateMac,privateIp,privateNetmask,"Start",podGateway,null,"PodBasedNetworkGuru",false,1,"Static",null,type);
+}
