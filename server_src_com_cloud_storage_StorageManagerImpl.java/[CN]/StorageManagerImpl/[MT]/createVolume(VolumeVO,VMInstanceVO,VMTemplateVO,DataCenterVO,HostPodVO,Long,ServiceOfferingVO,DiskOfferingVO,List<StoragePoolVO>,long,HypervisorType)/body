@@ -33,26 +33,36 @@
     }
     CreateCommand cmd=null;
     VMTemplateStoragePoolVO tmpltStoredOn=null;
-    if (volume.getVolumeType() == VolumeType.ROOT && Storage.ImageFormat.ISO != template.getFormat()) {
-      tmpltStoredOn=_tmpltMgr.prepareTemplateForCreate(template,pool);
-      if (tmpltStoredOn == null) {
-        continue;
+    for (int i=0; i < 2; i++) {
+      if (volume.getVolumeType() == VolumeType.ROOT && Storage.ImageFormat.ISO != template.getFormat()) {
+        tmpltStoredOn=_tmpltMgr.prepareTemplateForCreate(template,pool);
+        if (tmpltStoredOn == null) {
+          continue;
+        }
+        cmd=new CreateCommand(dskCh,tmpltStoredOn.getLocalDownloadPath(),new StorageFilerTO(pool));
       }
-      cmd=new CreateCommand(dskCh,tmpltStoredOn.getLocalDownloadPath(),new StorageFilerTO(pool));
-    }
  else {
-      cmd=new CreateCommand(dskCh,new StorageFilerTO(pool));
-    }
-    try {
-      Answer answer=sendToPool(pool,cmd);
-      if (answer != null && answer.getResult()) {
-        created=((CreateAnswer)answer).getVolume();
+        cmd=new CreateCommand(dskCh,new StorageFilerTO(pool));
+      }
+      try {
+        Answer answer=sendToPool(pool,cmd);
+        if (answer != null && answer.getResult()) {
+          created=((CreateAnswer)answer).getVolume();
+          break;
+        }
+        if (tmpltStoredOn != null && answer != null && (answer instanceof CreateAnswer) && ((CreateAnswer)answer).templateReloadRequested()) {
+          if (!_tmpltMgr.resetTemplateDownloadStateOnPool(tmpltStoredOn.getId()))           break;
+        }
+ else {
+          break;
+        }
+      }
+ catch (      StorageUnavailableException e) {
+        s_logger.debug("Storage unavailable for " + pool.getId());
         break;
       }
     }
- catch (    StorageUnavailableException e) {
-      s_logger.debug("Storage unavailable for " + pool.getId());
-    }
+    if (created != null)     break;
     s_logger.debug("Retrying the create because it failed on pool " + pool);
   }
   Transaction txn=Transaction.currentTxn();
