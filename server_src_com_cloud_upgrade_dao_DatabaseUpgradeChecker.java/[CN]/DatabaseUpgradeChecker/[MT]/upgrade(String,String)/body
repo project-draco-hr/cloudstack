@@ -2,7 +2,7 @@
   s_logger.info("Database upgrade must be performed from " + dbVersion + " to "+ currentVersion);
   String trimmedDbVersion=Version.trimToPatch(dbVersion);
   String trimmedCurrentVersion=Version.trimToPatch(currentVersion);
-  DbUpgrade[] upgrades=_upgradeMap.get(new Pair<String,String>(trimmedDbVersion,trimmedCurrentVersion));
+  DbUpgrade[] upgrades=_upgradeMap.get(trimmedDbVersion);
   if (upgrades == null) {
     throw new CloudRuntimeException("There is no upgrade path from " + dbVersion + " to "+ currentVersion);
   }
@@ -16,7 +16,8 @@
       break;
     }
   }
-  if (!supportsRollingUpgrade) {
+  if (!supportsRollingUpgrade && ClusterManagerImpl.arePeersRunning(null)) {
+    throw new CloudRuntimeException("Unable to run upgrade because the upgrade sequence does not support rolling update and there are other management server nodes running");
   }
   for (  DbUpgrade upgrade : upgrades) {
     s_logger.info("Running upgrade " + upgrade.getClass().getSimpleName() + " to upgrade from "+ upgrade.getUpgradableVersionRange()[0]+ "-"+ upgrade.getUpgradableVersionRange()[1]+ " to "+ upgrade.getUpgradedVersion());
@@ -45,25 +46,28 @@
       txn.close();
     }
   }
-  for (  DbUpgrade upgrade : upgrades) {
-    s_logger.info("Cleanup upgrade " + upgrade.getClass().getSimpleName() + " to upgrade from "+ upgrade.getUpgradableVersionRange()[0]+ "-"+ upgrade.getUpgradableVersionRange()[1]+ " to "+ upgrade.getUpgradedVersion());
-    VersionVO version=_dao.findByVersion(upgrade.getUpgradedVersion(),Step.Upgrade);
-    Transaction txn=Transaction.open("Cleanup");
-    txn.start();
-    try {
-      File[] scripts=upgrade.getCleanupScripts();
-      if (scripts != null) {
-        for (        File script : scripts) {
-          runScript(script);
+  if (!ClusterManagerImpl.arePeersRunning(trimmedCurrentVersion)) {
+    s_logger.info("Cleaning upgrades because all management server are now at the same version");
+    for (    DbUpgrade upgrade : upgrades) {
+      s_logger.info("Cleanup upgrade " + upgrade.getClass().getSimpleName() + " to upgrade from "+ upgrade.getUpgradableVersionRange()[0]+ "-"+ upgrade.getUpgradableVersionRange()[1]+ " to "+ upgrade.getUpgradedVersion());
+      VersionVO version=_dao.findByVersion(upgrade.getUpgradedVersion(),Step.Upgrade);
+      Transaction txn=Transaction.open("Cleanup");
+      txn.start();
+      try {
+        File[] scripts=upgrade.getCleanupScripts();
+        if (scripts != null) {
+          for (          File script : scripts) {
+            runScript(script);
+          }
         }
+        version.setStep(Step.Complete);
+        version.setUpdated(new Date());
+        _dao.update(version.getId(),version);
+        txn.commit();
       }
-      version.setStep(Step.Complete);
-      version.setUpdated(new Date());
-      _dao.update(version.getId(),version);
-      txn.commit();
-    }
   finally {
-      txn.close();
+        txn.close();
+      }
     }
   }
 }
