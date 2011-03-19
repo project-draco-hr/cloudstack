@@ -1,0 +1,102 @@
+{
+  s_logger.debug("Finding sample data from 2.1.7");
+  DbTestUtils.executeScript("PreviousDatabaseSchema/2.1.7/2.1.7_sample_instanceGroups.sql",false,true);
+  PreparedStatement pstmt;
+  ResultSet rs;
+  VersionDaoImpl dao=ComponentLocator.inject(VersionDaoImpl.class);
+  DatabaseUpgradeChecker checker=ComponentLocator.inject(DatabaseUpgradeChecker.class);
+  String version=dao.getCurrentVersion();
+  if (!version.equals("2.1.7")) {
+    s_logger.error("Version returned is not 2.1.7 but " + version);
+  }
+ else {
+    s_logger.debug("Basic zone test version is " + version);
+  }
+  Long groupNumberVmInstance=0L;
+  ArrayList<Object[]> groups=new ArrayList<Object[]>();
+  Connection conn=Transaction.getStandaloneConnection();
+  try {
+    pstmt=conn.prepareStatement("SELECT DISTINCT v.group, v.account_id from vm_instance v where v.group is not null");
+    rs=pstmt.executeQuery();
+    while (rs.next()) {
+      groupNumberVmInstance++;
+    }
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT DISTINCT v.group, v.account_id from vm_instance v where v.group is not null");
+    rs=pstmt.executeQuery();
+    while (rs.next()) {
+      Object[] group=new Object[10];
+      group[0]=rs.getString(1);
+      group[1]=rs.getLong(2);
+      groups.add(group);
+    }
+    rs.close();
+    pstmt.close();
+  }
+  finally {
+    conn.close();
+  }
+  checker.upgrade("2.1.7","2.2.4");
+  conn=Transaction.getStandaloneConnection();
+  try {
+    s_logger.debug("Starting tesing upgrade from 2.1.7 to 2.2.4 for Instance groups...");
+    pstmt=conn.prepareStatement("SELECT version FROM version");
+    rs=pstmt.executeQuery();
+    if (!rs.next()) {
+      s_logger.error("ERROR: No version selected");
+    }
+ else     if (!rs.getString(1).equals("2.2.4")) {
+      s_logger.error("ERROR: VERSION stored is not 2.2.4: " + rs.getString(1));
+    }
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT COUNT(*) FROM instance_group");
+    rs=pstmt.executeQuery();
+    Long groupNumber=0L;
+    if (rs.next()) {
+      groupNumber=rs.getLong(1);
+    }
+    rs.close();
+    pstmt.close();
+    if (groupNumber != groupNumberVmInstance) {
+      s_logger.error("ERROR: instance groups were updated incorrectly. Have " + groupNumberVmInstance + " groups in vm_instance table, and "+ groupNumber+ " where created in instance_group table. Stopping the test");
+      System.exit(2);
+    }
+    for (    Object[] group : groups) {
+      String groupName=(String)group[0];
+      Long accountId=(Long)group[1];
+      if (!checkInstanceGroup(conn,groupName,accountId)) {
+        s_logger.error("ERROR: Unable to find group with name " + groupName + " for account id="+ accountId+ ", stopping the test");
+        System.exit(2);
+      }
+    }
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT g.id, v.id from vm_instance v, instance_group g where g.name=v.group and g.account_id=v.account_id and v.group is not null");
+    rs=pstmt.executeQuery();
+    ArrayList<Object[]> groupVmMaps=new ArrayList<Object[]>();
+    while (rs.next()) {
+      Object[] groupMaps=new Object[10];
+      groupMaps[0]=rs.getLong(1);
+      groupMaps[1]=rs.getLong(2);
+      groupVmMaps.add(groupMaps);
+    }
+    rs.close();
+    pstmt.close();
+    for (    Object[] groupMap : groupVmMaps) {
+      Long groupId=(Long)groupMap[0];
+      Long instanceId=(Long)groupMap[1];
+      if (!checkInstanceGroupVmMap(conn,groupId,instanceId)) {
+        s_logger.error("ERROR: unable to find instanceGroupVMMap for vm id=" + instanceId + " and group id="+ groupId+ ", stopping the test");
+        System.exit(2);
+      }
+    }
+    rs.close();
+    pstmt.close();
+    s_logger.debug("Instance group upgrade test is passed");
+  }
+  finally {
+    conn.close();
+  }
+}
