@@ -12,19 +12,37 @@
   Boolean isShared=cmd.getIsShared();
   Boolean isDefault=cmd.isDefault();
   Long userId=UserContext.current().getCallerUserId();
+  Long domainId=null;
+  Account owner=null;
   Transaction txn=Transaction.currentTxn();
+  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
+  if (networkOffering == null || networkOffering.isSystemOnly()) {
+    throw new InvalidParameterValueException("Unable to find network offeirng by id " + networkOfferingId);
+  }
   Account ctxAccount=UserContext.current().getCaller();
-  Account owner=_accountMgr.finalizeOwner(ctxAccount,cmd.getAccountName(),cmd.getDomainId());
+  owner=_accountMgr.finalizeOwner(ctxAccount,cmd.getAccountName(),cmd.getDomainId());
   UserContext.current().setAccountId(owner.getAccountId());
+  if (cmd.getDomainId() != null) {
+    if (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != GuestIpType.Direct) {
+      throw new InvalidParameterValueException("Domain level networks are supported just for traffic type " + TrafficType.Guest + " and guest Ip type "+ GuestIpType.Direct);
+    }
+ else     if (isShared == null || !isShared) {
+      throw new InvalidParameterValueException("Network dedicated to domain should be shared");
+    }
+ else {
+      domainId=cmd.getDomainId();
+      DomainVO domain=_domainDao.findById(domainId);
+      if (domain == null) {
+        throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
+      }
+      _accountMgr.checkAccess(ctxAccount,domain);
+    }
+  }
   if (endIP == null && startIP != null) {
     endIP=startIP;
   }
   if (zoneId == null || ((_dcDao.findById(zoneId)) == null)) {
     throw new InvalidParameterValueException("Please specify a valid zone.");
-  }
-  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
-  if (networkOffering == null || networkOffering.isSystemOnly()) {
-    throw new InvalidParameterValueException("Unable to find network offeirng by id " + networkOfferingId);
   }
   if (networkOffering.getAvailability() == Availability.Unavailable) {
     throw new InvalidParameterValueException("Can't create network; network offering id=" + networkOfferingId + " is "+ networkOffering.getAvailability());
@@ -65,7 +83,7 @@
     }
   }
   txn.start();
-  Network network=createNetwork(networkOfferingId,name,displayText,isShared,isDefault,zoneId,gateway,cidr,vlanId,networkDomain,owner,false);
+  Network network=createNetwork(networkOfferingId,name,displayText,isShared,isDefault,zoneId,gateway,cidr,vlanId,networkDomain,owner,false,domainId);
   if (network.getGuestType() == GuestIpType.Direct) {
     owner=null;
   }
