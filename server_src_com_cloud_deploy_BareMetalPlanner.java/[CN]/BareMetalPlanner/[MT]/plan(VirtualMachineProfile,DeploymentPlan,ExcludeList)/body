@@ -8,9 +8,16 @@
       hostTag=tags[0];
     }
   }
+  List<ClusterVO> clusters=_clusterDao.listByHyTypeWithoutGuid(HypervisorType.BareMetal.name());
+  if (clusters.size() != 1) {
+    throw new CloudRuntimeException("Invaild baremetal cluster number " + clusters.size());
+  }
+  Cluster cluster=clusters.get(0);
+  int cpu_requested;
+  long ram_requested;
+  HostVO target=null;
+  List<HostVO> hosts=_hostDao.listByCluster(cluster.getId());
   if (hostTag != null) {
-    List<HostVO> hosts=_hostDao.listBy(Host.Type.Routing,vm.getDataCenterId());
-    HostVO target=null;
     for (    HostVO h : hosts) {
       _hostDao.loadDetails(h);
       if (h.getDetail("hostTag") != null && h.getDetail("hostTag").equalsIgnoreCase(hostTag)) {
@@ -18,22 +25,26 @@
         break;
       }
     }
-    if (target == null) {
-      s_logger.warn("Cannot find host with tag " + hostTag);
-      return null;
-    }
-    int cpu=target.getCpus();
-    int speed=target.getSpeed().intValue();
-    Long ramSize=target.getTotalMemory() / (1024L * 1024L);
-    ServiceOfferingVO newOffering=new ServiceOfferingVO(offering.getName(),cpu,ramSize.intValue(),speed,offering.getRateMbps(),offering.getMulticastRateMbps(),false,offering.getDisplayText(),offering.getUseLocalStorage(),false,offering.getTags(),false);
-    ((VirtualMachineProfileImpl)vmProfile).setServiceOffering(newOffering);
   }
-  DeployDestination dest=super.plan(vmProfile,plan,avoid);
-  if (hostTag == null && dest != null) {
-    Host h=dest.getHost();
-    if (h.getCpus() != offering.getCpu() || h.getTotalMemory() != offering.getRamSize() || h.getSpeed() != offering.getSpeed()) {
-      throw new CloudRuntimeException(String.format("Bare Metal only allows one VM one host, " + "the offering capcacity doesn't equal to host capacity(offering: cpu number:%$1s, cpu speed:%$2s," + "ram size:%3$s; host: cpu number:%$4s, cpu speed:%$5s, ram size:%$6s)",offering.getCpu(),offering.getSpeed(),offering.getRamSize(),h.getCpus(),h.getSpeed(),h.getTotalMemory()));
+  if (target == null) {
+    s_logger.warn("Cannot find host with tag " + hostTag + " use capacity from service offering");
+    cpu_requested=offering.getCpu() * offering.getSpeed();
+    ram_requested=offering.getRamSize() * 1024 * 1024;
+  }
+ else {
+    cpu_requested=target.getCpus() * target.getSpeed().intValue();
+    ram_requested=target.getTotalMemory();
+  }
+  for (  HostVO h : hosts) {
+    if (h.getStatus() == Status.Up) {
+      if (_capacityMgr.checkIfHostHasCapacity(h.getId(),cpu_requested,ram_requested,false)) {
+        s_logger.debug("Find host " + h.getId() + " has enough capacity");
+        DataCenter dc=_dcDao.findById(h.getDataCenterId());
+        Pod pod=_podDao.findById(h.getPodId());
+        return new DeployDestination(dc,pod,cluster,h);
+      }
     }
   }
-  return dest;
+  s_logger.warn(String.format("Cannot find enough capacity(requested cpu=%1$s memory=%2$s)",cpu_requested,ram_requested));
+  return null;
 }
