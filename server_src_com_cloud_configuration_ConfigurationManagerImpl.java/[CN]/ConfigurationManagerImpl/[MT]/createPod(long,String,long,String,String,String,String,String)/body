@@ -1,0 +1,43 @@
+{
+  if (!validZone(zoneId)) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  DataCenterVO zone=_zoneDao.findById(zoneId);
+  Account account=UserContext.current().getCaller();
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
+  }
+  String cidrAddress=getCidrAddress(cidr);
+  int cidrSize=getCidrSize(cidr);
+  if (startIp != null) {
+    if (endIp == null) {
+      endIp=NetUtils.getIpRangeEndIpFromCidr(cidrAddress,cidrSize);
+    }
+  }
+  checkPodAttributes(-1,podName,zoneId,gateway,cidr,startIp,endIp,allocationStateStr,true);
+  String ipRange;
+  if (startIp != null) {
+    ipRange=startIp + "-" + endIp;
+  }
+ else {
+    throw new InvalidParameterValueException("Start ip is required parameter");
+  }
+  HostPodVO pod=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
+  Grouping.AllocationState allocationState=null;
+  if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
+    allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
+    pod.setAllocationState(allocationState);
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  pod=_podDao.persist(pod);
+  if (startIp != null) {
+    _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
+  }
+  String[] linkLocalIpRanges=getLinkLocalIPRange();
+  if (linkLocalIpRanges != null) {
+    _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
+  }
+  txn.commit();
+  return pod;
+}

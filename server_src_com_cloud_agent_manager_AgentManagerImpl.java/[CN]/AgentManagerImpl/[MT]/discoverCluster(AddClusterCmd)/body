@@ -6,8 +6,13 @@
   String username=cmd.getUsername();
   String password=cmd.getPassword();
   URI uri=null;
-  if (_dcDao.findById(dcId) == null) {
+  DataCenterVO zone=_dcDao.findById(dcId);
+  if (zone == null) {
     throw new InvalidParameterValueException("Can't find zone by id " + dcId);
+  }
+  Account account=UserContext.current().getCaller();
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + dcId);
   }
   if (podId != null) {
     if (_podDao.findById(podId) == null) {
@@ -36,6 +41,18 @@
   if (clusterType == null) {
     clusterType=Cluster.ClusterType.CloudManaged;
   }
+  Grouping.AllocationState allocationState=null;
+  if (cmd.getAllocationState() != null && !cmd.getAllocationState().isEmpty()) {
+    try {
+      allocationState=Grouping.AllocationState.valueOf(cmd.getAllocationState());
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve Allocation State '" + cmd.getAllocationState() + "' to a supported state");
+    }
+  }
+  if (allocationState == null) {
+    allocationState=Grouping.AllocationState.Disabled;
+  }
   Discoverer discoverer=getMatchingDiscover(hypervisorType);
   if (discoverer == null) {
     throw new InvalidParameterValueException("Could not find corresponding resource manager for " + cmd.getHypervisor());
@@ -45,6 +62,7 @@
   ClusterVO cluster=new ClusterVO(dcId,podId,clusterName);
   cluster.setHypervisorType(cmd.getHypervisor());
   cluster.setClusterType(clusterType);
+  cluster.setAllocationState(allocationState);
   try {
     cluster=_clusterDao.persist(cluster);
   }
@@ -88,7 +106,7 @@
     if (resources != null) {
       for (      Map.Entry<? extends ServerResource,Map<String,String>> entry : resources.entrySet()) {
         ServerResource resource=entry.getKey();
-        AgentAttache attache=simulateStart(resource,entry.getValue(),true,null);
+        AgentAttache attache=simulateStart(resource,entry.getValue(),true,null,null);
         if (attache != null) {
           hosts.add(_hostDao.findById(attache.getId()));
         }

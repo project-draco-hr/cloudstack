@@ -1,0 +1,57 @@
+{
+  if (checkForDuplicates) {
+    if (validPod(podName,zoneId)) {
+      throw new InvalidParameterValueException("A pod with name: " + podName + " already exists in zone "+ zoneId+ ". Please specify a different pod name. ");
+    }
+  }
+  String cidrAddress;
+  long cidrSize;
+  if (NetUtils.isValidCIDR(cidr)) {
+    cidrAddress=getCidrAddress(cidr);
+    cidrSize=getCidrSize(cidr);
+  }
+ else {
+    throw new InvalidParameterValueException("Please enter a valid CIDR for pod: " + podName);
+  }
+  if (startIp != null || endIp != null) {
+    checkIpRange(startIp,endIp,cidrAddress,cidrSize);
+  }
+  if (!NetUtils.isValidIp(gateway)) {
+    throw new InvalidParameterValueException("The gateway is not a valid IP address.");
+  }
+  if (!NetUtils.getCidrSubNet(gateway,cidrSize).equalsIgnoreCase(NetUtils.getCidrSubNet(cidrAddress,cidrSize))) {
+    throw new InvalidParameterValueException("The gateway is not in the CIDR subnet.");
+  }
+  if (NetUtils.ipRangesOverlap(startIp,endIp,gateway,gateway)) {
+    throw new InvalidParameterValueException("The gateway shouldn't overlap start/end ip addresses");
+  }
+  String checkPodCIDRs=_configDao.getValue("check.pod.cidrs");
+  if (checkPodCIDRs == null || checkPodCIDRs.trim().isEmpty() || Boolean.parseBoolean(checkPodCIDRs)) {
+    HashMap<Long,List<Object>> currentPodCidrSubnets=_podDao.getCurrentPodCidrSubnets(zoneId,podId);
+    List<Object> newCidrPair=new ArrayList<Object>();
+    newCidrPair.add(0,cidrAddress);
+    newCidrPair.add(1,new Long(cidrSize));
+    currentPodCidrSubnets.put(new Long(-1),newCidrPair);
+    checkPodCidrSubnets(zoneId,currentPodCidrSubnets);
+    List<VlanVO> vlans=_vlanDao.listByZoneAndType(zoneId,VlanType.VirtualNetwork);
+    for (    VlanVO vlan : vlans) {
+      String vlanCidr=NetUtils.ipAndNetMaskToCidr(vlan.getVlanGateway(),vlan.getVlanNetmask());
+      String[] cidrPairVlan=vlanCidr.split("\\/");
+      String[] vlanIpRange=NetUtils.getIpRangeFromCidr(cidrPairVlan[0],Long.valueOf(cidrPairVlan[1]));
+      String[] cidrPairPod=cidr.split("\\/");
+      String[] podIpRange=NetUtils.getIpRangeFromCidr(cidrPairPod[0],Long.valueOf(cidrPairPod[1]));
+      if (NetUtils.ipRangesOverlap(vlanIpRange[0],vlanIpRange[1],podIpRange[0],podIpRange[1])) {
+        throw new InvalidParameterValueException("Pod's cidr conflicts with cidr of virtual network in zone id=" + zoneId);
+      }
+    }
+  }
+  Grouping.AllocationState allocationState=null;
+  if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
+    try {
+      allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve Allocation State '" + allocationStateStr + "' to a supported state");
+    }
+  }
+}

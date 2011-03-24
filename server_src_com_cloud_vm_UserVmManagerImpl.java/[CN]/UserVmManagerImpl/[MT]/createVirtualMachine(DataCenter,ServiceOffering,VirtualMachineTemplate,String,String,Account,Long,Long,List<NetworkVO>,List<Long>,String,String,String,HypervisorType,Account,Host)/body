@@ -1,0 +1,170 @@
+{
+  _accountMgr.checkAccess(caller,owner);
+  long accountId=owner.getId();
+  if (destinationHost != null && !_accountMgr.isRootAdmin(caller.getType())) {
+    throw new PermissionDeniedException("Destination Host can only be specified by a Root Admin, permission denied");
+  }
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zone.getId());
+  }
+  if (zone.getDomainId() != null) {
+    DomainVO domain=_domainDao.findById(zone.getDomainId());
+    if (domain == null) {
+      throw new CloudRuntimeException("Unable to find the domain " + zone.getDomainId() + " for the zone: "+ zone);
+    }
+    _accountMgr.checkAccess(caller,domain);
+    _accountMgr.checkAccess(owner,domain);
+  }
+  if (_accountMgr.resourceLimitExceeded(owner,ResourceType.user_vm)) {
+    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of virtual machines for account: " + owner.getAccountName() + " has been exceeded.");
+    rae.setResourceType("vm");
+    throw rae;
+  }
+  List<StoragePoolVO> availablePools=_storagePoolDao.listPoolsByStatus(StoragePoolStatus.Up);
+  if (availablePools == null || availablePools.size() < 1) {
+    throw new StorageUnavailableException("There are no available pools in the UP state for vm deployment",-1);
+  }
+  ServiceOfferingVO offering=_serviceOfferingDao.findById(serviceOffering.getId());
+  if (template.getTemplateType().equals(TemplateType.SYSTEM)) {
+    throw new InvalidParameterValueException("Unable to use system template " + template.getId() + " to deploy a user vm");
+  }
+  List<VMTemplateZoneVO> listZoneTemplate=_templateZoneDao.listByZoneTemplate(zone.getId(),template.getId());
+  if (listZoneTemplate == null || listZoneTemplate.isEmpty()) {
+    throw new InvalidParameterValueException("The template " + template.getId() + " is not available for use");
+  }
+  boolean isIso=Storage.ImageFormat.ISO == template.getFormat();
+  if (isIso && !template.isBootable()) {
+    throw new InvalidParameterValueException("Installing from ISO requires an ISO that is bootable: " + template.getId());
+  }
+  Pair<DiskOfferingVO,Long> rootDiskOffering=new Pair<DiskOfferingVO,Long>(null,null);
+  List<Pair<DiskOfferingVO,Long>> dataDiskOfferings=new ArrayList<Pair<DiskOfferingVO,Long>>();
+  if (isIso) {
+    if (diskOfferingId == null) {
+      throw new InvalidParameterValueException("Installing from ISO requires a disk offering to be specified for the root disk.");
+    }
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+    if (diskOffering == null) {
+      throw new InvalidParameterValueException("Unable to find disk offering " + diskOfferingId);
+    }
+    Long size=null;
+    if (diskOffering.getDiskSize() == 0) {
+      size=diskSize;
+      if (size == null) {
+        throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+      }
+    }
+    rootDiskOffering.first(diskOffering);
+    rootDiskOffering.second(size);
+  }
+ else {
+    rootDiskOffering.first(offering);
+    if (diskOfferingId != null) {
+      DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+      if (diskOffering == null) {
+        throw new InvalidParameterValueException("Unable to find disk offering " + diskOfferingId);
+      }
+      Long size=null;
+      if (diskOffering.getDiskSize() == 0) {
+        size=diskSize;
+        if (size == null) {
+          throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+        }
+      }
+      dataDiskOfferings.add(new Pair<DiskOfferingVO,Long>(diskOffering,size));
+    }
+  }
+  byte[] decodedUserData=null;
+  if (userData != null) {
+    if (userData.length() >= 2 * MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    decodedUserData=org.apache.commons.codec.binary.Base64.decodeBase64(userData.getBytes());
+    if (decodedUserData.length > MAX_USER_DATA_LENGTH_BYTES) {
+      throw new InvalidParameterValueException("User data is too long");
+    }
+    if (decodedUserData.length < 1) {
+      throw new InvalidParameterValueException("User data is too short");
+    }
+  }
+  String sshPublicKey=null;
+  if (sshKeyPair != null && !sshKeyPair.equals("")) {
+    Account account=UserContext.current().getCaller();
+    SSHKeyPair pair=_sshKeyPairDao.findByName(account.getAccountId(),account.getDomainId(),sshKeyPair);
+    if (pair == null) {
+      throw new InvalidParameterValueException("A key pair with name '" + sshKeyPair + "' was not found.");
+    }
+    sshPublicKey=pair.getPublicKey();
+  }
+  _accountMgr.checkAccess(caller,template);
+  DataCenterDeployment plan=null;
+  if (destinationHost != null) {
+    s_logger.debug("Destination Host to deploy the VM is specified, adding it to the deployment plan");
+    plan=new DataCenterDeployment(zone.getId(),destinationHost.getPodId(),destinationHost.getClusterId(),destinationHost.getId(),null);
+  }
+ else {
+    plan=new DataCenterDeployment(zone.getId());
+  }
+  s_logger.debug("Allocating in the DB for vm");
+  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>();
+  short defaultNetworkNumber=0;
+  for (  NetworkVO network : networkList) {
+    if (network.isDefault()) {
+      defaultNetworkNumber++;
+    }
+    networks.add(new Pair<NetworkVO,NicProfile>(network,null));
+  }
+  if (defaultNetworkNumber == 0) {
+    throw new InvalidParameterValueException("At least 1 default network has to be specified for the vm");
+  }
+ else   if (defaultNetworkNumber > 1) {
+    throw new InvalidParameterValueException("Only 1 default network per vm is supported");
+  }
+  long id=_vmDao.getNextInSequence(Long.class,"id");
+  String instanceName=VirtualMachineName.getVmName(id,owner.getId(),_instance);
+  if (hostName == null) {
+    hostName=instanceName;
+  }
+ else {
+    if (!NetUtils.verifyDomainNameLabel(hostName,true)) {
+      throw new InvalidParameterValueException("Invalid name. Vm name can contain ASCII letters 'a' through 'z', the digits '0' through '9', " + "and the hyphen ('-'), must be between 1 and 63 characters long, and can't start or end with \"-\" and can't start with digit");
+    }
+  }
+  HypervisorType hypervisorType=null;
+  if (template == null || template.getHypervisorType() == null || template.getHypervisorType() == HypervisorType.None) {
+    hypervisorType=hypervisor;
+  }
+ else {
+    hypervisorType=template.getHypervisorType();
+  }
+  UserVmVO vm=new UserVmVO(id,instanceName,displayName,template.getId(),hypervisorType,template.getGuestOSId(),offering.getOfferHA(),owner.getDomainId(),owner.getId(),offering.getId(),userData,hostName);
+  if (sshPublicKey != null) {
+    vm.setDetail("SSH.PublicKey",sshPublicKey);
+  }
+  if (isIso) {
+    vm.setIsoId(template.getId());
+  }
+  if (_itMgr.allocate(vm,_templateDao.findById(template.getId()),offering,rootDiskOffering,dataDiskOfferings,networks,null,plan,hypervisorType,owner) == null) {
+    return null;
+  }
+  _vmDao.saveDetails(vm);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Successfully allocated DB entry for " + vm);
+  }
+  UserContext.current().setEventDetails("Vm Id: " + vm.getId());
+  UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VM_CREATE,accountId,zone.getId(),vm.getId(),vm.getName(),offering.getId(),template.getId(),hypervisorType.toString());
+  _usageEventDao.persist(usageEvent);
+  _accountMgr.incrementResourceCount(accountId,ResourceType.user_vm);
+  try {
+    if (group != null) {
+      boolean addToGroup=addInstanceToGroup(Long.valueOf(id),group);
+      if (!addToGroup) {
+        throw new CloudRuntimeException("Unable to assign Vm to the group " + group);
+      }
+    }
+  }
+ catch (  Exception ex) {
+    throw new CloudRuntimeException("Unable to assign Vm to the group " + group);
+  }
+  _networkGroupMgr.addInstanceToGroups(vm.getId(),securityGroupIdList);
+  return vm;
+}
