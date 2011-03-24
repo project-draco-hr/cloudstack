@@ -1,4 +1,6 @@
 {
+  Transaction txn=Transaction.currentTxn();
+  boolean success=false;
   Long userId=UserContext.current().getCallerUserId();
   Long zoneId=cmd.getId();
   if (userId == null) {
@@ -8,28 +10,19 @@
     throw new InvalidParameterValueException("A zone with ID: " + zoneId + " does not exist.");
   }
   checkIfZoneIsDeletable(zoneId);
-  boolean success=_zoneDao.expunge(zoneId);
-  try {
-    _zoneDao.deleteVnet(zoneId);
-    List<NetworkVO> networks=_networkDao.listByZone(zoneId);
-    if (networks != null && !networks.isEmpty()) {
-      for (      NetworkVO network : networks) {
-        _networkDao.remove(network.getId());
-      }
-    }
-    List<VlanVO> vlans=_vlanDao.listByZone(zoneId);
-    for (    VlanVO vlan : vlans) {
-      _vlanDao.remove(vlan.getId());
+  txn.start();
+  _zoneDao.deleteVnet(zoneId);
+  List<VlanVO> vlans=_vlanDao.listByZone(zoneId);
+  for (  VlanVO vlan : vlans) {
+    _vlanDao.remove(vlan.getId());
+  }
+  List<NetworkVO> networks=_networkDao.listByZoneIncludingRemoved(zoneId);
+  if (networks != null && !networks.isEmpty()) {
+    for (    NetworkVO network : networks) {
+      _networkDao.expunge(network.getId());
     }
   }
- catch (  Exception ex) {
-    s_logger.error("Failed to delete zone " + zoneId);
-    throw new CloudRuntimeException("Failed to delete zone " + zoneId);
-  }
-  if (success) {
-    return true;
-  }
- else {
-    return false;
-  }
+  success=_zoneDao.expunge(zoneId);
+  txn.commit();
+  return success;
 }
