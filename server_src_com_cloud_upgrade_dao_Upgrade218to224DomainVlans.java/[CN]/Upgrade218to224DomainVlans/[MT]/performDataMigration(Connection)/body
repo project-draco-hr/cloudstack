@@ -1,0 +1,45 @@
+{
+  HashMap<Long,Long> networkDomainMap=new HashMap<Long,Long>();
+  try {
+    PreparedStatement pstmt=conn.prepareStatement("SELECT id FROM networks WHERE shared=1 AND traffic_type='Guest' AND guest_type='Direct'");
+    ResultSet rs=pstmt.executeQuery();
+    s_logger.debug("query is " + pstmt);
+    while (rs.next()) {
+      Long networkId=rs.getLong(1);
+      Long vlanId=null;
+      Long domainId=null;
+      pstmt=conn.prepareStatement("SELECT id FROM vlan WHERE network_id=? LIMIT 0,1");
+      pstmt.setLong(1,networkId);
+      s_logger.debug("query is " + pstmt);
+      rs=pstmt.executeQuery();
+      while (rs.next()) {
+        vlanId=rs.getLong(1);
+      }
+      if (vlanId != null) {
+        pstmt=conn.prepareStatement("SELECT domain_id FROM account_vlan_map WHERE domain_id IS NOT NULL AND vlan_db_id=? LIMIT 0,1");
+        pstmt.setLong(1,vlanId);
+        s_logger.debug("query is " + pstmt);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          domainId=rs.getLong(1);
+        }
+        if (domainId != null) {
+          if (!networkDomainMap.containsKey(networkId)) {
+            networkDomainMap.put(networkId,domainId);
+          }
+        }
+      }
+    }
+    for (    Long networkId : networkDomainMap.keySet()) {
+      pstmt=conn.prepareStatement("INSERT INTO domain_network_ref (network_id, domain_id) VALUES (?,    ?)");
+      pstmt.setLong(1,networkId);
+      pstmt.setLong(2,networkDomainMap.get(networkId));
+      pstmt.executeUpdate();
+    }
+    rs.close();
+    pstmt.close();
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Unable to convert 2.1.x domain level vlans to 2.2.x domain level networks",e);
+  }
+}

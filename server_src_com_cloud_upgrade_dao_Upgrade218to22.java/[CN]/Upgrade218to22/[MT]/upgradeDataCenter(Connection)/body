@@ -1,0 +1,229 @@
+{
+  PreparedStatement pstmt;
+  try {
+    pstmt=conn.prepareStatement("SELECT value FROM configuration WHERE name='direct.attach.untagged.vlan.enabled'");
+    ResultSet rs=pstmt.executeQuery();
+    _basicZone=!rs.next() || Boolean.parseBoolean(rs.getString(1));
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("UPDATE data_center SET networktype=?, dns_provider=?, gateway_provider=?, firewall_provider=?, dhcp_provider=?, lb_provider=?, vpn_provider=?, userdata_provider=?");
+    if (_basicZone) {
+      pstmt.setString(1,"Basic");
+      pstmt.setString(2,"DhcpServer");
+      pstmt.setString(3,null);
+      pstmt.setString(4,null);
+      pstmt.setString(5,"DhcpServer");
+      pstmt.setString(6,null);
+      pstmt.setString(7,null);
+      pstmt.setString(8,"DhcpServer");
+    }
+ else {
+      pstmt.setString(1,"Advanced");
+      pstmt.setString(2,"VirtualRouter");
+      pstmt.setString(3,"VirtualRouter");
+      pstmt.setString(4,"VirtualRouter");
+      pstmt.setString(5,"VirtualRouter");
+      pstmt.setString(6,"VirtualRouter");
+      pstmt.setString(7,"VirtualRouter");
+      pstmt.setString(8,"VirtualRouter");
+    }
+    pstmt.executeUpdate();
+    pstmt.close();
+    if (_basicZone) {
+      pstmt=conn.prepareStatement("UPDATE data_center SET vnet=?, guest_network_cidr=?");
+      pstmt.setString(1,null);
+      pstmt.setString(2,null);
+      pstmt.executeUpdate();
+      pstmt.close();
+    }
+    pstmt=conn.prepareStatement("SELECT id, guest_network_cidr, domain FROM data_center");
+    rs=pstmt.executeQuery();
+    ArrayList<Object[]> dcs=new ArrayList<Object[]>();
+    while (rs.next()) {
+      Object[] dc=new Object[10];
+      dc[0]=rs.getLong(1);
+      dc[1]=rs.getString(2);
+      dc[2]=rs.getString(3);
+      dcs.add(dc);
+    }
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT id FROM network_offerings WHERE name='System-Management-Network'");
+    rs=pstmt.executeQuery();
+    if (!rs.next()) {
+      throw new CloudRuntimeException("Unable to find the management network offering.");
+    }
+    long managementNetworkOfferingId=rs.getLong(1);
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT id FROM network_offerings WHERE name='System-Public-Network'");
+    rs=pstmt.executeQuery();
+    if (!rs.next()) {
+      throw new CloudRuntimeException("Unable to find the public network offering.");
+    }
+    long publicNetworkOfferingId=rs.getLong(1);
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT id FROM network_offerings WHERE name='System-Control-Network'");
+    rs=pstmt.executeQuery();
+    if (!rs.next()) {
+      throw new CloudRuntimeException("Unable to find the control network offering.");
+    }
+    long controlNetworkOfferingId=rs.getLong(1);
+    rs.close();
+    pstmt.close();
+    pstmt=conn.prepareStatement("SELECT id FROM network_offerings WHERE name='System-Storage-Network'");
+    rs=pstmt.executeQuery();
+    if (!rs.next()) {
+      throw new CloudRuntimeException("Unable to find the storage network offering.");
+    }
+    long storageNetworkOfferingId=rs.getLong(1);
+    rs.close();
+    pstmt.close();
+    if (_basicZone) {
+      for (      Object[] dc : dcs) {
+        Long dcId=(Long)dc[0];
+        long mgmtNetworkId=insertNetwork(conn,"ManagementNetwork" + dcId,"Management Network created for Zone " + dcId,"Management","Native",null,null,null,"Static",managementNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long storageNetworkId=insertNetwork(conn,"StorageNetwork" + dcId,"Storage Network created for Zone " + dcId,"Storage","Native",null,null,null,"Static",storageNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long controlNetworkId=insertNetwork(conn,"ControlNetwork" + dcId,"Control Network created for Zone " + dcId,"Control","Native",null,null,null,"Static",controlNetworkOfferingId,dcId,"ControlNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        upgradeManagementIpAddress(conn,dcId);
+        long basicDefaultDirectNetworkId=insertNetwork(conn,"BasicZoneDirectNetwork" + dcId,"Basic Zone Direct Network created for Zone " + dcId,"Guest","Native",null,null,null,"Dhcp",5,dcId,"DirectPodBasedNetworkGuru","Setup",1,1,null,null,"Direct",true,null,true,null);
+        pstmt=conn.prepareStatement("SELECT id FROM vlan WHERE vlan_type='DirectAttached' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          long vlanId=rs.getLong(1);
+          pstmt=conn.prepareStatement("UPDATE vlan SET network_id=? WHERE id=?");
+          pstmt.setLong(1,basicDefaultDirectNetworkId);
+          pstmt.setLong(2,vlanId);
+          pstmt.executeUpdate();
+          pstmt.close();
+          upgradeDirectUserIpAddress(conn,dcId,basicDefaultDirectNetworkId,"DirectAttached");
+        }
+        pstmt=conn.prepareStatement("SELECT vm_instance.id, vm_instance.domain_id, vm_instance.account_id, domain_router.gateway, domain_router.guest_ip_address, domain_router.domain, domain_router.dns1, domain_router.dns2, domain_router.vnet FROM vm_instance INNER JOIN domain_router ON vm_instance.id=domain_router.id WHERE vm_instance.removed IS NULL AND vm_instance.type='DomainRouter' AND vm_instance.data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        ArrayList<Object[]> routers=new ArrayList<Object[]>();
+        while (rs.next()) {
+          Object[] router=new Object[40];
+          router[0]=rs.getLong(1);
+          router[1]=rs.getString(4);
+          routers.add(router);
+        }
+        rs.close();
+        pstmt.close();
+        for (        Object[] router : routers) {
+          s_logger.debug("Updating domR with network id in basic zone id=" + dcId);
+          pstmt=conn.prepareStatement("UPDATE domain_router SET network_id = ? wHERE id = ? ");
+          pstmt.setLong(1,basicDefaultDirectNetworkId);
+          pstmt.setLong(2,(Long)router[0]);
+          pstmt.executeUpdate();
+          pstmt.close();
+          upgradeBasicUserVms(conn,(Long)router[0],basicDefaultDirectNetworkId,(String)router[1],"untagged");
+          upgradeDomR(conn,(Long)router[0],null,basicDefaultDirectNetworkId,controlNetworkId,"Basic");
+        }
+        upgradeSsvm(conn,dcId,basicDefaultDirectNetworkId,storageNetworkId,controlNetworkId,"Basic");
+        pstmt=conn.prepareStatement("SELECT vm_instance.id FROM vm_instance WHERE removed IS NULL AND type='ConsoleProxy' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          upgradeConsoleProxy(conn,rs.getLong(1),basicDefaultDirectNetworkId,mgmtNetworkId,controlNetworkId,"Basic");
+        }
+      }
+    }
+ else {
+      for (      Object[] dc : dcs) {
+        Long dcId=(Long)dc[0];
+        long mgmtNetworkId=insertNetwork(conn,"ManagementNetwork" + dcId,"Management Network created for Zone " + dcId,"Management","Native",null,null,null,"Static",managementNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long storageNetworkId=insertNetwork(conn,"StorageNetwork" + dcId,"Storage Network created for Zone " + dcId,"Storage","Native",null,null,null,"Static",storageNetworkOfferingId,dcId,"PodBasedNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        long controlNetworkId=insertNetwork(conn,"ControlNetwork" + dcId,"Control Network created for Zone " + dcId,"Control","Native",null,null,null,"Static",controlNetworkOfferingId,dcId,"ControlNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        upgradeManagementIpAddress(conn,dcId);
+        long publicNetworkId=insertNetwork(conn,"PublicNetwork" + dcId,"Public Network Created for Zone " + dcId,"Public","Native",null,null,null,"Static",publicNetworkOfferingId,dcId,"PublicNetworkGuru","Setup",1,1,null,null,null,true,null,false,null);
+        pstmt=conn.prepareStatement("SELECT vm_instance.id, vm_instance.domain_id, vm_instance.account_id, domain_router.guest_ip_address, domain_router.domain, domain_router.dns1, domain_router.dns2, domain_router.vnet FROM vm_instance INNER JOIN domain_router ON vm_instance.id=domain_router.id WHERE vm_instance.removed IS NULL AND vm_instance.type='DomainRouter' AND vm_instance.data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        ArrayList<Object[]> routers=new ArrayList<Object[]>();
+        while (rs.next()) {
+          Object[] router=new Object[40];
+          router[0]=rs.getLong(1);
+          router[1]=rs.getLong(2);
+          router[2]=rs.getLong(3);
+          router[3]=rs.getString(4);
+          router[4]=rs.getString(5);
+          router[5]=rs.getString(6);
+          router[6]=rs.getString(7);
+          router[7]=rs.getString(8);
+          routers.add(router);
+        }
+        rs.close();
+        pstmt.close();
+        for (        Object[] router : routers) {
+          String vnet=(String)router[7];
+          String reservationId=null;
+          String state="Allocated";
+          if (vnet != null) {
+            reservationId=dcId + "-" + vnet;
+            state="Implemented";
+          }
+          long virtualNetworkId=insertNetwork(conn,"VirtualNetwork" + router[0],"Virtual Network for " + router[0],"Guest","Vlan","vlan://" + vnet,(String)router[3],(String)dc[1],"Dhcp",6,dcId,"ExternalGuestNetworkGuru",state,(Long)router[1],(Long)router[2],(String)router[5],(String)router[6],"Virtual",false,(String)router[4],true,reservationId);
+          pstmt=conn.prepareStatement("UPDATE domain_router SET network_id = ? wHERE id = ? ");
+          pstmt.setLong(1,virtualNetworkId);
+          pstmt.setLong(2,(Long)router[0]);
+          pstmt.executeUpdate();
+          pstmt.close();
+          s_logger.debug("Network inserted for " + router[0] + " id = "+ virtualNetworkId);
+          upgradeVirtualUserVms(conn,(Long)router[0],virtualNetworkId,(String)router[3],vnet);
+          upgradeDomR(conn,(Long)router[0],publicNetworkId,virtualNetworkId,controlNetworkId,"Advanced");
+        }
+        upgradePublicUserIpAddress(conn,dcId,publicNetworkId,"VirtualNetwork");
+        pstmt=conn.prepareStatement("SELECT id, vlan_id, vlan_gateway, vlan_netmask FROM vlan WHERE vlan_type='DirectAttached' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        HashMap<String,Long> vlanNetworkMap=new HashMap<String,Long>();
+        while (rs.next()) {
+          long vlanId=rs.getLong(1);
+          String tag=rs.getString(2);
+          String gateway=rs.getString(3);
+          String netmask=rs.getString(4);
+          String cidr=NetUtils.getCidrFromGatewayAndNetmask(gateway,netmask);
+          Long accountId=1L;
+          Long domainId=1L;
+          boolean isShared=true;
+          pstmt=conn.prepareStatement("SELECT account_id FROM account_vlan_map WHERE account_id IS NOT NULL AND vlan_db_id=?");
+          pstmt.setLong(1,vlanId);
+          ResultSet accountRs=pstmt.executeQuery();
+          while (accountRs.next()) {
+            isShared=false;
+            accountId=accountRs.getLong(1);
+            pstmt=conn.prepareStatement("SELECT domain_id FROM account WHERE id=?");
+            pstmt.setLong(1,accountId);
+            ResultSet domainRs=pstmt.executeQuery();
+            while (domainRs.next()) {
+              domainId=domainRs.getLong(1);
+            }
+          }
+          if (vlanNetworkMap.get(tag) == null) {
+            long directNetworkId=insertNetwork(conn,"DirectNetwork" + vlanId,"Direct network created for " + vlanId,"Guest","Vlan","vlan://" + tag,gateway,cidr,"Dhcp",7,dcId,"DirectNetworkGuru","Setup",domainId,accountId,null,null,"Direct",isShared,(String)dc[2],true,null);
+            vlanNetworkMap.put(tag,directNetworkId);
+          }
+          pstmt=conn.prepareStatement("UPDATE vlan SET network_id=? WHERE id=?");
+          pstmt.setLong(1,vlanNetworkMap.get(tag));
+          pstmt.setLong(2,vlanId);
+          pstmt.executeUpdate();
+          pstmt.close();
+          upgradeDirectUserIpAddress(conn,dcId,vlanNetworkMap.get(tag),"DirectAttached");
+        }
+        upgradeSsvm(conn,dcId,publicNetworkId,storageNetworkId,controlNetworkId,"Advanced");
+        pstmt=conn.prepareStatement("SELECT vm_instance.id FROM vm_instance WHERE removed IS NULL AND type='ConsoleProxy' AND data_center_id=?");
+        pstmt.setLong(1,dcId);
+        rs=pstmt.executeQuery();
+        while (rs.next()) {
+          upgradeConsoleProxy(conn,rs.getLong(1),publicNetworkId,mgmtNetworkId,controlNetworkId,"Advanced");
+        }
+      }
+    }
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Can't update data center ",e);
+  }
+}
