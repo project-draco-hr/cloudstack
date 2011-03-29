@@ -27,6 +27,10 @@
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getType())) {
     throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
   }
+  List<HostVO> allHosts=_hostDao.listBy(Host.Type.Routing,clusterId,podId,zoneId);
+  if (allHosts.isEmpty()) {
+    throw new ResourceUnavailableException("No host up to associate a storage pool with in cluster " + clusterId,HostPodVO.class,podId);
+  }
   URI uri=null;
   try {
     uri=new URI(cmd.getUrl());
@@ -144,10 +148,6 @@
     Long oldPodId=pools.get(0).getPodId();
     throw new ResourceInUseException("Storage pool " + uri + " already in use by another pod (id="+ oldPodId+ ")","StoragePool",uri.toASCIIString());
   }
-  List<HostVO> allHosts=_hostDao.listBy(Host.Type.Routing,clusterId,podId,zoneId);
-  if (allHosts.isEmpty()) {
-    throw new ResourceUnavailableException("No host exists to associate a storage pool with in pod: ",HostPodVO.class,podId);
-  }
   long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
   String uuid=null;
   if (scheme.equalsIgnoreCase("sharedmountpoint")) {
@@ -180,10 +180,21 @@
   if (allHosts.isEmpty()) {
     return pool;
   }
+  boolean success=false;
+  for (  HostVO h : allHosts) {
+    success=createStoragePool(h.getId(),pool);
+    if (success) {
+      break;
+    }
+  }
+  if (!success) {
+    s_logger.warn("Can not create storage pool " + pool + " on cluster "+ clusterId);
+    return null;
+  }
   s_logger.debug("In createPool Adding the pool to each of the hosts");
   List<HostVO> poolHosts=new ArrayList<HostVO>();
   for (  HostVO h : allHosts) {
-    boolean success=addPoolToHost(h.getId(),pool);
+    success=addPoolToHost(h.getId(),pool);
     if (success) {
       poolHosts.add(h);
     }
