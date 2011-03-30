@@ -1,0 +1,53 @@
+{
+  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+  String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
+  String[] results=new String[cmd.getIpAddresses().length];
+  Connect conn;
+  try {
+    conn=LibvirtConnection.getConnection();
+    List<InterfaceDef> nics=getInterfaces(conn,routerName);
+    Map<String,Integer> vlanAllocatedToVM=new HashMap<String,Integer>();
+    Integer nicPos=0;
+    for (    InterfaceDef nic : nics) {
+      if (nic.getBrName().equalsIgnoreCase(_linkLocalBridgeName)) {
+        vlanAllocatedToVM.put("LinkLocal",nicPos);
+      }
+ else {
+        String vlanId=getVlanIdFromBridge(nic.getBrName());
+        if (vlanId != null) {
+          vlanAllocatedToVM.put(vlanId,nicPos);
+        }
+ else {
+          vlanAllocatedToVM.put(Vlan.UNTAGGED,nicPos);
+        }
+      }
+      nicPos++;
+    }
+    IpAddressTO[] ips=cmd.getIpAddresses();
+    int i=0;
+    String result=null;
+    int nicNum=0;
+    for (    IpAddressTO ip : ips) {
+      if (!vlanAllocatedToVM.containsKey(ip.getVlanId())) {
+        VifHotPlug(conn,routerName,ip.getVlanId(),ip.getVifMacAddress());
+        vlanAllocatedToVM.put(ip.getVlanId(),nicPos++);
+      }
+      nicNum=vlanAllocatedToVM.get(ip.getVlanId());
+      result=_virtRouterResource.assignPublicIpAddress(routerName,routerIp,ip.getPublicIp(),ip.isAdd(),ip.isFirstIP(),ip.isSourceNat(),ip.getVlanId(),ip.getVlanGateway(),ip.getVlanNetmask(),ip.getVifMacAddress(),ip.getGuestIp(),nicNum);
+      if (result != null) {
+        results[i++]=IpAssocAnswer.errorResult;
+      }
+ else {
+        results[i++]=ip.getPublicIp() + " - success";
+        ;
+      }
+    }
+    return new IpAssocAnswer(cmd,results);
+  }
+ catch (  LibvirtException e) {
+    return new ManageSnapshotAnswer(cmd,false,e.toString());
+  }
+catch (  InternalErrorException e) {
+    return new ManageSnapshotAnswer(cmd,false,e.toString());
+  }
+}
