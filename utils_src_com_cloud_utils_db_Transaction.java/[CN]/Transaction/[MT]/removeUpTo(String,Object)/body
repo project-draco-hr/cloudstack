@@ -4,51 +4,63 @@
   while (it.hasNext()) {
     StackElement item=it.next();
     it.remove();
-    if (item.type == type && (ref == null || item.ref == ref)) {
-      break;
-    }
-    if (item.type == CURRENT_TXN) {
-      if (s_logger.isTraceEnabled()) {
-        s_logger.trace("Releasing the current txn: " + (item.ref != null ? item.ref : ""));
+    try {
+      if (item.type == type && (ref == null || item.ref == ref)) {
+        break;
       }
-    }
- else     if (item.type == CREATE_CONN) {
-      closeConnection();
-    }
- else     if (item.type == START_TXN) {
-      if (item.ref == null) {
-        rollback=true;
+      if (item.type == CURRENT_TXN) {
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("Releasing the current txn: " + (item.ref != null ? item.ref : ""));
+        }
       }
+ else       if (item.type == CREATE_CONN) {
+        closeConnection();
+      }
+ else       if (item.type == START_TXN) {
+        if (item.ref == null) {
+          rollback=true;
+        }
  else {
-        try {
-          _conn.rollback((Savepoint)ref);
-          rollback=false;
-        }
- catch (        final SQLException e) {
-          s_logger.warn("Unable to rollback Txn.",e);
-        }
-      }
-    }
- else     if (item.type == STATEMENT) {
-      try {
-        if (s_stmtLogger.isTraceEnabled()) {
-          s_stmtLogger.trace("Closing: " + ref.toString());
-        }
-        Statement stmt=(Statement)ref;
-        try {
-          ResultSet rs=stmt.getResultSet();
-          if (rs != null) {
-            rs.close();
+          try {
+            _conn.rollback((Savepoint)ref);
+            rollback=false;
+          }
+ catch (          final SQLException e) {
+            s_logger.warn("Unable to rollback Txn.",e);
           }
         }
- catch (        SQLException e) {
-          s_stmtLogger.trace("Unable to close resultset");
+      }
+ else       if (item.type == STATEMENT) {
+        try {
+          if (s_stmtLogger.isTraceEnabled()) {
+            s_stmtLogger.trace("Closing: " + ref.toString());
+          }
+          Statement stmt=(Statement)ref;
+          try {
+            ResultSet rs=stmt.getResultSet();
+            if (rs != null) {
+              rs.close();
+            }
+          }
+ catch (          SQLException e) {
+            s_stmtLogger.trace("Unable to close resultset");
+          }
+          stmt.close();
         }
-        stmt.close();
+ catch (        final SQLException e) {
+          s_stmtLogger.trace("Unable to close statement: " + item.toString());
+        }
       }
- catch (      final SQLException e) {
-        s_stmtLogger.trace("Unable to close statement: " + item.toString());
+ else       if (item.type == ATTACHMENT) {
+        TransactionAttachment att=(TransactionAttachment)item.ref;
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("Cleaning up " + att.getName());
+        }
+        att.cleanup();
       }
+    }
+ catch (    Exception e) {
+      s_logger.error("Unable to clean up " + item,e);
     }
   }
   if (rollback) {
