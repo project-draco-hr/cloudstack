@@ -1,0 +1,68 @@
+{
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Allocate secondary storage vm standby capacity for data center : " + dataCenterId);
+  }
+  boolean secStorageVmFromStoppedPool=false;
+  SecondaryStorageVmVO secStorageVm=assignSecStorageVmFromStoppedPool(dataCenterId,role);
+  if (secStorageVm == null) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("No stopped secondary storage vm is available, need to allocate a new secondary storage vm");
+    }
+    if (_allocLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+      try {
+        secStorageVm=startNew(dataCenterId,role);
+      }
+  finally {
+        _allocLock.unlock();
+      }
+    }
+ else {
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Unable to acquire synchronization lock to allocate secStorageVm resource for standby capacity, wait for next scan");
+      }
+      return;
+    }
+  }
+ else {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Found a stopped secondary storage vm, bring it up to running pool. secStorageVm vm id : " + secStorageVm.getId());
+    }
+    secStorageVmFromStoppedPool=true;
+  }
+  if (secStorageVm != null) {
+    long secStorageVmId=secStorageVm.getId();
+    GlobalLock secStorageVmLock=GlobalLock.getInternLock(getSecStorageVmLockName(secStorageVmId));
+    try {
+      if (secStorageVmLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
+        try {
+          secStorageVm=startSecStorageVm(secStorageVmId);
+        }
+  finally {
+          secStorageVmLock.unlock();
+        }
+      }
+ else {
+        if (s_logger.isInfoEnabled()) {
+          s_logger.info("Unable to acquire synchronization lock to start secStorageVm for standby capacity, secStorageVm vm id : " + secStorageVm.getId());
+        }
+        return;
+      }
+    }
+  finally {
+      secStorageVmLock.releaseRef();
+    }
+    if (secStorageVm == null) {
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Unable to start secondary storage vm for standby capacity, secStorageVm vm Id : " + secStorageVmId + ", will recycle it and start a new one");
+      }
+      if (secStorageVmFromStoppedPool) {
+        destroySecStorageVm(secStorageVmId);
+      }
+    }
+ else {
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Secondary storage vm " + secStorageVm.getName() + " is started");
+      }
+    }
+  }
+}
