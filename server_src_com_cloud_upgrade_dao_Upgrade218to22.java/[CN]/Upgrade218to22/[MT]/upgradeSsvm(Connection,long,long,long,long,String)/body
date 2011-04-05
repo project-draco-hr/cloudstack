@@ -34,12 +34,37 @@
   rs.close();
   pstmt.close();
   s_logger.debug("Gateway is " + podGateway);
+  pstmt=conn.prepareStatement("SELECT v.vlan_id from vlan v, user_ip_address u where v.id=u.vlan_db_id and u.public_ip_address=?");
+  pstmt.setString(1,publicIp);
+  rs=pstmt.executeQuery();
+  String publicVlan=null;
+  while (rs.next()) {
+    publicVlan=rs.getString(1);
+  }
+  rs.close();
+  pstmt.close();
   if (zoneType.equalsIgnoreCase("Basic")) {
-    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Start",gateway,null,"DirectPodBasedNetworkGuru",true,2,"Static",null);
+    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Start",gateway,publicVlan,"DirectPodBasedNetworkGuru",true,2,"Static",null);
   }
  else {
-    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Create",gateway,null,"PublicNetworkGuru",true,2,"Static",null);
+    insertNic(conn,publicNetworkId,ssvmId,running,publicMac,publicIp,publicNetmask,"Create",gateway,publicVlan,"PublicNetworkGuru",true,2,"Static",null);
   }
-  insertNic(conn,controlNetworkId,ssvmId,running,guestMac,guestIp,guestNetmask,"Start","169.254.0.1",null,"ControlNetworkGuru",false,0,"Static",guestIp != null ? (ssvmId + guestIp) : null);
-  insertNic(conn,managementNetworkId,ssvmId,running,privateMac,privateIp,privateNetmask,"Start",podGateway,null,"PodBasedNetworkGuru",false,1,"Static",null);
+  long controlNicId=insertNic(conn,controlNetworkId,ssvmId,running,guestMac,guestIp,guestNetmask,"Start","169.254.0.1",null,"ControlNetworkGuru",false,0,"Static",guestIp != null ? (ssvmId + guestIp) : null);
+  if (guestIp != null) {
+    pstmt=conn.prepareStatement("UPDATE op_dc_link_local_ip_address_alloc SET instance_id=? WHERE ip_address=? AND data_center_id=?");
+    pstmt.setLong(1,controlNicId);
+    pstmt.setString(2,guestIp);
+    pstmt.setLong(3,dataCenterId);
+    pstmt.executeUpdate();
+    pstmt.close();
+  }
+  long mgmtNicId=insertNic(conn,managementNetworkId,ssvmId,running,privateMac,privateIp,privateNetmask,"Start",podGateway,null,"PodBasedNetworkGuru",false,1,"Static",null);
+  if (privateIp != null) {
+    pstmt=conn.prepareStatement("UPDATE op_dc_ip_address_alloc SET instance_id=? WHERE ip_address=? AND data_center_id=?");
+    pstmt.setLong(1,mgmtNicId);
+    pstmt.setString(2,privateIp);
+    pstmt.setLong(3,dataCenterId);
+    pstmt.executeUpdate();
+    pstmt.close();
+  }
 }
