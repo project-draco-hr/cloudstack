@@ -4,25 +4,26 @@
   Host fromHost=_hostDao.findById(srcHostId);
   if (fromHost == null) {
     s_logger.info("Unable to find the host to migrate from: " + srcHostId);
-    throw new ManagementServerException("Unable to find the host to migrate from: " + srcHostId);
+    throw new CloudRuntimeException("Unable to find the host to migrate from: " + srcHostId);
   }
   if (fromHost.getClusterId().longValue() != dest.getCluster().getId()) {
     s_logger.info("Source and destination host are not in same cluster, unable to migrate to host: " + dest.getHost().getId());
-    throw new ManagementServerException("Source and destination host are not in same cluster, unable to migrate to host: " + dest.getHost().getId());
+    throw new CloudRuntimeException("Source and destination host are not in same cluster, unable to migrate to host: " + dest.getHost().getId());
   }
   VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
-  vm=vmGuru.findById(vm.getId());
+  long vmId=vm.getId();
+  vm=vmGuru.findById(vmId);
   if (vm == null) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Unable to find the vm " + vm);
     }
-    throw new ManagementServerException("Unable to find a virtual machine with id " + vm.getId());
+    throw new ManagementServerException("Unable to find a virtual machine with id " + vmId);
   }
   if (vm.getState() != State.Running) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is not Running, unable to migrate the vm " + vm);
     }
-    throw new ManagementServerException("VM is not Running, unable to migrate the vm " + vm);
+    throw new VirtualMachineMigrationException("VM is not Running, unable to migrate the vm currently " + vm);
   }
   short alertType=AlertManager.ALERT_TYPE_USERVM_MIGRATE;
   if (VirtualMachine.Type.DomainRouter.equals(vm.getType())) {
@@ -87,7 +88,12 @@
     try {
       if (!checkVmOnHost(vm,dstHostId)) {
         s_logger.error("Unable to complete migration for " + vm);
-        _agentMgr.send(srcHostId,new Commands(cleanup(vm.getInstanceName())),null);
+        try {
+          _agentMgr.send(srcHostId,new Commands(cleanup(vm.getInstanceName())),null);
+        }
+ catch (        AgentUnavailableException e) {
+          s_logger.error("AgentUnavailableException while cleanup on source host: " + srcHostId);
+        }
         cleanup(vmGuru,new VirtualMachineProfileImpl<T>(vm),work,Event.AgentReportStopped,true,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount());
         return null;
       }
@@ -101,7 +107,12 @@
     if (!migrated) {
       s_logger.info("Migration was unsuccessful.  Cleaning up: " + vm);
       _alertMgr.sendAlert(alertType,fromHost.getDataCenterId(),fromHost.getPodId(),"Unable to migrate vm " + vm.getName() + " from host "+ fromHost.getName()+ " in zone "+ dest.getDataCenter().getName()+ " and pod "+ dest.getPod().getName(),"Migrate Command failed.  Please check logs.");
-      _agentMgr.send(dstHostId,new Commands(cleanup(vm.getInstanceName())),null);
+      try {
+        _agentMgr.send(dstHostId,new Commands(cleanup(vm.getInstanceName())),null);
+      }
+ catch (      AgentUnavailableException ae) {
+        s_logger.info("Looks like the destination Host is unavailable for cleanup");
+      }
       stateTransitTo(vm,Event.OperationFailed,srcHostId);
     }
     work.setStep(Step.Done);
