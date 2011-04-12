@@ -10,54 +10,67 @@
     s_logger.warn("Unable to delete local storage id:" + id);
     throw new InvalidParameterValueException("Unable to delete local storage id: " + id);
   }
-  List<StoragePoolHostVO> hostPoolRecords=_storagePoolHostDao.listByPoolId(id);
-  if (hostPoolRecords.size() == 0) {
-    sPool.setUuid(null);
-    _storagePoolDao.update(id,sPool);
-    _storagePoolDao.remove(id);
-    deletePoolStats(id);
-    return true;
+  Pair<Long,Long> volumeRecords=_volsDao.getCountAndTotalByPool(id);
+  if (volumeRecords.first() > 0) {
+    s_logger.warn("Cannot delete pool " + sPool.getName() + " as there are associated vols for this pool");
+    return false;
   }
- else {
-    Pair<Long,Long> volumeRecords=_volsDao.getCountAndTotalByPool(id);
-    if (volumeRecords.first() > 0) {
-      s_logger.warn("Cannot delete pool " + sPool.getName() + " as there are associated vols for this pool");
-      return false;
+  StoragePoolVO lock=_storagePoolDao.acquireInLockTable(sPool.getId());
+  if (lock == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Failed to acquire lock when deleting StoragePool with ID: " + sPool.getId());
+    }
+    return false;
+  }
+  boolean isLockReleased=false;
+  sPool.setStatus(StoragePoolStatus.Removed);
+  _storagePoolDao.update(id,sPool);
+  isLockReleased=_storagePoolDao.releaseFromLockTable(lock.getId());
+  s_logger.trace("Released lock for storage pool " + id);
+  List<StoragePoolHostVO> hostPoolRecords=_storagePoolHostDao.listByPoolId(id);
+  Transaction txn=Transaction.currentTxn();
+  try {
+    if (hostPoolRecords.size() == 0) {
+      txn.start();
+      sPool.setUuid(null);
+      _storagePoolDao.update(id,sPool);
+      _storagePoolDao.remove(id);
+      deletePoolStats(id);
+      txn.commit();
+      deleteFlag=true;
+      return true;
     }
  else {
-      StoragePoolVO lock=_storagePoolDao.acquireInLockTable(sPool.getId());
-      try {
-        if (lock == null) {
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Failed to acquire lock when deleting StoragePool with ID: " + sPool.getId());
-          }
-          return false;
-        }
-        for (        StoragePoolHostVO host : hostPoolRecords) {
-          DeleteStoragePoolCommand cmd=new DeleteStoragePoolCommand(sPool);
-          final Answer answer=_agentMgr.easySend(host.getHostId(),cmd);
-          if (answer != null && answer.getResult()) {
-            deleteFlag=true;
-            break;
-          }
+      for (      StoragePoolHostVO host : hostPoolRecords) {
+        DeleteStoragePoolCommand cmd=new DeleteStoragePoolCommand(sPool);
+        final Answer answer=_agentMgr.easySend(host.getHostId(),cmd);
+        if (answer != null && answer.getResult()) {
+          deleteFlag=true;
+          break;
         }
       }
+    }
+  }
   finally {
-        if (lock != null) {
-          _storagePoolDao.releaseFromLockTable(lock.getId());
-        }
+    if (deleteFlag) {
+      txn.start();
+      for (      StoragePoolHostVO host : hostPoolRecords) {
+        _storagePoolHostDao.deleteStoragePoolHostDetails(host.getHostId(),host.getPoolId());
       }
-      if (deleteFlag) {
-        for (        StoragePoolHostVO host : hostPoolRecords) {
-          _storagePoolHostDao.deleteStoragePoolHostDetails(host.getHostId(),host.getPoolId());
-        }
-        sPool.setUuid(null);
-        sPool.setStatus(StoragePoolStatus.Removed);
-        _storagePoolDao.update(id,sPool);
-        _storagePoolDao.remove(id);
-        deletePoolStats(id);
-        return true;
-      }
+      sPool.setUuid(null);
+      _storagePoolDao.update(id,sPool);
+      _storagePoolDao.remove(id);
+      deletePoolStats(id);
+      txn.commit();
+      s_logger.debug("Storage pool id=" + id + " is removed successfully");
+      return true;
+    }
+ else {
+      s_logger.warn("Failed to Delete storage pool id: " + id);
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_STORAGE_DELETE,sPool.getDataCenterId(),sPool.getPodId(),"Unable to delete storage pool id= " + id,"Delete storage pool command failed.  Please check logs.");
+    }
+    if (lock != null && !isLockReleased) {
+      _storagePoolDao.releaseFromLockTable(lock.getId());
     }
   }
   return false;
