@@ -1,0 +1,90 @@
+{
+  boolean success=true;
+  VMTemplateVO template=profile.getTemplate();
+  Long zoneId=profile.getZoneId();
+  Long templateId=template.getId();
+  String zoneName;
+  List<HostVO> secondaryStorageHosts;
+  if (!template.isCrossZones() && zoneId != null) {
+    DataCenterVO zone=_dcDao.findById(zoneId);
+    zoneName=zone.getName();
+    secondaryStorageHosts=new ArrayList<HostVO>();
+    secondaryStorageHosts.add(_hostDao.findSecondaryStorageHost(zoneId));
+  }
+ else {
+    zoneName="(all zones)";
+    secondaryStorageHosts=_hostDao.listSecondaryStorageHosts();
+  }
+  s_logger.debug("Attempting to mark template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
+  for (  HostVO secondaryStorageHost : secondaryStorageHosts) {
+    long hostId=secondaryStorageHost.getId();
+    List<VMTemplateHostVO> templateHostVOs=_tmpltHostDao.listByHostTemplate(hostId,templateId);
+    for (    VMTemplateHostVO templateHostVO : templateHostVOs) {
+      if (templateHostVO.getDownloadState() == Status.DOWNLOAD_IN_PROGRESS) {
+        String errorMsg="Please specify a template that is not currently being downloaded.";
+        s_logger.debug("Template: " + template.getName() + " is currently being downloaded to secondary storage host: "+ secondaryStorageHost.getName()+ "; cant' delete it.");
+        throw new CloudRuntimeException(errorMsg);
+      }
+    }
+  }
+  Account account=_accountDao.findByIdIncludingRemoved(template.getAccountId());
+  String eventType="";
+  if (template.getFormat().equals(ImageFormat.ISO)) {
+    eventType=EventTypes.EVENT_ISO_DELETE;
+  }
+ else {
+    eventType=EventTypes.EVENT_TEMPLATE_DELETE;
+  }
+  for (  HostVO secondaryStorageHost : secondaryStorageHosts) {
+    long hostId=secondaryStorageHost.getId();
+    long sZoneId=secondaryStorageHost.getDataCenterId();
+    List<VMTemplateHostVO> templateHostVOs=_tmpltHostDao.listByHostTemplate(hostId,templateId);
+    for (    VMTemplateHostVO templateHostVO : templateHostVOs) {
+      VMTemplateHostVO lock=_tmpltHostDao.acquireInLockTable(templateHostVO.getId());
+      try {
+        if (lock == null) {
+          s_logger.debug("Failed to acquire lock when deleting templateHostVO with ID: " + templateHostVO.getId());
+          success=false;
+          break;
+        }
+        templateHostVO.setDestroyed(true);
+        _tmpltHostDao.update(templateHostVO.getId(),templateHostVO);
+        VMTemplateZoneVO templateZone=_tmpltZoneDao.findByZoneTemplate(sZoneId,templateId);
+        if (templateZone != null) {
+          _tmpltZoneDao.remove(templateZone.getId());
+        }
+        UsageEventVO usageEvent=new UsageEventVO(eventType,account.getId(),sZoneId,templateId,null);
+        _usageEventDao.persist(usageEvent);
+      }
+  finally {
+        if (lock != null) {
+          _tmpltHostDao.releaseFromLockTable(lock.getId());
+        }
+      }
+    }
+    if (!success) {
+      break;
+    }
+  }
+  s_logger.debug("Successfully marked template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
+  if (success && (_tmpltHostDao.listByTemplateId(templateId).size() == 0)) {
+    long accountId=template.getAccountId();
+    VMTemplateVO lock=_tmpltDao.acquireInLockTable(templateId);
+    try {
+      if (lock == null) {
+        s_logger.debug("Failed to acquire lock when deleting template with ID: " + templateId);
+        success=false;
+      }
+ else       if (_tmpltDao.remove(templateId)) {
+        _accountMgr.decrementResourceCount(accountId,ResourceType.template);
+      }
+    }
+  finally {
+      if (lock != null) {
+        _tmpltDao.releaseFromLockTable(lock.getId());
+      }
+    }
+    s_logger.debug("Removed template: " + template.getName() + " because all of its template host refs were marked as destroyed.");
+  }
+  return success;
+}
