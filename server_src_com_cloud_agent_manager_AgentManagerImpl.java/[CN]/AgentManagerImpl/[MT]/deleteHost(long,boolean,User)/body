@@ -1,24 +1,51 @@
 {
-  List<VMInstanceVO> vms=_vmDao.listByHostId(hostId);
-  if (!vms.isEmpty()) {
-    throw new CloudRuntimeException("Unable to delete the host as there are vms in " + vms.get(0).getState() + " state using this host");
-  }
-  Transaction txn=Transaction.currentTxn();
-  try {
-    HostVO host=_hostDao.findById(hostId);
-    if (host == null) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Host: " + hostId + " does not even exist.  Delete call is ignored.");
-      }
-      return true;
-    }
-    if (host.getType() == Type.SecondaryStorage) {
-      return deleteSecondaryStorageHost(host);
-    }
+  HostVO host=_hostDao.findById(hostId);
+  if (host == null) {
     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Delete Host: " + hostId + " Guid:"+ host.getGuid());
+      s_logger.debug("Host: " + hostId + " does not even exist.  Delete call is ignored.");
     }
+    return true;
+  }
+  if (host.getType() == Type.SecondaryStorage) {
+    return deleteSecondaryStorageHost(host);
+  }
+  AgentAttache attache=findAttache(hostId);
+  try {
     if (host.getType() == Type.Routing) {
+      Status currentState=host.getStatus();
+      Status nextState=currentState.getNextStatus(Status.Event.Remove);
+      if (nextState == null) {
+        if (!(attache instanceof DirectAgentAttache)) {
+          return false;
+        }
+        s_logger.debug("There is no transition from state " + currentState.toString() + " to state "+ Status.Event.Remove.toString());
+        return false;
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Deleting Host: " + hostId + " Guid:"+ host.getGuid());
+      }
+      List<VMInstanceVO> vms=_vmDao.listByHostId(hostId);
+      if (!vms.isEmpty()) {
+        if (isForced) {
+          for (          VMInstanceVO vm : vms) {
+            if (!vm.isHaEnabled() || vm.getState() == State.Stopping) {
+              s_logger.debug("Stopping vm: " + vm + " as a part of deleteHost id="+ hostId);
+              if (!_vmMgr.advanceStop(vm,true,caller,_accountMgr.getAccount(vm.getAccountId()))) {
+                String errorMsg="There was an error stopping the vm: " + vm + " as a part of hostDelete id="+ hostId;
+                s_logger.warn(errorMsg);
+                throw new CloudRuntimeException(errorMsg);
+              }
+            }
+ else             if (vm.isHaEnabled() && (vm.getState() == State.Running || vm.getState() == State.Starting)) {
+              s_logger.debug("Scheduling restart for vm: " + vm + " "+ vm.getState()+ " on the host id="+ hostId);
+              _haMgr.scheduleRestart(vm,false);
+            }
+          }
+        }
+ else {
+          throw new CloudRuntimeException("Unable to delete the host as there are vms in " + vms.get(0).getState() + " state using this host and isForced=false specified");
+        }
+      }
       if (host.getHypervisorType() == HypervisorType.XenServer) {
         if (host.getClusterId() != null) {
           List<HostVO> hosts=_hostDao.listBy(Type.Routing,host.getClusterId(),host.getPodId(),host.getDataCenterId());
@@ -35,12 +62,12 @@
             }
  else {
               success=false;
-              s_logger.debug("Eject Host: " + hostId + " from "+ thostId+ " failed due to "+ (answer != null ? answer.getDetails() : "no answer"));
+              s_logger.warn("Eject Host: " + hostId + " from "+ thostId+ " failed due to "+ (answer != null ? answer.getDetails() : "no answer"));
             }
           }
           if (!success) {
             String msg="Unable to eject host " + host.getGuid() + " due to there is no host up in this cluster, please execute xe pool-eject host-uuid="+ host.getGuid()+ "in this host "+ host.getPrivateIpAddress();
-            s_logger.info(msg);
+            s_logger.warn(msg);
             _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,host.getDataCenterId(),host.getPodId(),"Unable to eject host " + host.getGuid(),msg);
           }
         }
@@ -51,16 +78,16 @@
           send(host.getId(),cmd);
         }
  catch (        AgentUnavailableException e) {
-          s_logger.debug("Sending ShutdownCommand failed: " + e.toString());
+          s_logger.warn("Sending ShutdownCommand failed: ",e);
         }
 catch (        OperationTimedoutException e) {
-          s_logger.debug("Sending ShutdownCommand failed: " + e.toString());
+          s_logger.warn("Sending ShutdownCommand failed: ",e);
         }
       }
     }
+    Transaction txn=Transaction.currentTxn();
     txn.start();
     _dcDao.releasePrivateIpAddress(host.getPrivateIpAddress(),host.getDataCenterId(),null);
-    AgentAttache attache=findAttache(hostId);
     if (attache != null) {
       handleDisconnect(attache,Status.Event.Remove,false);
     }
