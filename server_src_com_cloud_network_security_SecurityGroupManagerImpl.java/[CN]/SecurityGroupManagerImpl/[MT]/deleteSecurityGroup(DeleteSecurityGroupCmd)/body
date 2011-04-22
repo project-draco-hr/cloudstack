@@ -1,54 +1,21 @@
 {
-  Long id=cmd.getId();
-  String accountName=cmd.getAccountName();
-  Long domainId=cmd.getDomainId();
-  Account account=UserContext.current().getCaller();
-  Long accountId=null;
-  if ((account == null) || isAdmin(account.getType())) {
-    if ((accountName != null) && (domainId != null)) {
-      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Unable to find rules network group: " + id + ", permission denied.");
-        }
-        throw new PermissionDeniedException("Unable to network group: " + id + ", permission denied.");
-      }
-      Account groupOwner=_accountDao.findActiveAccount(accountName,domainId);
-      if (groupOwner == null) {
-        throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
-      }
-      accountId=groupOwner.getId();
-    }
- else {
-      if (account != null) {
-        accountId=account.getId();
-        domainId=account.getDomainId();
-      }
-    }
+  Long groupId=cmd.getId();
+  Account caller=UserContext.current().getCaller();
+  SecurityGroupVO group=_securityGroupDao.findById(groupId);
+  if (group == null) {
+    throw new InvalidParameterValueException("Unable to find network group: " + groupId + "; failed to delete group.");
   }
- else {
-    if (account != null) {
-      accountId=account.getId();
-      domainId=account.getDomainId();
-    }
-  }
-  if (accountId == null) {
-    throw new InvalidParameterValueException("Unable to find account for network group: " + id + "; failed to delete group.");
-  }
-  SecurityGroupVO sg=_securityGroupDao.findById(id);
-  if (sg == null) {
-    throw new InvalidParameterValueException("Unable to find network group: " + id + "; failed to delete group.");
-  }
-  Long groupId=sg.getId();
+  _accountMgr.checkAccess(caller,group);
   final Transaction txn=Transaction.currentTxn();
   txn.start();
-  final SecurityGroupVO group=_securityGroupDao.lockRow(groupId,true);
+  group=_securityGroupDao.lockRow(groupId,true);
   if (group == null) {
     s_logger.info("Not deleting group -- cannot find id " + groupId);
     return false;
   }
   if (group.getName().equalsIgnoreCase(SecurityGroupManager.DEFAULT_GROUP_NAME)) {
     txn.rollback();
-    throw new PermissionDeniedException("The network group default is reserved");
+    throw new InvalidParameterValueException("The network group default is reserved");
   }
   List<IngressRuleVO> allowingRules=_ingressRuleDao.listByAllowedSecurityGroupId(groupId);
   if (allowingRules.size() != 0) {
@@ -62,6 +29,6 @@
   }
   _securityGroupDao.expunge(groupId);
   txn.commit();
-  s_logger.debug("Deleted security group " + group + " for account id="+ accountId);
+  s_logger.debug("Deleted security group id=" + groupId);
   return true;
 }
