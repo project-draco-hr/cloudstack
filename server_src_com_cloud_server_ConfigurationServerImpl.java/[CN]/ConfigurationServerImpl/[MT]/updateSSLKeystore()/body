@@ -1,0 +1,50 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Processing updateSSLKeyStore");
+  }
+  String dbString=_configDao.getValue("ssl.keystore");
+  String keystorePath="/etc/cloud/management/cloud.keystore";
+  File keystoreFile=new File(keystorePath);
+  boolean dbExisted=(dbString != null && !dbString.isEmpty());
+  try {
+    if (!dbExisted) {
+      if (!keystoreFile.exists()) {
+        generateDefaultKeystore(keystorePath);
+        s_logger.info("Generated SSL keystore.");
+      }
+      String base64Keystore=getBase64Keystore(keystorePath);
+      createSSLKeystoreDBEntry(base64Keystore);
+      s_logger.info("Stored SSL keystore to database.");
+    }
+ else     if (keystoreFile.exists()) {
+      String base64Keystore=getBase64Keystore(keystorePath);
+      if (base64Keystore.compareTo(dbString) != 0) {
+        _configDao.update("ssl.keystore",base64Keystore);
+        s_logger.info("Updated database keystore with local one.");
+      }
+    }
+ else {
+      byte[] storeBytes=Base64.decodeBase64(dbString);
+      try {
+        String tmpKeystorePath="/tmp/tmpkey";
+        FileOutputStream fo=new FileOutputStream(tmpKeystorePath);
+        fo.write(storeBytes);
+        fo.close();
+        Script script=new Script(true,"cp",5000,null);
+        script.add(tmpKeystorePath);
+        script.add(keystorePath);
+        String result=script.execute();
+        if (result != null) {
+          throw new IOException();
+        }
+      }
+ catch (      Exception e) {
+        throw new IOException("Fail to create keystore file!",e);
+      }
+      s_logger.info("Stored database keystore to local.");
+    }
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Would use fail-safe keystore to continue.",ex);
+  }
+}

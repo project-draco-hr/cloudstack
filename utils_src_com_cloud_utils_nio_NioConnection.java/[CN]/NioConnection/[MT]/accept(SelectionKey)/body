@@ -2,13 +2,27 @@
   ServerSocketChannel serverSocketChannel=(ServerSocketChannel)key.channel();
   SocketChannel socketChannel=serverSocketChannel.accept();
   Socket socket=socketChannel.socket();
-  socketChannel.configureBlocking(false);
   socket.setKeepAlive(true);
   if (s_logger.isTraceEnabled()) {
     s_logger.trace("Connection accepted for " + socket);
   }
+  socketChannel.configureBlocking(true);
+  SSLEngine sslEngine=null;
+  try {
+    SSLContext sslContext=initSSLContext(false);
+    sslEngine=sslContext.createSSLEngine();
+    sslEngine.setUseClientMode(false);
+    sslEngine.setNeedClientAuth(false);
+    doHandshake(socketChannel,sslEngine,false);
+    s_logger.info("SSL: Handshake done");
+  }
+ catch (  Exception e) {
+    throw new IOException("SSL: Fail to init SSL! " + e);
+  }
+  socketChannel.configureBlocking(false);
   InetSocketAddress saddr=(InetSocketAddress)socket.getRemoteSocketAddress();
   Link link=new Link(saddr,this);
+  link.setSSLEngine(sslEngine);
   link.setKey(socketChannel.register(key.selector(),SelectionKey.OP_READ,link));
   Task task=_factory.create(Task.Type.CONNECT,link,null);
   registerLink(saddr,link);
