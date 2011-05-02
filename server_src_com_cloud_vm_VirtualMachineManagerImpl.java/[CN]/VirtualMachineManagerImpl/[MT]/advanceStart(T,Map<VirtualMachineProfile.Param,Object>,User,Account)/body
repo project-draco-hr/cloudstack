@@ -1,6 +1,5 @@
 {
   long vmId=vm.getId();
-  Long hostIdSpecified=vm.getHostId();
   VirtualMachineGuru<T> vmGuru;
   if (vm.getHypervisorType() == HypervisorType.BareMetal) {
     vmGuru=getBareMetalVmGuru(vm);
@@ -19,37 +18,28 @@
   T startedVm=null;
   ServiceOfferingVO offering=_offeringDao.findById(vm.getServiceOfferingId());
   VMTemplateVO template=_templateDao.findById(vm.getTemplateId());
-  Long clusterSpecified=null;
-  if (hostIdSpecified != null) {
-    Host destinationHost=_hostDao.findById(hostIdSpecified);
-    clusterSpecified=destinationHost.getClusterId();
-  }
-  DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),clusterSpecified,hostIdSpecified,null);
+  DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),vm.getPodId(),null,null,null);
   HypervisorGuru hvGuru=_hvGuruMgr.getGuru(vm.getHypervisorType());
+  boolean canRetry=true;
   try {
     Journal journal=start.second().getJournal();
     List<VolumeVO> vols=_volsDao.findReadyRootVolumesByInstance(vm.getId());
     for (    VolumeVO vol : vols) {
-      Volume.State state=vol.getState();
-      if (state == Volume.State.Ready) {
-        Long volTemplateId=vol.getTemplateId();
-        if (volTemplateId != null && template != null) {
-          if (volTemplateId.longValue() != template.getId()) {
-            if (s_logger.isDebugEnabled()) {
-              s_logger.debug("Root Volume " + vol + " of "+ vm.getType().toString()+ " VM is READY, but volume's templateId does not match the VM's Template, let the planner reassign a new pool");
-            }
-            continue;
-          }
+      Long volTemplateId=vol.getTemplateId();
+      if (volTemplateId != null && volTemplateId.longValue() != template.getId()) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(vol + " of " + vm+ " is READY, but template ids don't match, let the planner reassign a new pool");
         }
-        StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
-        if (!pool.isInMaintenance()) {
-          long rootVolDcId=pool.getDataCenterId();
-          Long rootVolPodId=pool.getPodId();
-          Long rootVolClusterId=pool.getClusterId();
-          plan=new DataCenterDeployment(rootVolDcId,rootVolPodId,rootVolClusterId,null,vol.getPoolId());
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Root Volume " + vol + " is ready, changing deployment plan to use this pool's datacenterId: "+ rootVolDcId+ " , podId: "+ rootVolPodId+ " , and clusterId: "+ rootVolClusterId);
-          }
+        continue;
+      }
+      StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
+      if (!pool.isInMaintenance()) {
+        long rootVolDcId=pool.getDataCenterId();
+        Long rootVolPodId=pool.getPodId();
+        Long rootVolClusterId=pool.getClusterId();
+        plan=new DataCenterDeployment(rootVolDcId,rootVolPodId,rootVolClusterId,null,vol.getPoolId());
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug(vol + " is ready, changing deployment plan to use this pool's dcId: " + rootVolDcId+ " , podId: "+ rootVolPodId+ " , and clusterId: "+ rootVolClusterId);
         }
       }
     }
@@ -88,7 +78,6 @@
         Commands cmds=new Commands(OnError.Revert);
         cmds.addCommand(new StartCommand(vmTO));
         vmGuru.finalizeDeployment(cmds,vmProfile,dest,ctx);
-        vm.setPodId(dest.getPod().getId());
         work=_workDao.findById(work.getId());
         if (work == null || work.getStep() != Step.Prepare) {
           throw new ConcurrentOperationException("Work steps have been changed: " + work);
@@ -104,9 +93,22 @@
             }
             startedVm=vm;
             if (s_logger.isDebugEnabled()) {
-              s_logger.debug("Creation complete for VM " + vm);
+              s_logger.debug("Start completed for VM " + vm);
             }
             return startedVm;
+          }
+ else {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.info("The guru did not like the answers so stopping " + vm);
+            }
+            StopCommand cmd=new StopCommand(vm.getInstanceName());
+            StopAnswer answer=(StopAnswer)_agentMgr.easySend(destHostId,cmd);
+            if (answer == null || !answer.getResult()) {
+              s_logger.warn("Unable to stop " + vm + " due to "+ (answer != null ? answer.getDetails() : "no answers"));
+              canRetry=false;
+              _haMgr.scheduleStop(vm,destHostId,WorkType.ForceStop);
+              throw new ExecutionException("Unable to stop " + vm + " so we are unable to retry the start operation");
+            }
           }
         }
         s_logger.info("Unable to start VM on " + dest.getHost() + " due to "+ (startAnswer == null ? " no start answer" : startAnswer.getDetails()));
@@ -114,9 +116,10 @@
  catch (      OperationTimedoutException e) {
         s_logger.debug("Unable to send the start command to host " + dest.getHost());
         if (e.isActive()) {
+          _haMgr.scheduleStop(vm,destHostId,WorkType.ForceStop);
         }
-        avoids.addHost(destHostId);
-        continue;
+        canRetry=false;
+        throw new AgentUnavailableException("Unable to start " + vm.getHostName(),destHostId,e);
       }
 catch (      ResourceUnavailableException e) {
         s_logger.info("Unable to contact resource.",e);
@@ -129,7 +132,6 @@ catch (      ResourceUnavailableException e) {
             throw e;
           }
         }
-        continue;
       }
 catch (      InsufficientCapacityException e) {
         s_logger.info("Insufficient capacity ",e);
@@ -141,14 +143,13 @@ catch (      InsufficientCapacityException e) {
             s_logger.warn("unexpected InsufficientCapacityException : " + e.getScope().getName(),e);
           }
         }
-        continue;
       }
-catch (      RuntimeException e) {
-        s_logger.warn("Failed to start instance " + vm,e);
-        throw e;
+catch (      Exception e) {
+        s_logger.error("Failed to start instance " + vm,e);
+        throw new AgentUnavailableException("Unable to start instance",destHostId,e);
       }
  finally {
-        if (startedVm == null) {
+        if (startedVm == null && canRetry) {
           _workDao.updateStep(work,Step.Release);
           cleanup(vmGuru,vmProfile,work,Event.OperationFailed,false,caller,account);
         }
@@ -156,7 +157,7 @@ catch (      RuntimeException e) {
     }
   }
   finally {
-    if (startedVm == null) {
+    if (startedVm == null && canRetry) {
       if (vm.getType().equals(VirtualMachine.Type.User) && (vm.getLastHostId() == null)) {
         _accountMgr.decrementResourceCount(vm.getAccountId(),ResourceType.user_vm);
       }
