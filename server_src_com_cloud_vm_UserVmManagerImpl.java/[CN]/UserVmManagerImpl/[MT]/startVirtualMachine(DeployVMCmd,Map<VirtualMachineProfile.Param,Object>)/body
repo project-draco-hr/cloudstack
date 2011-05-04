@@ -1,4 +1,15 @@
 {
+  Host destinationHost=null;
+  if (cmd.getHostId() != null) {
+    Account account=UserContext.current().getCaller();
+    if (!_accountService.isRootAdmin(account.getType())) {
+      throw new PermissionDeniedException("Parameter hostid can only be specified by a Root Admin, permission denied");
+    }
+    destinationHost=_hostDao.findById(cmd.getHostId());
+    if (destinationHost == null) {
+      throw new InvalidParameterValueException("Unable to find the host to deploy the VM, host id=" + cmd.getHostId());
+    }
+  }
   long vmId=cmd.getEntityId();
   UserVmVO vm=_vmDao.findById(vmId);
   _vmDao.loadDetails(vm);
@@ -28,7 +39,12 @@
       params.putAll(additonalParams);
     }
     params.put(VirtualMachineProfile.Param.VmPassword,password);
-    vm=_itMgr.start(vm,params,caller,owner);
+    DataCenterDeployment plan=null;
+    if (destinationHost != null) {
+      s_logger.debug("Destination Host to deploy the VM is specified, specifying a deployment plan to deploy the VM");
+      plan=new DataCenterDeployment(vm.getDataCenterId(),destinationHost.getPodId(),destinationHost.getClusterId(),destinationHost.getId(),null);
+    }
+    vm=_itMgr.start(vm,params,caller,owner,plan);
   }
   finally {
     updateVmStateForFailedVmCreation(vm.getId());
