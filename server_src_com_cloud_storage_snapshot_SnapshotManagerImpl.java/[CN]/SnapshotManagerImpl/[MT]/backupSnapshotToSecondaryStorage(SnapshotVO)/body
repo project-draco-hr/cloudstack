@@ -17,19 +17,27 @@
     SnapshotVO prevSnapshot=null;
     String prevSnapshotUuid=null;
     String prevBackupUuid=null;
+    SwiftVO swift=_swiftDao.findById(1L);
     long prevSnapshotId=snapshot.getPrevSnapshotId();
     if (prevSnapshotId > 0) {
       prevSnapshot=_snapshotDao.findByIdIncludingRemoved(prevSnapshotId);
-      if (prevSnapshot.getVersion() != null && prevSnapshot.getVersion().equals("2.2")) {
-        prevBackupUuid=prevSnapshot.getBackupSnapshotId();
-        if (prevBackupUuid != null) {
+      if (prevSnapshot.getBackupSnapshotId() != null && swift == null) {
+        if (prevSnapshot.getVersion() != null && prevSnapshot.getVersion().equals("2.2")) {
+          prevBackupUuid=prevSnapshot.getBackupSnapshotId();
           prevSnapshotUuid=prevSnapshot.getPath();
         }
+      }
+ else       if (prevSnapshot.getSwiftName() != null && swift != null) {
+        prevBackupUuid=prevSnapshot.getSwiftName();
+        prevSnapshotUuid=prevSnapshot.getPath();
       }
     }
     boolean isVolumeInactive=_storageMgr.volumeInactive(volume);
     String vmName=_storageMgr.getVmNameOnVolume(volume);
-    BackupSnapshotCommand backupSnapshotCommand=new BackupSnapshotCommand(primaryStoragePoolNameLabel,secondaryStoragePoolUrl,dcId,accountId,volumeId,volume.getPath(),snapshotUuid,snapshot.getName(),prevSnapshotUuid,prevBackupUuid,isVolumeInactive,vmName);
+    BackupSnapshotCommand backupSnapshotCommand=new BackupSnapshotCommand(primaryStoragePoolNameLabel,secondaryStoragePoolUrl,dcId,accountId,volumeId,snapshot.getId(),volume.getPath(),snapshotUuid,snapshot.getName(),prevSnapshotUuid,prevBackupUuid,isVolumeInactive,vmName);
+    if (swift != null) {
+      backupSnapshotCommand.setSwift(toSwiftTO(swift));
+    }
     String backedUpSnapshotUuid=null;
     boolean backedUp=false;
     BackupSnapshotAnswer answer=(BackupSnapshotAnswer)sendToPool(volume,backupSnapshotCommand);
@@ -45,7 +53,13 @@
     Transaction txn=Transaction.currentTxn();
     txn.start();
     if (backedUp) {
-      snapshot.setBackupSnapshotId(backedUpSnapshotUuid);
+      if (backupSnapshotCommand.getSwift() != null) {
+        snapshot.setSwiftId(1L);
+        snapshot.setSwiftName(backedUpSnapshotUuid);
+      }
+ else {
+        snapshot.setBackupSnapshotId(backedUpSnapshotUuid);
+      }
       if (answer.isFull()) {
         snapshot.setPrevSnapshotId(0);
       }
