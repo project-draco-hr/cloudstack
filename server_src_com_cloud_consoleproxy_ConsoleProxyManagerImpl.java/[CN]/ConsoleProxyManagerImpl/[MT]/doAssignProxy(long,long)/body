@@ -5,10 +5,41 @@
     s_logger.warn("VM " + vmId + " no longer exists, return a null proxy for vm:"+ vmId);
     return null;
   }
-  Boolean[] proxyFromStoppedPool=new Boolean[1];
+  if (vm != null && vm.getState() != State.Running) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Detected that vm : " + vmId + " is not currently at running state, we will fail the proxy assignment for it");
+    }
+    return null;
+  }
   if (_allocProxyLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_SYNC)) {
     try {
-      proxy=getOrAllocProxyResource(dataCenterId,vmId,proxyFromStoppedPool);
+      if (vm.getProxyId() != null) {
+        proxy=_consoleProxyDao.findById(vm.getProxyId());
+        if (proxy != null) {
+          if (!isInAssignableState(proxy)) {
+            if (s_logger.isInfoEnabled()) {
+              s_logger.info("A previous assigned proxy is not assignable now, reassign console proxy for user vm : " + vmId);
+            }
+            proxy=null;
+          }
+ else {
+            if (_consoleProxyDao.getProxyActiveLoad(proxy.getId()) < _capacityPerProxy || hasPreviousSession(proxy,vm)) {
+              if (s_logger.isTraceEnabled()) {
+                s_logger.trace("Assign previous allocated console proxy for user vm : " + vmId);
+              }
+              if (proxy.getActiveSession() >= _capacityPerProxy) {
+                s_logger.warn("Assign overloaded proxy to user VM as previous session exists, user vm : " + vmId);
+              }
+            }
+ else {
+              proxy=null;
+            }
+          }
+        }
+        if (proxy == null) {
+          proxy=assignProxyFromRunningPool(dataCenterId);
+        }
+      }
     }
   finally {
       _allocProxyLock.unlock();
@@ -21,25 +52,15 @@
     s_logger.warn("Unable to find or allocate console proxy resource");
     return null;
   }
-  long proxyVmId=proxy.getId();
-  proxy=startProxy(proxyVmId);
-  if (proxy == null) {
-    return null;
+  if (vm.getProxyId() == null || vm.getProxyId().longValue() != proxy.getId()) {
+    _instanceDao.updateProxyId(vmId,proxy.getId(),DateUtil.currentGMTTime());
+  }
+  proxy.setSslEnabled(_sslEnabled);
+  if (_sslEnabled) {
+    proxy.setPort(443);
   }
  else {
-    if (s_logger.isTraceEnabled()) {
-      s_logger.trace("Console proxy " + proxy.getHostName() + " is started");
-    }
-    if (vm.getProxyId() == null || vm.getProxyId().longValue() != proxy.getId()) {
-      _instanceDao.updateProxyId(vmId,proxy.getId(),DateUtil.currentGMTTime());
-    }
-    proxy.setSslEnabled(_sslEnabled);
-    if (_sslEnabled) {
-      proxy.setPort(443);
-    }
- else {
-      proxy.setPort(80);
-    }
-    return proxy;
+    proxy.setPort(80);
   }
+  return proxy;
 }
