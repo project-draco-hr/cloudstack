@@ -1,45 +1,61 @@
 {
   HostVO host=null;
   if (id != null) {
-    host=_hostDao.findById(id);
-    if (!_hostDao.directConnect(host,_nodeId,false)) {
-      s_logger.info("MS " + host.getManagementServerId() + " is loading "+ host);
-      return null;
-    }
-  }
-  StartupCommand[] cmds=resource.initialize();
-  if (cmds == null) {
-    s_logger.info("Unable to fully initialize the agent because no StartupCommands are returned");
-    if (id != null) {
-      _hostDao.updateStatus(host,Event.AgentDisconnected,_nodeId);
-    }
-    return null;
-  }
-  if (host != null) {
-    if (!_hostDao.directConnect(host,_nodeId,true)) {
-      host=_hostDao.findById(id);
-      s_logger.info("MS " + host.getManagementServerId() + " is loading "+ host+ " after it has been initialized.");
-      resource.disconnected();
-      return null;
+synchronized (_loadingAgents) {
+      s_logger.debug("Adding to loading agents " + id);
+      _loadingAgents.add(id);
     }
   }
   AgentAttache attache=null;
-  if (s_logger.isDebugEnabled()) {
-    new Request(0l,-1l,-1l,cmds,true,false,true).log(-1,"Startup request from directly connected host: ");
-  }
+  StartupCommand[] cmds=null;
   try {
-    attache=handleDirectConnect(resource,cmds,details,old,hostTags,allocationState);
+    if (id != null) {
+      host=_hostDao.findById(id);
+      if (!_hostDao.directConnect(host,_nodeId,false)) {
+        s_logger.info("MS " + host.getManagementServerId() + " is loading "+ host);
+        return null;
+      }
+    }
+    cmds=resource.initialize();
+    if (cmds == null) {
+      s_logger.info("Unable to fully initialize the agent because no StartupCommands are returned");
+      return null;
+    }
+    if (host != null) {
+      if (!_hostDao.directConnect(host,_nodeId,true)) {
+        host=_hostDao.findById(id);
+        s_logger.info("MS " + host.getManagementServerId() + " is loading "+ host+ " after it has been initialized.");
+        return null;
+      }
+    }
+    if (s_logger.isDebugEnabled()) {
+      new Request(0l,-1l,-1l,cmds,true,false,true).log(-1,"Startup request from directly connected host: ");
+    }
+    try {
+      attache=handleDirectConnect(resource,cmds,details,old,hostTags,allocationState);
+    }
+ catch (    IllegalArgumentException ex) {
+      s_logger.warn("Unable to connect due to ",ex);
+      throw ex;
+    }
+catch (    Exception e) {
+      s_logger.warn("Unable to connect due to ",e);
+    }
   }
- catch (  IllegalArgumentException ex) {
-    s_logger.warn("Unable to connect due to ",ex);
-    throw ex;
-  }
-catch (  Exception e) {
-    s_logger.warn("Unable to connect due to ",e);
-  }
-  if (attache == null) {
-    resource.disconnected();
-    return null;
+  finally {
+    if (id != null) {
+synchronized (_loadingAgents) {
+        _loadingAgents.remove(id);
+      }
+    }
+    if (attache == null) {
+      if (cmds != null) {
+        resource.disconnected();
+      }
+      if (host != null) {
+        _hostDao.updateStatus(host,Event.AgentDisconnected,_nodeId);
+      }
+    }
   }
   return attache;
 }
