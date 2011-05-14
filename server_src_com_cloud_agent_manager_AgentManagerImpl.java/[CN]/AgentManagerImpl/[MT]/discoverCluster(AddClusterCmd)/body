@@ -1,0 +1,138 @@
+{
+  Long dcId=cmd.getZoneId();
+  Long podId=cmd.getPodId();
+  String clusterName=cmd.getClusterName();
+  String url=cmd.getUrl();
+  String username=cmd.getUsername();
+  String password=cmd.getPassword();
+  if (url != null) {
+    url=URLDecoder.decode(url);
+  }
+  URI uri=null;
+  DataCenterVO zone=_dcDao.findById(dcId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Can't find zone by id " + dcId);
+  }
+  Account account=UserContext.current().getCaller();
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + dcId);
+  }
+  if (podId != null) {
+    if (_podDao.findById(podId) == null) {
+      throw new InvalidParameterValueException("Can't find pod by id " + podId);
+    }
+    HostPodVO pod=_podDao.findById(podId);
+    if (!Long.valueOf(pod.getDataCenterId()).equals(dcId)) {
+      throw new InvalidParameterValueException("Pod " + podId + " doesn't belong to the zone "+ dcId);
+    }
+  }
+  if (clusterName == null || clusterName.isEmpty()) {
+    throw new InvalidParameterValueException("Please specify cluster name");
+  }
+  if (cmd.getHypervisor() == null || cmd.getHypervisor().isEmpty()) {
+    throw new InvalidParameterValueException("Please specify a hypervisor");
+  }
+  Hypervisor.HypervisorType hypervisorType=Hypervisor.HypervisorType.getType(cmd.getHypervisor());
+  if (hypervisorType == null) {
+    s_logger.error("Unable to resolve " + cmd.getHypervisor() + " to a valid supported hypervisor type");
+    throw new InvalidParameterValueException("Unable to resolve " + cmd.getHypervisor() + " to a supported ");
+  }
+  Cluster.ClusterType clusterType=null;
+  if (cmd.getClusterType() != null && !cmd.getClusterType().isEmpty()) {
+    clusterType=Cluster.ClusterType.valueOf(cmd.getClusterType());
+  }
+  if (clusterType == null) {
+    clusterType=Cluster.ClusterType.CloudManaged;
+  }
+  Grouping.AllocationState allocationState=null;
+  if (cmd.getAllocationState() != null && !cmd.getAllocationState().isEmpty()) {
+    try {
+      allocationState=Grouping.AllocationState.valueOf(cmd.getAllocationState());
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve Allocation State '" + cmd.getAllocationState() + "' to a supported state");
+    }
+  }
+  if (allocationState == null) {
+    allocationState=Grouping.AllocationState.Enabled;
+  }
+  Discoverer discoverer=getMatchingDiscover(hypervisorType);
+  if (discoverer == null) {
+    throw new InvalidParameterValueException("Could not find corresponding resource manager for " + cmd.getHypervisor());
+  }
+  List<ClusterVO> result=new ArrayList<ClusterVO>();
+  long clusterId=0;
+  ClusterVO cluster=new ClusterVO(dcId,podId,clusterName);
+  cluster.setHypervisorType(cmd.getHypervisor());
+  cluster.setClusterType(clusterType);
+  cluster.setAllocationState(allocationState);
+  try {
+    cluster=_clusterDao.persist(cluster);
+  }
+ catch (  Exception e) {
+    throw new CloudRuntimeException("Unable to create cluster " + clusterName + " in pod "+ podId+ " and data center "+ dcId,e);
+  }
+  clusterId=cluster.getId();
+  result.add(cluster);
+  if (clusterType == Cluster.ClusterType.CloudManaged) {
+    return result;
+  }
+  Map<String,String> details=new HashMap<String,String>();
+  details.put("url",url);
+  details.put("username",username);
+  details.put("password",password);
+  _clusterDetailsDao.persist(cluster.getId(),details);
+  boolean success=false;
+  try {
+    try {
+      uri=new URI(UriUtils.encodeURIComponent(url));
+      if (uri.getScheme() == null) {
+        throw new InvalidParameterValueException("uri.scheme is null " + url + ", add http:// as a prefix");
+      }
+ else       if (uri.getScheme().equalsIgnoreCase("http")) {
+        if (uri.getHost() == null || uri.getHost().equalsIgnoreCase("") || uri.getPath() == null || uri.getPath().equalsIgnoreCase("")) {
+          throw new InvalidParameterValueException("Your host and/or path is wrong.  Make sure it's of the format http://hostname/path");
+        }
+      }
+    }
+ catch (    URISyntaxException e) {
+      throw new InvalidParameterValueException(url + " is not a valid uri");
+    }
+    List<HostVO> hosts=new ArrayList<HostVO>();
+    Map<? extends ServerResource,Map<String,String>> resources=null;
+    try {
+      resources=discoverer.find(dcId,podId,clusterId,uri,username,password);
+    }
+ catch (    Exception e) {
+      s_logger.info("Exception in external cluster discovery process with discoverer: " + discoverer.getName());
+    }
+    if (resources != null) {
+      for (      Map.Entry<? extends ServerResource,Map<String,String>> entry : resources.entrySet()) {
+        ServerResource resource=entry.getKey();
+        if (hypervisorType == Hypervisor.HypervisorType.Hyperv) {
+          break;
+        }
+        AgentAttache attache=simulateStart(null,resource,entry.getValue(),true,null,null);
+        if (attache != null) {
+          hosts.add(_hostDao.findById(attache.getId()));
+        }
+        discoverer.postDiscovery(hosts,_nodeId);
+      }
+      s_logger.info("External cluster has been successfully discovered by " + discoverer.getName());
+      success=true;
+      return result;
+    }
+    s_logger.warn("Unable to find the server resources at " + url);
+    throw new DiscoveryException("Unable to add the external cluster");
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception ",e);
+    throw new DiscoveryException("Unable to add the external cluster due to unhandled exception");
+  }
+ finally {
+    if (!success) {
+      _clusterDetailsDao.deleteDetails(clusterId);
+      _clusterDao.remove(clusterId);
+    }
+  }
+}

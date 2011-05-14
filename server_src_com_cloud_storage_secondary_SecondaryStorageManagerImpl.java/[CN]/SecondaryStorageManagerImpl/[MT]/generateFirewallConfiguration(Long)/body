@@ -1,11 +1,59 @@
 {
-  if (hostId == null) {
+  if (ssAHostId == null) {
     return true;
   }
-  boolean success=true;
-  List<DataCenterVO> allZones=_dcDao.listAll();
-  for (  DataCenterVO zone : allZones) {
-    success=success && generateFirewallConfigurationForZone(zone.getId());
+  HostVO ssAHost=_hostDao.findById(ssAHostId);
+  Long zoneId=ssAHost.getDataCenterId();
+  SecondaryStorageVmVO thisSecStorageVm=_secStorageVmDao.findByInstanceName(ssAHost.getName());
+  if (thisSecStorageVm == null) {
+    s_logger.warn("secondary storage VM " + ssAHost.getName() + " doesn't exist");
+    return false;
+  }
+  if (thisSecStorageVm.getState() != State.Running) {
+    s_logger.warn("secondary storage VM " + ssAHost.getName() + " is not running");
+    return false;
+  }
+  List<SecondaryStorageVmVO> alreadyRunning=_secStorageVmDao.getSecStorageVmListInStates(SecondaryStorageVm.Role.templateProcessor,State.Running,State.Migrating,State.Starting);
+  String copyPort=_useSSlCopy ? "443" : Integer.toString(TemplateConstants.DEFAULT_TMPLT_COPY_PORT);
+  SecStorageFirewallCfgCommand cpc=new SecStorageFirewallCfgCommand();
+  SecStorageFirewallCfgCommand thiscpc=new SecStorageFirewallCfgCommand();
+  thiscpc.addPortConfig(thisSecStorageVm.getPublicIpAddress(),copyPort,true,TemplateConstants.DEFAULT_TMPLT_COPY_INTF);
+  for (  SecondaryStorageVmVO ssVm : alreadyRunning) {
+    if (ssVm.getDataCenterId() == zoneId) {
+      continue;
+    }
+    if (ssVm.getPublicIpAddress() != null) {
+      cpc.addPortConfig(ssVm.getPublicIpAddress(),copyPort,true,TemplateConstants.DEFAULT_TMPLT_COPY_INTF);
+    }
+    if (ssVm.getState() != State.Running) {
+      continue;
+    }
+    String instanceName=ssVm.getInstanceName();
+    HostVO host=_hostDao.findByName(instanceName);
+    Answer answer=_agentMgr.easySend(host.getId(),thiscpc);
+    if (answer != null && answer.getResult()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Successfully programmed firewall rules into " + ssVm.getHostName());
+      }
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("failed to program firewall rules into secondary storage vm : " + ssVm.getHostName());
+      }
+      return false;
+    }
+  }
+  Answer answer=_agentMgr.easySend(ssAHostId,cpc);
+  if (answer != null && answer.getResult()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Successfully programmed firewall rules into " + thisSecStorageVm.getHostName());
+    }
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("failed to program firewall rules into secondary storage vm : " + thisSecStorageVm.getHostName());
+    }
+    return false;
   }
   return true;
 }

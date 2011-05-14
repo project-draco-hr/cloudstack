@@ -1,49 +1,45 @@
 {
-  String mountPoint=null;
-  for (int i=0; i < 10; i++) {
-    String mntPt=parent + File.separator + Integer.toHexString(_rand.nextInt(Integer.MAX_VALUE));
-    File file=new File(mntPt);
-    if (!file.exists()) {
-      if (_storage.mkdir(mntPt)) {
-        mountPoint=mntPt;
-        break;
-      }
+  File file=new File(root);
+  if (!file.exists()) {
+    if (!_storage.mkdir(root)) {
+      s_logger.debug("create mount point: " + root);
     }
-    s_logger.debug("Unable to create mount: " + mntPt);
-  }
-  if (mountPoint == null) {
-    s_logger.warn("Unable to create a mount point");
-    return null;
+ else {
+      s_logger.debug("Unable to create mount point: " + root);
+      return null;
+    }
   }
   Script script=null;
   String result=null;
-  script=new Script(!_inSystemVM,"umount",_timeout,s_logger);
-  script.add(path);
-  result=script.execute();
-  if (_parent != null) {
-    script=new Script("rmdir",_timeout,s_logger);
-    script.add(_parent);
-    result=script.execute();
+  script=new Script(!_inSystemVM,"mount",_timeout,s_logger);
+  List<String> res=new ArrayList<String>();
+  ZfsPathParser parser=new ZfsPathParser(root);
+  script.execute(parser);
+  res.addAll(parser.getPaths());
+  for (  String s : res) {
+    if (s.contains(root)) {
+      return root;
+    }
   }
   Script command=new Script(!_inSystemVM,"mount",_timeout,s_logger);
   command.add("-t","nfs");
   if (_inSystemVM) {
     command.add("-o","soft,timeo=133,retrans=2147483647,tcp,acdirmax=0,acdirmin=0");
   }
-  command.add(path);
-  command.add(mountPoint);
+  command.add(nfsPath);
+  command.add(root);
   result=command.execute();
   if (result != null) {
-    s_logger.warn("Unable to mount " + path + " due to "+ result);
-    File file=new File(mountPoint);
+    s_logger.warn("Unable to mount " + nfsPath + " due to "+ result);
+    file=new File(root);
     if (file.exists())     file.delete();
     return null;
   }
-  if (!checkForSnapshotsDir(mountPoint)) {
+  if (!checkForSnapshotsDir(root)) {
     return null;
   }
-  if (!checkForVolumesDir(mountPoint)) {
+  if (!checkForVolumesDir(root)) {
     return null;
   }
-  return mountPoint;
+  return root;
 }

@@ -1,51 +1,53 @@
 {
-  List<SecondaryStorageVmVO> zoneSsvms=_secStorageVmDao.listByZoneId(SecondaryStorageVm.Role.templateProcessor,zoneId);
-  if (zoneSsvms.size() == 0) {
-    return true;
-  }
-  SecondaryStorageVmVO secStorageVm=zoneSsvms.get(0);
-  if (secStorageVm.getState() != State.Running && secStorageVm.getState() != State.Starting) {
-    s_logger.warn("No running secondary storage vms found in zone " + zoneId + " , skip programming http auth");
-    return true;
-  }
-  Host storageHost=_hostDao.findSecondaryStorageHost(zoneId);
-  if (storageHost == null) {
-    s_logger.warn("No storage hosts found in zone " + zoneId + " , skip programming http auth");
-    return true;
-  }
-  SecStorageSetupCommand setupCmd=new SecStorageSetupCommand(zoneId);
-  if (_allowedInternalSites != null) {
-    List<String> allowedCidrs=new ArrayList<String>();
-    String[] cidrs=_allowedInternalSites.split(",");
-    for (    String cidr : cidrs) {
-      if (NetUtils.isValidCIDR(cidr) || NetUtils.isValidIp(cidr)) {
-        allowedCidrs.add(cidr);
+  HostVO cssHost=_hostDao.findById(ssHostId);
+  Long zoneId=cssHost.getDataCenterId();
+  if (cssHost.getType() == Host.Type.SecondaryStorageVM) {
+    SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findByInstanceName(cssHost.getName());
+    if (secStorageVm == null) {
+      s_logger.warn("secondary storage VM " + cssHost.getName() + " doesn't exist");
+      return false;
+    }
+    if (secStorageVm.getState() != State.Running) {
+      s_logger.warn("secondary storage VM " + cssHost.getName() + " is not running");
+      return false;
+    }
+    List<HostVO> ssHosts=_hostDao.listSecondaryStorageHosts(zoneId);
+    for (    HostVO ssHost : ssHosts) {
+      String secUrl=ssHost.getStorageUrl();
+      SecStorageSetupCommand setupCmd=new SecStorageSetupCommand(secUrl);
+      Answer answer=_agentMgr.easySend(ssHostId,setupCmd);
+      if (answer != null && answer.getResult()) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Successfully programmed secondary storage " + ssHost.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
+        }
+      }
+ else {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Successfully programmed secondary storage " + ssHost.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
+        }
+        return false;
       }
     }
-    List<? extends Nic> nics=_networkMgr.getNicsForTraffic(secStorageVm.getId(),TrafficType.Management);
-    Nic privateNic=nics.get(0);
-    String privateCidr=NetUtils.ipAndNetMaskToCidr(privateNic.getIp4Address(),privateNic.getNetmask());
-    String publicCidr=NetUtils.ipAndNetMaskToCidr(secStorageVm.getPublicIpAddress(),secStorageVm.getPublicNetmask());
-    if (NetUtils.isNetworkAWithinNetworkB(privateCidr,publicCidr) || NetUtils.isNetworkAWithinNetworkB(publicCidr,privateCidr)) {
-      s_logger.info("private and public interface overlaps, add a default route through private interface. privateCidr: " + privateCidr + ", publicCidr: "+ publicCidr);
-      allowedCidrs.add("0.0.0.0/0");
-    }
-    setupCmd.setAllowedInternalSites(allowedCidrs.toArray(new String[allowedCidrs.size()]));
   }
-  String copyPasswd=_configDao.getValue("secstorage.copy.password");
-  setupCmd.setCopyPassword(copyPasswd);
-  setupCmd.setCopyUserName(TemplateConstants.DEFAULT_HTTP_AUTH_USER);
-  Answer answer=_agentMgr.easySend(storageHost.getId(),setupCmd);
-  if (answer != null && answer.getResult()) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Successfully programmed http auth into " + secStorageVm.getHostName());
-    }
-    return true;
-  }
+ else   if (cssHost.getType() == Host.Type.SecondaryStorage) {
+    List<SecondaryStorageVmVO> alreadyRunning=_secStorageVmDao.getSecStorageVmListInStates(SecondaryStorageVm.Role.templateProcessor,zoneId,State.Running);
+    String secUrl=cssHost.getStorageUrl();
+    SecStorageSetupCommand setupCmd=new SecStorageSetupCommand(secUrl);
+    for (    SecondaryStorageVmVO ssVm : alreadyRunning) {
+      HostVO host=_hostDao.findByName(ssVm.getInstanceName());
+      Answer answer=_agentMgr.easySend(host.getId(),setupCmd);
+      if (answer != null && answer.getResult()) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Successfully programmed secondary storage " + host.getName() + " in secondary storage VM "+ ssVm.getInstanceName());
+        }
+      }
  else {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("failed to program http auth into secondary storage vm : " + secStorageVm.getHostName());
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Successfully programmed secondary storage " + host.getName() + " in secondary storage VM "+ ssVm.getInstanceName());
+        }
+        return false;
+      }
     }
-    return false;
   }
+  return true;
 }

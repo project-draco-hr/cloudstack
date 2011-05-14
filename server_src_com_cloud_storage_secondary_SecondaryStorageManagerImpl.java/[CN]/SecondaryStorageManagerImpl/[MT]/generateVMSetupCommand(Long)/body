@@ -1,0 +1,50 @@
+{
+  HostVO ssAHost=_hostDao.findById(ssAHostId);
+  if (ssAHost.getType() != Host.Type.SecondaryStorageVM) {
+    return false;
+  }
+  SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findByInstanceName(ssAHost.getName());
+  if (secStorageVm == null) {
+    s_logger.warn("secondary storage VM " + ssAHost.getName() + " doesn't exist");
+    return false;
+  }
+  if (secStorageVm.getState() != State.Running) {
+    s_logger.warn("secondary storage VM " + ssAHost.getName() + " is not running");
+    return false;
+  }
+  SecStorageVMSetupCommand setupCmd=new SecStorageVMSetupCommand();
+  if (_allowedInternalSites != null) {
+    List<String> allowedCidrs=new ArrayList<String>();
+    String[] cidrs=_allowedInternalSites.split(",");
+    for (    String cidr : cidrs) {
+      if (NetUtils.isValidCIDR(cidr) || NetUtils.isValidIp(cidr)) {
+        allowedCidrs.add(cidr);
+      }
+    }
+    List<? extends Nic> nics=_networkMgr.getNicsForTraffic(secStorageVm.getId(),TrafficType.Management);
+    Nic privateNic=nics.get(0);
+    String privateCidr=NetUtils.ipAndNetMaskToCidr(privateNic.getIp4Address(),privateNic.getNetmask());
+    String publicCidr=NetUtils.ipAndNetMaskToCidr(secStorageVm.getPublicIpAddress(),secStorageVm.getPublicNetmask());
+    if (NetUtils.isNetworkAWithinNetworkB(privateCidr,publicCidr) || NetUtils.isNetworkAWithinNetworkB(publicCidr,privateCidr)) {
+      s_logger.info("private and public interface overlaps, add a default route through private interface. privateCidr: " + privateCidr + ", publicCidr: "+ publicCidr);
+      allowedCidrs.add("0.0.0.0/0");
+    }
+    setupCmd.setAllowedInternalSites(allowedCidrs.toArray(new String[allowedCidrs.size()]));
+  }
+  String copyPasswd=_configDao.getValue("secstorage.copy.password");
+  setupCmd.setCopyPassword(copyPasswd);
+  setupCmd.setCopyUserName(TemplateConstants.DEFAULT_HTTP_AUTH_USER);
+  Answer answer=_agentMgr.easySend(ssAHostId,setupCmd);
+  if (answer != null && answer.getResult()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Successfully programmed http auth into " + secStorageVm.getHostName());
+    }
+    return true;
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("failed to program http auth into secondary storage vm : " + secStorageVm.getHostName());
+    }
+    return false;
+  }
+}
