@@ -1,0 +1,64 @@
+{
+synchronized (poolUuid.intern()) {
+    String masterIp=host.getAddress(conn);
+    PoolSyncDB(conn);
+    s_logger.debug("Designating the new master to " + masterIp);
+    Pool.designateNewMaster(conn,host);
+    Connection slaveConn=null;
+    Connection masterConn=null;
+    int retry=30;
+    for (int i=0; i < retry; i++) {
+      forceSleep(5);
+      try {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Logging on as the slave to " + slaveIp);
+        }
+        slaveConn=null;
+        masterConn=null;
+        Session slaveSession=null;
+        slaveConn=new Connection(getURL(slaveIp),10);
+        slaveSession=slaveLocalLoginWithPassword(slaveConn,username,password);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Slave logon successful. session= " + slaveSession);
+        }
+        Pool.Record pr=getPoolRecord(slaveConn);
+        Host master=pr.master;
+        String ma=master.getAddress(slaveConn);
+        if (!ma.trim().equals(masterIp.trim())) {
+          continue;
+        }
+        s_logger.debug("Logging on as the master to " + masterIp);
+        masterConn=new Connection(getURL(masterIp),10);
+        loginWithPassword(masterConn,username,password,APIVersion.latest().toString());
+        removeConnect(poolUuid);
+        ensurePoolIntegrity(masterConn,masterIp,username,password,wait);
+        PoolSyncDB(masterConn);
+        return;
+      }
+ catch (      Types.HostIsSlave e) {
+        s_logger.debug("HostIsSlaveException: Still waiting for the conversion to the master");
+      }
+catch (      XmlRpcException e) {
+        s_logger.debug("XmlRpcException: Still waiting for the conversion to the master " + e.getMessage());
+      }
+catch (      Exception e) {
+        s_logger.debug("Exception: Still waiting for the conversion to the master" + e.getMessage());
+      }
+ finally {
+        if (masterConn != null) {
+          try {
+            Session.logout(masterConn);
+          }
+ catch (          Exception e) {
+            s_logger.debug("Unable to log out of session: " + e.getMessage());
+          }
+          masterConn.dispose();
+          masterConn=null;
+        }
+        localLogout(slaveConn);
+        slaveConn=null;
+      }
+    }
+    throw new CloudRuntimeException("Unable to logon to the new master after " + retry + " retries");
+  }
+}
