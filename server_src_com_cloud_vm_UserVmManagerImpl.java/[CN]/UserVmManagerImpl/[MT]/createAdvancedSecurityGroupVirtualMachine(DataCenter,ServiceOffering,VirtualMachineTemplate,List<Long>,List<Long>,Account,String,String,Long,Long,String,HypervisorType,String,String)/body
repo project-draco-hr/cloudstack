@@ -1,6 +1,7 @@
 {
   Account caller=UserContext.current().getCaller();
   List<NetworkVO> networkList=new ArrayList<NetworkVO>();
+  boolean isSecurityGroupEnabledNetworkUsed=false;
   _accountMgr.checkAccess(caller,owner);
   if (networkIdList == null || networkIdList.isEmpty()) {
     NetworkVO networkWithSecurityGroup=_networkMgr.getNetworkWithSecurityGroupEnabled(zone.getId());
@@ -21,6 +22,7 @@
       throw new InvalidParameterValueException("Network is not security group enabled: " + network.getId());
     }
     networkList.add(network);
+    isSecurityGroupEnabledNetworkUsed=true;
   }
  else {
     for (    Long networkId : networkIdList) {
@@ -41,6 +43,31 @@
         }
       }
       networkList.add(network);
+    }
+  }
+  if (isSecurityGroupEnabledNetworkUsed) {
+    if (securityGroupIdList == null) {
+      securityGroupIdList=new ArrayList<Long>();
+    }
+    SecurityGroup defaultGroup=_securityGroupMgr.getDefaultSecurityGroup(owner.getId());
+    if (defaultGroup != null) {
+      boolean defaultGroupPresent=false;
+      for (      Long securityGroupId : securityGroupIdList) {
+        if (securityGroupId.longValue() == defaultGroup.getId()) {
+          defaultGroupPresent=true;
+          break;
+        }
+      }
+      if (!defaultGroupPresent) {
+        securityGroupIdList.add(defaultGroup.getId());
+      }
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Couldn't find default security group for the account " + owner + " so creating a new one");
+      }
+      defaultGroup=_securityGroupMgr.createSecurityGroup(SecurityGroupManager.DEFAULT_GROUP_NAME,SecurityGroupManager.DEFAULT_GROUP_DESCRIPTION,owner.getDomainId(),owner.getId(),owner.getAccountName());
+      securityGroupIdList.add(defaultGroup.getId());
     }
   }
   return createVirtualMachine(zone,serviceOffering,template,hostName,displayName,owner,diskOfferingId,diskSize,networkList,securityGroupIdList,group,userData,sshKeyPair,hypervisor,caller);
