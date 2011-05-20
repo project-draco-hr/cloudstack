@@ -4,20 +4,38 @@
   Long sourceZoneId=cmd.getSourceZoneId();
   Long destZoneId=cmd.getDestinationZoneId();
   Account account=UserContext.current().getCaller();
+  if (sourceZoneId == destZoneId) {
+    throw new InvalidParameterValueException("Please specify different source and destination zones.");
+  }
+  DataCenterVO sourceZone=_dcDao.findById(sourceZoneId);
+  if (sourceZone == null) {
+    throw new InvalidParameterValueException("Please specify a valid source zone.");
+  }
+  DataCenterVO dstZone=_dcDao.findById(destZoneId);
+  if (dstZone == null) {
+    throw new InvalidParameterValueException("Please specify a valid destination zone.");
+  }
   VMTemplateVO template=_tmpltDao.findById(templateId);
   if (template == null) {
     throw new InvalidParameterValueException("Unable to find template with id");
   }
-  boolean isIso=Storage.ImageFormat.ISO.equals(template.getFormat());
-  if (isIso) {
-    throw new InvalidParameterValueException("Please specify a valid template.");
+  HostVO dstSecHost=_storageMgr.getSecondaryStorageHost(destZoneId,templateId);
+  if (dstSecHost != null) {
+    s_logger.debug("There is template " + templateId + " in secondary storage "+ dstSecHost.getId()+ " in zone "+ destZoneId+ " , don't need to copy");
+    return template;
+  }
+  HostVO srcSecHost=_storageMgr.getSecondaryStorageHost(sourceZoneId,templateId);
+  if (srcSecHost == null) {
+    throw new InvalidParameterValueException("There is no template " + templateId + " in zone "+ sourceZoneId);
   }
   String errMsg="Unable to copy template " + templateId;
   userId=accountAndUserValidation(account,userId,null,template,errMsg);
-  boolean success=copy(userId,templateId,sourceZoneId,destZoneId);
-  VMTemplateVO copiedTemplate=null;
+  boolean success=copy(userId,template,srcSecHost,sourceZone,dstZone);
   if (success) {
-    copiedTemplate=_tmpltDao.findById(templateId);
+    return template;
   }
-  return copiedTemplate;
+ else {
+    s_logger.warn(errMsg);
+  }
+  return null;
 }

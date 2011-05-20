@@ -10,11 +10,13 @@
     downloadJobExists=true;
   }
   Long maxTemplateSizeInBytes=getMaxTemplateSizeInBytes();
-  String url=sserver.getStorageUrl();
+  String secUrl=sserver.getStorageUrl();
   if (vmTemplateHost != null) {
     start();
-    DownloadCommand dcmd=new DownloadCommand(url,template,maxTemplateSizeInBytes);
-    dcmd.setUrl(vmTemplateHost.getDownloadUrl());
+    DownloadCommand dcmd=new DownloadCommand(secUrl,template,maxTemplateSizeInBytes);
+    if (downloadJobExists) {
+      dcmd=new DownloadProgressCommand(dcmd,vmTemplateHost.getJobId(),RequestType.GET_OR_RESTART);
+    }
     if (vmTemplateHost.isCopy()) {
       dcmd.setCreds(TemplateConstants.DEFAULT_HTTP_AUTH_USER,_copyAuthPasswd);
     }
@@ -25,10 +27,15 @@
     }
     DownloadListener dl=new DownloadListener(ssAhost,template,_timer,_vmTemplateHostDao,vmTemplateHost.getId(),this,dcmd);
     if (downloadJobExists) {
-      dcmd=new DownloadProgressCommand(dcmd,vmTemplateHost.getJobId(),RequestType.GET_OR_RESTART);
       dl.setCurrState(vmTemplateHost.getDownloadState());
     }
-    _listenerMap.put(vmTemplateHost,dl);
+    DownloadListener old=null;
+synchronized (_listenerMap) {
+      old=_listenerMap.put(vmTemplateHost,dl);
+    }
+    if (old != null) {
+      old.abandon();
+    }
     long result=send(ssAhost.getId(),dcmd,dl);
     if (result == -1) {
       s_logger.warn("Unable to start /resume download of template " + template.getUniqueName() + " to "+ sserver.getName());

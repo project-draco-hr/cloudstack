@@ -6,6 +6,9 @@
   if (srcTmpltHost == null) {
     throw new InvalidParameterValueException("Template " + template.getName() + " not associated with "+ sourceServer.getName());
   }
+  if (!_secMgr.generateSetupCommand(sourceServer.getId())) {
+    return false;
+  }
   String url=generateCopyUrl(sourceServer,srcTmpltHost);
   if (url == null) {
     s_logger.warn("Unable to start/resume copy of template " + template.getUniqueName() + " to "+ destServer.getName()+ ", no secondary storage vm in running state in source zone");
@@ -24,20 +27,34 @@
   if (destTmpltHost != null) {
     start();
     DownloadCommand dcmd=new DownloadCommand(destServer.getStorageUrl(),url,template,TemplateConstants.DEFAULT_HTTP_AUTH_USER,_copyAuthPasswd,maxTemplateSizeInBytes);
-    DownloadListener dl=downloadJobExists ? _listenerMap.get(destTmpltHost) : null;
-    if (dl == null) {
-      dl=new DownloadListener(destServer,template,_timer,_vmTemplateHostDao,destTmpltHost.getId(),this,dcmd);
-    }
     if (downloadJobExists) {
       dcmd=new DownloadProgressCommand(dcmd,destTmpltHost.getJobId(),RequestType.GET_OR_RESTART);
+    }
+    HostVO ssAhost=_agentMgr.getSSAgent(destServer);
+    if (ssAhost == null) {
+      s_logger.warn("There is no secondary storage VM for secondary storage host " + destServer.getName());
+      return false;
+    }
+    DownloadListener dl=new DownloadListener(ssAhost,template,_timer,_vmTemplateHostDao,destTmpltHost.getId(),this,dcmd);
+    if (downloadJobExists) {
       dl.setCurrState(destTmpltHost.getDownloadState());
     }
-    _listenerMap.put(destTmpltHost,dl);
-    long result=_agentMgr.sendToSecStorage(destServer,dcmd,dl);
+    DownloadListener old=null;
+synchronized (_listenerMap) {
+      old=_listenerMap.put(destTmpltHost,dl);
+    }
+    if (old != null) {
+      old.abandon();
+    }
+    long result=send(ssAhost.getId(),dcmd,dl);
     if (result == -1) {
       s_logger.warn("Unable to start /resume COPY of template " + template.getUniqueName() + " to "+ destServer.getName());
       dl.setDisconnected();
       dl.scheduleStatusCheck(RequestType.GET_OR_RESTART);
     }
+ else {
+      return true;
+    }
   }
+  return false;
 }
