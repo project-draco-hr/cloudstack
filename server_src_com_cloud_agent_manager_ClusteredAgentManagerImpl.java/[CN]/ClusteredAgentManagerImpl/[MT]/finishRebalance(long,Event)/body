@@ -1,0 +1,38 @@
+{
+  HostTransferMapVO map=_hostTransferDao.findById(hostId);
+  AgentAttache attache=findAttache(hostId);
+  if (attache == null) {
+    s_logger.debug("Unable to find attache for the host id=" + hostId + ", assuming that the agent disconnected already");
+    HostTransferState state=(event == Event.RebalanceCompleted) ? HostTransferState.TransferCompleted : HostTransferState.TransferFailed;
+    map.setState(state);
+    _hostTransferDao.update(hostId,map);
+    return true;
+  }
+  if (map.getInitialOwner() != _nodeId) {
+    s_logger.warn("Why finish rebalance called not by initial host owner???");
+    return false;
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Finishing rebalancing for the host id=" + hostId);
+  }
+  if (event == Event.RebalanceFailed) {
+    ((ClusteredDirectAgentAttache)attache).setTransferMode(false);
+    s_logger.debug("Rebalance failed for the host id=" + hostId);
+    map.setState(HostTransferState.TransferFailed);
+    _hostTransferDao.update(hostId,map);
+  }
+ else   if (event == Event.RebalanceCompleted) {
+    LinkedList<Request> requests=((ClusteredDirectAgentAttache)attache).getRequests();
+    removeAgent(attache,Status.Rebalance);
+    createAttache(hostId);
+    if (!requests.isEmpty()) {
+      for (      Request request : requests) {
+        routeToPeer(Long.toString(map.getFutureOwner()),request.getBytes());
+      }
+    }
+    map.setState(HostTransferState.TransferCompleted);
+    _hostTransferDao.update(hostId,map);
+    return true;
+  }
+  return true;
+}

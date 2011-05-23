@@ -1,0 +1,51 @@
+{
+  Date cutTime=DateUtil.currentGMTTime();
+  List<ManagementServerHostVO> activeNodes=_mshostDao.getActiveList(new Date(cutTime.getTime() - ClusterManager.DEFAULT_HEARTBEAT_THRESHOLD));
+  List<HostVO> allManagedAgents=_hostDao.listManagedAgents();
+  long avLoad=0L;
+  if (!allManagedAgents.isEmpty() && !activeNodes.isEmpty()) {
+    avLoad=allManagedAgents.size() / activeNodes.size();
+  }
+ else {
+    return;
+  }
+  for (  ManagementServerHostVO node : activeNodes) {
+    if (node.getMsid() != _nodeId) {
+      List<HostVO> hostsToRebalance=new ArrayList<HostVO>();
+      for (      AgentLoadBalancerPlanner lbPlanner : _lbPlanners) {
+        hostsToRebalance=lbPlanner.getHostsToRebalance(node.getMsid(),avLoad);
+        if (!hostsToRebalance.isEmpty()) {
+          break;
+        }
+      }
+      if (!hostsToRebalance.isEmpty()) {
+        for (        HostVO host : hostsToRebalance) {
+          long hostId=host.getId();
+          s_logger.debug("Asking management server " + node.getMsid() + " to give away host id="+ hostId);
+          boolean result=true;
+          HostTransferMapVO transfer=_hostTransferDao.startAgentTransfering(hostId,_nodeId,node.getMsid());
+          try {
+            Answer[] answer=sendRebalanceCommand(hostId,_nodeId,Event.RequestAgentRebalance);
+            if (answer == null) {
+              s_logger.warn("Failed to get host id=" + hostId + " from management server "+ node.getMsid());
+              result=false;
+            }
+          }
+ catch (          Exception ex) {
+            s_logger.warn("Failed to get host id=" + hostId + " from management server "+ node.getMsid(),ex);
+            result=false;
+          }
+ finally {
+            HostTransferMapVO updatedTransfer=_hostTransferDao.findById(transfer.getId());
+            if (!result && updatedTransfer.getState() == HostTransferState.TransferRequested) {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Removing mapping from op_host_transfer as it failed to be set to transfer mode");
+              }
+              _hostTransferDao.remove(transfer.getId());
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  return new Runnable(){
+    @Override public void run(){
+      try {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Clustered agent transfer scan check, management server id:" + _nodeId);
+        }
+        if (_agentToTransferIds.size() > 0) {
+          s_logger.debug("Found " + _agentToTransferIds.size() + " agents to transfer");
+          for (          Long hostId : _agentToTransferIds) {
+            AgentAttache attache=findAttache(hostId);
+            if (attache.getQueueSize() == 0 && attache.getListenersSize() == 0) {
+              boolean result=true;
+              _agentToTransferIds.remove(hostId);
+              try {
+                result=rebalanceHost(hostId);
+              }
+  finally {
+                if (result) {
+                  finishRebalance(hostId,Event.RebalanceCompleted);
+                }
+ else {
+                  finishRebalance(hostId,Event.RebalanceFailed);
+                }
+              }
+            }
+ else {
+              Date cutTime=DateUtil.currentGMTTime();
+              if (!(_hostTransferDao.isActive(hostId,new Date(cutTime.getTime() - rebalanceTimeOut)))) {
+                s_logger.debug("Timed out waiting for the host id=" + hostId + " to be ready to transfer, failing rebalance for this host");
+                _agentToTransferIds.remove(hostId);
+                HostTransferMapVO transferMap=_hostTransferDao.findById(hostId);
+                transferMap.setState(HostTransferState.TransferFailed);
+                _hostTransferDao.update(hostId,transferMap);
+              }
+            }
+          }
+        }
+ else {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Found no agents to be transfered by the management server " + _nodeId);
+          }
+        }
+      }
+ catch (      Throwable e) {
+        s_logger.error("Problem with the clustered agent transfer scan check!",e);
+      }
+    }
+  }
+;
+}
