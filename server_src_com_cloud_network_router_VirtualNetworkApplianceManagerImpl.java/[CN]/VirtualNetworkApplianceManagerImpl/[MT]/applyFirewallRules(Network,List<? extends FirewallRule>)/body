@@ -1,42 +1,42 @@
 {
-  DomainRouterVO router=_routerDao.findByNetwork(network.getId());
-  if (router == null) {
+  List<DomainRouterVO> routers=_routerDao.findByNetwork(network.getId());
+  if (routers.isEmpty()) {
     s_logger.warn("Unable to apply lb rules, virtual router doesn't exist in the network " + network.getId());
     throw new ResourceUnavailableException("Unable to apply lb rules",DataCenter.class,network.getDataCenterId());
   }
-  if (router.getState() == State.Running) {
-    if (rules != null && !rules.isEmpty()) {
-      if (rules.get(0).getPurpose() == Purpose.LoadBalancing) {
-        List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(network.getId());
-        List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
-        for (        LoadBalancerVO lb : lbs) {
-          List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
-          LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
-          lbRules.add(loadBalancing);
+  boolean result=true;
+  for (  DomainRouterVO router : routers) {
+    if (router.getState() == State.Running) {
+      if (rules != null && !rules.isEmpty()) {
+        if (rules.get(0).getPurpose() == Purpose.LoadBalancing) {
+          List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(network.getId());
+          List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+          for (          LoadBalancerVO lb : lbs) {
+            List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+            LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+            lbRules.add(loadBalancing);
+          }
+          result=result && applyLBRules(router,lbRules);
         }
-        return applyLBRules(router,lbRules);
-      }
- else       if (rules.get(0).getPurpose() == Purpose.PortForwarding) {
-        return applyPortForwardingRules(router,(List<PortForwardingRule>)rules);
-      }
- else       if (rules.get(0).getPurpose() == Purpose.StaticNat) {
-        return applyStaticNatRules(router,(List<StaticNatRule>)rules);
-      }
+ else         if (rules.get(0).getPurpose() == Purpose.PortForwarding) {
+          result=result && applyPortForwardingRules(router,(List<PortForwardingRule>)rules);
+        }
+ else         if (rules.get(0).getPurpose() == Purpose.StaticNat) {
+          result=result && applyStaticNatRules(router,(List<StaticNatRule>)rules);
+        }
  else {
-        s_logger.warn("Unable to apply rules of purpose: " + rules.get(0).getPurpose());
-        return false;
+          s_logger.warn("Unable to apply rules of purpose: " + rules.get(0).getPurpose());
+          result=false;
+        }
       }
     }
+ else     if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
+      s_logger.debug("Router is in " + router.getState() + ", so not sending apply firewall rules commands to the backend");
+    }
  else {
-      return true;
+      s_logger.warn("Unable to apply firewall rules, virtual router is not in the right state " + router.getState());
+      throw new ResourceUnavailableException("Unable to apply firewall rules, virtual router is not in the right state",VirtualRouter.class,router.getId());
     }
   }
- else   if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
-    s_logger.debug("Router is in " + router.getState() + ", so not sending apply firewall rules commands to the backend");
-    return true;
-  }
- else {
-    s_logger.warn("Unable to apply firewall rules, virtual router is not in the right state " + router.getState());
-    throw new ResourceUnavailableException("Unable to apply firewall rules, virtual router is not in the right state",VirtualRouter.class,router.getId());
-  }
+  return result;
 }
