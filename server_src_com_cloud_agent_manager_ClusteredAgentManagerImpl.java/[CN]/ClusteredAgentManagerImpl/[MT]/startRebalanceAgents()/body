@@ -1,39 +1,42 @@
 {
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Management server " + _nodeId + " was asked to do agent rebalancing; checking how many hosts can be taken from this server");
-  }
   List<ManagementServerHostVO> allMS=_mshostDao.listBy(ManagementServerHost.State.Up,ManagementServerHost.State.Starting);
-  List<HostVO> allManagedAgents=_hostDao.listManagedAgents();
-  long avLoad=0L;
+  List<HostVO> allManagedAgents=_hostDao.listManagedRoutingAgents();
+  int avLoad=0;
   if (!allManagedAgents.isEmpty() && !allMS.isEmpty()) {
     avLoad=allManagedAgents.size() / allMS.size();
   }
  else {
     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Management server " + _nodeId + " found no hosts to rebalance. Current number of active management server nodes in the system is "+ allMS.size()+ "; number of managed agents is "+ allMS.size());
+      s_logger.debug("There are no hosts to rebalance in the system. Current number of active management server nodes in the system is " + allMS.size() + "; number of managed agents is "+ allManagedAgents.size());
     }
     return;
+  }
+  if (avLoad == 0L) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("As calculated average load is less than 1, rounding it to 1");
+    }
+    avLoad=1;
   }
   for (  ManagementServerHostVO node : allMS) {
     if (node.getMsid() != _nodeId) {
       List<HostVO> hostsToRebalance=new ArrayList<HostVO>();
       for (      AgentLoadBalancerPlanner lbPlanner : _lbPlanners) {
         hostsToRebalance=lbPlanner.getHostsToRebalance(node.getMsid(),avLoad);
-        if (!hostsToRebalance.isEmpty()) {
+        if (hostsToRebalance != null && !hostsToRebalance.isEmpty()) {
           break;
         }
  else {
-          s_logger.debug("Agent load balancer planner " + lbPlanner.getName() + " found no hosts to be rebalanced from management server "+ _nodeId);
+          s_logger.debug("Agent load balancer planner " + lbPlanner.getName() + " found no hosts to be rebalanced from management server "+ node.getMsid());
         }
       }
-      if (!hostsToRebalance.isEmpty()) {
+      if (hostsToRebalance != null && !hostsToRebalance.isEmpty()) {
         for (        HostVO host : hostsToRebalance) {
           long hostId=host.getId();
           s_logger.debug("Asking management server " + node.getMsid() + " to give away host id="+ hostId);
           boolean result=true;
-          HostTransferMapVO transfer=_hostTransferDao.startAgentTransfering(hostId,_nodeId,node.getMsid());
+          HostTransferMapVO transfer=_hostTransferDao.startAgentTransfering(hostId,node.getMsid(),_nodeId);
           try {
-            Answer[] answer=sendRebalanceCommand(hostId,_nodeId,Event.RequestAgentRebalance);
+            Answer[] answer=sendRebalanceCommand(hostId,node.getMsid(),Event.RequestAgentRebalance);
             if (answer == null) {
               s_logger.warn("Failed to get host id=" + hostId + " from management server "+ node.getMsid());
               result=false;
@@ -55,7 +58,7 @@
         }
       }
  else {
-        s_logger.debug("Management server " + _nodeId + " found no hosts to rebalance.");
+        s_logger.debug("Found no hosts to rebalance from the management server " + node.getMsid());
       }
     }
   }

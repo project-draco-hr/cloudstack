@@ -9,10 +9,11 @@
           s_logger.debug("Found " + _agentToTransferIds.size() + " agents to transfer");
           for (          Long hostId : _agentToTransferIds) {
             AgentAttache attache=findAttache(hostId);
-            if (attache.getQueueSize() == 0 && attache.getListenersSize() == 0) {
-              boolean result=true;
+            if (attache.getQueueSize() == 0 && attache.getNonRecurringListenersSize() == 0) {
+              boolean result=false;
               _agentToTransferIds.remove(hostId);
               try {
+                _hostTransferDao.startAgentTransfer(hostId);
                 result=rebalanceHost(hostId);
               }
   finally {
@@ -26,12 +27,13 @@
             }
  else {
               Date cutTime=DateUtil.currentGMTTime();
-              if (!(_hostTransferDao.isActive(hostId,new Date(cutTime.getTime() - rebalanceTimeOut)))) {
+              if (_hostTransferDao.isNotActive(hostId,new Date(cutTime.getTime() - rebalanceTimeOut))) {
                 s_logger.debug("Timed out waiting for the host id=" + hostId + " to be ready to transfer, failing rebalance for this host");
                 _agentToTransferIds.remove(hostId);
-                HostTransferMapVO transferMap=_hostTransferDao.findById(hostId);
-                transferMap.setState(HostTransferState.TransferFailed);
-                _hostTransferDao.update(hostId,transferMap);
+                _hostTransferDao.completeAgentTransfer(hostId);
+              }
+ else {
+                s_logger.debug("Agent " + hostId + " can't be transfered yet as its request queue size is "+ attache.getQueueSize()+ " and listener queue size is "+ attache.getNonRecurringListenersSize());
               }
             }
           }
