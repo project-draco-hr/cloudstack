@@ -1,0 +1,99 @@
+{
+  ListResponse<TemplateResponse> response=new ListResponse<TemplateResponse>();
+  List<TemplateResponse> isoResponses=new ArrayList<TemplateResponse>();
+  for (  Pair<Long,Long> isoZonePair : isoZonePairSet) {
+    VMTemplateVO iso=ApiDBUtils.findTemplateById(isoZonePair.first());
+    if ((isBootable == null || !isBootable) && iso.getTemplateType() == TemplateType.PERHOST) {
+      TemplateResponse isoResponse=new TemplateResponse();
+      isoResponse.setId(iso.getId());
+      isoResponse.setName(iso.getName());
+      isoResponse.setDisplayText(iso.getDisplayText());
+      isoResponse.setPublic(iso.isPublicTemplate());
+      isoResponse.setExtractable(iso.isExtractable() && !(iso.getTemplateType() == TemplateType.PERHOST));
+      isoResponse.setReady(true);
+      isoResponse.setBootable(iso.isBootable());
+      isoResponse.setFeatured(iso.isFeatured());
+      isoResponse.setCrossZones(iso.isCrossZones());
+      isoResponse.setPublic(iso.isPublicTemplate());
+      isoResponse.setCreated(iso.getCreated());
+      isoResponse.setPasswordEnabled(false);
+      Account owner=ApiDBUtils.findAccountById(iso.getAccountId());
+      if (owner != null) {
+        isoResponse.setAccount(owner.getAccountName());
+        isoResponse.setDomainId(owner.getDomainId());
+        isoResponse.setDomainName(ApiDBUtils.findDomainById(owner.getDomainId()).getName());
+      }
+      isoResponse.setObjectName("iso");
+      isoResponses.add(isoResponse);
+      response.setResponses(isoResponses);
+      if (isBootable != null && !isBootable) {
+        continue;
+      }
+    }
+    List<VMTemplateHostVO> isoHosts=ApiDBUtils.listTemplateHostBy(iso.getId(),isoZonePair.second(),readyOnly);
+    for (    VMTemplateHostVO isoHost : isoHosts) {
+      TemplateResponse isoResponse=new TemplateResponse();
+      isoResponse.setId(iso.getId());
+      isoResponse.setName(iso.getName());
+      isoResponse.setDisplayText(iso.getDisplayText());
+      isoResponse.setPublic(iso.isPublicTemplate());
+      isoResponse.setExtractable(iso.isExtractable() && !(iso.getTemplateType() == TemplateType.PERHOST));
+      isoResponse.setCreated(isoHost.getCreated());
+      isoResponse.setReady(isoHost.getDownloadState() == Status.DOWNLOADED);
+      isoResponse.setBootable(iso.isBootable());
+      isoResponse.setFeatured(iso.isFeatured());
+      isoResponse.setCrossZones(iso.isCrossZones());
+      isoResponse.setPublic(iso.isPublicTemplate());
+      GuestOS os=ApiDBUtils.findGuestOSById(iso.getGuestOSId());
+      if (os != null) {
+        isoResponse.setOsTypeId(os.getId());
+        isoResponse.setOsTypeName(os.getDisplayName());
+      }
+ else {
+        isoResponse.setOsTypeId(-1L);
+        isoResponse.setOsTypeName("");
+      }
+      Account owner=ApiDBUtils.findAccountById(iso.getAccountId());
+      if (owner != null) {
+        isoResponse.setAccount(owner.getAccountName());
+        isoResponse.setDomainId(owner.getDomainId());
+        isoResponse.setDomainName(ApiDBUtils.findDomainById(owner.getDomainId()).getName());
+      }
+      HostVO host=ApiDBUtils.findHostById(isoHost.getHostId());
+      DataCenterVO datacenter=ApiDBUtils.findZoneById(host.getDataCenterId());
+      isoResponse.setZoneId(host.getDataCenterId());
+      isoResponse.setZoneName(datacenter.getName());
+      if (isAdmin || account.getId() == iso.getAccountId()) {
+        if (isoHost.getDownloadState() != Status.DOWNLOADED) {
+          String isoStatus="Processing";
+          if (isoHost.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+            isoStatus="Download Complete";
+          }
+ else           if (isoHost.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+            if (isoHost.getDownloadPercent() == 100) {
+              isoStatus="Installing ISO";
+            }
+ else {
+              isoStatus=isoHost.getDownloadPercent() + "% Downloaded";
+            }
+          }
+ else {
+            isoStatus=isoHost.getErrorString();
+          }
+          isoResponse.setStatus(isoStatus);
+        }
+ else {
+          isoResponse.setStatus("Successfully Installed");
+        }
+      }
+      Long isoSize=isoHost.getSize();
+      if (isoSize > 0) {
+        isoResponse.setSize(isoSize);
+      }
+      isoResponse.setObjectName("iso");
+      isoResponses.add(isoResponse);
+    }
+  }
+  response.setResponses(isoResponses);
+  return response;
+}
