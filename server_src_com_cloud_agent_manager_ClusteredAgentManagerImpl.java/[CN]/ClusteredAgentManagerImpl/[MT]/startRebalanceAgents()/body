@@ -34,9 +34,13 @@
           long hostId=host.getId();
           s_logger.debug("Asking management server " + node.getMsid() + " to give away host id="+ hostId);
           boolean result=true;
+          if (_hostTransferDao.findById(hostId) != null) {
+            s_logger.warn("Somebody else is already rebalancing host id: " + hostId);
+            continue;
+          }
           HostTransferMapVO transfer=_hostTransferDao.startAgentTransfering(hostId,node.getMsid(),_nodeId);
           try {
-            Answer[] answer=sendRebalanceCommand(hostId,node.getMsid(),Event.RequestAgentRebalance);
+            Answer[] answer=sendRebalanceCommand(node.getMsid(),hostId,node.getMsid(),_nodeId,Event.RequestAgentRebalance);
             if (answer == null) {
               s_logger.warn("Failed to get host id=" + hostId + " from management server "+ node.getMsid());
               result=false;
@@ -47,8 +51,8 @@
             result=false;
           }
  finally {
-            HostTransferMapVO updatedTransfer=_hostTransferDao.findById(transfer.getId());
-            if (!result && updatedTransfer.getState() == HostTransferState.TransferRequested) {
+            HostTransferMapVO transferState=_hostTransferDao.findByIdAndFutureOwnerId(transfer.getId(),_nodeId);
+            if (!result && transferState != null && transferState.getState() == HostTransferState.TransferRequested) {
               if (s_logger.isDebugEnabled()) {
                 s_logger.debug("Removing mapping from op_host_transfer as it failed to be set to transfer mode");
               }

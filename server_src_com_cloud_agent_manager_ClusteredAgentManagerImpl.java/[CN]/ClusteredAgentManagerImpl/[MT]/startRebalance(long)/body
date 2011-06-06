@@ -1,0 +1,33 @@
+{
+  HostVO host=_hostDao.findById(hostId);
+  if (host == null || host.getRemoved() != null) {
+    s_logger.warn("Unable to find host record, fail start rebalancing process");
+    return false;
+  }
+synchronized (_agents) {
+    ClusteredDirectAgentAttache attache=(ClusteredDirectAgentAttache)_agents.get(hostId);
+    if (attache != null && attache.getQueueSize() == 0 && attache.getNonRecurringListenersSize() == 0) {
+      _agentToTransferIds.remove(hostId);
+      s_logger.debug("Putting agent id=" + hostId + " to transfer mode");
+      attache.setTransferMode(true);
+      _agents.put(hostId,attache);
+    }
+ else {
+      if (attache == null) {
+        s_logger.warn("Attache for the agent " + hostId + " no longer exists on management server "+ _nodeId+ ", can't start host rebalancing");
+      }
+ else {
+        s_logger.warn("Attache for the agent " + hostId + " has request queue size= "+ attache.getQueueSize()+ " and listener queue size "+ attache.getNonRecurringListenersSize()+ ", can't start host rebalancing");
+      }
+      return false;
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  s_logger.debug("Updating host id=" + hostId + " with the status "+ Status.Rebalancing);
+  host.setManagementServerId(null);
+  _hostDao.updateStatus(host,Event.StartAgentRebalance,_nodeId);
+  _hostTransferDao.startAgentTransfer(hostId);
+  txn.commit();
+  return true;
+}
