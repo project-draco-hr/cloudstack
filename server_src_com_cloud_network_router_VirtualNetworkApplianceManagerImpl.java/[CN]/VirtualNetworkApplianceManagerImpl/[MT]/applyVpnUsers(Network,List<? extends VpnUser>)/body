@@ -1,37 +1,40 @@
 {
-  DomainRouterVO router=_routerDao.findByNetwork(network.getId()).get(0);
-  if (router == null) {
+  List<DomainRouterVO> routers=_routerDao.findByNetwork(network.getId());
+  if (routers.size() == 0) {
     s_logger.warn("Failed to add/remove VPN users: no router found for account and zone");
     throw new ResourceUnavailableException("Unable to assign ip addresses, domR doesn't exist for network " + network.getId(),DataCenter.class,network.getDataCenterId());
   }
-  if (router.getState() != State.Running) {
-    s_logger.warn("Failed to add/remove VPN users: router not in running state");
-    throw new ResourceUnavailableException("Unable to assign ip addresses, domR is not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
-  }
-  Commands cmds=new Commands(OnError.Continue);
-  List<VpnUser> addUsers=new ArrayList<VpnUser>();
-  List<VpnUser> removeUsers=new ArrayList<VpnUser>();
-  for (  VpnUser user : users) {
-    if (user.getState() == VpnUser.State.Add || user.getState() == VpnUser.State.Active) {
-      addUsers.add(user);
+  boolean agentResults=true;
+  for (  DomainRouterVO router : routers) {
+    if (router.getState() != State.Running) {
+      s_logger.warn("Failed to add/remove VPN users: router not in running state");
+      throw new ResourceUnavailableException("Unable to assign ip addresses, domR is not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
     }
- else     if (user.getState() == VpnUser.State.Revoke) {
-      removeUsers.add(user);
+    Commands cmds=new Commands(OnError.Continue);
+    List<VpnUser> addUsers=new ArrayList<VpnUser>();
+    List<VpnUser> removeUsers=new ArrayList<VpnUser>();
+    for (    VpnUser user : users) {
+      if (user.getState() == VpnUser.State.Add || user.getState() == VpnUser.State.Active) {
+        addUsers.add(user);
+      }
+ else       if (user.getState() == VpnUser.State.Revoke) {
+        removeUsers.add(user);
+      }
     }
+    VpnUsersCfgCommand cmd=new VpnUsersCfgCommand(addUsers,removeUsers);
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+    cmds.addCommand(cmd);
+    boolean agentResult=sendCommandsToRouter(router,cmds);
+    agentResults=agentResults && agentResult;
   }
-  VpnUsersCfgCommand cmd=new VpnUsersCfgCommand(addUsers,removeUsers);
-  cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
-  cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
-  cmds.addCommand(cmd);
-  boolean agentResult=sendCommandsToRouter(router,cmds);
-  ;
   String[] result=new String[users.size()];
   for (int i=0; i < result.length; i++) {
-    if (agentResult) {
+    if (agentResults) {
       result[i]=null;
     }
  else {
-      result[i]=String.valueOf(agentResult);
+      result[i]=String.valueOf(agentResults);
     }
   }
   return result;
