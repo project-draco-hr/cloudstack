@@ -1,8 +1,8 @@
 {
-  Object id=cmd.getId();
-  Object keyword=cmd.getKeyword();
+  Long id=cmd.getId();
+  String keyword=cmd.getKeyword();
   Long zoneId=cmd.getZoneId();
-  Account account=UserContext.current().getCaller();
+  Account caller=UserContext.current().getCaller();
   Long domainId=cmd.getDomainId();
   String accountName=cmd.getAccountName();
   String type=cmd.getType();
@@ -12,131 +12,73 @@
   Boolean isDefault=cmd.isDefault();
   Long accountId=null;
   String path=null;
-  List<Long> avoidNetworks=new ArrayList<Long>();
-  List<Long> allowedSharedNetworks=new ArrayList<Long>();
-  if (isSystem == null && id == null) {
+  Long sharedNetworkDomainId=null;
+  if (isSystem == null || caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
     isSystem=false;
   }
   if (isSystem != null && isSystem && (accountName != null || domainId != null)) {
     throw new InvalidParameterValueException("System network belongs to system, account and domainId parameters can't be specified");
   }
-  if (_accountMgr.isAdmin(account.getType())) {
+  if (_accountMgr.isAdmin(caller.getType())) {
     if (domainId != null) {
       DomainVO domain=_domainDao.findById(domainId);
       if (domain == null) {
         throw new InvalidParameterValueException("Domain id=" + domainId + " doesn't exist in the system");
       }
-      _accountMgr.checkAccess(account,domain);
+      _accountMgr.checkAccess(caller,domain);
       if (accountName != null) {
-        account=_accountMgr.getActiveAccount(accountName,domainId);
-        if (account == null) {
+        Account owner=_accountMgr.getActiveAccount(accountName,domainId);
+        if (owner == null) {
           throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
         }
-        accountId=account.getId();
+        accountId=owner.getId();
       }
     }
- else {
-      accountId=account.getId();
-    }
-    if (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
-      DomainVO domain=_domainDao.findById(account.getDomainId());
+    if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+      DomainVO domain=_domainDao.findById(caller.getDomainId());
       if (domain != null) {
         path=domain.getPath();
       }
     }
   }
  else {
-    accountName=account.getAccountName();
-    domainId=account.getDomainId();
-    accountId=account.getId();
+    accountId=caller.getId();
+  }
+  if (!isSystem && (isShared == null || isShared)) {
+    if (domainId == null) {
+      sharedNetworkDomainId=caller.getDomainId();
+    }
+ else {
+      sharedNetworkDomainId=domainId;
+    }
   }
   Filter searchFilter=new Filter(NetworkVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<NetworkVO> sb=_networksDao.createSearchBuilder();
   SearchBuilder<NetworkOfferingVO> networkOfferingSearch=_networkOfferingDao.createSearchBuilder();
   networkOfferingSearch.and("systemOnly",networkOfferingSearch.entity().isSystemOnly(),SearchCriteria.Op.EQ);
-  if (isSystem != null && isSystem) {
+  if (isSystem) {
     networkOfferingSearch.and("trafficType",networkOfferingSearch.entity().getTrafficType(),SearchCriteria.Op.EQ);
   }
   sb.join("networkOfferingSearch",networkOfferingSearch,sb.entity().getNetworkOfferingId(),networkOfferingSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   SearchBuilder<DataCenterVO> zoneSearch=_dcDao.createSearchBuilder();
   zoneSearch.and("networkType",zoneSearch.entity().getNetworkType(),SearchCriteria.Op.EQ);
   sb.join("zoneSearch",zoneSearch,sb.entity().getDataCenterId(),zoneSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  if (path != null) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  if (sharedNetworkDomainId != null) {
+    SearchBuilder<NetworkDomainVO> domainNetworkSearch=_networkDomainDao.createSearchBuilder();
+    sb.join("domainNetworkSearch",domainNetworkSearch,sb.entity().getId(),domainNetworkSearch.entity().getNetworkId(),JoinBuilder.JoinType.LEFTOUTER);
   }
   sb.and("removed",sb.entity().getRemoved(),Op.NULL);
-  SearchCriteria<NetworkVO> sc=sb.create();
-  if (isSystem != null) {
-    sc.setJoinParameters("networkOfferingSearch","systemOnly",isSystem);
+  if (isSystem == null || !isSystem) {
+    List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
+    if (sharedNetworkDomainId != null) {
+      networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter,sharedNetworkDomainId));
+    }
+    if (accountId != null || (domainId == null && accountName == null)) {
+      networksToReturn.addAll(listAccountSpecificAndZoneLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter,accountId,path));
+    }
+    return networksToReturn;
   }
-  if (keyword != null) {
-    SearchCriteria<NetworkVO> ssc=_networksDao.createSearchCriteria();
-    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
-    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
-  }
-  if (id != null) {
-    sc.addAnd("id",SearchCriteria.Op.EQ,id);
-  }
-  if (zoneId != null) {
-    sc.addAnd("dataCenterId",SearchCriteria.Op.EQ,zoneId);
-  }
-  if (type != null) {
-    sc.addAnd("guestType",SearchCriteria.Op.EQ,type);
-  }
-  if (isSystem != null && !isSystem) {
-    if (accountName != null && domainId != null) {
-      if (isShared == null) {
-        sc.addAnd("accountId",SearchCriteria.Op.EQ,accountId);
-      }
- else       if (!isShared) {
-        sc.addAnd("accountId",SearchCriteria.Op.EQ,accountId);
-      }
  else {
-        sc.addAnd("isShared",SearchCriteria.Op.EQ,true);
-      }
-      if (isShared == null || isShared) {
-        List<NetworkVO> allNetworks=_networksDao.listNetworksBy(true);
-        for (        NetworkVO network : allNetworks) {
-          NetworkOffering offering=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
-          if (!isNetworkAvailableInDomain(network.getId(),domainId) || offering.isSystemOnly()) {
-            avoidNetworks.add(network.getId());
-          }
- else {
-            allowedSharedNetworks.add(network.getId());
-          }
-        }
-      }
-    }
- else     if (isShared != null) {
-      sc.addAnd("isShared",SearchCriteria.Op.EQ,isShared);
-    }
+    return _networksDao.search(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter);
   }
-  if (domainId != null && accountName == null) {
-    List<NetworkVO> allNetworks=_networksDao.listNetworksBy(true);
-    for (    NetworkVO network : allNetworks) {
-      if (!isNetworkAvailableInDomain(network.getId(),domainId)) {
-        avoidNetworks.add(network.getId());
-      }
-    }
-    sc.addAnd("isShared",SearchCriteria.Op.EQ,true);
-  }
-  for (  Long avoidNetwork : avoidNetworks) {
-    sc.addAnd("id",SearchCriteria.Op.NOTIN,avoidNetwork);
-  }
-  for (  Long allowerdSharedNetwork : allowedSharedNetworks) {
-    sc.addOr("id",SearchCriteria.Op.IN,allowerdSharedNetwork);
-  }
-  if (isDefault != null) {
-    sc.addAnd("isDefault",SearchCriteria.Op.EQ,isDefault);
-  }
-  if (trafficType != null) {
-    sc.addAnd("trafficType",SearchCriteria.Op.EQ,trafficType);
-  }
-  if (isSystem != null && !isSystem && path != null && (isShared == null || !isShared)) {
-    sc.setJoinParameters("domainSearch","path",path + "%");
-  }
-  List<NetworkVO> networks=_networksDao.search(sc,searchFilter);
-  return networks;
 }
