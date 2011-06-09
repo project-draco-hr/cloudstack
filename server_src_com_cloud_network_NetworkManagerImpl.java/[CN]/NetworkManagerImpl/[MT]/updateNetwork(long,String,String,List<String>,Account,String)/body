@@ -1,0 +1,37 @@
+{
+  NetworkVO network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Network id=" + networkId + "doesn't exist in the system");
+  }
+  if (tags != null && tags.size() > 1) {
+    throw new InvalidParameterException("Unable to support more than one tag on network yet");
+  }
+  NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
+  if (offering.isSystemOnly()) {
+    throw new InvalidParameterValueException("Can't update system networks");
+  }
+  if (domainSuffix != null) {
+    Map<Network.Capability,String> dnsCapabilities=getServiceCapabilities(network.getDataCenterId(),network.getNetworkOfferingId(),Service.Dns);
+    String isUpdateDnsSupported=dnsCapabilities.get(Capability.AllowDnsSuffixModification);
+    if (isUpdateDnsSupported == null || !Boolean.valueOf(isUpdateDnsSupported)) {
+      throw new InvalidParameterValueException("Domain name change is not supported for network id=" + network.getNetworkOfferingId() + " in zone id="+ network.getDataCenterId());
+    }
+    List<DomainRouterVO> routers=_routerDao.listActive(networkId);
+    if (!routers.isEmpty()) {
+      throw new CloudRuntimeException("Unable to update network id=" + networkId + " with new network domain as the network has running network elements");
+    }
+    network.setNetworkDomain(domainSuffix);
+  }
+  _accountMgr.checkAccess(caller,network);
+  if (name != null) {
+    network.setName(name);
+  }
+  if (displayText != null) {
+    network.setDisplayText(displayText);
+  }
+  if (tags != null) {
+    network.setTags(tags);
+  }
+  _networksDao.update(networkId,network);
+  return network;
+}
