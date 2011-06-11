@@ -1,7 +1,24 @@
 {
   try {
+    String tag=tags != null && tags.length > 0 ? tags[0] : null;
     VM router=getVM(conn,vmName);
-    VIF correctVif=getCorrectVif(conn,router,vlanId);
+    NicTO nic=new NicTO();
+    nic.setMac(vifMacAddress);
+    nic.setType(trafficType);
+    if (vlanId == null) {
+      nic.setBroadcastType(BroadcastDomainType.Native);
+    }
+ else {
+      nic.setBroadcastType(BroadcastDomainType.Vlan);
+      nic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(vlanId));
+    }
+    nic.setDeviceId(0);
+    nic.setNetworkRateMbps(networkRate);
+    if (tags != null) {
+      nic.setTags(Arrays.asList(tags));
+    }
+    Network network=getNetwork(conn,nic);
+    VIF correctVif=getCorrectVif(conn,router,network);
     boolean addVif=false;
     boolean removeVif=false;
     if (add && correctVif == null) {
@@ -15,18 +32,7 @@
       if (vifDeviceNum == null) {
         throw new InternalErrorException("There were no more available slots for a new VIF on router: " + router.getNameLabel(conn));
       }
-      NicTO nic=new NicTO();
-      nic.setMac(vifMacAddress);
-      nic.setType(TrafficType.Public);
-      if (vlanId == null) {
-        nic.setBroadcastType(BroadcastDomainType.Native);
-      }
- else {
-        nic.setBroadcastType(BroadcastDomainType.Vlan);
-        nic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(vlanId));
-      }
       nic.setDeviceId(Integer.parseInt(vifDeviceNum));
-      nic.setNetworkRateMbps(networkRate);
       correctVif=createVif(conn,vmName,router,nic);
       correctVif.plug(conn);
       networkUsage(conn,privateIpAddress,"addVif","eth" + correctVif.getDevice(conn));
@@ -63,7 +69,7 @@
       throw new InternalErrorException("Xen plugin \"ipassoc\" failed.");
     }
     if (removeVif) {
-      Network network=correctVif.getNetwork(conn);
+      network=correctVif.getNetwork(conn);
       networkUsage(conn,privateIpAddress,"deleteVif","eth" + correctVif.getDevice(conn));
       correctVif.unplug(conn);
       correctVif.destroy(conn);
