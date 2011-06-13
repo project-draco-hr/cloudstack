@@ -1,3 +1,107 @@
 {
-  return new SetupAnswer(cmd,false);
+  Connection conn=getConnection();
+  setupServer(conn);
+  try {
+    if (!setIptables(conn)) {
+      s_logger.warn("set xenserver Iptable failed");
+      return null;
+    }
+    _canBridgeFirewall=can_bridge_firewall(conn);
+    String result=callHostPluginPremium(conn,"heartbeat","host",_host.uuid,"interval",Integer.toString(_heartbeatInterval));
+    if (result == null || !result.contains("> DONE <")) {
+      s_logger.warn("Unable to launch the heartbeat process on " + _host.ip);
+      return null;
+    }
+    cleanupTemplateSR(conn);
+    Host host=Host.getByUuid(conn,_host.uuid);
+    try {
+      if (cmd.useMultipath()) {
+        host.addToOtherConfig(conn,"multipathing","true");
+        host.addToOtherConfig(conn,"multipathhandle","dmp");
+      }
+    }
+ catch (    Types.MapDuplicateKey e) {
+      s_logger.debug("multipath is already set");
+    }
+    if (cmd.needSetup()) {
+      result=callHostPlugin(conn,"vmops","setup_iscsi","uuid",_host.uuid);
+      if (!result.contains("> DONE <")) {
+        s_logger.warn("Unable to setup iscsi: " + result);
+        return new SetupAnswer(cmd,result);
+      }
+      Pair<PIF,PIF.Record> mgmtPif=null;
+      Set<PIF> hostPifs=host.getPIFs(conn);
+      for (      PIF pif : hostPifs) {
+        PIF.Record rec=pif.getRecord(conn);
+        if (rec.management) {
+          if (rec.VLAN != null && rec.VLAN != -1) {
+            String msg=new StringBuilder("Unsupported configuration.  Management network is on a VLAN.  host=").append(_host.uuid).append("; pif=").append(rec.uuid).append("; vlan=").append(rec.VLAN).toString();
+            s_logger.warn(msg);
+            return new SetupAnswer(cmd,msg);
+          }
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Management network is on pif=" + rec.uuid);
+          }
+          mgmtPif=new Pair<PIF,PIF.Record>(pif,rec);
+          break;
+        }
+      }
+      if (mgmtPif == null) {
+        String msg="Unable to find management network for " + _host.uuid;
+        s_logger.warn(msg);
+        return new SetupAnswer(cmd,msg);
+      }
+      Map<Network,Network.Record> networks=Network.getAllRecords(conn);
+      for (      Network.Record network : networks.values()) {
+        if (network.nameLabel.equals("cloud-private")) {
+          for (          PIF pif : network.PIFs) {
+            PIF.Record pr=pif.getRecord(conn);
+            if (_host.uuid.equals(pr.host.getUuid(conn))) {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Found a network called cloud-private. host=" + _host.uuid + ";  Network="+ network.uuid+ "; pif="+ pr.uuid);
+              }
+              if (pr.VLAN != null && pr.VLAN != -1) {
+                String msg=new StringBuilder("Unsupported configuration.  Network cloud-private is on a VLAN.  Network=").append(network.uuid).append(" ; pif=").append(pr.uuid).toString();
+                s_logger.warn(msg);
+                return new SetupAnswer(cmd,msg);
+              }
+              if (!pr.management && pr.bondMasterOf != null && pr.bondMasterOf.size() > 0) {
+                if (pr.bondMasterOf.size() > 1) {
+                  String msg=new StringBuilder("Unsupported configuration.  Network cloud-private has more than one bond.  Network=").append(network.uuid).append("; pif=").append(pr.uuid).toString();
+                  s_logger.warn(msg);
+                  return new SetupAnswer(cmd,msg);
+                }
+                Bond bond=pr.bondMasterOf.iterator().next();
+                Set<PIF> slaves=bond.getSlaves(conn);
+                for (                PIF slave : slaves) {
+                  PIF.Record spr=slave.getRecord(conn);
+                  if (spr.management) {
+                    if (!transferManagementNetwork(conn,host,slave,spr,pif)) {
+                      String msg=new StringBuilder("Unable to transfer management network.  slave=" + spr.uuid + "; master="+ pr.uuid+ "; host="+ _host.uuid).toString();
+                      s_logger.warn(msg);
+                      return new SetupAnswer(cmd,msg);
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return new SetupAnswer(cmd,false);
+  }
+ catch (  XmlRpcException e) {
+    s_logger.warn("Unable to setup",e);
+    return new SetupAnswer(cmd,e.getMessage());
+  }
+catch (  XenAPIException e) {
+    s_logger.warn("Unable to setup",e);
+    return new SetupAnswer(cmd,e.getMessage());
+  }
+catch (  Exception e) {
+    s_logger.warn("Unable to setup",e);
+    return new SetupAnswer(cmd,e.getMessage());
+  }
 }
