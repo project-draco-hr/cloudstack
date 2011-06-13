@@ -4,19 +4,41 @@
   if (newOwner == null) {
     throw new InvalidParameterValueException("Unable to find account " + newOwner + " in domain "+ oldOwner.getDomainId());
   }
-  UserVmVO vm=_vmDao.findById(cmd.getHostId());
-  vm.setAccountId(newOwner.getAccountId());
-  DomainVO domain=_domainDao.findById(oldOwner.getDomainId());
-  _accountMgr.checkAccess(oldOwner,domain);
-  _accountMgr.checkAccess(newOwner,domain);
   if (_accountMgr.resourceLimitExceeded(newOwner,ResourceType.user_vm)) {
     ResourceAllocationException rae=new ResourceAllocationException("Maximum number of virtual machines for account: " + newOwner.getAccountName() + " has been exceeded.");
     rae.setResourceType("vm");
     throw rae;
   }
-  this.stopVirtualMachine(cmd.getHostId(),true);
+  UserVmVO vm=_vmDao.findById(cmd.getVmId());
+  if (vm.getState() == State.Running) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM is Running, unable to move the vm " + vm);
+    }
+    throw new InvalidParameterValueException("VM is Running, unable to move the vm " + vm);
+  }
+  VirtualMachineTemplate template=_templateDao.findById(vm.getTemplateId());
+  if (!template.isPublicTemplate()) {
+    Account templateOwner=_accountMgr.getAccount(template.getAccountId());
+    _accountMgr.checkAccess(newOwner,templateOwner);
+  }
+  DomainVO domain=_domainDao.findById(oldOwner.getDomainId());
+  _accountMgr.checkAccess(newOwner,domain);
+  try {
+    if (!_itMgr.advanceStop(vm,false,_userDao.findById(UserContext.current().getCallerUserId()),oldOwner)) {
+      s_logger.debug("Unable to stop " + vm);
+      return null;
+    }
+  }
+ catch (  OperationTimedoutException e) {
+    e.printStackTrace();
+  }
+  vm.setAccountId(newOwner.getAccountId());
   vm.setAccountId(newOwner.getId());
   _vmDao.persist(vm);
-  this.startVirtualMachine(cmd.getHostId());
+  List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
+  for (  VolumeVO volume : volumes) {
+    volume.setAccountId(cmd.getAccountId());
+    _volsDao.persist(volume);
+  }
   return vm;
 }
