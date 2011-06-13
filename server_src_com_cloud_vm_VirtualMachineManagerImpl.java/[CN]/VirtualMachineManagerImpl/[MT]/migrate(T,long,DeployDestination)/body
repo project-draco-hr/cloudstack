@@ -62,9 +62,15 @@
     }
   }
   vm.setLastHostId(srcHostId);
-  if (vm == null || vm.getHostId() == null || vm.getHostId() != srcHostId || !changeState(vm,Event.MigrationRequested,dstHostId,work,Step.Migrating)) {
-    s_logger.info("Migration cancelled because state has changed: " + vm);
-    throw new ConcurrentOperationException("Migration cancelled because state has changed: " + vm);
+  try {
+    if (vm == null || vm.getHostId() == null || vm.getHostId() != srcHostId || !changeState(vm,Event.MigrationRequested,dstHostId,work,Step.Migrating)) {
+      s_logger.info("Migration cancelled because state has changed: " + vm);
+      throw new ConcurrentOperationException("Migration cancelled because state has changed: " + vm);
+    }
+  }
+ catch (  NoTransitionException e1) {
+    s_logger.info("Migration cancelled because " + e1.getMessage());
+    throw new ConcurrentOperationException("Migration cancelled because " + e1.getMessage());
   }
   boolean migrated=false;
   try {
@@ -84,7 +90,14 @@
       }
       throw new AgentUnavailableException("Operation timed out on migrating " + vm,dstHostId);
     }
-    changeState(vm,VirtualMachine.Event.OperationSucceeded,dstHostId,work,Step.Started);
+    try {
+      if (!changeState(vm,VirtualMachine.Event.OperationSucceeded,dstHostId,work,Step.Started)) {
+        throw new ConcurrentOperationException("Unable to change the state for " + vm);
+      }
+    }
+ catch (    NoTransitionException e1) {
+      throw new ConcurrentOperationException("Unable to change state due to " + e1.getMessage());
+    }
     try {
       if (!checkVmOnHost(vm,dstHostId)) {
         s_logger.error("Unable to complete migration for " + vm);
@@ -113,7 +126,12 @@
  catch (      AgentUnavailableException ae) {
         s_logger.info("Looks like the destination Host is unavailable for cleanup");
       }
-      stateTransitTo(vm,Event.OperationFailed,srcHostId);
+      try {
+        stateTransitTo(vm,Event.OperationFailed,srcHostId);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.warn(e.getMessage());
+      }
     }
     work.setStep(Step.Done);
     _workDao.update(work.getId(),work);

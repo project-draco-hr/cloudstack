@@ -14,7 +14,12 @@
     return true;
   }
   VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
-  if (!stateTransitTo(vm,Event.StopRequested,vm.getHostId())) {
+  try {
+    if (!stateTransitTo(vm,Event.StopRequested,vm.getHostId())) {
+      throw new ConcurrentOperationException("VM is being operated on.");
+    }
+  }
+ catch (  NoTransitionException e1) {
     if (!forced) {
       throw new ConcurrentOperationException("VM is being operated on by someone else.");
     }
@@ -31,7 +36,13 @@
     ItWorkVO work=_workDao.findByOutstandingWork(vm.getId(),vm.getState());
     if (work != null) {
       if (cleanup(vmGuru,new VirtualMachineProfileImpl<T>(vm),work,Event.StopRequested,forced,user,account)) {
-        return stateTransitTo(vm,Event.AgentReportStopped,null);
+        try {
+          return stateTransitTo(vm,Event.AgentReportStopped,null);
+        }
+ catch (        NoTransitionException e) {
+          s_logger.warn("Unable to cleanup " + vm);
+          return false;
+        }
       }
     }
   }
@@ -59,7 +70,12 @@ catch (    OperationTimedoutException e) {
       if (!stopped) {
         if (!forced) {
           s_logger.warn("Unable to stop vm " + vm);
-          stateTransitTo(vm,Event.OperationFailed,vm.getHostId());
+          try {
+            stateTransitTo(vm,Event.OperationFailed,vm.getHostId());
+          }
+ catch (          NoTransitionException e) {
+            s_logger.warn("Unable to transition the state " + vm);
+          }
           return false;
         }
  else {
@@ -89,5 +105,11 @@ catch (    OperationTimedoutException e) {
     s_logger.warn("Unable to release storage resources.",e);
   }
   vm.setReservationId(null);
-  return stateTransitTo(vm,Event.OperationSucceeded,null);
+  try {
+    return stateTransitTo(vm,Event.OperationSucceeded,null);
+  }
+ catch (  NoTransitionException e) {
+    s_logger.warn(e.getMessage());
+    return false;
+  }
 }
