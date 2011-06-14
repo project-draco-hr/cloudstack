@@ -4,35 +4,27 @@
     s_logger.debug("Finishing rebalancing for the agent " + hostId + " with result "+ success);
   }
   AgentAttache attache=findAttache(hostId);
-  if (attache == null) {
-    s_logger.debug("Unable to find attache for the host id=" + hostId + ", assuming that the agent disconnected already");
+  if (attache == null || !(attache instanceof ClusteredAgentAttache)) {
+    s_logger.debug("Unable to find forward attache for the host id=" + hostId + ", assuming that the agent disconnected already");
     _hostTransferDao.completeAgentTransfer(hostId);
     return;
   }
- else   if (success) {
-    s_logger.debug("Management server " + _nodeId + " is completing agent "+ hostId+ " rebalance");
-    LinkedList<Request> requests=((ClusteredDirectAgentAttache)attache).getRequests();
-    removeAgent(attache,Status.Rebalancing);
-    try {
-      getAttache(hostId);
-      if (!requests.isEmpty()) {
-        s_logger.debug("Forwarding requests held in transfer attache " + hostId + " from the management server "+ _nodeId+ " to "+ futureOwnerId);
-        for (Iterator<Request> iter=requests.iterator(); iter.hasNext(); ) {
-          Request req=iter.next();
-          boolean routeResult=routeToPeer(Long.toString(futureOwnerId),req.getBytes());
-          if (!routeResult) {
-            logD(req.getBytes(),"Failed to route request to peer");
-          }
-        }
+  ClusteredAgentAttache forwardAttache=(ClusteredAgentAttache)attache;
+  if (success) {
+    forwardAttache.setTransferMode(false);
+    Request requestToTransfer=forwardAttache.getRequestToTransfer();
+    while (requestToTransfer != null) {
+      s_logger.debug("Forwarding request " + requestToTransfer.getSequence() + " held in transfer attache "+ hostId+ " from the management server "+ _nodeId+ " to "+ futureOwnerId);
+      boolean routeResult=routeToPeer(Long.toString(futureOwnerId),requestToTransfer.getBytes());
+      if (!routeResult) {
+        logD(requestToTransfer.getBytes(),"Failed to route request to peer");
       }
-    }
- catch (    AgentUnavailableException ex) {
-      s_logger.warn("Failed to finish host " + hostId + " rebalance: couldn't create forward attache as agent is not available",ex);
-      failRebalance(hostId);
+      requestToTransfer=forwardAttache.getRequestToTransfer();
     }
   }
  else {
     failRebalance(hostId);
   }
+  s_logger.debug("Management server " + _nodeId + " completed agent "+ hostId+ " rebalance");
   _hostTransferDao.completeAgentTransfer(hostId);
 }
