@@ -3,7 +3,6 @@
   final List<? extends VMInstanceVO> vms=_vmDao.listByHostId(hostId);
   s_logger.debug("Found " + vms.size() + " VMs for host "+ hostId);
   Map<Long,AgentVmInfo> infos=convertToInfos(newStates);
-  boolean nativeHA=_agentMgr.isHostNativeHAEnabled(hostId);
   for (  VMInstanceVO vm : vms) {
     AgentVmInfo info=infos.remove(vm.getId());
     VMInstanceVO castedVm=null;
@@ -14,30 +13,32 @@
  else {
       castedVm=info.vm;
     }
-    Command command=compareState(castedVm,info,true,nativeHA);
+    HypervisorGuru hvGuru=_hvGuruMgr.getGuru(castedVm.getHypervisorType());
+    Command command=compareState(castedVm,info,true,hvGuru.trackVmHostChange());
     if (command != null) {
       commands.addCommand(command);
     }
   }
   for (  final AgentVmInfo left : infos.values()) {
-    if (nativeHA) {
-      for (      VirtualMachineGuru<? extends VMInstanceVO> vmGuru : _vmGurus.values()) {
-        VMInstanceVO vm=vmGuru.findByName(left.name);
-        if (vm == null) {
-          s_logger.warn("Stopping a VM that we have no record of: " + left.name);
-          commands.addCommand(cleanup(left.name));
-        }
+    for (    VirtualMachineGuru<? extends VMInstanceVO> vmGuru : _vmGurus.values()) {
+      VMInstanceVO vm=vmGuru.findByName(left.name);
+      if (vm == null) {
+        s_logger.warn("Stopping a VM that we have no record of: " + left.name);
+        commands.addCommand(cleanup(left.name));
+      }
  else {
-          Command command=compareState(vm,left,true,nativeHA);
+        HypervisorGuru hvGuru=_hvGuruMgr.getGuru(vm.getHypervisorType());
+        if (hvGuru.trackVmHostChange()) {
+          Command command=compareState(vm,left,true,true);
           if (command != null) {
             commands.addCommand(command);
           }
         }
-      }
-    }
  else {
-      s_logger.warn("Stopping a VM that we have no record of: " + left.name);
-      commands.addCommand(cleanup(left.name));
+          s_logger.warn("Stopping a VM that we have no record of: " + left.name);
+          commands.addCommand(cleanup(left.name));
+        }
+      }
     }
   }
   return commands;
