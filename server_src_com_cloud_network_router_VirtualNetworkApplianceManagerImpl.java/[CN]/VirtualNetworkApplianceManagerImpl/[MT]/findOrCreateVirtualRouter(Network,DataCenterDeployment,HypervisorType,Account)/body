@@ -1,0 +1,57 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  Network network=_networkDao.lockRow(guestNetwork.getId(),true);
+  if (network == null) {
+    throw new ConcurrentOperationException("Unable to acquire lock on " + guestNetwork.getId());
+  }
+  DomainRouterVO router=_routerDao.findByNetwork(guestNetwork.getId());
+  if (router != null) {
+    return router;
+  }
+  long id=_routerDao.getNextInSequence(Long.class,"id");
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating the router " + id);
+  }
+  PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountService.getSystemUser().getId());
+  List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork);
+  NetworkOfferingVO controlOffering=offerings.get(0);
+  NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false,false).get(0);
+  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(3);
+  NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
+  List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false,false);
+  NicProfile defaultNic=new NicProfile();
+  defaultNic.setDefaultNic(true);
+  defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
+  defaultNic.setGateway(sourceNatIp.getGateway());
+  defaultNic.setNetmask(sourceNatIp.getNetmask());
+  defaultNic.setMacAddress(sourceNatIp.getMacAddress());
+  defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+  defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
+  defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
+  defaultNic.setDeviceId(2);
+  networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),defaultNic));
+  NicProfile gatewayNic=new NicProfile();
+  gatewayNic.setIp4Address(guestNetwork.getGateway());
+  gatewayNic.setBroadcastUri(guestNetwork.getBroadcastUri());
+  gatewayNic.setBroadcastType(guestNetwork.getBroadcastDomainType());
+  gatewayNic.setIsolationUri(guestNetwork.getBroadcastUri());
+  gatewayNic.setMode(guestNetwork.getMode());
+  String gatewayCidr=guestNetwork.getCidr();
+  gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
+  networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
+  networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
+  VMTemplateVO template=_templateDao.findRoutingTemplate(type);
+  router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),_offering.getOfferHA());
+  router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+  UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),plan.getDataCenterId(),router.getNetworkId(),null,router.getId(),router.getType().toString());
+  if (stats == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Creating user statistics for the account: " + owner.getId() + " Router Id: "+ router.getId());
+    }
+    stats=new UserStatisticsVO(owner.getId(),plan.getDataCenterId(),null,router.getId(),router.getType().toString(),guestNetwork.getId());
+    _userStatsDao.persist(stats);
+  }
+  txn.commit();
+  return router;
+}
