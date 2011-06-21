@@ -1,0 +1,50 @@
+{
+  if ((dispatcher == null) || !dispatcher.isAlive() || (bufferSize <= 0)) {
+synchronized (appenders) {
+      appenders.appendLoopOnAppenders(event);
+    }
+    return;
+  }
+  event.getNDC();
+  event.getThreadName();
+  event.getMDCCopy();
+  if (locationInfo) {
+    event.getLocationInformation();
+  }
+  event.getRenderedMessage();
+  event.getThrowableStrRep();
+synchronized (buffer) {
+    while (true) {
+      int previousSize=buffer.size();
+      if (previousSize < bufferSize) {
+        buffer.add(event);
+        if (previousSize == 0) {
+          buffer.notifyAll();
+        }
+        break;
+      }
+      boolean discard=true;
+      if (blocking && !Thread.interrupted() && Thread.currentThread() != dispatcher) {
+        try {
+          buffer.wait();
+          discard=false;
+        }
+ catch (        InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      }
+      if (discard) {
+        String loggerName=event.getLoggerName();
+        DiscardSummary summary=(DiscardSummary)discardMap.get(loggerName);
+        if (summary == null) {
+          summary=new DiscardSummary(event);
+          discardMap.put(loggerName,summary);
+        }
+ else {
+          summary.add(event);
+        }
+        break;
+      }
+    }
+  }
+}
