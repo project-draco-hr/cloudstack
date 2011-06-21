@@ -4,17 +4,11 @@
   Set<Pair<Long,Long>> templateZonePairList=new HashSet<Pair<Long,Long>>();
   PreparedStatement pstmt=null;
   ResultSet rs=null;
+  StringBuilder relatedDomainIds=new StringBuilder();
   String sql=SELECT_TEMPLATE_ZONE_REF;
   try {
     short accountType;
     String accountId=null;
-    if (account != null) {
-      accountType=account.getType();
-      accountId=Long.toString(account.getId());
-    }
- else {
-      accountType=Account.ACCOUNT_TYPE_ADMIN;
-    }
     String guestOSJoin="";
     StringBuilder templateHostRefJoin=new StringBuilder();
     String dataCenterJoin="";
@@ -25,15 +19,42 @@
       templateHostRefJoin.append(" INNER JOIN  template_host_ref thr on (t.id = thr.template_id) INNER JOIN host h on (thr.host_id = h.id)");
       sql=SELECT_TEMPLATE_HOST_REF;
     }
-    if (templateFilter == TemplateFilter.featured) {
+    if ((templateFilter == TemplateFilter.featured) || (templateFilter == TemplateFilter.community)) {
       dataCenterJoin=" INNER JOIN data_center dc on (h.data_center_id = dc.id)";
     }
     sql+=guestOSJoin + templateHostRefJoin + dataCenterJoin;
     String whereClause="";
+    if (account != null) {
+      accountType=account.getType();
+      accountId=Long.toString(account.getId());
+      DomainVO accountDomain=_domainDao.findById(account.getDomainId());
+      DomainVO domainTreeNode=accountDomain;
+      while (true) {
+        relatedDomainIds.append(domainTreeNode.getId());
+        relatedDomainIds.append(",");
+        if (domainTreeNode.getParent() != null) {
+          domainTreeNode=_domainDao.findById(domainTreeNode.getParent());
+        }
+ else {
+          break;
+        }
+      }
+      if ((account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) || (account.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) || (account.getType() == Account.ACCOUNT_TYPE_ADMIN)) {
+        List<DomainVO> allChildDomains=_domainDao.findAllChildren(accountDomain.getPath(),accountDomain.getId());
+        for (        DomainVO childDomain : allChildDomains) {
+          relatedDomainIds.append(childDomain.getId());
+          relatedDomainIds.append(",");
+        }
+      }
+      relatedDomainIds.setLength(relatedDomainIds.length() - 1);
+    }
+ else {
+      accountType=Account.ACCOUNT_TYPE_ADMIN;
+    }
     if (templateFilter == TemplateFilter.featured) {
       whereClause+=" WHERE t.public = 1 AND t.featured = 1";
       if (account != null) {
-        whereClause+=" AND (dc.domain_id = " + account.getDomainId() + " OR dc.domain_id is NULL)";
+        whereClause+=" AND (dc.domain_id IN (" + relatedDomainIds + ") OR dc.domain_id is NULL)";
       }
     }
  else     if ((templateFilter == TemplateFilter.self || templateFilter == TemplateFilter.selfexecutable) && accountType != Account.ACCOUNT_TYPE_ADMIN) {
@@ -57,6 +78,9 @@
     }
  else     if (templateFilter == TemplateFilter.community) {
       whereClause+=" WHERE t.public = 1 AND t.featured = 0";
+      if (account != null) {
+        whereClause+=" AND (dc.domain_id IN (" + relatedDomainIds + ") OR dc.domain_id is NULL)";
+      }
     }
  else     if (templateFilter == TemplateFilter.all && accountType == Account.ACCOUNT_TYPE_ADMIN) {
       whereClause+=" WHERE ";
