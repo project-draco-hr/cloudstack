@@ -1,0 +1,36 @@
+{
+  VirtualMachineGuru<VMInstanceVO> vmGuru=getVmGuru(vm);
+  s_logger.debug("VM state is starting on full sync so updating it to running");
+  vm=findById(vm.getType(),vm.getId());
+  try {
+    stateTransitTo(vm,cause,hostId);
+  }
+ catch (  NoTransitionException e1) {
+    s_logger.warn(e1.getMessage());
+  }
+  s_logger.debug("VM's " + vm + " state is starting on full sync so updating it to Running");
+  vm=vmGuru.findById(vm.getId());
+  VirtualMachineProfile<VMInstanceVO> profile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
+  List<NicVO> nics=_nicsDao.listByVmId(profile.getId());
+  for (  NicVO nic : nics) {
+    Network network=_networkMgr.getNetwork(nic.getNetworkId());
+    NicProfile nicProfile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),null);
+    profile.addNic(nicProfile);
+  }
+  Commands cmds=new Commands(OnError.Stop);
+  s_logger.debug("Finalizing commands that need to be send to complete Start process for the vm " + vm);
+  if (vmGuru.finalizeCommandsOnStart(cmds,profile)) {
+    if (cmds.size() != 0) {
+      _agentMgr.send(vm.getHostId(),cmds);
+    }
+    if (vmGuru.finalizeStart(profile,vm.getHostId(),cmds,null)) {
+      stateTransitTo(vm,cause,vm.getHostId());
+    }
+ else {
+      s_logger.error("Unable to finish finialization for running vm: " + vm);
+    }
+  }
+ else {
+    s_logger.error("Unable to finalize commands on start for vm: " + vm);
+  }
+}
