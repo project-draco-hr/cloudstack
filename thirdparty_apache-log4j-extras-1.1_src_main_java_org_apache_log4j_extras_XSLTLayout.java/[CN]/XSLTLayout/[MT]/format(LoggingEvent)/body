@@ -1,0 +1,93 @@
+{
+  if (!activated) {
+    activateOptions();
+  }
+  if (templates != null && encoding != null) {
+    outputStream.reset();
+    try {
+      TransformerHandler transformer=transformerFactory.newTransformerHandler(templates);
+      transformer.setResult(new StreamResult(outputStream));
+      transformer.startDocument();
+      AttributesImpl attrs=new AttributesImpl();
+      attrs.addAttribute(null,"logger","logger","CDATA",event.getLoggerName());
+      attrs.addAttribute(null,"timestamp","timestamp","CDATA",Long.toString(event.timeStamp));
+      attrs.addAttribute(null,"level","level","CDATA",event.getLevel().toString());
+      attrs.addAttribute(null,"thread","thread","CDATA",event.getThreadName());
+      StringBuffer buf=new StringBuffer();
+      utcDateFormat.format(event.timeStamp,buf);
+      attrs.addAttribute(null,"time","time","CDATA",buf.toString());
+      transformer.startElement(LOG4J_NS,"event","event",attrs);
+      attrs.clear();
+      transformer.startElement(LOG4J_NS,"message","message",attrs);
+      String msg=event.getRenderedMessage();
+      if (msg != null && msg.length() > 0) {
+        transformer.characters(msg.toCharArray(),0,msg.length());
+      }
+      transformer.endElement(LOG4J_NS,"message","message");
+      String ndc=event.getNDC();
+      if (ndc != null) {
+        transformer.startElement(LOG4J_NS,"NDC","NDC",attrs);
+        char[] ndcChars=ndc.toCharArray();
+        transformer.characters(ndcChars,0,ndcChars.length);
+        transformer.endElement(LOG4J_NS,"NDC","NDC");
+      }
+      if (!ignoresThrowable) {
+        String[] s=event.getThrowableStrRep();
+        if (s != null) {
+          transformer.startElement(LOG4J_NS,"throwable","throwable",attrs);
+          char[] nl=new char[]{'\n'};
+          for (int i=0; i < s.length; i++) {
+            char[] line=s[i].toCharArray();
+            transformer.characters(line,0,line.length);
+            transformer.characters(nl,0,nl.length);
+          }
+          transformer.endElement(LOG4J_NS,"throwable","throwable");
+        }
+      }
+      if (locationInfo) {
+        LocationInfo locationInfo=event.getLocationInformation();
+        attrs.addAttribute(null,"class","class","CDATA",locationInfo.getClassName());
+        attrs.addAttribute(null,"method","method","CDATA",locationInfo.getMethodName());
+        attrs.addAttribute(null,"file","file","CDATA",locationInfo.getFileName());
+        attrs.addAttribute(null,"line","line","CDATA",locationInfo.getLineNumber());
+        transformer.startElement(LOG4J_NS,"locationInfo","locationInfo",attrs);
+        transformer.endElement(LOG4J_NS,"locationInfo","locationInfo");
+      }
+      if (properties) {
+        Set mdcKeySet=MDCKeySetExtractor.INSTANCE.getPropertyKeySet(event);
+        if ((mdcKeySet != null) && (mdcKeySet.size() > 0)) {
+          attrs.clear();
+          transformer.startElement(LOG4J_NS,"properties","properties",attrs);
+          Object[] keys=mdcKeySet.toArray();
+          Arrays.sort(keys);
+          for (int i=0; i < keys.length; i++) {
+            String key=keys[i].toString();
+            Object val=event.getMDC(key);
+            attrs.clear();
+            attrs.addAttribute(null,"name","name","CDATA",key);
+            attrs.addAttribute(null,"value","value","CDATA",val.toString());
+            transformer.startElement(LOG4J_NS,"data","data",attrs);
+            transformer.endElement(LOG4J_NS,"data","data");
+          }
+        }
+      }
+      transformer.endElement(LOG4J_NS,"event","event");
+      transformer.endDocument();
+      String body=encoding.decode(ByteBuffer.wrap(outputStream.toByteArray())).toString();
+      outputStream.reset();
+      if (body.startsWith("<?xml ")) {
+        int endDecl=body.indexOf("?>");
+        if (endDecl != -1) {
+          for (endDecl+=2; endDecl < body.length() && (body.charAt(endDecl) == '\n' || body.charAt(endDecl) == '\r'); endDecl++)           ;
+          return body.substring(endDecl);
+        }
+      }
+      return body;
+    }
+ catch (    Exception ex) {
+      LogLog.error("Error during transformation",ex);
+      return ex.toString();
+    }
+  }
+  return "No valid transform or encoding specified.";
+}
