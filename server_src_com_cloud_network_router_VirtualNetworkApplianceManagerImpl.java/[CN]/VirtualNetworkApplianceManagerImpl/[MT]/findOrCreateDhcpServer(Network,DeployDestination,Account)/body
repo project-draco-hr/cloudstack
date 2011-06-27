@@ -29,33 +29,40 @@
   networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
   VMTemplateVO template=_templateDao.findRoutingTemplate(dest.getCluster().getHypervisorType());
   Transaction txn=Transaction.currentTxn();
-  txn.start();
-  Network network=_networkDao.lockRow(guestNetwork.getId(),true);
+  Network network=_networkDao.acquireInLockTable(guestNetwork.getId());
   if (network == null) {
     throw new ConcurrentOperationException("Unable to acquire lock on " + guestNetwork.getId());
   }
-  if ((dc.getNetworkType() == NetworkType.Basic || guestNetwork.isSecurityGroupEnabled()) && guestNetwork.getTrafficType() == TrafficType.Guest) {
-    router=_routerDao.findByNetworkAndPod(guestNetwork.getId(),podId);
-    plan=new DataCenterDeployment(dcId,podId,null,null,null);
-  }
- else {
-    router=_routerDao.findByNetwork(guestNetwork.getId());
-    plan=new DataCenterDeployment(dcId);
-  }
-  if (router != null) {
-    return router;
-  }
-  router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),_offering.getOfferHA());
-  router.setRole(Role.DHCP_USERDATA);
-  router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
-  UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
-  if (stats == null) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Creating user statistics for the account: " + owner.getId() + " Router Id: "+ router.getId());
+  try {
+    txn.start();
+    if ((dc.getNetworkType() == NetworkType.Basic || guestNetwork.isSecurityGroupEnabled()) && guestNetwork.getTrafficType() == TrafficType.Guest) {
+      router=_routerDao.findByNetworkAndPod(guestNetwork.getId(),podId);
+      plan=new DataCenterDeployment(dcId,podId,null,null,null);
     }
-    stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
-    _userStatsDao.persist(stats);
+ else {
+      router=_routerDao.findByNetwork(guestNetwork.getId());
+      plan=new DataCenterDeployment(dcId);
+    }
+    if (router != null) {
+      return router;
+    }
+    router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),_offering.getOfferHA());
+    router.setRole(Role.DHCP_USERDATA);
+    router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+    UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
+    if (stats == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating user statistics for the account: " + owner.getId() + " Router Id: "+ router.getId());
+      }
+      stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
+      _userStatsDao.persist(stats);
+    }
+    txn.commit();
   }
-  txn.commit();
+  finally {
+    if (network != null) {
+      _networkDao.releaseFromLockTable(network.getId());
+    }
+  }
   return router;
 }
