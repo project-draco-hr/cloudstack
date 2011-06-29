@@ -1,0 +1,84 @@
+{
+  VirtualMachineTemplate template=findTemplateById(templateId);
+  List<TemplateResponse> responses=new ArrayList<TemplateResponse>();
+  VMTemplateHostVO templateHostRef=ApiDBUtils.findTemplateHostRef(templateId,zoneId,readyOnly);
+  if (templateHostRef == null) {
+    return responses;
+  }
+  HostVO host=ApiDBUtils.findHostById(templateHostRef.getHostId());
+  if (host.getType() == Host.Type.LocalSecondaryStorage && host.getStatus() != com.cloud.host.Status.Up) {
+    return responses;
+  }
+  TemplateResponse templateResponse=new TemplateResponse();
+  templateResponse.setId(template.getId());
+  templateResponse.setName(template.getName());
+  templateResponse.setDisplayText(template.getDisplayText());
+  templateResponse.setPublic(template.isPublicTemplate());
+  templateResponse.setCreated(templateHostRef.getCreated());
+  templateResponse.setReady(templateHostRef.getDownloadState() == Status.DOWNLOADED);
+  templateResponse.setFeatured(template.isFeatured());
+  templateResponse.setExtractable(template.isExtractable() && !(template.getTemplateType() == TemplateType.SYSTEM));
+  templateResponse.setPasswordEnabled(template.getEnablePassword());
+  templateResponse.setCrossZones(template.isCrossZones());
+  templateResponse.setFormat(template.getFormat());
+  if (template.getTemplateType() != null) {
+    templateResponse.setTemplateType(template.getTemplateType().toString());
+  }
+  templateResponse.setHypervisor(template.getHypervisorType().toString());
+  GuestOS os=ApiDBUtils.findGuestOSById(template.getGuestOSId());
+  if (os != null) {
+    templateResponse.setOsTypeId(os.getId());
+    templateResponse.setOsTypeName(os.getDisplayName());
+  }
+ else {
+    templateResponse.setOsTypeId(-1L);
+    templateResponse.setOsTypeName("");
+  }
+  Account owner=ApiDBUtils.findAccountById(template.getAccountId());
+  if (owner != null) {
+    templateResponse.setAccount(owner.getAccountName());
+    templateResponse.setDomainId(owner.getDomainId());
+    templateResponse.setDomainName(ApiDBUtils.findDomainById(owner.getDomainId()).getName());
+  }
+  DataCenterVO datacenter=ApiDBUtils.findZoneById(zoneId);
+  templateResponse.setZoneId(zoneId);
+  templateResponse.setZoneName(datacenter.getName());
+  Account account=UserContext.current().getCaller();
+  boolean isAdmin=false;
+  if ((account == null) || BaseCmd.isAdmin(account.getType())) {
+    isAdmin=true;
+  }
+  if (isAdmin || account.getId() == template.getAccountId()) {
+    if (templateHostRef.getDownloadState() != Status.DOWNLOADED) {
+      String templateStatus="Processing";
+      if (templateHostRef.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+        if (templateHostRef.getDownloadPercent() == 100) {
+          templateStatus="Installing Template";
+        }
+ else {
+          templateStatus=templateHostRef.getDownloadPercent() + "% Downloaded";
+        }
+      }
+ else {
+        templateStatus=templateHostRef.getErrorString();
+      }
+      templateResponse.setStatus(templateStatus);
+    }
+ else     if (templateHostRef.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+      templateResponse.setStatus("Download Complete");
+    }
+ else {
+      templateResponse.setStatus("Successfully Installed");
+    }
+  }
+  Long templateSize=templateHostRef.getSize();
+  if (templateSize > 0) {
+    templateResponse.setSize(templateSize);
+  }
+  templateResponse.setChecksum(template.getChecksum());
+  templateResponse.setSourceTemplateId(template.getSourceTemplateId());
+  templateResponse.setChecksum(template.getChecksum());
+  templateResponse.setObjectName("template");
+  responses.add(templateResponse);
+  return responses;
+}
