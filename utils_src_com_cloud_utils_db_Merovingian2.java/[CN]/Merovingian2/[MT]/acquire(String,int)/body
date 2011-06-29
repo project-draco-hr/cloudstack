@@ -1,0 +1,48 @@
+{
+  Thread th=Thread.currentThread();
+  String threadName=th.getName();
+  int threadId=System.identityHashCode(th);
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Acquiring lck-" + key + " with wait time of "+ timeInSeconds);
+  }
+  long startTime=InaccurateClock.getTime();
+  Connection conn=null;
+  try {
+    conn=Transaction.getStandaloneConnectionWithException();
+    while ((InaccurateClock.getTime() - startTime) < (timeInSeconds * 1000)) {
+      int count=owns(conn,key);
+      if (count == -1) {
+        try {
+          Thread.sleep(1000);
+        }
+ catch (        InterruptedException e) {
+        }
+      }
+ else       if (count >= 1) {
+        return increment(conn,key,threadName,threadId);
+      }
+ else {
+        if (doAcquire(conn,key,threadName,threadId)) {
+          return true;
+        }
+      }
+    }
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Unable to acquire lock " + key,e);
+  }
+ finally {
+    try {
+      if (conn != null) {
+        conn.close();
+      }
+    }
+ catch (    SQLException e) {
+      s_logger.warn("Unable to close conn",e);
+    }
+  }
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Timed out on acquiring lock " + key);
+  }
+  return false;
+}
