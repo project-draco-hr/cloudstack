@@ -1,9 +1,10 @@
 {
-  Long sserverId=ssHost.getId();
   if (ssHost == null) {
-    s_logger.warn("Huh? Agent id " + sserverId + " does not correspond to a row in hosts table?");
+    s_logger.warn("Huh? ssHost is null");
     return;
   }
+  long sserverId=ssHost.getId();
+  long zoneId=ssHost.getDataCenterId();
   if (!(ssHost.getType() == Host.Type.SecondaryStorage || ssHost.getType() == Host.Type.LocalSecondaryStorage)) {
     s_logger.warn("Huh? Agent id " + sserverId + " is not secondary storage host");
     return;
@@ -12,9 +13,8 @@
   if (templateInfos == null) {
     return;
   }
-  long zoneId=ssHost.getDataCenterId();
   Set<VMTemplateVO> toBeDownloaded=new HashSet<VMTemplateVO>();
-  List<VMTemplateVO> allTemplates=listAllInZone(ssHost.getDataCenterId());
+  List<VMTemplateVO> allTemplates=_templateDao.listAllInZone(zoneId);
   List<VMTemplateVO> rtngTmplts=_templateDao.listAllSystemVMTemplates();
   List<VMTemplateVO> defaultBuiltin=_templateDao.listDefaultBuiltinTemplates();
   if (rtngTmplts != null) {
@@ -45,11 +45,11 @@
         }
         if (tmpltInfo.isCorrupted()) {
           tmpltHost.setDownloadState(Status.DOWNLOAD_ERROR);
-          tmpltHost.setErrorString("This template is corrupted");
-          toBeDownloaded.add(tmplt);
-          s_logger.info("Template (" + tmplt + ") is corrupted");
+          String msg="Template " + tmplt.getName() + ":"+ tmplt.getId()+ " is corrupted on secondary storage "+ tmpltHost.getId();
+          tmpltHost.setErrorString(msg);
+          s_logger.info("msg");
           if (tmplt.getUrl() == null) {
-            String msg="Private Template (" + tmplt + ") with install path "+ tmpltInfo.getInstallPath()+ "is corrupted, please check in secondary storage: "+ tmpltHost.getHostId();
+            msg="Private Template (" + tmplt + ") with install path "+ tmpltInfo.getInstallPath()+ "is corrupted, please check in secondary storage: "+ tmpltHost.getHostId();
             s_logger.warn(msg);
           }
  else {
@@ -102,7 +102,7 @@
     }
   }
   if (toBeDownloaded.size() > 0) {
-    List<HypervisorType> availHypers=_clusterDao.getAvailableHypervisorInZone(ssHost.getDataCenterId());
+    List<HypervisorType> availHypers=_clusterDao.getAvailableHypervisorInZone(zoneId);
     if (availHypers.isEmpty()) {
       availHypers.add(HypervisorType.KVM);
     }
@@ -110,14 +110,13 @@
     availHypers.add(HypervisorType.None);
     for (    VMTemplateVO tmplt : toBeDownloaded) {
       if (tmplt.getUrl() == null) {
-        VMTemplateHostVO tmpltHost=_vmTemplateHostDao.findByHostTemplate(ssHost.getId(),tmplt.getId());
-        if (tmpltHost != null) {
-          tmpltHost.setDownloadState(Status.DOWNLOAD_ERROR);
-          tmpltHost.setDownloadPercent(0);
-          tmpltHost.setErrorString("Cannot initiate the download as url is null.");
-          _vmTemplateHostDao.update(tmpltHost.getId(),tmpltHost);
-        }
         continue;
+      }
+      if (!tmplt.isPublicTemplate() && !tmplt.isFeatured()) {
+        VMTemplateHostVO tmpltHost=_vmTemplateHostDao.findByHostTemplate(sserverId,tmplt.getId());
+        if (tmpltHost == null) {
+          continue;
+        }
       }
       if (availHypers.contains(tmplt.getHypervisorType())) {
         s_logger.debug("Template " + tmplt.getName() + " needs to be downloaded to "+ ssHost.getName());
@@ -137,5 +136,7 @@
     String description="Deleted template " + tInfo.getTemplateName() + " on secondary storage "+ sserverId+ " since it isn't in the database, result="+ result;
     s_logger.info(description);
   }
-  if (ssHost.getType() == Host.Type.SecondaryStorage)   checksumSync(sserverId);
+  if (ssHost.getType() == Host.Type.SecondaryStorage) {
+    checksumSync(sserverId);
+  }
 }
