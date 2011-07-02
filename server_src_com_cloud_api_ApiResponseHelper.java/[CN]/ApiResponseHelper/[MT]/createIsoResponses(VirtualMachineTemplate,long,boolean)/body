@@ -1,0 +1,70 @@
+{
+  long isoId=iso.getId();
+  List<TemplateResponse> isoResponses=new ArrayList<TemplateResponse>();
+  VMTemplateHostVO isoHost=ApiDBUtils.findTemplateHostRef(isoId,zoneId,readyOnly);
+  TemplateResponse isoResponse=new TemplateResponse();
+  isoResponse.setId(iso.getId());
+  isoResponse.setName(iso.getName());
+  isoResponse.setDisplayText(iso.getDisplayText());
+  isoResponse.setPublic(iso.isPublicTemplate());
+  isoResponse.setExtractable(iso.isExtractable() && !(iso.getTemplateType() == TemplateType.PERHOST));
+  isoResponse.setCreated(isoHost.getCreated());
+  isoResponse.setReady(isoHost.getDownloadState() == Status.DOWNLOADED);
+  isoResponse.setBootable(iso.isBootable());
+  isoResponse.setFeatured(iso.isFeatured());
+  isoResponse.setCrossZones(iso.isCrossZones());
+  isoResponse.setPublic(iso.isPublicTemplate());
+  GuestOS os=ApiDBUtils.findGuestOSById(iso.getGuestOSId());
+  if (os != null) {
+    isoResponse.setOsTypeId(os.getId());
+    isoResponse.setOsTypeName(os.getDisplayName());
+  }
+ else {
+    isoResponse.setOsTypeId(-1L);
+    isoResponse.setOsTypeName("");
+  }
+  Account owner=ApiDBUtils.findAccountById(iso.getAccountId());
+  if (owner != null) {
+    isoResponse.setAccount(owner.getAccountName());
+    isoResponse.setDomainId(owner.getDomainId());
+    isoResponse.setDomainName(ApiDBUtils.findDomainById(owner.getDomainId()).getName());
+  }
+  Account account=UserContext.current().getCaller();
+  boolean isAdmin=false;
+  if ((account == null) || BaseCmd.isAdmin(account.getType())) {
+    isAdmin=true;
+  }
+  DataCenterVO datacenter=ApiDBUtils.findZoneById(zoneId);
+  isoResponse.setZoneId(zoneId);
+  isoResponse.setZoneName(datacenter.getName());
+  if (isAdmin || account.getId() == iso.getAccountId()) {
+    if (isoHost.getDownloadState() != Status.DOWNLOADED) {
+      String isoStatus="Processing";
+      if (isoHost.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+        isoStatus="Download Complete";
+      }
+ else       if (isoHost.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+        if (isoHost.getDownloadPercent() == 100) {
+          isoStatus="Installing ISO";
+        }
+ else {
+          isoStatus=isoHost.getDownloadPercent() + "% Downloaded";
+        }
+      }
+ else {
+        isoStatus=isoHost.getErrorString();
+      }
+      isoResponse.setStatus(isoStatus);
+    }
+ else {
+      isoResponse.setStatus("Successfully Installed");
+    }
+  }
+  Long isoSize=isoHost.getSize();
+  if (isoSize > 0) {
+    isoResponse.setSize(isoSize);
+  }
+  isoResponse.setObjectName("iso");
+  isoResponses.add(isoResponse);
+  return isoResponses;
+}
