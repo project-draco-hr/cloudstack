@@ -1,4 +1,5 @@
 {
+  boolean restartNetwork=false;
   NetworkVO network=_networksDao.findById(networkId);
   if (network == null) {
     throw new InvalidParameterValueException("Network id=" + networkId + "doesn't exist in the system");
@@ -6,6 +7,7 @@
   if (tags != null && tags.size() > 1) {
     throw new InvalidParameterException("Unable to support more than one tag on network yet");
   }
+  _accountMgr.checkAccess(caller,network);
   NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
   if (offering.isSystemOnly() && network.getTrafficType() != TrafficType.Guest) {
     throw new InvalidParameterValueException("Can't update system networks");
@@ -21,11 +23,10 @@
     }
     List<DomainRouterVO> routers=_routerDao.listActive(networkId);
     if (!routers.isEmpty()) {
-      throw new CloudRuntimeException("Unable to update network id=" + networkId + " with new network domain as the network has running network elements");
+      restartNetwork=true;
     }
     network.setNetworkDomain(domainSuffix);
   }
-  _accountMgr.checkAccess(caller,network);
   if (name != null) {
     network.setName(name);
   }
@@ -46,25 +47,23 @@
     }
     network.setNetworkOfferingId(networkOfferingId);
   }
-  _networksDao.update(networkId,network);
   if ((networkOfferingId != 0) && (networkOfferingId != oldNetworkOfferingId)) {
-    s_logger.info("Try to restart the network since the networkofferingID is changed");
-    if (!(network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup)) {
-      s_logger.warn("Network is not in the right state to be restarted. Correct states are: " + Network.State.Implemented + ", "+ Network.State.Setup);
-    }
-    boolean success=true;
+    restartNetwork=true;
+  }
+  boolean success=_networksDao.update(networkId,network);
+  if (success && restartNetwork && (network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup)) {
+    s_logger.info("Restarting network " + network + " as a part of update network call");
     try {
       success=restartNetwork(networkId,true,caller);
     }
  catch (    Exception e) {
-      s_logger.warn("Fail to restart the network: " + e);
       success=false;
     }
     if (success) {
-      s_logger.debug("Network id=" + networkId + " is restarted successfully.");
+      s_logger.debug("Successully restarted the network " + network + " as a part of updateNetwork call");
     }
  else {
-      s_logger.warn("Network id=" + networkId + " failed to restart.");
+      s_logger.warn("Failed to restart the network " + network + " as a part of updateNetwork call");
     }
   }
   return network;
