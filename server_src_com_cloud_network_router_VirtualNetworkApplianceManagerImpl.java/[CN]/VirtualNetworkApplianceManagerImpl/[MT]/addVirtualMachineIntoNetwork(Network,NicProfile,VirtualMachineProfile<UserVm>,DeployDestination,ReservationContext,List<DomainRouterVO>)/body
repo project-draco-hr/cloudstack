@@ -1,6 +1,7 @@
 {
   List<VirtualRouter> rets=new ArrayList<VirtualRouter>(routers.size());
   for (  DomainRouterVO router : routers) {
+    boolean sendPasswordAndVmData=true;
     _userVmDao.loadDetails((UserVmVO)profile.getVirtualMachine());
     String password=(String)profile.getParameter(VirtualMachineProfile.Param.VmPassword);
     String userData=profile.getVirtualMachine().getUserData();
@@ -21,18 +22,27 @@
     DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
     dhcpCommand.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
     cmds.addCommand("dhcp",dhcpCommand);
-    if (password != null && network.isDefault()) {
-      final String encodedPassword=PasswordGenerator.rot13(password);
-      SavePasswordCommand cmd=new SavePasswordCommand(encodedPassword,nic.getIp4Address(),profile.getVirtualMachine().getHostName());
-      cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
-      cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,router.getGuestIpAddress());
-      cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
-      cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
-      cmds.addCommand("password",cmd);
+    DataCenter dc=dest.getDataCenter();
+    if (dc.getNetworkType() == NetworkType.Basic) {
+      Long podId=dest.getPod().getId();
+      if (router.getPodIdToDeployIn().longValue() != podId.longValue()) {
+        sendPasswordAndVmData=false;
+      }
     }
-    String serviceOffering=_serviceOfferingDao.findByIdIncludingRemoved(profile.getServiceOfferingId()).getDisplayText();
-    String zoneName=_dcDao.findById(network.getDataCenterId()).getName();
-    cmds.addCommand("vmdata",generateVmDataCommand(router,nic.getIp4Address(),userData,serviceOffering,zoneName,nic.getIp4Address(),profile.getVirtualMachine().getHostName(),profile.getVirtualMachine().getInstanceName(),profile.getId(),sshPublicKey));
+    if (sendPasswordAndVmData) {
+      if (password != null && network.isDefault()) {
+        final String encodedPassword=PasswordGenerator.rot13(password);
+        SavePasswordCommand cmd=new SavePasswordCommand(encodedPassword,nic.getIp4Address(),profile.getVirtualMachine().getHostName());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,router.getGuestIpAddress());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+        cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+        cmds.addCommand("password",cmd);
+      }
+      String serviceOffering=_serviceOfferingDao.findByIdIncludingRemoved(profile.getServiceOfferingId()).getDisplayText();
+      String zoneName=_dcDao.findById(network.getDataCenterId()).getName();
+      cmds.addCommand("vmdata",generateVmDataCommand(router,nic.getIp4Address(),userData,serviceOffering,zoneName,nic.getIp4Address(),profile.getVirtualMachine().getHostName(),profile.getVirtualMachine().getInstanceName(),profile.getId(),sshPublicKey));
+    }
     try {
       _agentMgr.send(router.getHostId(),cmds);
     }
