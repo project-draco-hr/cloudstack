@@ -1,23 +1,22 @@
 {
   DataCenter dc=_configMgr.getZone(network.getDataCenterId());
   DeployDestination dest=new DeployDestination(dc,null,null,null);
+  NetworkOffering networkOffering=_networkOfferingDao.findById(network.getNetworkOfferingId());
   List<DomainRouterVO> routers=_routerDao.findByNetwork(network.getId());
   if (routers == null || routers.isEmpty()) {
     s_logger.trace("Can't find virtual router element in network " + network.getId());
     return true;
   }
-  VirtualRouter result=null;
+  long host_id=0;
+  boolean result=true;
   boolean ret=true;
   for (  DomainRouterVO router : routers) {
     if (canHandle(network.getGuestType(),dest.getDataCenter())) {
-      if (router.getState() == State.Stopped) {
-        result=_routerMgr.startRouter(router.getId(),false);
-      }
- else {
-        result=_routerMgr.rebootRouter(router.getId(),false);
-      }
-      if (result == null) {
-        s_logger.warn("Failed to restart virtual router element " + router + " as a part of netowrk "+ network+ " restart");
+      host_id=router.getHostId();
+      _routerMgr.stopRouter(router.getId(),true);
+      result=_routerMgr.destroyRouter(router.getId());
+      if (!result) {
+        s_logger.warn("Failed to destroy virtual router element " + router + " as a part of netowrk "+ network+ " restart");
         ret=false;
       }
     }
@@ -25,5 +24,8 @@
       s_logger.trace("Virtual router element doesn't handle network restart for the network " + network);
     }
   }
+  Cluster cluster=_configMgr.getCluster(_hostDao.findById(host_id).getClusterId());
+  dest=new DeployDestination(dc,null,cluster,null);
+  implement(network,networkOffering,dest,context);
   return ret;
 }
