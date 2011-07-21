@@ -1,2 +1,101 @@
 {
+  long accountId=account.getId();
+  boolean accountCleanupNeeded=false;
+  try {
+    List<InstanceGroupVO> groups=_vmGroupDao.listByAccountId(accountId);
+    for (    InstanceGroupVO group : groups) {
+      if (!_vmMgr.deleteVmGroup(group.getId())) {
+        s_logger.error("Unable to delete group: " + group.getId());
+        accountCleanupNeeded=true;
+      }
+    }
+    boolean success=_snapMgr.deleteSnapshotDirsForAccount(accountId);
+    if (success) {
+      s_logger.debug("Successfully deleted snapshots directories for all volumes under account " + accountId + " across all zones");
+    }
+    List<VMTemplateVO> userTemplates=_templateDao.listByAccountId(accountId);
+    boolean allTemplatesDeleted=true;
+    for (    VMTemplateVO template : userTemplates) {
+      try {
+        allTemplatesDeleted=_tmpltMgr.delete(callerUserId,template.getId(),null);
+      }
+ catch (      Exception e) {
+        s_logger.warn("Failed to delete template while removing account: " + template.getName() + " due to: ",e);
+        allTemplatesDeleted=false;
+      }
+    }
+    if (!allTemplatesDeleted) {
+      s_logger.warn("Failed to delete templates while removing account id=" + accountId);
+      accountCleanupNeeded=true;
+    }
+    List<UserVmVO> vms=_userVmDao.listByAccountId(accountId);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Destroying # of vms (accountId=" + accountId + "): "+ vms.size());
+    }
+    for (    UserVmVO vm : vms) {
+      if (!_vmMgr.expunge(vm,callerUserId,caller)) {
+        s_logger.error("Unable to destroy vm: " + vm.getId());
+        accountCleanupNeeded=true;
+      }
+    }
+    List<VolumeVO> volumes=_volumeDao.findDetachedByAccount(accountId);
+    for (    VolumeVO volume : volumes) {
+      if (!volume.getState().equals(Volume.State.Destroy)) {
+        try {
+          _storageMgr.destroyVolume(volume);
+        }
+ catch (        ConcurrentOperationException ex) {
+          s_logger.warn("Failed to cleanup volumes as a part of account id=" + accountId + " cleanup due to Exception: ",ex);
+          accountCleanupNeeded=true;
+        }
+      }
+    }
+    List<RemoteAccessVpnVO> remoteAccessVpns=_remoteAccessVpnDao.findByAccount(accountId);
+    List<VpnUserVO> vpnUsers=_vpnUser.listByAccount(accountId);
+    for (    VpnUserVO vpnUser : vpnUsers) {
+      _remoteAccessVpnMgr.removeVpnUser(accountId,vpnUser.getUsername());
+    }
+    try {
+      for (      RemoteAccessVpnVO vpn : remoteAccessVpns) {
+        _remoteAccessVpnMgr.destroyRemoteAccessVpn(vpn.getServerAddressId());
+      }
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to cleanup remote access vpn resources as a part of account id=" + accountId + " cleanup due to Exception: ",ex);
+      accountCleanupNeeded=true;
+    }
+    int numRemoved=_securityGroupDao.removeByAccountId(accountId);
+    s_logger.info("deleteAccount: Deleted " + numRemoved + " network groups for account "+ accountId);
+    boolean networksDeleted=true;
+    s_logger.debug("Deleting networks for account " + account.getId());
+    List<NetworkVO> networks=_networkDao.listByOwner(accountId);
+    if (networks != null) {
+      for (      NetworkVO network : networks) {
+        ReservationContext context=new ReservationContextImpl(null,null,getActiveUser(callerUserId),account);
+        if (!_networkMgr.destroyNetwork(network.getId(),context)) {
+          s_logger.warn("Unable to destroy network " + network + " as a part of account id="+ accountId+ " cleanup.");
+          accountCleanupNeeded=true;
+          networksDeleted=false;
+        }
+ else {
+          s_logger.debug("Network " + network.getId() + " successfully deleted as a part of account id="+ accountId+ " cleanup.");
+        }
+      }
+    }
+    if (networksDeleted) {
+      if (!_configMgr.deleteAccountSpecificVirtualRanges(accountId)) {
+        accountCleanupNeeded=true;
+      }
+ else {
+        s_logger.debug("Account specific Virtual IP ranges " + " are successfully deleted as a part of account id=" + accountId + " cleanup.");
+      }
+    }
+    return true;
+  }
+  finally {
+    s_logger.info("Cleanup for account " + account.getId() + (accountCleanupNeeded ? " is needed." : " is not needed."));
+    if (accountCleanupNeeded) {
+      _accountDao.markForCleanup(accountId);
+    }
+  }
 }
