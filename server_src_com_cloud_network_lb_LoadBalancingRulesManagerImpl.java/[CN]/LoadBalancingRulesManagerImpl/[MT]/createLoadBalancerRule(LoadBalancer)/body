@@ -2,6 +2,22 @@
   UserContext caller=UserContext.current();
   long ipId=lb.getSourceIpAddressId();
   IPAddressVO ipAddr=_ipAddressDao.findById(ipId);
+  Long networkId=ipAddr.getSourceNetworkId();
+  NetworkVO network=_networkDao.findById(networkId);
+  if (network.getGuestType() == GuestIpType.Direct) {
+    LoadBalancerVO lbvo;
+    Account account=caller.getCaller();
+    lbvo=_lbDao.findByAccountAndName(account.getId(),lb.getName());
+    if (lbvo == null) {
+      _elbMgr.deployLoadBalancerVM(networkId,account.getId());
+      IPAddressVO ipvo=_ipAddressDao.findById(ipId);
+      ipvo.setAssociatedWithNetworkId(networkId);
+      _ipAddressDao.update(ipvo.getId(),ipvo);
+      ipAddr.setAssociatedWithNetworkId(networkId);
+    }
+ else {
+    }
+  }
   if (ipAddr == null || !ipAddr.readyToUse()) {
     throw new InvalidParameterValueException("Unable to create load balancer rule, invalid IP address id" + ipId);
   }
@@ -30,14 +46,13 @@
   if ((lb.getAlgorithm() == null) || !NetUtils.isValidAlgorithm(lb.getAlgorithm())) {
     throw new InvalidParameterValueException("Invalid algorithm: " + lb.getAlgorithm());
   }
-  Long networkId=ipAddr.getAssociatedWithNetworkId();
+  networkId=ipAddr.getAssociatedWithNetworkId();
   if (networkId == null) {
     throw new InvalidParameterValueException("Unable to create load balancer rule ; ip id=" + ipId + " is not associated with any network");
   }
   _accountMgr.checkAccess(caller.getCaller(),ipAddr);
-  Network network=_networkMgr.getNetwork(networkId);
   if (!_networkMgr.isServiceSupported(network.getNetworkOfferingId(),Service.Lb)) {
-    throw new InvalidParameterValueException("LB service is not supported in network id=" + networkId);
+    throw new InvalidParameterValueException("LB service is not supported in network id= " + networkId);
   }
   LoadBalancerVO newRule=new LoadBalancerVO(lb.getXid(),lb.getName(),lb.getDescription(),lb.getSourceIpAddressId(),lb.getSourcePortEnd(),lb.getDefaultPortStart(),lb.getAlgorithm(),networkId,ipAddr.getAccountId(),ipAddr.getDomainId());
   newRule=_lbDao.persist(newRule);

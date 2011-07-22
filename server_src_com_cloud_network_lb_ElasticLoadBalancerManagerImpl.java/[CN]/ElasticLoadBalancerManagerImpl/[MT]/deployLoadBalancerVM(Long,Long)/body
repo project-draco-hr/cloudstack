@@ -1,0 +1,27 @@
+{
+  NetworkVO network=_networkDao.findById(networkId);
+  DataCenter dc=_dcDao.findById(network.getDataCenterId());
+  Map<VirtualMachineProfile.Param,Object> params=new HashMap<VirtualMachineProfile.Param,Object>(1);
+  params.put(VirtualMachineProfile.Param.RestartNetwork,true);
+  Account owner=_accountService.getActiveAccount("system",new Long(1));
+  DeployDestination dest=new DeployDestination(dc,null,null,null);
+  s_logger.debug("About to deploy elastic LB vm if necessary");
+  try {
+    VirtualRouter elbVm=deployELBVm(network,dest,owner,params);
+    s_logger.debug("ELB  vm = " + elbVm);
+    if (elbVm == null) {
+      throw new InvalidParameterValueException("No VM with id '" + elbVm + "' found.");
+    }
+    DomainRouterVO elbRouterVm=_routerDao.findById(elbVm.getId());
+    String publicIp=elbRouterVm.getGuestIpAddress();
+    IPAddressVO ipvo=_ipAddressDao.findByIpAndSourceNetworkId(networkId,publicIp);
+    ipvo.setAssociatedWithNetworkId(networkId);
+    _ipAddressDao.update(ipvo.getId(),ipvo);
+    return ipvo.getId();
+  }
+ catch (  Throwable t) {
+    String errorMsg="Error while deploying Loadbalancer VM:  " + t;
+    s_logger.warn(errorMsg);
+    return 0;
+  }
+}
