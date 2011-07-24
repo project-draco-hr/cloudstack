@@ -1,38 +1,32 @@
 {
-  DomainRouterVO router=_routerDao.findByNetwork(network.getId());
-  if (router == null) {
-    s_logger.warn("Unable to apply lb rules, virtual router doesn't exist in the network " + network.getId());
+  if (rules == null || rules.isEmpty()) {
+    return true;
+  }
+  if (rules.get(0).getPurpose() != Purpose.LoadBalancing) {
+    s_logger.warn("Not handling non-LB firewall rules");
+    return false;
+  }
+  DomainRouterVO elbVm=findElbVmForLb(rules.get(0));
+  if (elbVm == null) {
+    s_logger.warn("Unable to apply lb rules, ELB vm  doesn't exist in the network " + network.getId());
     throw new ResourceUnavailableException("Unable to apply lb rules",DataCenter.class,network.getDataCenterId());
   }
-  if (router.getState() == State.Running) {
-    if (rules != null && !rules.isEmpty()) {
-      if (rules.get(0).getPurpose() == Purpose.LoadBalancing) {
-        List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(network.getId());
-        List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
-        for (        LoadBalancerVO lb : lbs) {
-          if (lb.getSourceIpAddressId() == rules.get(0).getSourceIpAddressId()) {
-            List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
-            LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
-            lbRules.add(loadBalancing);
-          }
-        }
-        return applyLBRules(router,lbRules);
-      }
- else {
-        s_logger.warn("Unable to apply rules of purpose: " + rules.get(0).getPurpose());
-        return false;
-      }
+  if (elbVm.getState() == State.Running) {
+    List<LoadBalancerVO> lbs=_lbDao.listByIpAddress(rules.get(0).getSourceIpAddressId());
+    List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+    for (    LoadBalancerVO lb : lbs) {
+      List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+      LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+      lbRules.add(loadBalancing);
     }
- else {
-      return true;
-    }
+    return applyLBRules(elbVm,lbRules);
   }
- else   if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
-    s_logger.debug("Router is in " + router.getState() + ", so not sending apply firewall rules commands to the backend");
+ else   if (elbVm.getState() == State.Stopped || elbVm.getState() == State.Stopping) {
+    s_logger.debug("ELB VM is in " + elbVm.getState() + ", so not sending apply LoadBalancing rules commands to the backend");
     return true;
   }
  else {
-    s_logger.warn("Unable to apply firewall rules, virtual router is not in the right state " + router.getState());
-    throw new ResourceUnavailableException("Unable to apply firewall rules, virtual router is not in the right state",VirtualRouter.class,router.getId());
+    s_logger.warn("Unable to apply loadbalancing rules, ELB VM is not in the right state " + elbVm.getState());
+    throw new ResourceUnavailableException("Unable to apply loadbalancing rules, ELB VM is not in the right state",VirtualRouter.class,elbVm.getId());
   }
 }
