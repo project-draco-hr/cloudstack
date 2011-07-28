@@ -1,41 +1,75 @@
 {
-  long ipId=lb.getSourceIpAddressId();
-  IPAddressVO ipAddr=_ipAddressDao.findById(ipId);
-  Long networkId=ipAddr.getSourceNetworkId();
-  NetworkVO network=_networkDao.findById(networkId);
-  if (network.getGuestType() != GuestIpType.Direct) {
-    s_logger.info("Elastic LB Manager: not handling guest traffic of type " + network.getGuestType());
-    return;
+  Long ipId=lb.getSourceIpAddressId();
+  boolean newIp=false;
+  account=_accountDao.acquireInLockTable(account.getId());
+  if (account == null) {
+    s_logger.warn("CreateLoadBalancer: Failed to acquire lock on account");
   }
-  DomainRouterVO elbVm=null;
-  LoadBalancerVO lbvo;
-  lbvo=_lbDao.findByAccountAndName(account.getId(),lb.getName());
-  if (lbvo == null) {
-    elbVm=findELBVmWithCapacity(network,ipAddr);
-    if (elbVm == null) {
-      elbVm=deployLoadBalancerVM(networkId,ipAddr,account.getId());
-      if (elbVm == null) {
-        s_logger.warn("Failed to deploy a new ELB vm for ip " + ipAddr + " in network "+ network+ "lb name="+ lb.getName());
-        return;
+  try {
+    List<LoadBalancerVO> existingLbs=findExistingLoadBalancers(lb.getName(),lb.getSourceIpAddressId(),lb.getAccountId(),lb.getDomainId(),lb.getSourcePortStart());
+    if (existingLbs == null) {
+      existingLbs=findExistingLoadBalancers(lb.getName(),lb.getSourceIpAddressId(),lb.getAccountId(),lb.getDomainId(),null);
+      if (existingLbs == null) {
+        if (lb.getSourceIpAddressId() != null) {
+          existingLbs=findExistingLoadBalancers(lb.getName(),null,lb.getAccountId(),lb.getDomainId(),null);
+          if (existingLbs != null) {
+            throw new InvalidParameterValueException("Supplied LB name " + lb.getName() + " is not associated with IP "+ lb.getSourceIpAddressId());
+          }
+        }
+ else {
+          PublicIp ip=allocIp(lb,account);
+          ipId=ip.getId();
+          newIp=true;
+        }
       }
     }
-  }
+    IPAddressVO ipAddr=_ipAddressDao.findById(ipId);
+    Long networkId=ipAddr.getSourceNetworkId();
+    NetworkVO network=_networkDao.findById(networkId);
+    if (network.getGuestType() != GuestIpType.Direct) {
+      s_logger.info("Elastic LB Manager: not handling guest traffic of type " + network.getGuestType());
+      return null;
+    }
+    LoadBalancer result=null;
+    try {
+      result=_lbMgr.createLoadBalancer(lb);
+    }
+ catch (    NetworkRuleConflictException e) {
+      s_logger.warn("Failed to create LB rule, not continuing with ELB deployment");
+      if (newIp) {
+        releaseIp(ipId,UserContext.current().getCallerUserId(),account);
+      }
+    }
+    DomainRouterVO elbVm=null;
+    if (existingLbs == null) {
+      elbVm=findELBVmWithCapacity(network,ipAddr);
+      if (elbVm == null) {
+        elbVm=deployLoadBalancerVM(networkId,ipAddr,account.getId());
+        if (elbVm == null) {
+          s_logger.warn("Failed to deploy a new ELB vm for ip " + ipAddr + " in network "+ network+ "lb name="+ lb.getName());
+          if (newIp)           releaseIp(ipId,UserContext.current().getCallerUserId(),account);
+        }
+      }
+    }
  else {
-    ElasticLbVmMapVO elbVmMap=_elbVmMapDao.findOneByIp(lb.getSourceIpAddressId());
-    if (elbVmMap != null) {
-      elbVm=_routerDao.findById(elbVmMap.getElbVmId());
+      ElasticLbVmMapVO elbVmMap=_elbVmMapDao.findOneByIp(ipId);
+      if (elbVmMap != null) {
+        elbVm=_routerDao.findById(elbVmMap.getElbVmId());
+      }
+    }
+    if (elbVm == null) {
+      s_logger.warn("No ELB VM can be found or deployed");
+      s_logger.warn("Deleting LB since we failed to deploy ELB VM");
+      _lbDao.remove(result.getId());
+      return null;
+    }
+    ElasticLbVmMapVO mapping=new ElasticLbVmMapVO(ipId,elbVm.getId());
+    _elbVmMapDao.persist(mapping);
+    return result;
+  }
+  finally {
+    if (account != null) {
+      _accountDao.releaseFromLockTable(account.getId());
     }
   }
-  if (elbVm == null) {
-    s_logger.warn("No ELB VM can be found or deployed");
-    return;
-  }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  IPAddressVO ipvo=_ipAddressDao.findById(ipId);
-  ipvo.setAssociatedWithNetworkId(networkId);
-  _ipAddressDao.update(ipvo.getId(),ipvo);
-  ElasticLbVmMapVO mapping=new ElasticLbVmMapVO(ipId,elbVm.getId());
-  _elbVmMapDao.persist(mapping);
-  txn.commit();
 }
