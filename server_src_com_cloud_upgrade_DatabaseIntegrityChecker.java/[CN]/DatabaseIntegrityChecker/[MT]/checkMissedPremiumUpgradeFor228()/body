@@ -1,0 +1,49 @@
+{
+  Transaction txn=Transaction.open("Integrity");
+  txn.start();
+  try {
+    String dbVersion=_dao.getCurrentVersion();
+    if (Version.compare(Version.trimToPatch(dbVersion),Version.trimToPatch("2.2.8")) != 0) {
+      return true;
+    }
+    Connection conn;
+    try {
+      conn=txn.getConnection();
+      PreparedStatement pstmt=conn.prepareStatement("show databases");
+      ResultSet rs=pstmt.executeQuery();
+      boolean hasUsage=false;
+      while (rs.next()) {
+        String dbName=rs.getString(1);
+        if (dbName.equalsIgnoreCase("cloud_usage")) {
+          hasUsage=true;
+          break;
+        }
+      }
+      if (!hasUsage) {
+        s_logger.debug("No cloud_usage found in database, no need to check missed premium upgrade");
+        return true;
+      }
+      if (!check21to22PremiumUprage(conn)) {
+        s_logger.error("21to22 premium upgrade missed");
+        return false;
+      }
+      if (!check221to222PremiumUprage(conn)) {
+        s_logger.error("221to222 premium upgrade missed");
+        return false;
+      }
+      if (!check222to224PremiumUpgrade(conn)) {
+        s_logger.error("222to224 premium upgrade missed");
+        return false;
+      }
+      return true;
+    }
+ catch (    SQLException e) {
+      s_logger.error("Unable to check missed premiumg upgrade");
+      throw new CloudRuntimeException("Unable to check missed premiumg upgrade");
+    }
+  }
+  finally {
+    txn.commit();
+    txn.close();
+  }
+}
