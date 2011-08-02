@@ -1,2 +1,57 @@
 {
+  if (affectedVms.size() == 0) {
+    return;
+  }
+  if (delayMs == null) {
+    delayMs=new Long(100l);
+  }
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Security Group Mgr: scheduling ruleset updates for " + affectedVms.size() + " vms");
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    PreparedStatement pstmt=txn.prepareAutoCloseStatement("LOCK TABLES op_vm_ruleset_log WRITE, op_nwgrp_work WRITE");
+    int tablesLocked=pstmt.executeUpdate();
+    for (    Long vmId : affectedVms) {
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("Security Group Mgr: scheduling ruleset updates for " + vmId);
+      }
+      VmRulesetLogVO log=null;
+      SecurityGroupWorkVO work=null;
+      log=_rulesetLogDao.findByVmId(vmId);
+      if (log == null) {
+        log=new VmRulesetLogVO(vmId);
+        log=_rulesetLogDao.persist(log);
+      }
+      if (log != null && updateSeqno) {
+        log.incrLogsequence();
+        _rulesetLogDao.update(log.getId(),log);
+      }
+      work=_workDao.findByVmIdStep(vmId,Step.Scheduled);
+      if (work == null) {
+        work=new SecurityGroupWorkVO(vmId,null,null,SecurityGroupWorkVO.Step.Scheduled,null);
+        work=_workDao.persist(work);
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("Security Group Mgr: created new work item for " + vmId);
+        }
+      }
+      work.setLogsequenceNumber(log.getLogsequence());
+      _workDao.update(work.getId(),work);
+      _executorPool.schedule(new WorkerThread(),delayMs,TimeUnit.MILLISECONDS);
+    }
+    txn.commit();
+  }
+ catch (  SQLException e) {
+    s_logger.error("Unable to execute lock tables routines",e);
+  }
+ finally {
+    try {
+      PreparedStatement pstmt=txn.prepareAutoCloseStatement("UNLOCK TABLES");
+      int tablesUnlocked=pstmt.executeUpdate();
+    }
+ catch (    SQLException e) {
+      s_logger.warn("Unable to unlock tables");
+    }
+  }
 }
