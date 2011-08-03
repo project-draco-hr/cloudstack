@@ -1,0 +1,62 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=_accountDao.findById(vpnOwnerId);
+  _accountMgr.checkAccess(caller,owner);
+  s_logger.debug("Applying vpn users for " + owner);
+  List<RemoteAccessVpnVO> vpns=_remoteAccessVpnDao.findByAccount(vpnOwnerId);
+  List<VpnUserVO> users=_vpnUsersDao.listByAccount(vpnOwnerId);
+  for (  VpnUserVO user : users) {
+    if (user.getState() == State.Active) {
+      user.setState(State.Add);
+      _vpnUsersDao.update(user.getId(),user);
+    }
+  }
+  List<? extends RemoteAccessVpnElement> elements=_networkMgr.getRemoteAccessVpnElements();
+  boolean success=true;
+  boolean[] finals=new boolean[users.size()];
+  for (  RemoteAccessVpnElement element : elements) {
+    s_logger.debug("Applying vpn access to " + element.getName());
+    for (    RemoteAccessVpnVO vpn : vpns) {
+      try {
+        String[] results=element.applyVpnUsers(vpn,users);
+        if (results != null) {
+          for (int i=0; i < results.length; i++) {
+            s_logger.debug("VPN User " + users.get(i) + (results[i] == null ? " is set on " : (" couldn't be set due to " + results[i]) + " on ")+ vpn);
+            if (results[i] == null) {
+              if (!finals[i]) {
+                finals[i]=true;
+              }
+            }
+ else {
+              finals[i]=false;
+              success=false;
+            }
+          }
+        }
+      }
+ catch (      ResourceUnavailableException e) {
+        s_logger.warn("Unable to apply vpn users ",e);
+        success=false;
+        for (int i=0; i < finals.length; i++) {
+          finals[i]=false;
+        }
+      }
+    }
+  }
+  for (int i=0; i < finals.length; i++) {
+    VpnUserVO user=users.get(i);
+    if (finals[i]) {
+      if (user.getState() == State.Add) {
+        user.setState(State.Active);
+        _vpnUsersDao.update(user.getId(),user);
+      }
+ else       if (user.getState() == State.Revoke) {
+        _vpnUsersDao.remove(user.getId());
+      }
+    }
+ else {
+      s_logger.warn("Failed to apply vpn for user " + user.getUsername() + ", accountId="+ user.getAccountId());
+    }
+  }
+  return success;
+}

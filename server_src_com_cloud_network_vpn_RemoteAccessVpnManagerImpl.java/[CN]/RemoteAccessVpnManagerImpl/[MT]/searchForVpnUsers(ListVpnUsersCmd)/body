@@ -1,0 +1,44 @@
+{
+  Account caller=UserContext.current().getCaller();
+  String username=cmd.getUsername();
+  String path=null;
+  Pair<String,Long> accountDomainPair=_accountMgr.finalizeAccountDomainForList(caller,cmd.getAccountName(),cmd.getDomainId());
+  String accountName=accountDomainPair.first();
+  Long domainId=accountDomainPair.second();
+  if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
+    Domain domain=_accountMgr.getDomain(caller.getDomainId());
+    path=domain.getPath();
+  }
+  Filter searchFilter=new Filter(VpnUserVO.class,"username",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Object id=cmd.getId();
+  SearchBuilder<VpnUserVO> sb=_vpnUsersDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("username",sb.entity().getUsername(),SearchCriteria.Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  if (path != null) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<VpnUserVO> sc=sb.create();
+  sc.setParameters("state",State.Active);
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (username != null) {
+    sc.setParameters("username",username);
+  }
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    if (accountName != null) {
+      Account account=_accountMgr.getActiveAccount(accountName,domainId);
+      sc.setParameters("accountId",account.getId());
+    }
+  }
+  if (path != null) {
+    sc.setJoinParameters("domainSearch","path",path + "%");
+  }
+  return _vpnUsersDao.search(sc,searchFilter);
+}

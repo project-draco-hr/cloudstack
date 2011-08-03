@@ -1,0 +1,54 @@
+{
+  UserContext ctx=UserContext.current();
+  Account caller=ctx.getCaller();
+  PublicIpAddress ipAddr=_networkMgr.getPublicIpAddress(publicIpId);
+  if (ipAddr == null) {
+    throw new InvalidParameterValueException("Unable to create remote access vpn, invalid public IP address id" + publicIpId);
+  }
+  _accountMgr.checkAccess(caller,ipAddr);
+  if (!ipAddr.readyToUse() || ipAddr.getAssociatedWithNetworkId() == null) {
+    throw new InvalidParameterValueException("The Ip address is not ready to be used yet: " + ipAddr.getAddress());
+  }
+  RemoteAccessVpnVO vpnVO=_remoteAccessVpnDao.findByPublicIpAddress(publicIpId);
+  if (vpnVO != null) {
+    if (vpnVO.getState() == RemoteAccessVpn.State.Added) {
+      return vpnVO;
+    }
+    throw new InvalidParameterValueException("A Remote Access VPN already exists for this public Ip address");
+  }
+  vpnVO=_remoteAccessVpnDao.findByAccountAndNetwork(ipAddr.getAllocatedToAccountId(),ipAddr.getAssociatedWithNetworkId());
+  if (vpnVO != null) {
+    if (vpnVO.getState() == RemoteAccessVpn.State.Added) {
+      return vpnVO;
+    }
+    throw new InvalidParameterValueException("A Remote Access VPN already exists for this account");
+  }
+  Network network=_networkMgr.getNetwork(ipAddr.getAssociatedWithNetworkId());
+  if (!_networkMgr.isServiceSupported(network.getNetworkOfferingId(),Service.Vpn)) {
+    throw new InvalidParameterValueException("Vpn service is not supported in network id=" + ipAddr.getAssociatedWithNetworkId());
+  }
+  if (ipRange == null) {
+    ipRange=_clientIpRange;
+  }
+  String[] range=ipRange.split("-");
+  if (range.length != 2) {
+    throw new InvalidParameterValueException("Invalid ip range");
+  }
+  if (!NetUtils.isValidIp(range[0]) || !NetUtils.isValidIp(range[1])) {
+    throw new InvalidParameterValueException("Invalid ip in range specification " + ipRange);
+  }
+  if (!NetUtils.validIpRange(range[0],range[1])) {
+    throw new InvalidParameterValueException("Invalid ip range " + ipRange);
+  }
+  Pair<String,Integer> cidr=NetUtils.getCidr(network.getCidr());
+  String[] guestIpRange=NetUtils.getIpRangeFromCidr(cidr.first(),cidr.second());
+  if (NetUtils.ipRangesOverlap(range[0],range[1],guestIpRange[0],guestIpRange[1])) {
+    throw new InvalidParameterValueException("Invalid ip range: " + ipRange + " overlaps with guest ip range "+ guestIpRange[0]+ "-"+ guestIpRange[1]);
+  }
+  long startIp=NetUtils.ip2Long(range[0]);
+  String newIpRange=NetUtils.long2Ip(++startIp) + "-" + range[1];
+  String sharedSecret=PasswordGenerator.generatePresharedKey(_pskLength);
+  _rulesMgr.reservePorts(ipAddr,NetUtils.UDP_PROTO,Purpose.Vpn,NetUtils.VPN_PORT,NetUtils.VPN_L2TP_PORT,NetUtils.VPN_NATT_PORT);
+  vpnVO=new RemoteAccessVpnVO(ipAddr.getAllocatedToAccountId(),ipAddr.getAllocatedInDomainId(),ipAddr.getAssociatedWithNetworkId(),publicIpId,range[0],newIpRange,sharedSecret);
+  return _remoteAccessVpnDao.persist(vpnVO);
+}
