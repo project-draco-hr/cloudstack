@@ -11,57 +11,64 @@
   boolean isPodBased=(dc.getNetworkType() == NetworkType.Basic || guestNetwork.isSecurityGroupEnabled()) && guestNetwork.getTrafficType() == TrafficType.Guest;
   DomainRouterVO router=null;
   List<DomainRouterVO> routers=null;
-  Long podId=dest.getPod().getId();
-  if (isPodBased) {
-    routers=_routerDao.findByNetworkAndPod(guestNetwork.getId(),podId);
-    plan=new DataCenterDeployment(dcId,podId,null,null,null);
-  }
- else {
-    routers=_routerDao.findByNetwork(guestNetwork.getId());
-    plan=new DataCenterDeployment(dcId);
-  }
-  if (!routers.isEmpty()) {
+  try {
+    Long podId=dest.getPod().getId();
     if (isPodBased) {
-      List<DomainRouterVO> allRunningRoutersOutsideThePod=_routerDao.findByNetworkOutsideThePod(guestNetwork.getId(),podId,State.Running);
-      routers.addAll(allRunningRoutersOutsideThePod);
+      routers=_routerDao.findByNetworkAndPod(guestNetwork.getId(),podId);
+      plan=new DataCenterDeployment(dcId,podId,null,null,null);
     }
-    return routers;
-  }
-  long id=_routerDao.getNextInSequence(Long.class,"id");
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Creating the dhcp server " + id);
-  }
-  List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork);
-  NetworkOfferingVO controlOffering=offerings.get(0);
-  NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false,false).get(0);
-  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(3);
-  String defaultNetworkStartIp=null;
-  if (guestNetwork.getCidr() != null) {
-    String startIp=_networkMgr.getStartIpAddress(guestNetwork.getId());
-    if (_ipAddressDao.findByIpAndSourceNetworkId(guestNetwork.getId(),startIp).getAllocatedTime() == null) {
-      defaultNetworkStartIp=startIp;
+ else {
+      routers=_routerDao.findByNetwork(guestNetwork.getId());
+      plan=new DataCenterDeployment(dcId);
     }
- else     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("First ip " + startIp + " in network id="+ guestNetwork.getId()+ " is already allocated, can't use it for domain router; will get random ip address from the range");
+    if (!routers.isEmpty()) {
+      if (isPodBased) {
+        List<DomainRouterVO> allRunningRoutersOutsideThePod=_routerDao.findByNetworkOutsideThePod(guestNetwork.getId(),podId,State.Running);
+        routers.addAll(allRunningRoutersOutsideThePod);
+      }
+      return routers;
     }
-  }
-  NicProfile gatewayNic=new NicProfile(defaultNetworkStartIp);
-  gatewayNic.setDefaultNic(true);
-  networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
-  networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
-  VMTemplateVO template=_templateDao.findRoutingTemplate(dest.getCluster().getHypervisorType());
-  router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),false,0,RedundantState.UNKNOWN,_offering.getOfferHA());
-  router.setRole(Role.DHCP_USERDATA);
-  router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
-  routers.add(router);
-  UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
-  if (stats == null) {
+    long id=_routerDao.getNextInSequence(Long.class,"id");
     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Creating user statistics for the account: " + owner.getId() + " Router Id: "+ router.getId());
+      s_logger.debug("Creating the dhcp server " + id);
     }
-    stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
-    _userStatsDao.persist(stats);
+    List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork);
+    NetworkOfferingVO controlOffering=offerings.get(0);
+    NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false,false).get(0);
+    List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(3);
+    String defaultNetworkStartIp=null;
+    if (guestNetwork.getCidr() != null) {
+      String startIp=_networkMgr.getStartIpAddress(guestNetwork.getId());
+      if (_ipAddressDao.findByIpAndSourceNetworkId(guestNetwork.getId(),startIp).getAllocatedTime() == null) {
+        defaultNetworkStartIp=startIp;
+      }
+ else       if (s_logger.isDebugEnabled()) {
+        s_logger.debug("First ip " + startIp + " in network id="+ guestNetwork.getId()+ " is already allocated, can't use it for domain router; will get random ip address from the range");
+      }
+    }
+    NicProfile gatewayNic=new NicProfile(defaultNetworkStartIp);
+    gatewayNic.setDefaultNic(true);
+    networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
+    networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
+    VMTemplateVO template=_templateDao.findRoutingTemplate(dest.getCluster().getHypervisorType());
+    router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),false,0,RedundantState.UNKNOWN,_offering.getOfferHA());
+    router.setRole(Role.DHCP_USERDATA);
+    router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+    routers.add(router);
+    UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
+    if (stats == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating user statistics for the account: " + owner.getId() + " Router Id: "+ router.getId());
+      }
+      stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
+      _userStatsDao.persist(stats);
+    }
+    txn.commit();
   }
-  txn.commit();
+  finally {
+    if (network != null) {
+      _networkDao.releaseFromLockTable(network.getId());
+    }
+  }
   return routers;
 }
