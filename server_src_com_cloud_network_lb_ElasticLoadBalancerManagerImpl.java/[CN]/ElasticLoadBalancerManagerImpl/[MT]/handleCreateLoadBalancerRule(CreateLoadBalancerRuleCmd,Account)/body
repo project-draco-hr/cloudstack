@@ -1,9 +1,12 @@
 {
   Long ipId=lb.getSourceIpAddressId();
+  if (ipId != null && getNetworkToDeployLb(ipId) == null) {
+    return null;
+  }
   boolean newIp=false;
   account=_accountDao.acquireInLockTable(account.getId());
   if (account == null) {
-    s_logger.warn("CreateLoadBalancer: Failed to acquire lock on account");
+    s_logger.warn("ELB: CreateLoadBalancer: Failed to acquire lock on account");
     throw new CloudRuntimeException("Failed to acquire lock on account");
   }
   try {
@@ -18,6 +21,7 @@
           }
         }
  else {
+          s_logger.debug("Could not find any existing frontend ips for this account for this LB rule, acquiring a new frontent IP for ELB");
           PublicIp ip=allocIp(lb,account);
           ipId=ip.getId();
           newIp=true;
@@ -25,19 +29,16 @@
       }
  else {
         ipId=existingLbs.get(0).getSourceIpAddressId();
+        s_logger.debug("ELB: Found existing frontend ip for this account for this LB rule " + ipId);
       }
     }
  else {
-      s_logger.warn("Found existing load balancers matching requested new LB");
-      throw new NetworkRuleConflictException("Found existing load balancers matching requested new LB");
+      s_logger.warn("ELB: Found existing load balancers matching requested new LB");
+      throw new NetworkRuleConflictException("ELB: Found existing load balancers matching requested new LB");
     }
+    NetworkVO network=getNetworkToDeployLb(ipId);
     IPAddressVO ipAddr=_ipAddressDao.findById(ipId);
-    Long networkId=ipAddr.getSourceNetworkId();
-    NetworkVO network=_networkDao.findById(networkId);
-    if (network.getGuestType() != GuestIpType.Direct) {
-      s_logger.info("Elastic LB Manager: not handling guest traffic of type " + network.getGuestType());
-      return null;
-    }
+    long networkId=network.getId();
     LoadBalancer result=null;
     try {
       lb.setSourceIpAddressId(ipId);
