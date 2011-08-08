@@ -1,0 +1,43 @@
+{
+  long ipId=lb.getSourceIpAddressId();
+  UserContext caller=UserContext.current();
+  int srcPortStart=lb.getSourcePortStart();
+  int defPortStart=lb.getDefaultPortStart();
+  IPAddressVO ipAddr=_ipAddressDao.findById(lb.getSourceIpAddressId());
+  Long networkId=ipAddr.getSourceNetworkId();
+  NetworkVO network=_networkDao.findById(networkId);
+  if (ipAddr == null || !ipAddr.readyToUse()) {
+    throw new InvalidParameterValueException("Unable to create load balancer rule, invalid IP address id" + ipId);
+  }
+  networkId=ipAddr.getAssociatedWithNetworkId();
+  if (networkId == null) {
+    throw new InvalidParameterValueException("Unable to create load balancer rule ; ip id=" + ipId + " is not associated with any network");
+  }
+  _accountMgr.checkAccess(caller.getCaller(),ipAddr);
+  if (!_networkMgr.isServiceSupported(network.getNetworkOfferingId(),Service.Lb)) {
+    throw new InvalidParameterValueException("LB service is not supported in network id= " + networkId);
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  LoadBalancerVO newRule=new LoadBalancerVO(lb.getXid(),lb.getName(),lb.getDescription(),lb.getSourceIpAddressId(),lb.getSourcePortEnd(),lb.getDefaultPortStart(),lb.getSourceCidrList(),lb.getAlgorithm(),networkId,ipAddr.getAccountId(),ipAddr.getDomainId());
+  newRule=_lbDao.persist(newRule);
+  try {
+    _rulesMgr.detectRulesConflict(newRule,ipAddr);
+    if (!_rulesDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    s_logger.debug("Load balancer " + newRule.getId() + " for Ip address id="+ ipId+ ", public port "+ srcPortStart+ ", private port "+ defPortStart+ " is added successfully.");
+    UserContext.current().setEventDetails("Load balancer Id: " + newRule.getId());
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_LOAD_BALANCER_CREATE,ipAddr.getAllocatedToAccountId(),ipAddr.getDataCenterId(),newRule.getId(),null);
+    _usageEventDao.persist(usageEvent);
+    txn.commit();
+    return newRule;
+  }
+ catch (  Exception e) {
+    _lbDao.remove(newRule.getId());
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add rule for ip address id=" + newRule.getSourceIpAddressId(),e);
+  }
+}
