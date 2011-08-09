@@ -3,27 +3,29 @@
   try {
     if (scanLock.lock(3)) {
       try {
-        List<StoragePoolVO> storagePools=_storagePoolDao.listAll();
-        for (        StoragePoolVO pool : storagePools) {
-          try {
-            List<VMTemplateStoragePoolVO> unusedTemplatesInPool=_tmpltMgr.getUnusedTemplatesInPool(pool);
-            s_logger.debug("Storage pool garbage collector found " + unusedTemplatesInPool.size() + " templates to clean up in storage pool: "+ pool.getName());
-            for (            VMTemplateStoragePoolVO templatePoolVO : unusedTemplatesInPool) {
-              if (templatePoolVO.getDownloadState() != VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
-                s_logger.debug("Storage pool garbage collector is skipping templatePoolVO with ID: " + templatePoolVO.getId() + " because it is not completely downloaded.");
-                continue;
+        if (_templateCleanupEnabled) {
+          List<StoragePoolVO> storagePools=_storagePoolDao.listAll();
+          for (          StoragePoolVO pool : storagePools) {
+            try {
+              List<VMTemplateStoragePoolVO> unusedTemplatesInPool=_tmpltMgr.getUnusedTemplatesInPool(pool);
+              s_logger.debug("Storage pool garbage collector found " + unusedTemplatesInPool.size() + " templates to clean up in storage pool: "+ pool.getName());
+              for (              VMTemplateStoragePoolVO templatePoolVO : unusedTemplatesInPool) {
+                if (templatePoolVO.getDownloadState() != VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+                  s_logger.debug("Storage pool garbage collector is skipping templatePoolVO with ID: " + templatePoolVO.getId() + " because it is not completely downloaded.");
+                  continue;
+                }
+                if (!templatePoolVO.getMarkedForGC()) {
+                  templatePoolVO.setMarkedForGC(true);
+                  _vmTemplatePoolDao.update(templatePoolVO.getId(),templatePoolVO);
+                  s_logger.debug("Storage pool garbage collector has marked templatePoolVO with ID: " + templatePoolVO.getId() + " for garbage collection.");
+                  continue;
+                }
+                _tmpltMgr.evictTemplateFromStoragePool(templatePoolVO);
               }
-              if (!templatePoolVO.getMarkedForGC()) {
-                templatePoolVO.setMarkedForGC(true);
-                _vmTemplatePoolDao.update(templatePoolVO.getId(),templatePoolVO);
-                s_logger.debug("Storage pool garbage collector has marked templatePoolVO with ID: " + templatePoolVO.getId() + " for garbage collection.");
-                continue;
-              }
-              _tmpltMgr.evictTemplateFromStoragePool(templatePoolVO);
             }
-          }
- catch (          Exception e) {
-            s_logger.warn("Problem cleaning up primary storage pool " + pool,e);
+ catch (            Exception e) {
+              s_logger.warn("Problem cleaning up primary storage pool " + pool,e);
+            }
           }
         }
         List<HostVO> secondaryStorageHosts=_hostDao.listSecondaryStorageHosts();
