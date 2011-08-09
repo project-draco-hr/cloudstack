@@ -1,0 +1,27 @@
+{
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddrId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " doesn't exist in the system");
+  }
+ else   if (ipAddress.isOneToOneNat()) {
+    throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " has static nat enabled");
+  }
+  validateFirewallRule(caller,ipAddress,portStart,portEnd,protocol);
+  if (!protocol.equalsIgnoreCase(NetUtils.ICMP_PROTO) && (icmpCode != null || icmpType != null)) {
+    throw new InvalidParameterValueException("Can specify icmpCode and icmpType for ICMP protocol only");
+  }
+  Long networkId=ipAddress.getAssociatedWithNetworkId();
+  Long accountId=ipAddress.getAccountId();
+  Long domainId=ipAddress.getDomainId();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  FirewallRuleVO newRule=new FirewallRuleVO(xId,ipAddrId,portStart,portEnd,protocol.toLowerCase(),networkId,accountId,domainId,Purpose.Firewall,icmpCode,icmpType);
+  newRule=_firewallDao.persist(newRule);
+  detectRulesConflict(newRule,ipAddress);
+  if (!_firewallDao.setStateToAdd(newRule)) {
+    throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+  }
+  UserContext.current().setEventDetails("Rule Id: " + newRule.getId());
+  txn.commit();
+  return newRule;
+}
