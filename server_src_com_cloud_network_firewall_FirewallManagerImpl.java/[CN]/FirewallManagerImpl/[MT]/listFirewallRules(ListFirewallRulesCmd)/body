@@ -1,0 +1,51 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Long ipId=cmd.getIpAddressId();
+  Long id=cmd.getId();
+  String path=null;
+  Pair<String,Long> accountDomainPair=_accountMgr.finalizeAccountDomainForList(caller,cmd.getAccountName(),cmd.getDomainId());
+  String accountName=accountDomainPair.first();
+  Long domainId=accountDomainPair.second();
+  if (ipId != null) {
+    IPAddressVO ipAddressVO=_ipAddressDao.findById(ipId);
+    if (ipAddressVO == null || !ipAddressVO.readyToUse()) {
+      throw new InvalidParameterValueException("Ip address id=" + ipId + " not ready for firewall rules yet");
+    }
+    _accountMgr.checkAccess(caller,ipAddressVO);
+  }
+  if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
+    Domain domain=_accountMgr.getDomain(caller.getDomainId());
+    path=domain.getPath();
+  }
+  Filter filter=new Filter(FirewallRuleVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<FirewallRuleVO> sb=_firewallDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),Op.EQ);
+  sb.and("ip",sb.entity().getSourceIpAddressId(),Op.EQ);
+  sb.and("accountId",sb.entity().getAccountId(),Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),Op.EQ);
+  sb.and("purpose",sb.entity().getPurpose(),Op.EQ);
+  if (path != null) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<FirewallRuleVO> sc=sb.create();
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (ipId != null) {
+    sc.setParameters("ip",ipId);
+  }
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    if (accountName != null) {
+      Account account=_accountMgr.getActiveAccount(accountName,domainId);
+      sc.setParameters("accountId",account.getId());
+    }
+  }
+  sc.setParameters("purpose",Purpose.Firewall);
+  if (path != null) {
+    sc.setJoinParameters("domainSearch","path",path + "%");
+  }
+  return _firewallDao.search(sc,filter);
+}
