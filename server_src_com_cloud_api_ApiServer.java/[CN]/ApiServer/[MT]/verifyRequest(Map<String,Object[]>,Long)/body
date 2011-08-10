@@ -31,6 +31,8 @@
       parameterNames.add((String)paramNameObj);
     }
     Collections.sort(parameterNames);
+    String signatureVersion=null;
+    String expires=null;
     for (    String paramName : parameterNames) {
       String paramValue=((String[])requestParameters.get(paramName))[0];
       if ("signature".equalsIgnoreCase(paramName)) {
@@ -39,6 +41,12 @@
  else {
         if ("apikey".equalsIgnoreCase(paramName)) {
           apiKey=paramValue;
+        }
+ else         if ("signatureversion".equalsIgnoreCase(paramName)) {
+          signatureVersion=paramValue;
+        }
+ else         if ("expires".equalsIgnoreCase(paramName)) {
+          expires=paramValue;
         }
         if (unsignedRequest == null) {
           unsignedRequest=paramName + "=" + URLEncoder.encode(paramValue,"UTF-8").replaceAll("\\+","%20");
@@ -53,6 +61,25 @@
         s_logger.info("expired session, missing signature, or missing apiKey -- ignoring request...sig: " + signature + ", apiKey: "+ apiKey);
       }
       return false;
+    }
+    Date expiresTS=null;
+    if ("3".equals(signatureVersion)) {
+      if (expires == null) {
+        s_logger.info("missing Expires parameter -- ignoring request...sig: " + signature + ", apiKey: "+ apiKey);
+        return false;
+      }
+synchronized (_dateFormat) {
+        expiresTS=_dateFormat.parse(expires);
+      }
+      Date now=new Date(System.currentTimeMillis());
+      if (expiresTS.before(now)) {
+        s_logger.info("Request expired -- ignoring ...sig: " + signature + ", apiKey: "+ apiKey);
+        return false;
+      }
+      if (usedSignatures.containsValue(signature)) {
+        s_logger.info("Duplicate signature -- ignoring ...sig: " + signature + ", apiKey: "+ apiKey);
+        return false;
+      }
     }
     Transaction txn=Transaction.open(Transaction.CLOUD_DB);
     txn.close();
@@ -88,6 +115,11 @@
     boolean equalSig=signature.equals(computedSignature);
     if (!equalSig) {
       s_logger.info("User signature: " + signature + " is not equaled to computed signature: "+ computedSignature);
+    }
+ else {
+      if ("3".equals(signatureVersion)) {
+        usedSignatures.put(expiresTS.getTime(),signature);
+      }
     }
     return equalSig;
   }
