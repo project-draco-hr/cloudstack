@@ -1,2 +1,42 @@
 {
+  Account caller=UserContext.current().getCaller();
+  Long ipAddrId=rule.getSourceIpAddressId();
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddrId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to create static nat rule; ip id=" + ipAddrId + " doesn't exist in the system");
+  }
+ else   if (ipAddress.isSourceNat() || !ipAddress.isOneToOneNat() || ipAddress.getAssociatedWithVmId() == null) {
+    throw new NetworkRuleConflictException("Can't do static nat on ip address: " + ipAddress.getAddress());
+  }
+  _firewallMgr.validateFirewallRule(caller,ipAddress,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),Purpose.StaticNat);
+  Long networkId=ipAddress.getAssociatedWithNetworkId();
+  Long accountId=ipAddress.getAccountId();
+  Long domainId=ipAddress.getDomainId();
+  String dstIp=_networkMgr.getIpInNetwork(ipAddress.getAssociatedWithVmId(),networkId);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  if (openFirewall) {
+    _firewallMgr.createRuleForAllCidrs(ipAddrId,caller,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),null,null);
+  }
+  FirewallRuleVO newRule=new FirewallRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol().toLowerCase(),networkId,accountId,domainId,rule.getPurpose(),null,null,null);
+  newRule=_firewallDao.persist(newRule);
+  try {
+    _firewallMgr.detectRulesConflict(newRule,ipAddress);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    UserContext.current().setEventDetails("Rule Id: " + newRule.getId());
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NET_RULE_ADD,newRule.getAccountId(),0,newRule.getId(),null);
+    _usageEventDao.persist(usageEvent);
+    txn.commit();
+    StaticNatRule staticNatRule=new StaticNatRuleImpl(newRule,dstIp);
+    return staticNatRule;
+  }
+ catch (  Exception e) {
+    _forwardingDao.remove(newRule.getId());
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add static nat rule for the ip id=" + newRule.getSourceIpAddressId(),e);
+  }
 }
