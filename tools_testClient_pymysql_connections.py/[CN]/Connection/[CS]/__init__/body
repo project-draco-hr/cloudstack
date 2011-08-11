@@ -1,0 +1,80 @@
+def __init__(self, host='localhost', user=None, passwd='', db=None, port=3306, unix_socket=None, charset='', sql_mode=None, read_default_file=None, conv=decoders, use_unicode=None, client_flag=0, cursorclass=Cursor, init_command=None, connect_timeout=None, ssl=None, read_default_group=None, compress=None, named_pipe=None):
+    "\n        Establish a connection to the MySQL database. Accepts several\n        arguments:\n\n        host: Host where the database server is located\n        user: Username to log in as\n        passwd: Password to use.\n        db: Database to use, None to not use a particular one.\n        port: MySQL port to use, default is usually OK.\n        unix_socket: Optionally, you can use a unix socket rather than TCP/IP.\n        charset: Charset you want to use.\n        sql_mode: Default SQL_MODE to use.\n        read_default_file: Specifies  my.cnf file to read these parameters from under the [client] section.\n        conv: Decoders dictionary to use instead of the default one. This is used to provide custom marshalling of types. See converters.\n        use_unicode: Whether or not to default to unicode strings. This option defaults to true for Py3k.\n        client_flag: Custom flags to send to MySQL. Find potential values in constants.CLIENT.\n        cursorclass: Custom cursor class to use.\n        init_command: Initial SQL statement to run when connection is established.\n        connect_timeout: Timeout before throwing an exception when connecting.\n        ssl: A dict of arguments similar to mysql_ssl_set()'s parameters. For now the capath and cipher arguments are not supported.\n        read_default_group: Group to read from in the configuration file.\n        compress; Not supported\n        named_pipe: Not supported\n        "
+    if ((use_unicode is None) and (sys.version_info[0] > 2)):
+        use_unicode = True
+    if (compress or named_pipe):
+        raise NotImplementedError, 'compress and named_pipe arguments are not supported'
+    if (ssl and (ssl.has_key('capath') or ssl.has_key('cipher'))):
+        raise NotImplementedError, 'ssl options capath and cipher are not supported'
+    self.ssl = False
+    if ssl:
+        if (not SSL_ENABLED):
+            raise NotImplementedError, 'ssl module not found'
+        self.ssl = True
+        client_flag |= SSL
+        for k in ('key', 'cert', 'ca'):
+            v = None
+            if ssl.has_key(k):
+                v = ssl[k]
+            setattr(self, k, v)
+    if (read_default_group and (not read_default_file)):
+        if sys.platform.startswith('win'):
+            read_default_file = 'c:\\my.ini'
+        else:
+            read_default_file = '/etc/my.cnf'
+    if read_default_file:
+        if (not read_default_group):
+            read_default_group = 'client'
+        cfg = ConfigParser.RawConfigParser()
+        cfg.read(os.path.expanduser(read_default_file))
+
+        def _config(key, default):
+            try:
+                return cfg.get(read_default_group, key)
+            except:
+                return default
+        user = _config('user', user)
+        passwd = _config('password', passwd)
+        host = _config('host', host)
+        db = _config('db', db)
+        unix_socket = _config('socket', unix_socket)
+        port = _config('port', port)
+        charset = _config('default-character-set', charset)
+    self.host = host
+    self.port = port
+    self.user = user
+    self.password = passwd
+    self.db = db
+    self.unix_socket = unix_socket
+    if charset:
+        self.charset = charset
+        self.use_unicode = True
+    else:
+        self.charset = DEFAULT_CHARSET
+        self.use_unicode = False
+    if (use_unicode is not None):
+        self.use_unicode = use_unicode
+    client_flag |= CAPABILITIES
+    client_flag |= MULTI_STATEMENTS
+    if self.db:
+        client_flag |= CONNECT_WITH_DB
+    self.client_flag = client_flag
+    self.cursorclass = cursorclass
+    self.connect_timeout = connect_timeout
+    self._connect()
+    self.messages = []
+    self.set_charset(charset)
+    self.encoders = encoders
+    self.decoders = conv
+    self._result = None
+    self._affected_rows = 0
+    self.host_info = 'Not connected'
+    self.autocommit(False)
+    if (sql_mode is not None):
+        c = self.cursor()
+        c.execute('SET sql_mode=%s', (sql_mode,))
+    self.commit()
+    if (init_command is not None):
+        c = self.cursor()
+        c.execute(init_command)
+        self.commit()

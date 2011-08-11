@@ -1,0 +1,48 @@
+import uuid
+from cloudstackAPI import *
+import cloudstackException
+import cloudstackTestClient
+import time
+if (__name__ == '__main__'):
+    hypervisor = 'KVM'
+    hostNum = 30
+    templateId = 10
+    vmNum = 10
+    randomName = str(uuid.uuid4())
+    testClient = cloudstackTestClient.cloudstackTestClient('localhost')
+    api = testClient.getApiClient()
+    czcmd = createZone.createZoneCmd()
+    czcmd.dns1 = '8.8.8.8'
+    czcmd.internaldns1 = '192.168.110.254'
+    czcmd.name = ('test' + randomName)
+    czcmd.networktype = 'Basic'
+    czresponse = api.createZone(czcmd)
+    zoneId = czresponse.id
+    cpodcmd = createPod.createPodCmd()
+    cpodcmd.zoneid = zoneId
+    cpodcmd.gateway = '192.168.137.1'
+    cpodcmd.name = ('testpod' + randomName)
+    cpodcmd.netmask = '255.255.255.0'
+    cpodcmd.startip = '192.168.137.200'
+    cpodcmd.endip = '192.168.137.230'
+    cpodresponse = api.createPod(cpodcmd)
+    podId = cpodresponse.id
+    cvlancmd = createVlanIpRange.createVlanIpRangeCmd()
+    cvlancmd.zoneid = zoneId
+    cvlancmd.podid = podId
+    cvlancmd.gateway = '192.168.137.1'
+    cvlancmd.netmask = '255.255.255.0'
+    cvlancmd.startip = '192.168.137.100'
+    cvlancmd.endip = '192.168.137.190'
+    cvlancmd.forvirtualnetwork = 'false'
+    cvlancmd.vlan = 'untagged'
+    api.createVlanIpRange(cvlancmd)
+    aclustercmd = addCluster.addClusterCmd()
+    aclustercmd.clustername = ('testcluster' + randomName)
+    aclustercmd.hypervisor = hypervisor
+    aclustercmd.podid = podId
+    aclustercmd.zoneid = zoneId
+    aclustercmd.clustertype = 'CloudManaged'
+    clusterresponse = api.addCluster(aclustercmd)
+    clusterId = clusterresponse[0].id
+    '\n    for i in range(hostNum):\n        addhostcmd = addHost.addHostCmd()\n        addhostcmd.zoneid = zoneId\n        addhostcmd.podid = podId\n        addhostcmd.clusterid = clusterId\n        addhostcmd.hypervisor = hypervisor\n        addhostcmd.username = "root"\n        addhostcmd.password = "password"\n        if hypervisor == "Simulator":\n            addhostcmd.url = "http://sim"\n        else:\n            addhostcmd.url = "http://192.168.137.4"\n        addhostresponse = api.addHost(addhostcmd)\n        print addhostresponse[0].id, addhostresponse[0].ipaddress\n    \n    createspcmd = createStoragePool.createStoragePoolCmd()\n    createspcmd.zoneid = zoneId\n    createspcmd.podid = podId\n    createspcmd.clusterid = clusterId\n    createspcmd.url = "nfs://nfs2.lab.vmops.com/export/home/edison/primary"\n    createspcmd.name = "storage pool" + randomName\n    createspresponse = api.createStoragePool(createspcmd)\n    \n    addsscmd = addSecondaryStorage.addSecondaryStorageCmd()\n    addsscmd.url = "nfs://nfs2.lab.vmops.com/export/home/edison/xen/secondary"\n    addsscmd.zoneid = zoneId\n    api.addSecondaryStorage(addsscmd)\n    \n    listtmcmd = listTemplates.listTemplatesCmd()\n    listtmcmd.id = templateId\n    listtmcmd.zoneid = zoneId\n    listtmcmd.templatefilter = "featured"\n    listtmresponse = api.listTemplates(listtmcmd)\n    while True:\n        if listtmresponse is not None and listtmresponse[0].isready == "true":\n            break\n        time.sleep(30)\n        listtmresponse = api.listTemplates(listtmcmd)\n        \n    vmId = []\n    for i in range(vmNum):\n        cmd = deployVirtualMachine.deployVirtualMachineCmd()\n        cmd.zoneid = zoneId\n        cmd.hypervisor = hypervisor\n        cmd.serviceofferingid = "1"\n        cmd.templateid = listtmresponse[0].id\n        res = api.deployVirtualMachine(cmd)\n        \n        vmId.append(res.id)\n\n    \n    registerTempl = registerTemplate.registerTemplateCmd()\n    registerTempl.displaytext = "test template4"\n    registerTempl.format = "QCOW2"\n    registerTempl.hypervisor = "Simulator"\n    registerTempl.name = "test template4"\n    registerTempl.ostypeid = "100"\n    registerTempl.url = "http://www.google.com/template.qcow2"\n    registerTempl.zoneid = 1\n    registerTemlResponse = api.registerTemplate(registerTempl)\n    newtemplateId = registerTemlResponse[0].id\n    \n    listtempl = listTemplates.listTemplatesCmd()\n    listtempl.id = newtemplateId\n    listtempl.templatefilter = "self"\n    listemplResponse = api.listTemplates(listtempl)\n    while True:\n        if listemplResponse is not None:\n            \n            if listemplResponse[0].isready == "true":\n                break\n            else:\n                print listemplResponse[0].status\n        \n        time.sleep(30)\n        listemplResponse = api.listTemplates(listtempl)\n    \n    \n    \n    for i in range(10):\n        cmd = deployVirtualMachine.deployVirtualMachineCmd()\n        cmd.zoneid = 1\n        cmd.hypervisor = hypervisor\n        cmd.serviceofferingid = "1"\n        #cmd.templateid = listemplResponse[0].id\n        cmd.templateid = 200\n        res = api.deployVirtualMachine(cmd)\n    \n\n    createvolume = createVolume.createVolumeCmd()\n    createvolume.zoneid = 1\n    createvolume.diskofferingid = 9\n    createvolume.name = "test"\n    \n    createvolumeresponse = api.createVolume(createvolume)\n    volumeId = createvolumeresponse.id\n    \n    attachvolume = attachVolume.attachVolumeCmd()\n    attachvolume.id = volumeId\n    attachvolume.virtualmachineid = 9\n    attachvolumeresponse = api.attachVolume(attachvolume)\n    \n    deattachevolume = detachVolume.detachVolumeCmd()\n    deattachevolume.id = volumeId\n    deattachvolumeresponse = api.detachVolume(deattachevolume)\n    \n    createsnapshot = createSnapshot.createSnapshotCmd()\n    createsnapshot.volumeid = volumeId\n    createsnapshotresponse = api.createSnapshot(createsnapshot)\n    snapshotId = createsnapshotresponse.id\n    \n    createtmpl = createTemplate.createTemplateCmd()\n    createtmpl.snapshotid = snapshotId\n    createtmpl.name =  randomName[:10]\n    createtmpl.displaytext = randomName[:10]\n    createtmpl.ostypeid = 100\n    createtmpl.ispublic = "false"\n    createtmpl.passwordenabled = "false"\n    createtmpl.isfeatured = "false"\n    createtmplresponse = api.createTemplate(createtmpl)\n    templateId = createtmplresponse.id\n    \n    createvolume = createVolume.createVolumeCmd()\n    createvolume.snapshotid = snapshotId\n    createvolume.name = "test"\n    createvolumeresponse = api.createVolume(createvolume)\n    volumeId = createvolumeresponse.id\n    \n    cmd = deployVirtualMachine.deployVirtualMachineCmd()\n    cmd.zoneid = 1\n    cmd.hypervisor = hypervisor\n    cmd.serviceofferingid = "1"\n    cmd.templateid = templateId\n    cmd.name = "fdf"\n    res = api.deployVirtualMachine(cmd)\n    \n    attachvolume = attachVolume.attachVolumeCmd()\n    attachvolume.id = volumeId\n    attachvolume.virtualmachineid = 1\n    attachvolumeresponse = api.attachVolume(attachvolume)\n    \n    deattachevolume = detachVolume.detachVolumeCmd()\n    deattachevolume.id = volumeId\n    deattachvolumeresponse = api.detachVolume(deattachevolume)\n    \n    deletetmpl = deleteTemplate.deleteTemplateCmd()\n    deletetmpl.id = templateId\n    deletetmpl.zoneid = 1\n    api.deleteTemplate(deletetmpl)\n    \n    deletevolume = deleteVolume.deleteVolumeCmd()\n    deletevolume.id = volumeId\n    api.deleteVolume(deletevolume)\n    \n    deletesnapshot = deleteSnapshot.deleteSnapshotCmd()\n    deletesnapshot.id = snapshotId\n    \n    '
