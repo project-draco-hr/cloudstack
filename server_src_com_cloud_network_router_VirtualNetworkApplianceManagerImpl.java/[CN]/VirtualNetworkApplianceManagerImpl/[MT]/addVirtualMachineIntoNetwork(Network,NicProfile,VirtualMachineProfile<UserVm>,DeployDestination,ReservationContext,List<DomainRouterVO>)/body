@@ -9,8 +9,9 @@
     boolean sendDnsDhcpData=true;
     _userVmDao.loadDetails((UserVmVO)profile.getVirtualMachine());
     DataCenter dc=dest.getDataCenter();
+    Long podId=null;
     if (dc.getNetworkType() == NetworkType.Basic) {
-      Long podId=dest.getPod().getId();
+      podId=dest.getPod().getId();
       if (router.getPodIdToDeployIn().longValue() != podId.longValue()) {
         sendPasswordAndVmData=false;
         if (_dnsBasicZoneUpdates.equalsIgnoreCase("pod")) {
@@ -53,6 +54,10 @@
       cmds.addCommand("vmdata",generateVmDataCommand(router,nic.getIp4Address(),userData,serviceOffering,zoneName,nic.getIp4Address(),profile.getVirtualMachine().getHostName(),profile.getVirtualMachine().getInstanceName(),profile.getId(),sshPublicKey));
     }
     if (cmds.size() > 0) {
+      boolean podLevelException=false;
+      if (dc.getNetworkType() == NetworkType.Basic && podId != null && profile.getVirtualMachine().getType() == VirtualMachine.Type.User && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == GuestIpType.Direct) {
+        podLevelException=true;
+      }
       try {
         _agentMgr.send(router.getHostId(),cmds);
       }
@@ -62,16 +67,25 @@
       Answer answer=cmds.getAnswer("dhcp");
       if (!answer.getResult()) {
         s_logger.error("Unable to set dhcp entry for " + profile + " on domR: "+ router.getHostName()+ " due to "+ answer.getDetails());
+        if (podLevelException) {
+          throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),Pod.class,podId);
+        }
         throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
       }
       answer=cmds.getAnswer("password");
       if (answer != null && !answer.getResult()) {
         s_logger.error("Unable to set password for " + profile + " due to "+ answer.getDetails());
+        if (podLevelException) {
+          throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails(),Pod.class,podId);
+        }
         throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
       }
       answer=cmds.getAnswer("vmdata");
       if (answer != null && !answer.getResult()) {
         s_logger.error("Unable to set VM data for " + profile + " due to "+ answer.getDetails());
+        if (podLevelException) {
+          throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails(),Pod.class,podId);
+        }
         throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
       }
     }
