@@ -1,0 +1,32 @@
+{
+  if (routers == null || routers.isEmpty()) {
+    s_logger.warn("Failed to start remote access VPN: no router found for account and zone");
+    throw new ResourceUnavailableException("Failed to start remote access VPN: no router found for account and zone",DataCenter.class,network.getDataCenterId());
+  }
+  for (  VirtualRouter router : routers) {
+    if (router.getState() != State.Running) {
+      s_logger.warn("Failed to start remote access VPN: router not in right state " + router.getState());
+      throw new ResourceUnavailableException("Failed to start remote access VPN: router not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
+    }
+    Commands cmds=new Commands(OnError.Stop);
+    createApplyVpnCommands(vpn,router,cmds);
+    try {
+      _agentMgr.send(router.getHostId(),cmds);
+    }
+ catch (    OperationTimedoutException e) {
+      s_logger.debug("Failed to start remote access VPN: ",e);
+      throw new AgentUnavailableException("Unable to send commands to virtual router ",router.getHostId(),e);
+    }
+    Answer answer=cmds.getAnswer("users");
+    if (!answer.getResult()) {
+      s_logger.error("Unable to start vpn: unable add users to vpn in zone " + router.getDataCenterIdToDeployIn() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails());
+      throw new ResourceUnavailableException("Unable to start vpn: Unable to add users to vpn in zone " + router.getDataCenterIdToDeployIn() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
+    }
+    answer=cmds.getAnswer("startVpn");
+    if (!answer.getResult()) {
+      s_logger.error("Unable to start vpn in zone " + router.getDataCenterIdToDeployIn() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails());
+      throw new ResourceUnavailableException("Unable to start vpn in zone " + router.getDataCenterIdToDeployIn() + " for account "+ vpn.getAccountId()+ " on domR: "+ router.getInstanceName()+ " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
+    }
+  }
+  return true;
+}
