@@ -1,0 +1,39 @@
+{
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Executing resource GetStorageStatsCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareContext context=getServiceContext();
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    ManagedObjectReference morDs=hyperHost.findDatastore(cmd.getStorageId());
+    if (morDs != null) {
+      DatastoreMO datastoreMo=new DatastoreMO(context,morDs);
+      DatastoreSummary summary=datastoreMo.getSummary();
+      assert(summary != null);
+      long capacity=summary.getCapacity();
+      long free=summary.getFreeSpace();
+      long used=capacity - free;
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Datastore summary info, storageId: " + cmd.getStorageId() + ", localPath: "+ cmd.getLocalPath()+ ", poolType: "+ cmd.getPooltype()+ ", capacity: "+ capacity+ ", free: "+ free+ ", used: "+ used);
+      }
+      if (summary.getCapacity() <= 0) {
+        s_logger.warn("Something is wrong with vSphere NFS datastore, rebooting ESX(ESXi) host should help");
+      }
+      return new GetStorageStatsAnswer(cmd,capacity,used);
+    }
+ else {
+      String msg="Could not find datastore for GetStorageStatsCommand storageId : " + cmd.getStorageId() + ", localPath: "+ cmd.getLocalPath()+ ", poolType: "+ cmd.getPooltype();
+      s_logger.error(msg);
+      return new GetStorageStatsAnswer(cmd,msg);
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="Unable to execute GetStorageStatsCommand(storageId : " + cmd.getStorageId() + ", localPath: "+ cmd.getLocalPath()+ ", poolType: "+ cmd.getPooltype()+ ") due to "+ VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new GetStorageStatsAnswer(cmd,msg);
+  }
+}

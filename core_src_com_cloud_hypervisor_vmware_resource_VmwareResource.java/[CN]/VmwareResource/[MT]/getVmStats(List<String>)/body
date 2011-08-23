@@ -1,0 +1,85 @@
+{
+  VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+  HashMap<String,VmStatsEntry> vmResponseMap=new HashMap<String,VmStatsEntry>();
+  ManagedObjectReference perfMgr=getServiceContext().getServiceConnection().getServiceContent().getPerfManager();
+  VimPortType service=getServiceContext().getServiceConnection().getService();
+  PerfCounterInfo rxPerfCounterInfo=null;
+  PerfCounterInfo txPerfCounterInfo=null;
+  PerfCounterInfo[] cInfo=(PerfCounterInfo[])getServiceContext().getServiceUtil().getDynamicProperty(perfMgr,"perfCounter");
+  for (int i=0; i < cInfo.length; ++i) {
+    if ("net".equalsIgnoreCase(cInfo[i].getGroupInfo().getKey())) {
+      if ("transmitted".equalsIgnoreCase(cInfo[i].getNameInfo().getKey())) {
+        txPerfCounterInfo=cInfo[i];
+      }
+      if ("received".equalsIgnoreCase(cInfo[i].getNameInfo().getKey())) {
+        rxPerfCounterInfo=cInfo[i];
+      }
+    }
+  }
+  ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","summary.config.numCpu","summary.quickStats.overallCpuUsage"});
+  if (ocs != null && ocs.length > 0) {
+    for (    ObjectContent oc : ocs) {
+      DynamicProperty[] objProps=oc.getPropSet();
+      if (objProps != null) {
+        String name=null;
+        String numberCPUs=null;
+        String maxCpuUsage=null;
+        for (        DynamicProperty objProp : objProps) {
+          if (objProp.getName().equals("name")) {
+            name=objProp.getVal().toString();
+          }
+ else           if (objProp.getName().equals("summary.config.numCpu")) {
+            numberCPUs=objProp.getVal().toString();
+          }
+ else           if (objProp.getName().equals("summary.quickStats.overallCpuUsage")) {
+            maxCpuUsage=objProp.getVal().toString();
+          }
+        }
+        if (!vmNames.contains(name)) {
+          continue;
+        }
+        ManagedObjectReference vmMor=hyperHost.findVmOnHyperHost(name).getMor();
+        assert(vmMor != null);
+        ArrayList vmNetworkMetrics=new ArrayList();
+        PerfMetricId[] perfMetrics=service.queryAvailablePerfMetric(perfMgr,vmMor,null,null,null);
+        if (perfMetrics != null) {
+          for (int index=0; index < perfMetrics.length; ++index) {
+            if (((rxPerfCounterInfo != null) && (perfMetrics[index].getCounterId() == rxPerfCounterInfo.getKey())) || ((txPerfCounterInfo != null) && (perfMetrics[index].getCounterId() == txPerfCounterInfo.getKey()))) {
+              vmNetworkMetrics.add(perfMetrics[index]);
+            }
+          }
+        }
+        double networkReadKBs=0;
+        double networkWriteKBs=0;
+        long sampleDuration=0;
+        if (vmNetworkMetrics.size() != 0) {
+          PerfQuerySpec qSpec=new PerfQuerySpec();
+          qSpec.setEntity(vmMor);
+          PerfMetricId[] availableMetricIds=(PerfMetricId[])vmNetworkMetrics.toArray(new PerfMetricId[0]);
+          qSpec.setMetricId(availableMetricIds);
+          PerfQuerySpec[] qSpecs=new PerfQuerySpec[]{qSpec};
+          PerfEntityMetricBase[] values=service.queryPerf(perfMgr,qSpecs);
+          for (int i=0; i < values.length; ++i) {
+            PerfSampleInfo[] infos=((PerfEntityMetric)values[i]).getSampleInfo();
+            sampleDuration=(infos[infos.length - 1].getTimestamp().getTimeInMillis() - infos[0].getTimestamp().getTimeInMillis()) / 1000;
+            PerfMetricSeries[] vals=((PerfEntityMetric)values[i]).getValue();
+            for (int vi=0; ((vals != null) && (vi < vals.length)); ++vi) {
+              if (vals[vi] instanceof PerfMetricIntSeries) {
+                PerfMetricIntSeries val=(PerfMetricIntSeries)vals[vi];
+                long[] perfValues=val.getValue();
+                if (vals[vi].getId().getCounterId() == rxPerfCounterInfo.getKey()) {
+                  networkReadKBs=sampleDuration * perfValues[3];
+                }
+                if (vals[vi].getId().getCounterId() == txPerfCounterInfo.getKey()) {
+                  networkWriteKBs=sampleDuration * perfValues[3];
+                }
+              }
+            }
+          }
+        }
+        vmResponseMap.put(name,new VmStatsEntry(Integer.parseInt(maxCpuUsage),networkReadKBs,networkWriteKBs,Integer.parseInt(numberCPUs),"vm"));
+      }
+    }
+  }
+  return vmResponseMap;
+}

@@ -1,0 +1,35 @@
+{
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Executing resource GetVncPortCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareContext context=getServiceContext();
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    assert(hyperHost instanceof HostMO);
+    VmwareManager mgr=context.getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getName());
+    if (vmMo == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to find the owner VM for GetVncPortCommand on host " + hyperHost.getHyperHostName() + ", try within datacenter");
+      }
+      vmMo=hyperHost.findVmOnPeerHyperHost(cmd.getName());
+      if (vmMo == null) {
+        throw new Exception("Unable to find VM in vSphere, vm: " + cmd.getName());
+      }
+    }
+    Pair<String,Integer> portInfo=vmMo.getVncPort(mgr.getManagementPortGroupByHost((HostMO)hyperHost));
+    if (s_logger.isTraceEnabled()) {
+      s_logger.trace("Found vnc port info. vm: " + cmd.getName() + " host: "+ portInfo.first()+ ", vnc port: "+ portInfo.second());
+    }
+    return new GetVncPortAnswer(cmd,portInfo.first(),portInfo.second());
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="GetVncPortCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new GetVncPortAnswer(cmd,msg);
+  }
+}

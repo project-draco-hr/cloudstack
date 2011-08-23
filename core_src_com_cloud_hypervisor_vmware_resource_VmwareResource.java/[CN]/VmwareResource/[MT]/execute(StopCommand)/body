@@ -1,0 +1,69 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource StopCommand: " + _gson.toJson(cmd));
+  }
+  VmwareContext context=getServiceContext();
+  VmwareHypervisorHost hyperHost=getHyperHost(context);
+  try {
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
+    if (vmMo != null) {
+      State state=null;
+synchronized (_vms) {
+        state=_vms.get(cmd.getVmName());
+        _vms.put(cmd.getVmName(),State.Stopping);
+      }
+      try {
+        if (getVmState(vmMo) != State.Stopped) {
+          Long bytesSent=0L;
+          Long bytesRcvd=0L;
+          if (VirtualMachineName.isValidRouterName(cmd.getVmName())) {
+            if (cmd.getPrivateRouterIpAddress() != null) {
+              long[] stats=getNetworkStats(cmd.getPrivateRouterIpAddress());
+              bytesSent=stats[0];
+              bytesRcvd=stats[1];
+            }
+          }
+          s_logger.info("Remove all snapshot before stopping VM " + cmd.getVmName());
+          vmMo.removeAllSnapshots();
+          if (vmMo.safePowerOff(_shutdown_waitMs)) {
+            state=State.Stopped;
+            return new StopAnswer(cmd,"Stop VM " + cmd.getVmName() + " Succeed",0,bytesSent,bytesRcvd);
+          }
+ else {
+            String msg="Have problem in powering off VM " + cmd.getVmName() + ", let the process continue";
+            s_logger.warn(msg);
+            return new StopAnswer(cmd,msg,0,0L,0L);
+          }
+        }
+ else {
+          state=State.Stopped;
+        }
+        String msg="VM " + cmd.getVmName() + " is already in stopped state";
+        s_logger.info(msg);
+        return new StopAnswer(cmd,msg,0,0L,0L);
+      }
+  finally {
+synchronized (_vms) {
+          _vms.put(cmd.getVmName(),state);
+        }
+      }
+    }
+ else {
+synchronized (_vms) {
+        _vms.remove(cmd.getVmName());
+      }
+      String msg="VM " + cmd.getVmName() + " is no longer in vSphere";
+      s_logger.info(msg);
+      return new StopAnswer(cmd,msg,0,0L,0L);
+    }
+  }
+ catch (  Exception e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="StopCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new StopAnswer(cmd,msg);
+  }
+}

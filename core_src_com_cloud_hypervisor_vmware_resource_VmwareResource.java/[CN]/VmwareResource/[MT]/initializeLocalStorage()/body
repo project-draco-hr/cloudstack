@@ -1,0 +1,42 @@
+{
+  List<StartupStorageCommand> storageCmds=new ArrayList<StartupStorageCommand>();
+  VmwareContext context=getServiceContext();
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    if (hyperHost instanceof HostMO) {
+      HostMO hostMo=(HostMO)hyperHost;
+      List<Pair<ManagedObjectReference,String>> dsList=hostMo.getLocalDatastoreOnHost();
+      for (      Pair<ManagedObjectReference,String> dsPair : dsList) {
+        DatastoreMO dsMo=new DatastoreMO(context,dsPair.first());
+        String poolUuid=dsMo.getCustomFieldValue(CustomFieldConstants.CLOUD_UUID);
+        if (poolUuid == null || poolUuid.isEmpty()) {
+          poolUuid=UUID.randomUUID().toString();
+          dsMo.setCustomFieldValue(CustomFieldConstants.CLOUD_UUID,poolUuid);
+        }
+        DatastoreSummary dsSummary=dsMo.getSummary();
+        String address=hostMo.getHostName();
+        StoragePoolInfo pInfo=new StoragePoolInfo(poolUuid,address,"","",StoragePoolType.LVM,dsSummary.getCapacity(),dsSummary.getFreeSpace());
+        StartupStorageCommand cmd=new StartupStorageCommand();
+        cmd.setName(poolUuid + "@" + hostMo.getHostName());
+        cmd.setPoolInfo(pInfo);
+        cmd.setGuid(poolUuid);
+        cmd.setResourceType(Storage.StorageResourceType.STORAGE_POOL);
+        cmd.setDataCenter(_dcId);
+        cmd.setPod(_pod);
+        cmd.setCluster(_cluster);
+        s_logger.info("Add local storage startup command: " + _gson.toJson(cmd));
+        storageCmds.add(cmd);
+      }
+    }
+ else {
+      s_logger.info("Cluster host does not support local storage, skip it");
+    }
+  }
+ catch (  Exception e) {
+    String msg="initializing local storage failed due to : " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    invalidateServiceContext();
+    throw new CloudRuntimeException(msg);
+  }
+  return storageCmds;
+}

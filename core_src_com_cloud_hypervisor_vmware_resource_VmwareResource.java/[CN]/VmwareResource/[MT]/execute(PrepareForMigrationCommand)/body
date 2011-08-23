@@ -1,0 +1,36 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource PrepareForMigrationCommand: " + _gson.toJson(cmd));
+  }
+  VirtualMachineTO vm=cmd.getVirtualMachine();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Preparing host for migrating " + vm);
+  }
+  final String vmName=vm.getName();
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+    VirtualMachineMO vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="VM " + vmName + " does not exist in VMware datacenter";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    NicTO[] nics=vm.getNics();
+    for (    NicTO nic : nics) {
+      prepareNetworkFromNicInfo(new HostMO(getServiceContext(),_morHyperHost),nic);
+    }
+synchronized (_vms) {
+      _vms.put(vm.getName(),State.Migrating);
+    }
+    return new PrepareForMigrationAnswer(cmd);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="Unexcpeted exception " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new PrepareForMigrationAnswer(cmd,msg);
+  }
+}

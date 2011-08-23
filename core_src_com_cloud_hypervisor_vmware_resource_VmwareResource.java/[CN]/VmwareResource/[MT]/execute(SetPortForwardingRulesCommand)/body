@@ -1,0 +1,37 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource SetPortForwardingRulesCommand: " + _gson.toJson(cmd));
+  }
+  String controlIp=getRouterSshControlIp(cmd);
+  String args="";
+  String[] results=new String[cmd.getRules().length];
+  int i=0;
+  boolean endResult=true;
+  for (  PortForwardingRuleTO rule : cmd.getRules()) {
+    args+=rule.revoked() ? " -D " : " -A ";
+    args+=" -P " + rule.getProtocol().toLowerCase();
+    args+=" -l " + rule.getSrcIp();
+    args+=" -p " + rule.getStringSrcPortRange();
+    args+=" -r " + rule.getDstIp();
+    args+=" -d " + rule.getStringDstPortRange();
+    try {
+      VmwareManager mgr=getServiceContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+      Pair<Boolean,String> result=SshHelper.sshExecute(controlIp,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"/root/firewall.sh " + args);
+      if (s_logger.isDebugEnabled())       s_logger.debug("Executing script on domain router " + controlIp + ": /root/firewall.sh "+ args);
+      if (!result.first()) {
+        s_logger.error("SetPortForwardingRulesCommand failure on setting one rule. args: " + args);
+        results[i++]="Failed";
+        endResult=false;
+      }
+ else {
+        results[i++]=null;
+      }
+    }
+ catch (    Throwable e) {
+      s_logger.error("SetPortForwardingRulesCommand(args: " + args + ") failed on setting one rule due to "+ VmwareHelper.getExceptionMessage(e));
+      results[i++]="Failed";
+      endResult=false;
+    }
+  }
+  return new SetPortForwardingRulesAnswer(cmd,results,endResult);
+}

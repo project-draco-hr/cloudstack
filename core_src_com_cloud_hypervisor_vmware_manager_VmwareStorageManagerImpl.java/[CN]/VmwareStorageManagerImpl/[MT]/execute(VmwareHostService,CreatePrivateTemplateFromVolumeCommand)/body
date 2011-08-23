@@ -1,0 +1,31 @@
+{
+  String secondaryStoragePoolURL=cmd.getSecondaryStorageURL();
+  String volumePath=cmd.getVolumePath();
+  Long accountId=cmd.getAccountId();
+  Long templateId=cmd.getTemplateId();
+  String details=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
+    if (vmMo == null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to find the owner VM for CreatePrivateTemplateFromVolumeCommand on host " + hyperHost.getHyperHostName() + ", try within datacenter");
+      vmMo=hyperHost.findVmOnPeerHyperHost(cmd.getVmName());
+      if (vmMo == null) {
+        String msg="Unable to find the owner VM for volume operation. vm: " + cmd.getVmName();
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+    Ternary<String,Long,Long> result=createTemplateFromVolume(vmMo,accountId,templateId,cmd.getTemplateName(),secondaryStoragePoolURL,volumePath,hostService.getWorkerName(context,cmd));
+    return new CreatePrivateTemplateAnswer(cmd,true,null,result.first(),result.third(),result.second(),cmd.getTemplateName(),ImageFormat.OVA);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    s_logger.error("Unexpecpted exception ",e);
+    details="CreatePrivateTemplateFromVolumeCommand exception: " + StringUtils.getExceptionStackInfo(e);
+    return new CreatePrivateTemplateAnswer(cmd,false,details);
+  }
+}

@@ -1,0 +1,51 @@
+{
+  SnapshotDescriptor descriptor=getSnapshotDescriptor();
+  SnapshotInfo[] snapshotInfo=descriptor.getCurrentDiskChain();
+  if (snapshotInfo.length == 0) {
+    String msg="No snapshot found in this VM";
+    throw new Exception(msg);
+  }
+  HostMO hostMo=getRunningHost();
+  DatacenterMO dcMo=getOwnerDatacenter().first();
+  List<Pair<ManagedObjectReference,String>> mounts=hostMo.getDatastoreMountsOnHost();
+  VirtualMachineFileInfo vmFileInfo=getFileInfo();
+  List<Ternary<String,String,String>> backupInfo=new ArrayList<Ternary<String,String,String>>();
+  for (int i=0; i < snapshotInfo.length; i++) {
+    if (!includeBase && i == snapshotInfo.length - 1) {
+      break;
+    }
+    SnapshotDescriptor.DiskInfo[] disks=snapshotInfo[i].getDisks();
+    if (disks != null) {
+      String destBaseFileName;
+      String destFileName;
+      String destParentFileName;
+      for (      SnapshotDescriptor.DiskInfo disk : disks) {
+        if (deviceName == null || deviceName.equals(disk.getDeviceName())) {
+          String srcVmdkFullDsPath=getSnapshotDiskFileDatastorePath(vmFileInfo,mounts,disk.getDiskFileName());
+          Pair<DatastoreMO,String> srcDsInfo=getOwnerDatastore(srcVmdkFullDsPath);
+          Pair<VmdkFileDescriptor,byte[]> vmdkInfo=getVmdkFileInfo(srcVmdkFullDsPath);
+          String srcVmdkBaseFilePath=DatastoreFile.getCompanionDatastorePath(srcVmdkFullDsPath,vmdkInfo.first().getBaseFileName());
+          destFileName=destName + (snapshotInfo.length - i - 1) + ".vmdk";
+          if (vmdkInfo.first().getParentFileName() != null) {
+            destBaseFileName=destName + (snapshotInfo.length - i - 1) + "-delta.vmdk";
+            destParentFileName=destName + (snapshotInfo.length - i - 2) + ".vmdk";
+          }
+ else {
+            destBaseFileName=destName + (snapshotInfo.length - i - 1) + "-flat.vmdk";
+            destParentFileName=null;
+          }
+          s_logger.info("Copy VMDK base file " + srcVmdkBaseFilePath + " to "+ destDsDirectory+ "/"+ destBaseFileName);
+          srcDsInfo.first().copyDatastoreFile(srcVmdkBaseFilePath,dcMo.getMor(),morDestDs,destDsDirectory + "/" + destBaseFileName,dcMo.getMor(),true);
+          byte[] newVmdkContent=VmdkFileDescriptor.changeVmdkContentBaseInfo(vmdkInfo.second(),destBaseFileName,destParentFileName);
+          String vmdkUploadUrl=getContext().composeDatastoreBrowseUrl(dcMo.getName(),destDsDirectory + "/" + destFileName);
+          s_logger.info("Upload VMDK content file to " + destDsDirectory + "/"+ destFileName);
+          getContext().uploadResourceContent(vmdkUploadUrl,newVmdkContent);
+          backupInfo.add(new Ternary<String,String,String>(destFileName,destBaseFileName,destParentFileName));
+        }
+      }
+    }
+  }
+  byte[] vdiskInfo=VmwareHelper.composeDiskInfo(backupInfo,snapshotInfo.length,includeBase);
+  String vdiskUploadUrl=getContext().composeDatastoreBrowseUrl(dcMo.getName(),destDsDirectory + "/" + destName+ ".vdisk");
+  getContext().uploadResourceContent(vdiskUploadUrl,vdiskInfo);
+}

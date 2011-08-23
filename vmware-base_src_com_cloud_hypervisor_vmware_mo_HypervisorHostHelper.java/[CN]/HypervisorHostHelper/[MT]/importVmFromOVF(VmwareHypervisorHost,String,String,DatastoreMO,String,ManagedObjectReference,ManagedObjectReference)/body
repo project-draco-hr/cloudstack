@@ -1,0 +1,63 @@
+{
+  assert(morRp != null);
+  OvfCreateImportSpecParams importSpecParams=new OvfCreateImportSpecParams();
+  importSpecParams.setHostSystem(morHost);
+  importSpecParams.setLocale("US");
+  importSpecParams.setEntityName(vmName);
+  importSpecParams.setDeploymentOption("");
+  importSpecParams.setDiskProvisioning(diskOption);
+  importSpecParams.setPropertyMapping(null);
+  String ovfDescriptor=HttpNfcLeaseMO.readOvfContent(ovfFilePath);
+  VmwareContext context=host.getContext();
+  OvfCreateImportSpecResult ovfImportResult=context.getService().createImportSpec(context.getServiceContent().getOvfManager(),ovfDescriptor,morRp,dsMo.getMor(),importSpecParams);
+  if (ovfImportResult == null) {
+    String msg="createImportSpec() failed. ovfFilePath: " + ovfFilePath + ", vmName: "+ vmName+ ", diskOption: "+ diskOption;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  DatacenterMO dcMo=new DatacenterMO(context,host.getHyperHostDatacenter());
+  ManagedObjectReference morLease=context.getService().importVApp(morRp,ovfImportResult.getImportSpec(),dcMo.getVmFolder(),morHost);
+  if (morLease == null) {
+    String msg="importVApp() failed. ovfFilePath: " + ovfFilePath + ", vmName: "+ vmName+ ", diskOption: "+ diskOption;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  final HttpNfcLeaseMO leaseMo=new HttpNfcLeaseMO(context,morLease);
+  HttpNfcLeaseState state=leaseMo.waitState(new HttpNfcLeaseState[]{HttpNfcLeaseState.ready,HttpNfcLeaseState.error});
+  try {
+    if (state == HttpNfcLeaseState.ready) {
+      final long totalBytes=HttpNfcLeaseMO.calcTotalBytes(ovfImportResult);
+      File ovfFile=new File(ovfFilePath);
+      HttpNfcLeaseInfo httpNfcLeaseInfo=leaseMo.getLeaseInfo();
+      HttpNfcLeaseDeviceUrl[] deviceUrls=httpNfcLeaseInfo.getDeviceUrl();
+      long bytesAlreadyWritten=0;
+      final HttpNfcLeaseMO.ProgressReporter progressReporter=leaseMo.createProgressReporter();
+      try {
+        for (        HttpNfcLeaseDeviceUrl deviceUrl : deviceUrls) {
+          String deviceKey=deviceUrl.getImportKey();
+          for (          OvfFileItem ovfFileItem : ovfImportResult.getFileItem()) {
+            if (deviceKey.equals(ovfFileItem.getDeviceId())) {
+              String absoluteFile=ovfFile.getParent() + File.separator + ovfFileItem.getPath();
+              String urlToPost=deviceUrl.getUrl();
+              urlToPost=resolveHostNameInUrl(dcMo,urlToPost);
+              context.uploadVmdkFile(ovfFileItem.isCreate() ? "PUT" : "POST",urlToPost,absoluteFile,bytesAlreadyWritten,new ActionDelegate<Long>(){
+                public void action(                Long param){
+                  progressReporter.reportProgress((int)(param * 100 / totalBytes));
+                }
+              }
+);
+              bytesAlreadyWritten+=ovfFileItem.getSize();
+            }
+          }
+        }
+      }
+  finally {
+        progressReporter.close();
+      }
+      leaseMo.updateLeaseProgress(100);
+    }
+  }
+  finally {
+    leaseMo.completeLease();
+  }
+}

@@ -1,0 +1,65 @@
+{
+  VmwareManager mgr=getServiceContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+  File keyFile=mgr.getSystemVMKeyFile();
+  String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
+  String controlIp=getRouterSshControlIp(cmd);
+  assert(controlIp != null);
+  LoadBalancerConfigurator cfgtr=new HAProxyConfigurator();
+  String[] config=cfgtr.generateConfiguration(cmd);
+  String[][] rules=cfgtr.generateFwRules(cmd);
+  String tmpCfgFilePath="/tmp/" + routerIp.replace('.','_') + ".cfg";
+  String tmpCfgFileContents="";
+  for (int i=0; i < config.length; i++) {
+    tmpCfgFileContents+=config[i];
+    tmpCfgFileContents+="\n";
+  }
+  try {
+    SshHelper.scpTo(controlIp,DEFAULT_DOMR_SSHPORT,"root",keyFile,null,"/tmp/",tmpCfgFileContents.getBytes(),routerIp.replace('.','_') + ".cfg",null);
+    try {
+      String[] addRules=rules[LoadBalancerConfigurator.ADD];
+      String[] removeRules=rules[LoadBalancerConfigurator.REMOVE];
+      String args="";
+      args+="-i " + routerIp;
+      args+=" -f " + tmpCfgFilePath;
+      StringBuilder sb=new StringBuilder();
+      if (addRules.length > 0) {
+        for (int i=0; i < addRules.length; i++) {
+          sb.append(addRules[i]).append(',');
+        }
+        args+=" -a " + sb.toString();
+      }
+      sb=new StringBuilder();
+      if (removeRules.length > 0) {
+        for (int i=0; i < removeRules.length; i++) {
+          sb.append(removeRules[i]).append(',');
+        }
+        args+=" -d " + sb.toString();
+      }
+      Pair<Boolean,String> result=SshHelper.sshExecute(controlIp,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"scp " + tmpCfgFilePath + " /etc/haproxy/haproxy.cfg.new");
+      if (!result.first()) {
+        s_logger.error("Unable to copy haproxy configuration file");
+        return new Answer(cmd,false,"LoadBalancerConfigCommand failed due to uanble to copy haproxy configuration file");
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Run command on domain router " + routerIp + ",  /root/loadbalancer.sh "+ args);
+      }
+      result=SshHelper.sshExecute(controlIp,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"/root/loadbalancer.sh " + args);
+      if (!result.first()) {
+        String msg="LoadBalancerConfigCommand on domain router " + routerIp + " failed. message: "+ result.second();
+        s_logger.error(msg);
+        return new Answer(cmd,false,msg);
+      }
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("LoadBalancerConfigCommand on domain router " + routerIp + " completed");
+      }
+    }
+  finally {
+      SshHelper.sshExecute(controlIp,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"rm " + tmpCfgFilePath);
+    }
+    return new Answer(cmd);
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception: " + e.toString(),e);
+    return new Answer(cmd,false,"LoadBalancerConfigCommand failed due to " + VmwareHelper.getExceptionMessage(e));
+  }
+}

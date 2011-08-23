@@ -1,0 +1,52 @@
+{
+  String secondaryStorageUrl=cmd.getSecondaryStorageUrl();
+  assert(secondaryStorageUrl != null);
+  String templateUrl=cmd.getUrl();
+  String templateName=null;
+  String mountPoint=null;
+  if (templateUrl.endsWith(".ova")) {
+    int index=templateUrl.lastIndexOf("/");
+    mountPoint=templateUrl.substring(0,index);
+    mountPoint=mountPoint.substring(secondaryStorageUrl.length() + 1);
+    if (!mountPoint.endsWith("/")) {
+      mountPoint=mountPoint + "/";
+    }
+    templateName=templateUrl.substring(index + 1).replace("." + ImageFormat.OVA.getFileExtension(),"");
+    if (templateName == null || templateName.isEmpty()) {
+      templateName=cmd.getName();
+    }
+  }
+ else {
+    mountPoint=templateUrl.substring(secondaryStorageUrl.length() + 1);
+    if (!mountPoint.endsWith("/")) {
+      mountPoint=mountPoint + "/";
+    }
+    templateName=cmd.getName();
+  }
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    String templateUuidName=UUID.nameUUIDFromBytes((templateName + "@" + cmd.getPoolUuid()+ "-"+ hyperHost.getMor().get_value()).getBytes()).toString();
+    DatacenterMO dcMo=new DatacenterMO(context,hyperHost.getHyperHostDatacenter());
+    VirtualMachineMO templateMo=VmwareHelper.pickOneVmOnRunningHost(dcMo.findVmByNameAndLabel(templateUuidName),true);
+    if (templateMo == null) {
+      if (s_logger.isInfoEnabled())       s_logger.info("Template " + templateName + " is not setup yet, setup template from secondary storage with uuid name: "+ templateUuidName);
+      ManagedObjectReference morDs=hyperHost.findDatastore(cmd.getPoolUuid());
+      assert(morDs != null);
+      DatastoreMO primaryStorageDatastoreMo=new DatastoreMO(context,morDs);
+      copyTemplateFromSecondaryToPrimary(hyperHost,primaryStorageDatastoreMo,secondaryStorageUrl,mountPoint,templateUuidName);
+    }
+ else {
+      s_logger.info("Template " + templateName + " has already been setup, skip the template setup process in primary storage");
+    }
+    return new PrimaryStorageDownloadAnswer(templateUuidName,0);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    String msg="Unable to execute PrimaryStorageDownloadCommand due to exception";
+    s_logger.error(msg,e);
+    return new PrimaryStorageDownloadAnswer(msg);
+  }
+}

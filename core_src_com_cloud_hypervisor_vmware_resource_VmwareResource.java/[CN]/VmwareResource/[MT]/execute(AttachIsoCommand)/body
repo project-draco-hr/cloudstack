@@ -1,0 +1,67 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource AttachIsoCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
+    if (vmMo == null) {
+      String msg="Unable to find VM in vSphere to execute AttachIsoCommand, vmName: " + cmd.getVmName();
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    String storeUrl=cmd.getStoreUrl();
+    if (storeUrl == null) {
+      if (!cmd.getIsoPath().equalsIgnoreCase("vmware-tools.iso")) {
+        String msg="ISO store root url is not found in AttachIsoCommand";
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+ else {
+        if (cmd.isAttach()) {
+          vmMo.mountToolsInstaller();
+        }
+ else {
+          vmMo.unmountToolsInstaller();
+        }
+        return new Answer(cmd);
+      }
+    }
+    ManagedObjectReference morSecondaryDs=prepareSecondaryDatastoreOnHost(storeUrl);
+    String isoPath=cmd.getIsoPath();
+    if (!isoPath.startsWith(storeUrl)) {
+      assert(false);
+      String msg="ISO path does not start with the secondary storage root";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    int isoNameStartPos=isoPath.lastIndexOf('/');
+    String isoFileName=isoPath.substring(isoNameStartPos + 1);
+    String isoStorePathFromRoot=isoPath.substring(storeUrl.length(),isoNameStartPos);
+    String isoDatastorePath=String.format("[%s] %s%s",getSecondaryDatastoreUUID(storeUrl),isoStorePathFromRoot,isoFileName);
+    if (cmd.isAttach()) {
+      vmMo.attachIso(isoDatastorePath,morSecondaryDs,true,false);
+    }
+ else {
+      vmMo.detachIso(isoDatastorePath);
+    }
+    return new Answer(cmd);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    if (cmd.isAttach()) {
+      String msg="AttachIsoCommand(attach) failed due to " + VmwareHelper.getExceptionMessage(e);
+      s_logger.error(msg);
+      return new Answer(cmd,false,msg);
+    }
+ else {
+      String msg="AttachIsoCommand(detach) failed due to " + VmwareHelper.getExceptionMessage(e);
+      s_logger.warn(msg);
+      s_logger.warn("For detachment failure, we will eventually continue on to allow deassociating it from CloudStack DB");
+      return new Answer(cmd);
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  VirtualDeviceBackingInfo backingInfo=disk.getBacking();
+  if (!(backingInfo instanceof VirtualDiskFlatVer2BackingInfo)) {
+    throw new Exception("Unsupported VirtualDeviceBackingInfo");
+  }
+  List<Pair<String,ManagedObjectReference>> pathList=new ArrayList<Pair<String,ManagedObjectReference>>();
+  VirtualDiskFlatVer2BackingInfo diskBackingInfo=(VirtualDiskFlatVer2BackingInfo)backingInfo;
+  if (!followChain) {
+    pathList.add(new Pair<String,ManagedObjectReference>(diskBackingInfo.getFileName(),diskBackingInfo.getDatastore()));
+    return pathList;
+  }
+  Pair<DatacenterMO,String> dcPair=getOwnerDatacenter();
+  VirtualMachineFileInfo vmFilesInfo=getFileInfo();
+  DatastoreFile snapshotDirFile=new DatastoreFile(vmFilesInfo.getSnapshotDirectory());
+  DatastoreFile vmxDirFile=new DatastoreFile(vmFilesInfo.getVmPathName());
+  do {
+    if (diskBackingInfo.getParent() != null) {
+      pathList.add(new Pair<String,ManagedObjectReference>(diskBackingInfo.getFileName(),diskBackingInfo.getDatastore()));
+      diskBackingInfo=diskBackingInfo.getParent();
+    }
+ else {
+      byte[] content=null;
+      try {
+        String url=getContext().composeDatastoreBrowseUrl(dcPair.second(),diskBackingInfo.getFileName());
+        content=getContext().getResourceContent(url);
+        if (content == null || content.length == 0) {
+          break;
+        }
+        pathList.add(new Pair<String,ManagedObjectReference>(diskBackingInfo.getFileName(),diskBackingInfo.getDatastore()));
+      }
+ catch (      Exception e) {
+        DatastoreFile currentFile=new DatastoreFile(diskBackingInfo.getFileName());
+        String vmdkFullDsPath=snapshotDirFile.getCompanionPath(currentFile.getFileName());
+        String url=getContext().composeDatastoreBrowseUrl(dcPair.second(),vmdkFullDsPath);
+        content=getContext().getResourceContent(url);
+        if (content == null || content.length == 0) {
+          break;
+        }
+        pathList.add(new Pair<String,ManagedObjectReference>(vmdkFullDsPath,diskBackingInfo.getDatastore()));
+      }
+      VmdkFileDescriptor descriptor=new VmdkFileDescriptor();
+      descriptor.parse(content);
+      if (descriptor.getParentFileName() != null && !descriptor.getParentFileName().isEmpty()) {
+        VirtualDiskFlatVer2BackingInfo parentDiskBackingInfo=new VirtualDiskFlatVer2BackingInfo();
+        parentDiskBackingInfo.setDatastore(diskBackingInfo.getDatastore());
+        String parentFileName=descriptor.getParentFileName();
+        if (parentFileName.startsWith("/")) {
+          int fileNameStartPos=parentFileName.lastIndexOf("/");
+          parentFileName=parentFileName.substring(fileNameStartPos + 1);
+          parentDiskBackingInfo.setFileName(vmxDirFile.getCompanionPath(parentFileName));
+        }
+ else {
+          parentDiskBackingInfo.setFileName(snapshotDirFile.getCompanionPath(parentFileName));
+        }
+        diskBackingInfo=parentDiskBackingInfo;
+      }
+ else {
+        break;
+      }
+    }
+  }
+ while (diskBackingInfo != null);
+  return pathList;
+}

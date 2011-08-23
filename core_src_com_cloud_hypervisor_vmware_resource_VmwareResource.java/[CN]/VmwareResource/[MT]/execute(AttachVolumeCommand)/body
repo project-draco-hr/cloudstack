@@ -1,0 +1,40 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource AttachVolumeCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
+    if (vmMo == null) {
+      String msg="Unable to find the VM to execute AttachVolumeCommand, vmName: " + cmd.getVmName();
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    ManagedObjectReference morDs=hyperHost.findDatastore(cmd.getPoolUuid());
+    if (morDs == null) {
+      String msg="Unable to find the mounted datastore to execute AttachVolumeCommand, vmName: " + cmd.getVmName();
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    DatastoreMO dsMo=new DatastoreMO(getServiceContext(),morDs);
+    String datastoreVolumePath=String.format("[%s] %s.vmdk",dsMo.getName(),cmd.getVolumePath());
+    AttachVolumeAnswer answer=new AttachVolumeAnswer(cmd,cmd.getDeviceId());
+    if (cmd.getAttach()) {
+      vmMo.attachDisk(new String[]{datastoreVolumePath},morDs);
+    }
+ else {
+      vmMo.removeAllSnapshots();
+      vmMo.detachDisk(datastoreVolumePath,false);
+    }
+    return answer;
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="AttachVolumeCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new AttachVolumeAnswer(cmd,msg);
+  }
+}

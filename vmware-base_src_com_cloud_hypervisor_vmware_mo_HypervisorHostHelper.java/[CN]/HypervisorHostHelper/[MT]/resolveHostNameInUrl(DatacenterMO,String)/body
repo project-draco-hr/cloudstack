@@ -1,0 +1,44 @@
+{
+  s_logger.info("Resolving host name in url through vCenter, url: " + url);
+  URI uri;
+  try {
+    uri=new URI(url);
+  }
+ catch (  URISyntaxException e) {
+    s_logger.warn("URISyntaxException on url " + url);
+    return url;
+  }
+  String host=uri.getHost();
+  if (NetUtils.isValidIp(host)) {
+    s_logger.info("host name in url is already in IP address, url: " + url);
+    return url;
+  }
+  try {
+    ManagedObjectReference morHost=dcMo.findHost(host);
+    if (morHost != null) {
+      HostMO hostMo=new HostMO(dcMo.getContext(),morHost);
+      String managementPortGroupName;
+      if (hostMo.getHostType() == VmwareHostType.ESXi)       managementPortGroupName=(String)dcMo.getContext().getStockObject("manageportgroup");
+ else       managementPortGroupName=(String)dcMo.getContext().getStockObject("serviceconsole");
+      VmwareHypervisorHostNetworkSummary summary=hostMo.getHyperHostNetworkSummary(managementPortGroupName);
+      if (summary == null) {
+        s_logger.warn("Unable to resolve host name in url through vSphere, url: " + url);
+        return url;
+      }
+      String hostIp=summary.getHostIp();
+      try {
+        URI resolvedUri=new URI(uri.getScheme(),uri.getUserInfo(),hostIp,uri.getPort(),uri.getPath(),uri.getQuery(),uri.getFragment());
+        s_logger.info("url " + url + " is resolved to "+ resolvedUri.toString()+ " through vCenter");
+        return resolvedUri.toString();
+      }
+ catch (      URISyntaxException e) {
+        assert(false);
+        return url;
+      }
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unexpected exception ",e);
+  }
+  return url;
+}

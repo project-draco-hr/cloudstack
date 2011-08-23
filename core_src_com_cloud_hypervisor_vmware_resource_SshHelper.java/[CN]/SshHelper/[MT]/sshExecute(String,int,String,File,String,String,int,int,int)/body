@@ -1,0 +1,63 @@
+{
+  com.trilead.ssh2.Connection conn=null;
+  com.trilead.ssh2.Session sess=null;
+  try {
+    conn=new com.trilead.ssh2.Connection(host,port);
+    conn.connect(null,connectTimeoutInMs,kexTimeoutInMs);
+    if (pemKeyFile == null) {
+      if (!conn.authenticateWithPassword(user,password)) {
+        String msg="Failed to authentication SSH user " + user + " on host "+ host;
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+ else {
+      if (!conn.authenticateWithPublicKey(user,pemKeyFile,password)) {
+        String msg="Failed to authentication SSH user " + user + " on host "+ host;
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+    sess=conn.openSession();
+    Thread.sleep(1000);
+    sess.execCommand(command);
+    InputStream stdout=sess.getStdout();
+    InputStream stderr=sess.getStderr();
+    byte[] buffer=new byte[8192];
+    StringBuffer sbResult=new StringBuffer();
+    int currentReadBytes=0;
+    while (true) {
+      if ((stdout.available() == 0) && (stderr.available() == 0)) {
+        int conditions=sess.waitForCondition(ChannelCondition.STDOUT_DATA | ChannelCondition.STDERR_DATA | ChannelCondition.EOF,waitResultTimeoutInMs);
+        if ((conditions & ChannelCondition.TIMEOUT) != 0) {
+          String msg="Timed out in waiting SSH execution result";
+          s_logger.error(msg);
+          throw new Exception(msg);
+        }
+        if ((conditions & ChannelCondition.EOF) != 0) {
+          if ((conditions & (ChannelCondition.STDOUT_DATA | ChannelCondition.STDERR_DATA)) == 0) {
+            break;
+          }
+        }
+      }
+      while (stdout.available() > 0) {
+        currentReadBytes=stdout.read(buffer);
+        sbResult.append(new String(buffer,0,currentReadBytes));
+      }
+      while (stderr.available() > 0) {
+        currentReadBytes=stderr.read(buffer);
+        sbResult.append(new String(buffer,0,currentReadBytes));
+      }
+    }
+    String result=sbResult.toString();
+    if (sess.getExitStatus() != null && sess.getExitStatus().intValue() != 0) {
+      s_logger.error("SSH execution of command " + command + " has an error status code in return. result output: "+ result);
+      return new Pair<Boolean,String>(false,result);
+    }
+    return new Pair<Boolean,String>(true,result);
+  }
+  finally {
+    if (sess != null)     sess.close();
+    if (conn != null)     conn.close();
+  }
+}

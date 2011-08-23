@@ -1,0 +1,62 @@
+{
+  VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(vmName);
+  VmwareManager mgr=hyperHost.getContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+  if (!mgr.beginExclusiveOperation(600))   throw new Exception("Unable to begin exclusive operation, lock time out");
+  try {
+    int maxVncPorts=64;
+    int vncPort=0;
+    Random random=new Random();
+    HostMO vmOwnerHost=vmMo.getRunningHost();
+    ManagedObjectReference morParent=vmOwnerHost.getParentMor();
+    HashMap<String,Integer> portInfo;
+    if (morParent.getType().equalsIgnoreCase("ClusterComputeResource")) {
+      ClusterMO clusterMo=new ClusterMO(vmOwnerHost.getContext(),morParent);
+      portInfo=clusterMo.getVmVncPortsOnCluster();
+    }
+ else {
+      portInfo=vmOwnerHost.getVmVncPortsOnHost();
+    }
+    Collection<Integer> existingPorts=portInfo.values();
+    int val=random.nextInt(maxVncPorts);
+    int startVal=val;
+    do {
+      if (!existingPorts.contains(5900 + val)) {
+        vncPort=5900 + val;
+        break;
+      }
+      val=(++val) % maxVncPorts;
+    }
+ while (val != startVal);
+    if (vncPort == 0) {
+      s_logger.info("we've run out of range for ports between 5900-5964 for the cluster, we will try port range at 59000-60000");
+      Pair<Integer,Integer> additionalRange=mgr.getAddiionalVncPortRange();
+      maxVncPorts=additionalRange.second();
+      val=random.nextInt(maxVncPorts);
+      startVal=val;
+      do {
+        if (!existingPorts.contains(additionalRange.first() + val)) {
+          vncPort=additionalRange.first() + val;
+          break;
+        }
+        val=(++val) % maxVncPorts;
+      }
+ while (val != startVal);
+    }
+    if (vncPort == 0) {
+      throw new Exception("Unable to find an available VNC port on host");
+    }
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Configure VNC port for VM " + vmName + ", port: "+ vncPort+ ", host: "+ vmOwnerHost.getHyperHostName());
+    }
+    return VmwareHelper.composeVncOptions(optionsToMerge,true,vncPassword,vncPort,keyboardLayout);
+  }
+  finally {
+    try {
+      mgr.endExclusiveOperation();
+    }
+ catch (    Throwable e) {
+      assert(false);
+      s_logger.error("Unexpected exception ",e);
+    }
+  }
+}

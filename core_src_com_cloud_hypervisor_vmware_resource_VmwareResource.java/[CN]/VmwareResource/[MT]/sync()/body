@@ -1,0 +1,96 @@
+{
+  HashMap<String,State> changes=new HashMap<String,State>();
+  HashMap<String,State> oldStates=null;
+  try {
+synchronized (_vms) {
+      HashMap<String,State> newStates=getVmStates();
+      oldStates=new HashMap<String,State>(_vms.size());
+      oldStates.putAll(_vms);
+      for (      final Map.Entry<String,State> entry : newStates.entrySet()) {
+        final String vm=entry.getKey();
+        State newState=entry.getValue();
+        final State oldState=oldStates.remove(vm);
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("VM " + vm + ": vSphere has state "+ newState+ " and we have state "+ (oldState != null ? oldState.toString() : "null"));
+        }
+        if (vm.startsWith("migrating")) {
+          s_logger.debug("Migrating detected.  Skipping");
+          continue;
+        }
+        if (oldState == null) {
+          _vms.put(vm,newState);
+          s_logger.debug("Detecting a new state but couldn't find a old state so adding it to the changes: " + vm);
+          changes.put(vm,newState);
+        }
+ else         if (oldState == State.Starting) {
+          if (newState == State.Running) {
+            _vms.put(vm,newState);
+          }
+ else           if (newState == State.Stopped) {
+            s_logger.debug("Ignoring vm " + vm + " because of a lag in starting the vm.");
+          }
+        }
+ else         if (oldState == State.Migrating) {
+          if (newState == State.Running) {
+            s_logger.debug("Detected that an migrating VM is now running: " + vm);
+            _vms.put(vm,newState);
+          }
+        }
+ else         if (oldState == State.Stopping) {
+          if (newState == State.Stopped) {
+            _vms.put(vm,newState);
+          }
+ else           if (newState == State.Running) {
+            s_logger.debug("Ignoring vm " + vm + " because of a lag in stopping the vm. ");
+          }
+        }
+ else         if (oldState != newState) {
+          _vms.put(vm,newState);
+          if (newState == State.Stopped) {
+          }
+          changes.put(vm,newState);
+        }
+      }
+      for (      final Map.Entry<String,State> entry : oldStates.entrySet()) {
+        final String vm=entry.getKey();
+        final State oldState=entry.getValue();
+        if (isVmInCluster(vm)) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("VM " + vm + " is now missing from host report but we detected that it might be migrated to other host by vCenter");
+          }
+          _vms.remove(vm);
+          continue;
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("VM " + vm + " is now missing from host report");
+        }
+        if (oldState == State.Stopping) {
+          s_logger.debug("Ignoring VM " + vm + " in transition state stopping.");
+          _vms.remove(vm);
+        }
+ else         if (oldState == State.Starting) {
+          s_logger.debug("Ignoring VM " + vm + " in transition state starting.");
+        }
+ else         if (oldState == State.Stopped) {
+          _vms.remove(vm);
+        }
+ else         if (oldState == State.Migrating) {
+          s_logger.debug("Ignoring VM " + vm + " in migrating state.");
+        }
+ else {
+          State state=State.Stopped;
+          changes.put(entry.getKey(),state);
+        }
+      }
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    s_logger.error("Unable to perform sync information collection process at this point due to " + VmwareHelper.getExceptionMessage(e));
+    return null;
+  }
+  return changes;
+}

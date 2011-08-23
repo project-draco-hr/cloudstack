@@ -1,0 +1,29 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource ModifyStoragePoolCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+    StorageFilerTO pool=cmd.getPool();
+    if (pool.getType() != StoragePoolType.NetworkFilesystem && pool.getType() != StoragePoolType.VMFS) {
+      throw new Exception("Unsupported storage pool type " + pool.getType());
+    }
+    ManagedObjectReference morDatastore=hyperHost.mountDatastore(pool.getType() == StoragePoolType.VMFS,pool.getHost(),pool.getPort(),pool.getPath(),pool.getUuid());
+    assert(morDatastore != null);
+    DatastoreSummary summary=new DatastoreMO(getServiceContext(),morDatastore).getSummary();
+    long capacity=summary.getCapacity();
+    long available=summary.getFreeSpace();
+    Map<String,TemplateInfo> tInfo=new HashMap<String,TemplateInfo>();
+    ModifyStoragePoolAnswer answer=new ModifyStoragePoolAnswer(cmd,capacity,available,tInfo);
+    return answer;
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="ModifyStoragePoolCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new Answer(cmd,false,msg);
+  }
+}

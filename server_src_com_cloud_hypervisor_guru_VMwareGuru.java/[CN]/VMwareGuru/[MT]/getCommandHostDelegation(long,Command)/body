@@ -1,0 +1,33 @@
+{
+  boolean needDelegation=false;
+  if (cmd instanceof PrimaryStorageDownloadCommand || cmd instanceof BackupSnapshotCommand || cmd instanceof DeleteSnapshotsDirCommand|| cmd instanceof DeleteSnapshotBackupCommand|| cmd instanceof CreatePrivateTemplateFromVolumeCommand|| cmd instanceof CreatePrivateTemplateFromSnapshotCommand|| cmd instanceof CopyVolumeCommand|| cmd instanceof CreateVolumeFromSnapshotCommand) {
+    needDelegation=true;
+  }
+  if (needDelegation) {
+    HostVO host=_hostDao.findById(hostId);
+    assert(host != null);
+    assert(host.getHypervisorType() == HypervisorType.VMware);
+    long dcId=host.getDataCenterId();
+    Pair<HostVO,SecondaryStorageVmVO> cmdTarget=_secStorageMgr.assignSecStorageVm(dcId,cmd);
+    if (cmdTarget != null) {
+      cmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
+      Map<String,String> hostDetails=_hostDetailsDao.findDetails(hostId);
+      cmd.setContextParam("guid",resolveNameInGuid(hostDetails.get("guid")));
+      cmd.setContextParam("username",hostDetails.get("username"));
+      cmd.setContextParam("password",hostDetails.get("password"));
+      cmd.setContextParam("serviceconsole",_vmwareMgr.getServiceConsolePortGroupName());
+      cmd.setContextParam("manageportgroup",_vmwareMgr.getManagementPortGroupName());
+      CommandExecLogVO execLog=new CommandExecLogVO(cmdTarget.first().getId(),cmdTarget.second().getId(),cmd.getClass().getSimpleName(),1);
+      _cmdExecLogDao.persist(execLog);
+      cmd.setContextParam("execid",String.valueOf(execLog.getId()));
+      if (cmd instanceof BackupSnapshotCommand || cmd instanceof CreatePrivateTemplateFromVolumeCommand || cmd instanceof CreatePrivateTemplateFromSnapshotCommand|| cmd instanceof CopyVolumeCommand|| cmd instanceof CreateVolumeFromSnapshotCommand) {
+        String workerName=_vmwareMgr.composeWorkerName();
+        long checkPointId=_checkPointMgr.pushCheckPoint(new VmwareCleanupMaid(hostDetails.get("guid"),workerName));
+        cmd.setContextParam("worker",workerName);
+        cmd.setContextParam("checkpoint",String.valueOf(checkPointId));
+      }
+      return cmdTarget.first().getId();
+    }
+  }
+  return hostId;
+}

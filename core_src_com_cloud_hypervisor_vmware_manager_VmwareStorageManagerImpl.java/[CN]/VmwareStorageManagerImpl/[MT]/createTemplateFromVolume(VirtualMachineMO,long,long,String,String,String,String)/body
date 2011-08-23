@@ -1,0 +1,46 @@
+{
+  String secondaryMountPoint=_mountService.getMountPoint(secStorageUrl);
+  String installPath=getTemplateRelativeDirInSecStorage(accountId,templateId);
+  String installFullPath=secondaryMountPoint + "/" + installPath;
+synchronized (installPath.intern()) {
+    Script command=new Script(false,"mkdir",_timeout,s_logger);
+    command.add("-p");
+    command.add(installFullPath);
+    String result=command.execute();
+    if (result != null) {
+      String msg="unable to prepare template directory: " + installPath + ", storage: "+ secStorageUrl+ ", error msg: "+ result;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+  }
+  String tmpSnapshotName=UUID.randomUUID().toString();
+  VirtualMachineMO clonedVm=null;
+  try {
+    Pair<VirtualDisk,String> volumeDeviceInfo=vmMo.getDiskDevice(volumePath,false);
+    if (volumeDeviceInfo == null) {
+      String msg="Unable to find related disk device for volume. volume path: " + volumePath;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    if (!vmMo.createSnapshot(tmpSnapshotName,"Temporary snapshot for template creation",false,false)) {
+      String msg="Unable to take snapshot for creating template from volume. volume path: " + volumePath;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    vmMo.cloneFromCurrentSnapshot(workerVmName,0,4,volumeDeviceInfo.second(),VmwareHelper.getDiskDeviceDatastore(volumeDeviceInfo.first()));
+    clonedVm=vmMo.getRunningHost().findVmOnHyperHost(workerVmName);
+    if (clonedVm == null) {
+      String msg="Unable to create dummy VM to export volume. volume path: " + volumePath;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    clonedVm.exportVm(secondaryMountPoint + "/" + installPath,templateName,true,false);
+    long size=new File(installFullPath + "/" + templateName+ ".ova").length();
+    postCreatePrivateTemplate(installFullPath,templateId,templateName,size,size);
+    return new Ternary<String,Long,Long>(installPath + "/" + templateName+ ".ova",size,size);
+  }
+  finally {
+    if (clonedVm != null)     clonedVm.destroy();
+    vmMo.removeSnapshot(tmpSnapshotName,false);
+  }
+}

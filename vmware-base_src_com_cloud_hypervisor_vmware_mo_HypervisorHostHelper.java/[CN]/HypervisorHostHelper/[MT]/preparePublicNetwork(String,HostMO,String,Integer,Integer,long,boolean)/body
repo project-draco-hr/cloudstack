@@ -1,0 +1,78 @@
+{
+  HostVirtualSwitch vSwitch=hostMo.getHostVirtualSwitchByName(vSwitchName);
+  if (vSwitch == null) {
+    String msg="Unable to find vSwitch configured for public network";
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  boolean createGCTag=false;
+  String networkName;
+  Integer vid=null;
+  if (vlanId != null && !UNTAGGED_VLAN_NAME.equalsIgnoreCase(vlanId)) {
+    createGCTag=true;
+    vid=Integer.parseInt(vlanId);
+  }
+  networkName=composeCloudNetworkName("cloud.public",vlanId,networkRateMbps,vSwitchName);
+  HostNetworkTrafficShapingPolicy shapingPolicy=null;
+  if (networkRateMbps != null && networkRateMbps.intValue() > 0) {
+    shapingPolicy=new HostNetworkTrafficShapingPolicy();
+    shapingPolicy.setEnabled(true);
+    shapingPolicy.setAverageBandwidth((long)networkRateMbps.intValue() * 1024L * 1024L);
+    shapingPolicy.setPeakBandwidth((long)(shapingPolicy.getAverageBandwidth() * 1.5));
+    shapingPolicy.setBurstSize(5 * shapingPolicy.getAverageBandwidth() / 8);
+  }
+  if (!hostMo.hasPortGroup(vSwitch,networkName)) {
+    hostMo.createPortGroup(vSwitch,networkName,vid,shapingPolicy);
+  }
+ else {
+    hostMo.updatePortGroup(vSwitch,networkName,vid,shapingPolicy);
+  }
+  ManagedObjectReference morNetwork=waitForNetworkReady(hostMo,networkName,timeOutMs);
+  if (morNetwork == null) {
+    String msg="Failed to create public network on vSwitch " + vSwitchName;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  if (createGCTag) {
+    NetworkMO networkMo=new NetworkMO(hostMo.getContext(),morNetwork);
+    networkMo.setCustomFieldValue(CustomFieldConstants.CLOUD_GC,"true");
+  }
+  if (syncPeerHosts) {
+    ManagedObjectReference morParent=hostMo.getParentMor();
+    if (morParent != null && morParent.getType().equals("ClusterComputeResource")) {
+      GlobalLock lock=GlobalLock.getInternLock("ClusterLock." + morParent.get_value());
+      try {
+        if (lock.lock(DEFAULT_LOCK_TIMEOUT_SECONDS)) {
+          try {
+            ManagedObjectReference[] hosts=(ManagedObjectReference[])hostMo.getContext().getServiceUtil().getDynamicProperty(morParent,"host");
+            if (hosts != null) {
+              for (              ManagedObjectReference otherHost : hosts) {
+                if (!otherHost.get_value().equals(hostMo.getMor().get_value())) {
+                  HostMO otherHostMo=new HostMO(hostMo.getContext(),otherHost);
+                  try {
+                    if (s_logger.isDebugEnabled())                     s_logger.debug("prepare public network on other host, vlan: " + vlanId + ", host: "+ otherHostMo.getHostName());
+                    preparePublicNetwork(vSwitchName,otherHostMo,vlanId,networkRateMbps,networkRateMulticastMbps,timeOutMs,false);
+                  }
+ catch (                  Exception e) {
+                    s_logger.warn("Unable to prepare public network on other host, vlan: " + vlanId + ", host: "+ otherHostMo.getHostName());
+                  }
+                }
+              }
+            }
+          }
+  finally {
+            lock.unlock();
+          }
+        }
+ else {
+          s_logger.warn("Unable to lock cluster to prepare public network, vlan: " + vlanId);
+        }
+      }
+  finally {
+        lock.releaseRef();
+      }
+    }
+  }
+  s_logger.info("Network " + networkName + " is ready on vSwitch "+ vSwitchName);
+  return new Pair<ManagedObjectReference,String>(morNetwork,networkName);
+}

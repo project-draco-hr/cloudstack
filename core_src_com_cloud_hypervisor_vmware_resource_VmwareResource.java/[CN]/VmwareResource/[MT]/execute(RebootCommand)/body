@@ -1,0 +1,42 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource RebootCommand: " + _gson.toJson(cmd));
+  }
+  VmwareContext context=getServiceContext();
+  VmwareHypervisorHost hyperHost=getHyperHost(context);
+  try {
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
+    if (vmMo != null) {
+      try {
+        vmMo.rebootGuest();
+        return new RebootAnswer(cmd,"reboot succeeded",null,null);
+      }
+ catch (      ToolsUnavailable e) {
+        s_logger.warn("VMware tools is not installed at guest OS, we will perform hard reset for reboot");
+      }
+catch (      Exception e) {
+        s_logger.warn("We are not able to perform gracefull guest reboot due to " + VmwareHelper.getExceptionMessage(e));
+      }
+      if (vmMo.reset()) {
+        return new RebootAnswer(cmd,"reboot succeeded",null,null);
+      }
+      String msg="Reboot failed in vSphere. vm: " + cmd.getVmName();
+      s_logger.warn(msg);
+      return new RebootAnswer(cmd,msg);
+    }
+ else {
+      String msg="Unable to find the VM in vSphere to reboot. vm: " + cmd.getVmName();
+      s_logger.warn(msg);
+      return new RebootAnswer(cmd,msg);
+    }
+  }
+ catch (  Exception e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="RebootCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    return new RebootAnswer(cmd,msg);
+  }
+}

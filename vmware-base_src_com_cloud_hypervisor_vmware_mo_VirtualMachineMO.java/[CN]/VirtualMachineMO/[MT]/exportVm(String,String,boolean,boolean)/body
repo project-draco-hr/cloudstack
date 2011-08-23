@@ -1,0 +1,98 @@
+{
+  ManagedObjectReference morOvf=_context.getServiceContent().getOvfManager();
+  VirtualMachineRuntimeInfo runtimeInfo=getRuntimeInfo();
+  HostMO hostMo=new HostMO(_context,runtimeInfo.getHost());
+  String hostName=hostMo.getHostName();
+  String vmName=getVmName();
+  DatacenterMO dcMo=new DatacenterMO(_context,hostMo.getHyperHostDatacenter());
+  if (runtimeInfo.getPowerState() != VirtualMachinePowerState.poweredOff) {
+    String msg="Unable to export VM because it is not at powerdOff state. vmName: " + vmName + ", host: "+ hostName;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  ManagedObjectReference morLease=_context.getService().exportVm(getMor());
+  if (morLease == null) {
+    s_logger.error("exportVm() failed");
+    throw new Exception("exportVm() failed");
+  }
+  HttpNfcLeaseMO leaseMo=new HttpNfcLeaseMO(_context,morLease);
+  HttpNfcLeaseState state=leaseMo.waitState(new HttpNfcLeaseState[]{HttpNfcLeaseState.ready,HttpNfcLeaseState.error});
+  try {
+    if (state == HttpNfcLeaseState.ready) {
+      final HttpNfcLeaseMO.ProgressReporter progressReporter=leaseMo.createProgressReporter();
+      try {
+        HttpNfcLeaseInfo leaseInfo=leaseMo.getLeaseInfo();
+        final long totalBytes=leaseInfo.getTotalDiskCapacityInKB() * 1024;
+        long totalBytesDownloaded=0;
+        HttpNfcLeaseDeviceUrl[] deviceUrls=leaseInfo.getDeviceUrl();
+        if (deviceUrls != null) {
+          List<String> fileNames=new ArrayList<String>();
+          OvfFile[] ovfFiles=new OvfFile[deviceUrls.length];
+          for (int i=0; i < deviceUrls.length; i++) {
+            String deviceId=deviceUrls[i].getKey();
+            String deviceUrlStr=deviceUrls[i].getUrl();
+            String orgDiskFileName=deviceUrlStr.substring(deviceUrlStr.lastIndexOf("/") + 1);
+            String diskFileName=String.format("%s-disk%d%s",exportName,i,VmwareHelper.getFileExtension(orgDiskFileName,".vmdk"));
+            String diskUrlStr=deviceUrlStr.replace("*",hostName);
+            diskUrlStr=HypervisorHostHelper.resolveHostNameInUrl(dcMo,diskUrlStr);
+            String diskLocalPath=exportDir + File.separator + diskFileName;
+            fileNames.add(diskLocalPath);
+            if (s_logger.isInfoEnabled()) {
+              s_logger.info("Download VMDK file for export. url: " + deviceUrlStr);
+            }
+            long lengthOfDiskFile=_context.downloadVmdkFile(diskUrlStr,diskLocalPath,totalBytesDownloaded,new ActionDelegate<Long>(){
+              @Override public void action(              Long param){
+                if (s_logger.isTraceEnabled()) {
+                  s_logger.trace("Download progress " + param + "/"+ totalBytes);
+                }
+                progressReporter.reportProgress((int)(param * 100 / totalBytes));
+              }
+            }
+);
+            totalBytesDownloaded+=lengthOfDiskFile;
+            OvfFile ovfFile=new OvfFile();
+            ovfFile.setPath(diskFileName);
+            ovfFile.setDeviceId(deviceId);
+            ovfFile.setSize(lengthOfDiskFile);
+            ovfFiles[i]=ovfFile;
+          }
+          OvfCreateDescriptorParams ovfDescParams=new OvfCreateDescriptorParams();
+          ovfDescParams.setOvfFiles(ovfFiles);
+          OvfCreateDescriptorResult ovfCreateDescriptorResult=_context.getService().createDescriptor(morOvf,getMor(),ovfDescParams);
+          String ovfPath=exportDir + File.separator + exportName+ ".ovf";
+          fileNames.add(ovfPath);
+          FileWriter out=new FileWriter(ovfPath);
+          out.write(ovfCreateDescriptorResult.getOvfDescriptor());
+          out.close();
+          if (packToOva) {
+            Script command=new Script(false,"tar",0,s_logger);
+            command.setWorkDir(exportDir);
+            command.add("-cf",exportName + ".ova");
+            command.add(exportName + ".ovf");
+            for (            String name : fileNames) {
+              command.add((new File(name).getName()));
+            }
+            String result=command.execute();
+            if (result == null) {
+              if (leaveOvaFileOnly) {
+                for (                String name : fileNames) {
+                  new File(name).delete();
+                }
+              }
+            }
+          }
+        }
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception ",e);
+      }
+ finally {
+        progressReporter.close();
+      }
+    }
+  }
+  finally {
+    leaseMo.updateLeaseProgress(100);
+    leaseMo.completeLease();
+  }
+}

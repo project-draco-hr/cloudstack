@@ -1,0 +1,91 @@
+{
+  if (s_logger.isInfoEnabled())   s_logger.info("Discover host. dc: " + dcId + ", pod: "+ podId+ ", cluster: "+ clusterId+ ", uri host: "+ url.getHost());
+  if (podId == null) {
+    if (s_logger.isInfoEnabled())     s_logger.info("No pod is assigned, assuming that it is not for vmware and skip it to next discoverer");
+    return null;
+  }
+  ClusterVO cluster=_clusterDao.findById(clusterId);
+  if (cluster == null || cluster.getHypervisorType() != HypervisorType.VMware) {
+    if (s_logger.isInfoEnabled())     s_logger.info("invalid cluster id or cluster is not for VMware hypervisors");
+    return null;
+  }
+  List<HostVO> hosts=_hostDao.listByCluster(clusterId);
+  if (hosts.size() >= _vmwareMgr.getMaxHostsPerCluster()) {
+    String msg="VMware cluster " + cluster.getName() + " is too big to add new host now. (current configured cluster size: "+ _vmwareMgr.getMaxHostsPerCluster()+ ")";
+    s_logger.error(msg);
+    throw new DiscoveredWithErrorException(msg);
+  }
+  VmwareContext context=null;
+  try {
+    context=VmwareContextFactory.create(url.getHost(),username,password);
+    List<ManagedObjectReference> morHosts=_vmwareMgr.addHostToPodCluster(context,dcId,podId,clusterId,URLDecoder.decode(url.getPath()));
+    if (morHosts == null) {
+      s_logger.error("Unable to find host or cluster based on url: " + URLDecoder.decode(url.getPath()));
+      return null;
+    }
+    ManagedObjectReference morCluster=null;
+    Map<String,String> clusterDetails=_clusterDetailsDao.findDetails(clusterId);
+    if (clusterDetails.get("url") != null) {
+      URI uriFromCluster=new URI(UriUtils.encodeURIComponent(clusterDetails.get("url")));
+      morCluster=context.getHostMorByPath(URLDecoder.decode(uriFromCluster.getPath()));
+      if (morCluster == null || !morCluster.getType().equalsIgnoreCase("ClusterComputeResource")) {
+        s_logger.warn("Cluster url does not point to a valid vSphere cluster, url: " + clusterDetails.get("url"));
+        return null;
+      }
+ else {
+        ClusterMO clusterMo=new ClusterMO(context,morCluster);
+        ClusterDasConfigInfo dasConfig=clusterMo.getDasConfig();
+        if (dasConfig != null && dasConfig.getEnabled() != null && dasConfig.getEnabled().booleanValue()) {
+          clusterDetails.put("NativeHA","true");
+          _clusterDetailsDao.persist(clusterId,clusterDetails);
+        }
+      }
+    }
+    if (!validateDiscoveredHosts(context,morCluster,morHosts)) {
+      if (morCluster == null)       s_logger.warn("The discovered host is not standalone host, can not be added to a standalone cluster");
+ else       s_logger.warn("The discovered host does not belong to the cluster");
+      return null;
+    }
+    Map<VmwareResource,Map<String,String>> resources=new HashMap<VmwareResource,Map<String,String>>();
+    for (    ManagedObjectReference morHost : morHosts) {
+      Map<String,String> details=new HashMap<String,String>();
+      Map<String,Object> params=new HashMap<String,Object>();
+      HostMO hostMo=new HostMO(context,morHost);
+      details.put("url",hostMo.getHostName());
+      details.put("username",username);
+      details.put("password",password);
+      String guid=morHost.getType() + ":" + morHost.get_value()+ "@"+ url.getHost();
+      details.put("guid",guid);
+      params.put("url",hostMo.getHostName());
+      params.put("username",username);
+      params.put("password",password);
+      params.put("zone",Long.toString(dcId));
+      params.put("pod",Long.toString(podId));
+      params.put("cluster",Long.toString(clusterId));
+      params.put("guid",guid);
+      VmwareResource resource=new VmwareResource();
+      try {
+        resource.configure("VMware",params);
+      }
+ catch (      ConfigurationException e) {
+        _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,dcId,podId,"Unable to add " + url.getHost(),"Error is " + e.getMessage());
+        s_logger.warn("Unable to instantiate " + url.getHost(),e);
+      }
+      resource.start();
+      resources.put(resource,details);
+    }
+    cluster.setGuid(UUID.nameUUIDFromBytes(String.valueOf(clusterId).getBytes()).toString());
+    _clusterDao.update(clusterId,cluster);
+    return resources;
+  }
+ catch (  DiscoveredWithErrorException e) {
+    throw e;
+  }
+catch (  Exception e) {
+    s_logger.warn("Unable to connect to Vmware vSphere server. service address: " + url.getHost());
+    return null;
+  }
+ finally {
+    if (context != null)     context.close();
+  }
+}

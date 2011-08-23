@@ -1,0 +1,46 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource MigrateCommand: " + _gson.toJson(cmd));
+  }
+  final String vmName=cmd.getVmName();
+  State state=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
+    ManagedObjectReference morDc=hyperHost.getHyperHostDatacenter();
+    VirtualMachineMO vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="VM " + vmName + " does not exist in VMware datacenter";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    VmwareHypervisorHost destHyperHost=getTargetHyperHost(new DatacenterMO(hyperHost.getContext(),morDc),cmd.getDestinationIp());
+    ManagedObjectReference morTargetPhysicalHost=destHyperHost.findMigrationTarget(vmMo);
+    if (morTargetPhysicalHost == null) {
+      throw new Exception("Unable to find a target capable physical host");
+    }
+    prepareNetworkForVmTargetHost(new HostMO(hyperHost.getContext(),morTargetPhysicalHost),vmMo);
+    if (!vmMo.migrate(destHyperHost.getHyperHostOwnerResourcePool(),morTargetPhysicalHost)) {
+      throw new Exception("Migration failed");
+    }
+    state=State.Stopping;
+    return new MigrateAnswer(cmd,true,"migration succeeded",null);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="MigrationCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.warn(msg);
+    return new MigrateAnswer(cmd,false,msg,null);
+  }
+ finally {
+synchronized (_vms) {
+      _vms.put(vmName,state);
+    }
+  }
+}
