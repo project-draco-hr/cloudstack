@@ -1,0 +1,60 @@
+{
+  if (affectedVms.size() == 0) {
+    return;
+  }
+  if (delayMs == null) {
+    delayMs=new Long(100l);
+  }
+  Collections.sort(affectedVms);
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Security Group Mgr: scheduling ruleset updates for " + affectedVms.size() + " vms");
+  }
+  boolean locked=_workLock.lock(_globalWorkLockTimeout);
+  if (!locked) {
+    s_logger.warn("Security Group Mgr: failed to acquire global work lock");
+    return;
+  }
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Security Group Mgr: acquired global work lock");
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    for (    Long vmId : affectedVms) {
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("Security Group Mgr: scheduling ruleset update for " + vmId);
+      }
+      VmRulesetLogVO log=null;
+      SecurityGroupWorkVO work=null;
+      log=_rulesetLogDao.findByVmId(vmId);
+      if (log == null) {
+        log=new VmRulesetLogVO(vmId);
+        log=_rulesetLogDao.persist(log);
+      }
+      if (log != null && updateSeqno) {
+        log.incrLogsequence();
+        _rulesetLogDao.update(log.getId(),log);
+      }
+      work=_workDao.findByVmIdStep(vmId,Step.Scheduled);
+      if (work == null) {
+        work=new SecurityGroupWorkVO(vmId,null,null,SecurityGroupWork.Step.Scheduled,null);
+        work=_workDao.persist(work);
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("Security Group Mgr: created new work item for " + vmId + "; id = "+ work.getId());
+        }
+      }
+      work.setLogsequenceNumber(log.getLogsequence());
+      _workDao.update(work.getId(),work);
+    }
+    txn.commit();
+    for (    Long vmId : affectedVms) {
+      _executorPool.schedule(new WorkerThread(),delayMs,TimeUnit.MILLISECONDS);
+    }
+  }
+  finally {
+    _workLock.unlock();
+    if (s_logger.isTraceEnabled()) {
+      s_logger.trace("Security Group Mgr: released global work lock");
+    }
+  }
+}
