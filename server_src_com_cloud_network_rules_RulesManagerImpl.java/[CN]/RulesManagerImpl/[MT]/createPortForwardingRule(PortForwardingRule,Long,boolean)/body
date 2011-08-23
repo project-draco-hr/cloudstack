@@ -9,7 +9,7 @@
  else   if (ipAddress.isOneToOneNat()) {
     throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " has static nat enabled");
   }
-  _firewallMgr.validateFirewallRule(caller,ipAddress,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol());
+  _firewallMgr.validateFirewallRule(caller,ipAddress,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),Purpose.PortForwarding);
   Long networkId=ipAddress.getAssociatedWithNetworkId();
   Long accountId=ipAddress.getAccountId();
   Long domainId=ipAddress.getDomainId();
@@ -36,11 +36,11 @@
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  if (openFirewall) {
-    _firewallMgr.createRuleForAllCidrs(ipAddrId,caller,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),null,null);
-  }
-  PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol().toLowerCase(),rule.getSourceCidrList(),networkId,accountId,domainId,vmId);
+  PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol().toLowerCase(),networkId,accountId,domainId,vmId);
   newRule=_forwardingDao.persist(newRule);
+  if (openFirewall) {
+    _firewallMgr.createRuleForAllCidrs(ipAddrId,caller,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),null,null,newRule.getId());
+  }
   try {
     _firewallMgr.detectRulesConflict(newRule,ipAddress);
     if (!_firewallDao.setStateToAdd(newRule)) {
@@ -53,10 +53,13 @@
     return newRule;
   }
  catch (  Exception e) {
+    txn.start();
+    _firewallDao.remove(_firewallDao.findByRelatedId(newRule.getId()).getId());
     _forwardingDao.remove(newRule.getId());
+    txn.commit();
     if (e instanceof NetworkRuleConflictException) {
       throw (NetworkRuleConflictException)e;
     }
-    throw new CloudRuntimeException("Unable to add rule for the ip id=" + newRule.getSourceIpAddressId(),e);
+    throw new CloudRuntimeException("Unable to add rule for the ip id=" + ipAddrId,e);
   }
 }

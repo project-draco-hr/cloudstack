@@ -1,0 +1,61 @@
+{
+  Account caller=UserContext.current().getCaller();
+  UserVmVO vm=_vmDao.findById(vmId);
+  if (vm == null) {
+    throw new InvalidParameterValueException("Can't enable static nat for the address id=" + ipId + ", invalid virtual machine id specified ("+ vmId+ ").");
+  }
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to find ip address by id " + ipId);
+  }
+  checkIpAndUserVm(ipAddress,vm,caller);
+  Long networkId=ipAddress.getAssociatedWithNetworkId();
+  if (networkId == null) {
+    throw new InvalidParameterValueException("Unable to enable static nat for the ipAddress id=" + ipId + " as ip is not associated with any network");
+  }
+  Nic guestNic=_networkMgr.getNicInNetwork(vmId,networkId);
+  if (guestNic == null) {
+    throw new InvalidParameterValueException("Vm doesn't belong to the network " + networkId);
+  }
+  Network network=_networkMgr.getNetwork(networkId);
+  if (!_networkMgr.isServiceSupported(network.getNetworkOfferingId(),Service.Firewall)) {
+    throw new InvalidParameterValueException("Unable to create static nat rule; Firewall service is not supported in network id=" + networkId);
+  }
+  if (ipAddress.isSourceNat()) {
+    throw new InvalidParameterValueException("Can't enable static, ip address id=" + ipId + " is a sourceNat ip address");
+  }
+  if (!ipAddress.isOneToOneNat()) {
+    List<FirewallRuleVO> rules=_firewallDao.listByIpAndPurposeAndNotRevoked(ipId,Purpose.PortForwarding);
+    if (rules != null && !rules.isEmpty()) {
+      throw new NetworkRuleConflictException("Failed to enable static nat for the ip address id=" + ipId + " as it already has firewall rules assigned");
+    }
+  }
+ else {
+    if (ipAddress.getAssociatedWithVmId() != null && ipAddress.getAssociatedWithVmId().longValue() != vmId) {
+      throw new NetworkRuleConflictException("Failed to enable static for the ip address id=" + ipId + " and vm id="+ vmId+ " as it's already assigned to antoher vm");
+    }
+  }
+  IPAddressVO ip=_ipAddressDao.findByAssociatedVmId(vmId);
+  if (ip != null) {
+    throw new InvalidParameterValueException("Failed to enable static nat for the ip address id=" + ipId + " as vm id="+ " is already associated with ip id="+ ip.getId());
+  }
+  ipAddress.setOneToOneNat(true);
+  ipAddress.setAssociatedWithVmId(vmId);
+  if (_ipAddressDao.update(ipAddress.getId(),ipAddress)) {
+    s_logger.trace("Enabling static nat for ip address " + ipAddress + " and vm id="+ vmId+ " on the backend");
+    if (applyStaticNatForIp(ipId,false,caller,false)) {
+      return true;
+    }
+ else {
+      ipAddress.setOneToOneNat(false);
+      ipAddress.setAssociatedWithVmId(null);
+      _ipAddressDao.update(ipAddress.getId(),ipAddress);
+      s_logger.warn("Failed to enable static nat rule for ip address " + ipId + " on the backend");
+      return false;
+    }
+  }
+ else {
+    s_logger.warn("Failed to update ip address " + ipAddress + " in the DB as a part of enableStaticNat");
+    return false;
+  }
+}

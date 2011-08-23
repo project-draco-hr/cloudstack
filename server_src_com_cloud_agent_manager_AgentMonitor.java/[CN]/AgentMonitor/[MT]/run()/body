@@ -7,30 +7,12 @@
  catch (    InterruptedException e) {
       s_logger.info("Who woke me from my slumber?");
     }
-    GlobalLock lock=GlobalLock.getInternLock("AgentMonitorLock");
-    if (lock == null) {
-      s_logger.error("Unable to acquire lock.  Better luck next time?");
-      continue;
-    }
-    if (!lock.lock(10)) {
-      s_logger.info("Someone else is already working on the agents.  Skipping my turn");
-      continue;
-    }
     try {
-      long time=(System.currentTimeMillis() >> 10) - _pingTimeout;
-      List<HostVO> hosts=_hostDao.findLostHosts(time);
-      if (s_logger.isInfoEnabled()) {
-        s_logger.info("Found " + hosts.size() + " hosts behind on ping. pingTimeout : "+ _pingTimeout+ ", mark time : "+ time);
+      List<Long> behindAgents=findAgentsBehindOnPing();
+      for (      Long agentId : behindAgents) {
+        _agentMgr.disconnect(agentId,Event.PingTimeout,true);
       }
-      for (      HostVO host : hosts) {
-        if (host.getManagementServerId() == null || host.getManagementServerId() == _msId) {
-          if (s_logger.isInfoEnabled()) {
-            s_logger.info("Asking agent mgr to investgate why host " + host.getId() + " is behind on ping. last ping time: "+ host.getLastPinged());
-          }
-          _agentMgr.disconnect(host.getId(),Event.PingTimeout,true);
-        }
-      }
-      hosts=_hostDao.listByStatus(Status.PrepareForMaintenance,Status.ErrorInMaintenance);
+      List<HostVO> hosts=_hostDao.listByStatus(Status.PrepareForMaintenance,Status.ErrorInMaintenance);
       for (      HostVO host : hosts) {
         long hostId=host.getId();
         DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
@@ -48,9 +30,6 @@
     }
  catch (    Throwable th) {
       s_logger.error("Caught the following exception: ",th);
-    }
- finally {
-      lock.unlock();
     }
   }
   s_logger.info("Agent Monitor is leaving the building!");

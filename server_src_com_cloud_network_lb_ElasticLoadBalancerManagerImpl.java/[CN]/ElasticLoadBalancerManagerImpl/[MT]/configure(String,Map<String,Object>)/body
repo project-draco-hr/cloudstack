@@ -1,0 +1,39 @@
+{
+  _name=name;
+  final Map<String,String> configs=_configDao.getConfiguration("AgentManager",params);
+  _systemAcct=_accountService.getSystemAccount();
+  _instance=configs.get("instance.name");
+  if (_instance == null) {
+    _instance="VM";
+  }
+  _mgmtCidr=_configDao.getValue(Config.ManagementNetwork.key());
+  _mgmtHost=_configDao.getValue(Config.ManagementHostIPAdr.key());
+  boolean useLocalStorage=Boolean.parseBoolean(configs.get(Config.SystemVMUseLocalStorage.key()));
+  _elasticLbVmRamSize=NumbersUtil.parseInt(configs.get(Config.ElasticLoadBalancerVmMemory.key()),DEFAULT_ELB_VM_RAMSIZE);
+  _elasticLbvmCpuMHz=NumbersUtil.parseInt(configs.get(Config.ElasticLoadBalancerVmCpuMhz.key()),DEFAULT_ELB_VM_CPU_MHZ);
+  _elasticLbvmNumCpu=NumbersUtil.parseInt(configs.get(Config.ElasticLoadBalancerVmNumVcpu.key()),1);
+  _elasticLbVmOffering=new ServiceOfferingVO("System Offering For Elastic LB VM",_elasticLbvmNumCpu,_elasticLbVmRamSize,_elasticLbvmCpuMHz,0,0,true,null,useLocalStorage,true,null,true,VirtualMachine.Type.ElasticLoadBalancerVm,true);
+  _elasticLbVmOffering.setUniqueName("Cloud.Com-ElasticLBVm");
+  _elasticLbVmOffering=_serviceOfferingDao.persistSystemServiceOffering(_elasticLbVmOffering);
+  String enabled=_configDao.getValue(Config.ElasticLoadBalancerEnabled.key());
+  _enabled=(enabled == null) ? false : Boolean.parseBoolean(enabled);
+  s_logger.info("Elastic Load balancer enabled: " + _enabled);
+  if (_enabled) {
+    String traffType=_configDao.getValue(Config.ElasticLoadBalancerNetwork.key());
+    if ("guest".equalsIgnoreCase(traffType)) {
+      _frontendTrafficType=TrafficType.Guest;
+    }
+ else     if ("public".equalsIgnoreCase(traffType)) {
+      _frontendTrafficType=TrafficType.Public;
+    }
+ else     throw new ConfigurationException("ELB: Traffic type for front end of load balancer has to be guest or public; found : " + traffType);
+    s_logger.info("ELB: Elastic Load Balancer: will balance on " + traffType);
+    int gcIntervalMinutes=NumbersUtil.parseInt(configs.get(Config.ElasticLoadBalancerVmGcInterval.key()),5);
+    if (gcIntervalMinutes < 5)     gcIntervalMinutes=5;
+    s_logger.info("ELB: Elastic Load Balancer: scheduling GC to run every " + gcIntervalMinutes + " minutes");
+    _gcThreadPool=Executors.newScheduledThreadPool(1,new NamedThreadFactory("ELBVM-GC"));
+    _gcThreadPool.scheduleAtFixedRate(new CleanupThread(),gcIntervalMinutes,gcIntervalMinutes,TimeUnit.MINUTES);
+    _itMgr.registerGuru(VirtualMachine.Type.ElasticLoadBalancerVm,this);
+  }
+  return true;
+}
