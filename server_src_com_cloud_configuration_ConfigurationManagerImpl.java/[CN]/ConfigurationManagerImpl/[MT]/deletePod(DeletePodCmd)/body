@@ -1,15 +1,18 @@
 {
   Long podId=cmd.getId();
+  Transaction txn=Transaction.currentTxn();
   if (!validPod(podId)) {
     throw new InvalidParameterValueException("A pod with ID: " + podId + " does not exist.");
   }
   checkIfPodIsDeletable(podId);
   HostPodVO pod=_podDao.findById(podId);
+  txn.start();
   List<DataCenterIpAddressVO> privateIps=_privateIpAddressDao.listByPodIdDcId(Long.valueOf(podId),pod.getDataCenterId());
-  if (privateIps != null && privateIps.size() != 0) {
+  if (!privateIps.isEmpty()) {
     if (!(_privateIpAddressDao.deleteIpAddressByPod(podId))) {
       throw new CloudRuntimeException("Failed to cleanup private ip addresses for pod " + podId);
     }
+    _capacityDao.removeBy(Capacity.CAPACITY_TYPE_PRIVATE_IP,null,podId,null);
   }
   List<DataCenterLinkLocalIpAddressVO> localIps=_LinkLocalIpAllocDao.listByPodIdDcId(podId,pod.getDataCenterId());
   if (!localIps.isEmpty()) {
@@ -26,5 +29,6 @@
   if (!(_podDao.remove(podId))) {
     throw new CloudRuntimeException("Failed to delete pod " + podId);
   }
+  txn.commit();
   return true;
 }
