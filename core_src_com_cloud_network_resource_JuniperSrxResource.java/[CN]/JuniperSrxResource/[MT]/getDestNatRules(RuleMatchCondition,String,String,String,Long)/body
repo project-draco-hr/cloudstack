@@ -1,0 +1,86 @@
+{
+  List<String[]> destNatRules=new ArrayList<String[]>();
+  String xmlRequest=SrxXml.DEST_NAT_RULE_GETALL.getXml();
+  xmlRequest=replaceXmlValue(xmlRequest,"rule-set",_publicZone);
+  String xmlResponse=sendRequest(xmlRequest);
+  Document doc=getDocument(xmlResponse);
+  NodeList rules=doc.getElementsByTagName("rule");
+  for (int ruleIndex=0; ruleIndex < rules.getLength(); ruleIndex++) {
+    String rulePublicIp=null;
+    String rulePrivateIp=null;
+    String ruleSrcPort=null;
+    String ruleDestPort=null;
+    NodeList ruleEntries=rules.item(ruleIndex).getChildNodes();
+    for (int ruleEntryIndex=0; ruleEntryIndex < ruleEntries.getLength(); ruleEntryIndex++) {
+      Node ruleEntry=ruleEntries.item(ruleEntryIndex);
+      if (ruleEntry.getNodeName().equals("dest-nat-rule-match")) {
+        NodeList ruleMatchEntries=ruleEntry.getChildNodes();
+        for (int ruleMatchIndex=0; ruleMatchIndex < ruleMatchEntries.getLength(); ruleMatchIndex++) {
+          Node ruleMatchEntry=ruleMatchEntries.item(ruleMatchIndex);
+          if (ruleMatchEntry.getNodeName().equals("destination-address")) {
+            NodeList destAddressEntries=ruleMatchEntry.getChildNodes();
+            for (int destAddressIndex=0; destAddressIndex < destAddressEntries.getLength(); destAddressIndex++) {
+              Node destAddressEntry=destAddressEntries.item(destAddressIndex);
+              if (destAddressEntry.getNodeName().equals("dst-addr")) {
+                rulePublicIp=destAddressEntry.getFirstChild().getNodeValue().split("/")[0];
+              }
+            }
+          }
+ else           if (ruleMatchEntry.getNodeName().equals("destination-port")) {
+            NodeList destPortEntries=ruleMatchEntry.getChildNodes();
+            for (int destPortIndex=0; destPortIndex < destPortEntries.getLength(); destPortIndex++) {
+              Node destPortEntry=destPortEntries.item(destPortIndex);
+              if (destPortEntry.getNodeName().equals("dst-port")) {
+                ruleSrcPort=destPortEntry.getFirstChild().getNodeValue();
+              }
+            }
+          }
+        }
+      }
+ else       if (ruleEntry.getNodeName().equals("then")) {
+        NodeList ruleThenEntries=ruleEntry.getChildNodes();
+        for (int ruleThenIndex=0; ruleThenIndex < ruleThenEntries.getLength(); ruleThenIndex++) {
+          Node ruleThenEntry=ruleThenEntries.item(ruleThenIndex);
+          if (ruleThenEntry.getNodeName().equals("destination-nat")) {
+            NodeList destNatEntries=ruleThenEntry.getChildNodes();
+            for (int destNatIndex=0; destNatIndex < destNatEntries.getLength(); destNatIndex++) {
+              Node destNatEntry=destNatEntries.item(destNatIndex);
+              if (destNatEntry.getNodeName().equals("pool")) {
+                NodeList poolEntries=destNatEntry.getChildNodes();
+                for (int poolIndex=0; poolIndex < poolEntries.getLength(); poolIndex++) {
+                  Node poolEntry=poolEntries.item(poolIndex);
+                  if (poolEntry.getNodeName().equals("pool-name")) {
+                    String[] poolName=poolEntry.getFirstChild().getNodeValue().split("-");
+                    if (poolName.length == 5) {
+                      rulePrivateIp=poolName[0] + "." + poolName[1]+ "."+ poolName[2]+ "."+ poolName[3];
+                      ruleDestPort=poolName[4];
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (rulePublicIp == null || rulePrivateIp == null || ruleSrcPort == null || ruleDestPort == null) {
+      continue;
+    }
+    boolean addToList=false;
+    if (condition.equals(RuleMatchCondition.ALL)) {
+      addToList=true;
+    }
+ else     if (condition.equals(RuleMatchCondition.PUBLIC_PRIVATE_IPS)) {
+      assert(publicIp != null && privateIp != null);
+      addToList=publicIp.equals(rulePublicIp) && privateIp.equals(rulePrivateIp);
+    }
+ else     if (condition.equals(RuleMatchCondition.PRIVATE_SUBNET)) {
+      assert(privateGateway != null && privateCidrSize != null);
+      addToList=NetUtils.sameSubnetCIDR(rulePrivateIp,privateGateway,privateCidrSize);
+    }
+    if (addToList) {
+      destNatRules.add(new String[]{rulePublicIp,rulePrivateIp,ruleSrcPort,ruleDestPort});
+    }
+  }
+  return destNatRules;
+}

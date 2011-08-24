@@ -1,0 +1,33 @@
+{
+  long accountId=Long.parseLong(cmd.getAccessDetail(NetworkElementCommand.ACCOUNT_ID));
+  String guestNetworkCidr=cmd.getAccessDetail(NetworkElementCommand.GUEST_NETWORK_CIDR);
+  String ikePolicyName=genIkePolicyName(accountId);
+  UsernamePassword[] users=cmd.getUserpwds();
+  try {
+    openConfiguration();
+    for (    UsernamePassword user : users) {
+      SrxCommand srxCmd=user.isAdd() ? SrxCommand.ADD : SrxCommand.DELETE;
+      String ipsecVpnName=genIpsecVpnName(accountId,user.getUsername());
+      manageIkeGateway(srxCmd,null,accountId,ikePolicyName,_ikeGatewayHostname,user.getUsername());
+      manageIpsecVpn(srxCmd,null,accountId,guestNetworkCidr,user.getUsername(),_ipsecPolicyName);
+      manageDynamicVpnClient(srxCmd,null,accountId,guestNetworkCidr,ipsecVpnName,user.getUsername());
+      manageAccessProfile(srxCmd,null,accountId,user.getUsername(),user.getPassword(),genAddressPoolName(accountId));
+      manageAddressBookEntry(srxCmd,_privateZone,guestNetworkCidr,ipsecVpnName);
+      manageSecurityPolicy(SecurityPolicyType.VPN,srxCmd,null,null,guestNetworkCidr,null,ipsecVpnName);
+    }
+    commitConfiguration();
+    return new Answer(cmd);
+  }
+ catch (  ExecutionException e) {
+    s_logger.error(e);
+    closeConfiguration();
+    if (numRetries > 0 && refreshSrxConnection()) {
+      int numRetriesRemaining=numRetries - 1;
+      s_logger.debug("Retrying RemoteAccessVpnCfgCommand. Number of retries remaining: " + numRetriesRemaining);
+      return execute(cmd,numRetriesRemaining);
+    }
+ else {
+      return new Answer(cmd,e);
+    }
+  }
+}

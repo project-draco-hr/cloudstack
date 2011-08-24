@@ -1,0 +1,37 @@
+{
+  com.trilead.ssh2.Connection sshConnection=new com.trilead.ssh2.Connection(_ip,22);
+  sshConnection.connect(null,60000,60000);
+  if (!sshConnection.authenticateWithPassword(_username,_password)) {
+    throw new CloudRuntimeException("Unable to authenticate");
+  }
+  SCPClient scp=new SCPClient(sshConnection);
+  String configScriptName="scripts/vm/hypervisor/ovm/configureOvm.sh";
+  String configScriptPath=Script.findScript("",configScriptName);
+  if (configScriptPath == null) {
+    throw new CloudRuntimeException("Unable to find " + configScriptName);
+  }
+  scp.put(configScriptPath,"/usr/bin/","0755");
+  if (!SSHCmdHelper.sshExecuteCmd(sshConnection,"sh /usr/bin/configureOvm.sh preSetup")) {
+    throw new CloudRuntimeException("Execute configureOvm.sh preSetup failed on " + _ip);
+  }
+  File tmp=new File(configScriptPath);
+  File scriptDir=new File(tmp.getParent());
+  File[] scripts=scriptDir.listFiles();
+  for (int i=0; i < scripts.length; i++) {
+    File script=scripts[i];
+    if (script.getName().equals("configureOvm.sh")) {
+      continue;
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Copying " + script.getPath() + " to "+ _ovsAgentPath+ " on "+ _ip+ " with permission 0644");
+    }
+    scp.put(script.getPath(),_ovsAgentPath,"0644");
+  }
+  sshConnection=SSHCmdHelper.acquireAuthorizedConnection(_ip,_username,_password);
+  if (sshConnection == null) {
+    throw new CloudRuntimeException(String.format("Cannot connect to ovm host(IP=%1$s, username=%2$s, password=%3$s",_ip,_username,_password));
+  }
+  if (!SSHCmdHelper.sshExecuteCmd(sshConnection,"sh /usr/bin/configureOvm.sh postSetup")) {
+    throw new CloudRuntimeException("Execute configureOvm.sh postSetup failed on " + _ip);
+  }
+}

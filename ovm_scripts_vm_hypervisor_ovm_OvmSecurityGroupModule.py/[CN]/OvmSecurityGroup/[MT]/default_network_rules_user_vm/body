@@ -1,0 +1,37 @@
+@staticmethod
+def default_network_rules_user_vm(vm_name, vm_id, vm_ip, vm_mac, vif, bridge_name):
+    if (not OvmSecurityGroup.add_fw_framework(bridge_name)):
+        return False
+    OvmSecurityGroup.delete_iptables_rules_for_vm(vm_name)
+    OvmSecurityGroup.delete_ebtables_rules_for_vm(vm_name)
+    bridge_firewall_chain = ('BF-' + bridge_name)
+    vm_chain = vm_name
+    default_vm_chain = ('-'.join(vm_chain.split('-')[:(-1)]) + '-def')
+    dom_id = getDomId(vm_name)
+    try:
+        execute(('iptables -N ' + vm_chain))
+    except:
+        execute(('iptables -F ' + vm_chain))
+    try:
+        execute(('iptables -N ' + default_vm_chain))
+    except:
+        execute(('iptables -F ' + default_vm_chain))
+    try:
+        execute((((((('iptables -A ' + bridge_firewall_chain) + '-OUT') + ' -m physdev --physdev-is-bridged --physdev-out ') + vif) + ' -j ') + default_vm_chain))
+        execute((((((('iptables -A ' + bridge_firewall_chain) + '-IN') + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -j ') + default_vm_chain))
+        execute((('iptables -A  ' + default_vm_chain) + ' -m state --state RELATED,ESTABLISHED -j ACCEPT'))
+        execute((((('iptables -A ' + default_vm_chain) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -p udp --dport 67 --sport 68 -j ACCEPT'))
+        execute((((('iptables -A ' + default_vm_chain) + ' -m physdev --physdev-is-bridged --physdev-out ') + vif) + ' -p udp --dport 68 --sport 67  -j ACCEPT'))
+        if (vm_ip is not None):
+            execute((((((('iptables -A ' + default_vm_chain) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' --source ') + vm_ip) + ' -j ACCEPT'))
+        execute(((('iptables -A ' + default_vm_chain) + ' -j ') + vm_chain))
+        execute((('iptables -A ' + vm_chain) + ' -j DROP'))
+    except:
+        logging.debug(('Failed to program default rules for vm ' + vm_name))
+        return False
+    OvmSecurityGroup.default_ebtables_rules(vm_chain, vm_ip, vm_mac, vif)
+    if (vm_ip is not None):
+        if (OvmSecurityGroup.write_rule_log_for_vm(vm_name, vm_id, vm_ip, dom_id, '_initial_', '-1') == False):
+            logging.debug('Failed to log default network rules, ignoring')
+    logging.debug(('Programmed default rules for vm ' + vm_name))
+    return True

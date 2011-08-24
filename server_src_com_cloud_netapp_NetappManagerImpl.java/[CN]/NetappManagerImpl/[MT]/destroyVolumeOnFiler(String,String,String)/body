@@ -1,0 +1,66 @@
+{
+  NaElement xi0;
+  NaElement xi1;
+  NetappVolumeVO volume=null;
+  volume=_volumeDao.findVolume(ipAddress,aggrName,volName);
+  if (volume == null) {
+    s_logger.warn("The volume does not exist in our system");
+    throw new InvalidParameterValueException("The given tuple:" + ipAddress + ","+ aggrName+ ","+ volName+ " doesn't exist in our system");
+  }
+  List<LunVO> lunsOnVol=_lunDao.listLunsByVolId(volume.getId());
+  if (lunsOnVol != null && lunsOnVol.size() > 0) {
+    s_logger.warn("There are luns on the volume");
+    throw new ResourceInUseException("There are luns on the volume");
+  }
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  PoolVO pool=_poolDao.findById(volume.getPoolId());
+  if (pool == null) {
+    throw new InvalidParameterValueException("Failed to find pool for given volume");
+  }
+  pool=_poolDao.acquireInLockTable(pool.getId());
+  if (pool == null) {
+    throw new ConcurrentModificationException("Failed to acquire lock on pool " + volume.getPoolId());
+  }
+  NaServer s=null;
+  try {
+    s=getServer(volume.getIpAddress(),volume.getUsername(),volume.getPassword());
+    xi0=new NaElement("volume-offline");
+    xi0.addNewChild("name",volName);
+    s.invokeElem(xi0);
+    xi1=new NaElement("volume-destroy");
+    xi1.addNewChild("name",volName);
+    s.invokeElem(xi1);
+    _volumeDao.remove(volume.getId());
+    txn.commit();
+  }
+ catch (  UnknownHostException uhe) {
+    s_logger.warn("Unable to delete volume on filer ",uhe);
+    throw new ServerException("Unable to delete volume on filer",uhe);
+  }
+catch (  NaAPIFailedException naf) {
+    s_logger.warn("Unable to delete volume on filer ",naf);
+    if (naf.getErrno() == 13040) {
+      s_logger.info("Deleting the volume: " + volName);
+      _volumeDao.remove(volume.getId());
+      txn.commit();
+    }
+    throw new ServerException("Unable to delete volume on filer",naf);
+  }
+catch (  NaException nae) {
+    txn.rollback();
+    s_logger.warn("Unable to delete volume on filer ",nae);
+    throw new ServerException("Unable to delete volume on filer",nae);
+  }
+catch (  IOException ioe) {
+    txn.rollback();
+    s_logger.warn("Unable to delete volume on filer ",ioe);
+    throw new ServerException("Unable to delete volume on filer",ioe);
+  }
+ finally {
+    if (pool != null) {
+      _poolDao.releaseFromLockTable(pool.getId());
+    }
+    if (s != null)     s.close();
+  }
+}

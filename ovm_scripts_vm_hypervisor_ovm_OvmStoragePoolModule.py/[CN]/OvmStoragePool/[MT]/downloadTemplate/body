@@ -1,0 +1,59 @@
+@staticmethod
+def downloadTemplate(uuid, secPath):
+    secMountPoint = None
+    try:
+        logger.debug(OvmStoragePool.downloadTemplate, ('download %s to pool %s' % (secPath, uuid)))
+        try:
+            tmpUuid = get_uuid()
+            secMountPoint = join('/var/cloud/', tmpUuid)
+            if (not exists(secMountPoint)):
+                os.makedirs(secMountPoint)
+            templateFile = None
+            if secPath.endswith('raw'):
+                secPathDir = os.path.dirname(secPath)
+                templateFile = os.path.basename(secPath)
+            else:
+                secPathDir = secPath
+            mountCmd = ['mount.nfs', secPathDir, secMountPoint, '-r']
+            doCmd(mountCmd)
+            if (not templateFile):
+                for f in os.listdir(secMountPoint):
+                    if (isfile(join(secMountPoint, f)) and f.endswith('raw')):
+                        templateFile = f
+                        break
+            if (not templateFile):
+                raise Exception('Can not find raw template in secondary storage')
+            templateSecPath = join(secMountPoint, templateFile)
+            sr = OvmStoragePool()._getSrByNameLable(uuid)
+            priStorageMountPoint = sr.mountpoint
+            OvmStoragePool()._checkDirSizeForImage(priStorageMountPoint, templateSecPath)
+            seedDir = join(priStorageMountPoint, 'seed_pool', tmpUuid)
+            if exists(seedDir):
+                raise Exception(('%s already here, cannot override existing template' % seedDir))
+            os.makedirs(seedDir)
+            tgt = join(seedDir, templateFile)
+            cpTemplateCmd = ['cp', templateSecPath, tgt]
+            logger.info(OvmStoragePool.downloadTemplate, ' '.join(cpTemplateCmd))
+            doCmd(cpTemplateCmd)
+            templateSize = os.path.getsize(tgt)
+            logger.info(OvmStoragePool.downloadTemplate, ('primary_storage_download success:installPath:%s, templateSize:%s' % (tgt, templateSize)))
+            rs = toGson({'installPath': tgt, 'templateSize': templateSize, })
+            return rs
+        except Exception as e:
+            errmsg = fmt_err_msg(e)
+            logger.error(OvmStoragePool.downloadTemplate, errmsg)
+            raise XmlRpcFault(toErrCode(OvmStoragePool, OvmStoragePool.downloadTemplate), errmsg)
+    finally:
+        if exists(secMountPoint):
+            try:
+                umountCmd = ['umount', '-f', secMountPoint]
+                doCmd(umountCmd)
+                ls = os.listdir(secMountPoint)
+                if (len(ls) == 0):
+                    rmDirCmd = ['rm', '-r', secMountPoint]
+                    doCmd(rmDirCmd)
+                else:
+                    logger.warning(OvmStoragePool.downloadTemplate, 'Something wrong when umount %s, there are still files in directory:%s', secMountPoint, ' '.join(ls))
+            except Exception as e:
+                errmsg = fmt_err_msg(e)
+                logger.error(OvmStoragePool.downloadTemplate, ('unmount secondary storage at %s failed, %s' % (secMountPoint, errmsg)))

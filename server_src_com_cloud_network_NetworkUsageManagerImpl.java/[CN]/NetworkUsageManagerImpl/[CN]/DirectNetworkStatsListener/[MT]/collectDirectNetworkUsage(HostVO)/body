@@ -1,0 +1,136 @@
+{
+  s_logger.debug("Direct Network Usage stats collector is running...");
+  long zoneId=host.getDataCenterId();
+  DetailVO lastCollectDetail=_detailsDao.findDetail(host.getId(),"last_collection");
+  if (lastCollectDetail == null) {
+    s_logger.warn("Last collection time not available. Skipping direct usage collection for Traffic Monitor: " + host.getId());
+    return false;
+  }
+  Date lastCollection=new Date(new Long(lastCollectDetail.getValue()));
+  List<IPAddressVO> allocatedIps=listAllocatedDirectIps(zoneId);
+  Calendar rightNow=Calendar.getInstance();
+  rightNow.add(Calendar.HOUR_OF_DAY,-2);
+  Date now=rightNow.getTime();
+  if (lastCollection.after(now)) {
+    s_logger.debug("Current time is less than 2 hours after last collection time : " + lastCollection.toString() + ". Skipping direct network usage collection");
+    return false;
+  }
+  List<UsageEventVO> IpEvents=_eventDao.listDirectIpEvents(lastCollection,now,zoneId);
+  Map<String,Date> ipAssigment=new HashMap<String,Date>();
+  List<UsageIPAddressVO> IpPartialUsage=new ArrayList<UsageIPAddressVO>();
+  List<UsageIPAddressVO> fullDurationIpUsage=new ArrayList<UsageIPAddressVO>();
+  for (  UsageEventVO IpEvent : IpEvents) {
+    String address=IpEvent.getResourceName();
+    if (EventTypes.EVENT_NET_IP_ASSIGN.equals(IpEvent.getType())) {
+      ipAssigment.put(address,IpEvent.getCreateDate());
+    }
+ else     if (EventTypes.EVENT_NET_IP_RELEASE.equals(IpEvent.getType())) {
+      if (ipAssigment.containsKey(address)) {
+        Date assigned=ipAssigment.get(address);
+        ipAssigment.remove(address);
+        IpPartialUsage.add(new UsageIPAddressVO(IpEvent.getAccountId(),address,assigned,IpEvent.getCreateDate()));
+      }
+ else {
+        IpPartialUsage.add(new UsageIPAddressVO(IpEvent.getAccountId(),address,lastCollection,IpEvent.getCreateDate()));
+      }
+    }
+  }
+  List<String> IpList=new ArrayList<String>();
+  for (  IPAddressVO ip : allocatedIps) {
+    if (ip.getAccountId() == AccountVO.ACCOUNT_ID_SYSTEM) {
+      continue;
+    }
+    String address=(ip.getAddress()).toString();
+    if (ipAssigment.containsKey(address)) {
+      IpPartialUsage.add(new UsageIPAddressVO(ip.getAccountId(),address,ipAssigment.get(address),now));
+    }
+ else {
+      fullDurationIpUsage.add(new UsageIPAddressVO(ip.getAccountId(),address,lastCollection,now));
+      IpList.add(address);
+    }
+  }
+  List<UserStatisticsVO> collectedStats=new ArrayList<UserStatisticsVO>();
+  if (fullDurationIpUsage.size() > 0) {
+    DirectNetworkUsageCommand cmd=new DirectNetworkUsageCommand(IpList,lastCollection,now);
+    DirectNetworkUsageAnswer answer=(DirectNetworkUsageAnswer)_agentMgr.easySend(host.getId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      String details=(answer != null) ? answer.getDetails() : "details unavailable";
+      String msg="Unable to get network usage stats from " + host.getId() + " due to: "+ details+ ".";
+      s_logger.error(msg);
+    }
+ else {
+      for (      UsageIPAddressVO usageIp : fullDurationIpUsage) {
+        String publicIp=usageIp.getAddress();
+        long[] bytesSentRcvd=answer.get(publicIp);
+        Long bytesSent=bytesSentRcvd[0];
+        Long bytesRcvd=bytesSentRcvd[1];
+        if (bytesSent == null || bytesRcvd == null) {
+          s_logger.debug("Incorrect bytes for IP: " + publicIp);
+          continue;
+        }
+        if (bytesSent == 0L && bytesRcvd == 0L) {
+          s_logger.trace("Ignore zero bytes for IP: " + publicIp);
+          continue;
+        }
+        UserStatisticsVO stats=new UserStatisticsVO(usageIp.getAccountId(),zoneId,null,null,null,null);
+        stats.setCurrentBytesSent(bytesSent);
+        stats.setCurrentBytesReceived(bytesRcvd);
+        collectedStats.add(stats);
+      }
+    }
+  }
+  for (  UsageIPAddressVO usageIp : IpPartialUsage) {
+    IpList=new ArrayList<String>();
+    IpList.add(usageIp.getAddress());
+    DirectNetworkUsageCommand cmd=new DirectNetworkUsageCommand(IpList,usageIp.getAssigned(),usageIp.getReleased());
+    DirectNetworkUsageAnswer answer=(DirectNetworkUsageAnswer)_agentMgr.easySend(host.getId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      String details=(answer != null) ? answer.getDetails() : "details unavailable";
+      String msg="Unable to get network usage stats from " + host.getId() + " due to: "+ details+ ".";
+      s_logger.error(msg);
+    }
+ else {
+      String publicIp=usageIp.getAddress();
+      long[] bytesSentRcvd=answer.get(publicIp);
+      Long bytesSent=bytesSentRcvd[0];
+      Long bytesRcvd=bytesSentRcvd[1];
+      if (bytesSent == null || bytesRcvd == null) {
+        s_logger.debug("Incorrect bytes for IP: " + publicIp);
+        continue;
+      }
+      if (bytesSent == 0L && bytesRcvd == 0L) {
+        s_logger.trace("Ignore zero bytes for IP: " + publicIp);
+        continue;
+      }
+      UserStatisticsVO stats=new UserStatisticsVO(usageIp.getAccountId(),zoneId,null,null,null,null);
+      stats.setCurrentBytesSent(bytesSent);
+      stats.setCurrentBytesReceived(bytesRcvd);
+      collectedStats.add(stats);
+    }
+  }
+  Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+  try {
+    txn.start();
+    for (    UserStatisticsVO stat : collectedStats) {
+      UserStatisticsVO stats=_statsDao.lock(stat.getAccountId(),stat.getDataCenterId(),0L,null,host.getId(),"DirectNetwork");
+      if (stats == null) {
+        stats=new UserStatisticsVO(stat.getAccountId(),zoneId,null,host.getId(),"DirectNetwork",0L);
+        stats.setCurrentBytesSent(stat.getCurrentBytesSent());
+        stats.setCurrentBytesReceived(stat.getCurrentBytesReceived());
+        _statsDao.persist(stats);
+      }
+ else {
+        stats.setCurrentBytesSent(stats.getCurrentBytesSent() + stat.getCurrentBytesSent());
+        stats.setCurrentBytesReceived(stats.getCurrentBytesReceived() + stat.getCurrentBytesReceived());
+        _statsDao.update(stats.getId(),stats);
+      }
+    }
+    lastCollectDetail.setValue("" + now.getTime());
+    _detailsDao.update(lastCollectDetail.getId(),lastCollectDetail);
+    txn.commit();
+  }
+  finally {
+    txn.close();
+  }
+  return true;
+}

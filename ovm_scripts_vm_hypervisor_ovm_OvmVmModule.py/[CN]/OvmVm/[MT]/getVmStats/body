@@ -1,0 +1,55 @@
+@staticmethod
+def getVmStats(vmName):
+
+    def getVcpuNumAndUtils():
+        try:
+            session = session_login()
+            refs = session.xenapi.VM.get_by_name_label(vmName)
+            if (len(refs) == 0):
+                raise Exception(('No ref for %s found in xenapi VM objects' % vmName))
+            vm = XenAPIObject('VM', session, refs[0])
+            VM_metrics = XenAPIObject('VM_metrics', session, vm.get_metrics())
+            items = VM_metrics.get_VCPUs_utilisation().items()
+            nvCpus = len(items)
+            if (nvCpus == 0):
+                raise Exception(('vm %s has 0 vcpus !!!' % vmName))
+            xmInfo = successToMap(xen_get_xm_info())
+            nCpus = int(xmInfo['nr_cpus'])
+            totalUtils = 0.0
+            for (num, util) in items:
+                totalUtils += float(util)
+            avgUtils = (float((totalUtils / nCpus)) * 100)
+            return (nvCpus, avgUtils)
+        finally:
+            session_logout()
+    try:
+        try:
+            OvmHost()._getDomainIdByName(vmName)
+            vmPath = OvmHost()._vmNameToPath(vmName)
+            (nvcpus, avgUtils) = getVcpuNumAndUtils()
+            vifs = successToMap(xen_get_vifs(vmPath))
+            rxBytes = 0
+            txBytes = 0
+            vifs = OvmVm()._getVifs(vmName)
+            for vif in vifs:
+                rxp = join('/sys/class/net', vif.name, 'statistics/rx_bytes')
+                txp = join('/sys/class/net/', vif.name, 'statistics/tx_bytes')
+                if (not exists(rxp)):
+                    raise Exception(('can not find %s' % rxp))
+                if (not exists(txp)):
+                    raise Exception(('can not find %s' % txp))
+                rxBytes += (long(doCmd(['cat', rxp])) / 1000)
+                txBytes += (long(doCmd(['cat', txp])) / 1000)
+        except NoVmFoundException as e:
+            vmPath = OvmHost()._getVmPathFromPrimaryStorage(vmName)
+            nvcpus = int(successToMap(xen_get_vcpus(vmPath))['vcpus'])
+            avgUtils = 0
+            rxBytes = 0
+            txBytes = 0
+        rs = toGson({'cpuNum': nvcpus, 'cpuUtil': avgUtils, 'rxBytes': rxBytes, 'txBytes': txBytes, })
+        logger.debug(OvmVm.getVmStats, rs)
+        return rs
+    except Exception as e:
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmVm.getVmStats, errmsg)
+        raise XmlRpcFault(toErrCode(OvmVm, OvmVm.getVmStats), errmsg)

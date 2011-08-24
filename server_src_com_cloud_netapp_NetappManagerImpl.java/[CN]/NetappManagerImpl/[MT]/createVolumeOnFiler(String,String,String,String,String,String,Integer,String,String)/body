@@ -1,0 +1,126 @@
+{
+  if (s_logger.isDebugEnabled())   s_logger.debug("Request --> createVolume " + "serverIp:" + ipAddress);
+  boolean snapPolicy=false;
+  boolean snapshotRes=false;
+  boolean volumeCreated=false;
+  NaServer s=getServer(ipAddress,username,password);
+  NaElement xi=new NaElement("volume-create");
+  xi.addNewChild("volume",volName);
+  xi.addNewChild("containing-aggr-name",aggName);
+  xi.addNewChild("size",volSize);
+  NaElement xi1=new NaElement("snapshot-set-reserve");
+  if (snapshotReservation != null) {
+    snapshotRes=true;
+    xi1.addNewChild("percentage",snapshotReservation.toString());
+    xi1.addNewChild("volume",volName);
+  }
+  NaElement xi2=new NaElement("snapshot-set-schedule");
+  if (snapshotPolicy != null) {
+    snapPolicy=true;
+    String weeks=null;
+    String days=null;
+    String hours=null;
+    String whichHours=null;
+    String minutes=null;
+    String whichMinutes=null;
+    StringTokenizer s1=new StringTokenizer(snapshotPolicy," ");
+    if (s1.hasMoreTokens()) {
+      weeks=s1.nextToken();
+    }
+    if (weeks != null && s1.hasMoreTokens()) {
+      days=s1.nextToken();
+    }
+    if (days != null && s1.hasMoreTokens()) {
+      String[] hoursArr=s1.nextToken().split("@");
+      hours=hoursArr[0];
+      whichHours=hoursArr[1];
+    }
+    if (hours != null && s1.hasMoreTokens()) {
+      String[] minsArr=s1.nextToken().split("@");
+      minutes=minsArr[0];
+      whichMinutes=minsArr[1];
+    }
+    if (weeks != null)     xi2.addNewChild("weeks",weeks);
+    if (days != null)     xi2.addNewChild("days",days);
+    if (hours != null)     xi2.addNewChild("hours",hours);
+    if (minutes != null)     xi2.addNewChild("minutes",minutes);
+    xi2.addNewChild("volume",volName);
+    if (whichHours != null)     xi2.addNewChild("which-hours",whichHours);
+    if (whichMinutes != null)     xi2.addNewChild("which-minutes",whichMinutes);
+  }
+  Long volumeId=null;
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  NetappVolumeVO volume=null;
+  volume=_volumeDao.findVolume(ipAddress,aggName,volName);
+  if (volume != null) {
+    throw new InvalidParameterValueException("The volume for the given ipAddress/aggregateName/volumeName tuple already exists");
+  }
+  PoolVO pool=_poolDao.findPool(poolName);
+  if (pool == null) {
+    throw new InvalidParameterValueException("Cannot find pool " + poolName);
+  }
+  pool=_poolDao.acquireInLockTable(pool.getId());
+  if (pool == null) {
+    s_logger.warn("Failed to acquire lock on pool " + poolName);
+    throw new ConcurrentModificationException("Failed to acquire lock on pool " + poolName);
+  }
+  volume=new NetappVolumeVO(ipAddress,aggName,pool.getId(),volName,volSize,"",0,username,password,0,pool.getName());
+  volume=_volumeDao.persist(volume);
+  volumeId=volume.getId();
+  try {
+    s.invokeElem(xi);
+    volumeCreated=true;
+    if (snapshotRes) {
+      s.invokeElem(xi1);
+      volume.setSnapshotReservation(snapshotReservation);
+      _volumeDao.update(volumeId,volume);
+    }
+    if (snapPolicy) {
+      s.invokeElem(xi2);
+      volume.setSnapshotPolicy(snapshotPolicy);
+      _volumeDao.update(volumeId,volume);
+    }
+    txn.commit();
+  }
+ catch (  NaException nae) {
+    s_logger.warn("Failed to create volume on the netapp filer:",nae);
+    txn.rollback();
+    if (volumeCreated) {
+      try {
+        deleteRogueVolume(volName,s);
+      }
+ catch (      NaException e) {
+        s_logger.warn("Failed to cleanup created volume whilst rolling back on the netapp filer:",e);
+        throw new ServerException("Unable to create volume via cloudtools." + "Failed to cleanup created volume on netapp filer whilst rolling back on the cloud db:",e);
+      }
+catch (      IOException e) {
+        s_logger.warn("Failed to cleanup created volume whilst rolling back on the netapp filer:",e);
+        throw new ServerException("Unable to create volume via cloudtools." + "Failed to cleanup created volume on netapp filer whilst rolling back on the cloud db:",e);
+      }
+    }
+    throw new ServerException("Unable to create volume",nae);
+  }
+catch (  IOException ioe) {
+    s_logger.warn("Failed to create volume on the netapp filer:",ioe);
+    txn.rollback();
+    if (volumeCreated) {
+      try {
+        deleteRogueVolume(volName,s);
+      }
+ catch (      NaException e) {
+        s_logger.warn("Failed to cleanup created volume whilst rolling back on the netapp filer:",e);
+        throw new ServerException("Unable to create volume via cloudtools." + "Failed to cleanup created volume on netapp filer whilst rolling back on the cloud db:",e);
+      }
+catch (      IOException e) {
+        s_logger.warn("Failed to cleanup created volume whilst rolling back on the netapp filer:",e);
+        throw new ServerException("Unable to create volume via cloudtools." + "Failed to cleanup created volume on netapp filer whilst rolling back on the cloud db:",e);
+      }
+    }
+    throw new ServerException("Unable to create volume",ioe);
+  }
+ finally {
+    if (s != null)     s.close();
+    if (pool != null)     _poolDao.releaseFromLockTable(pool.getId());
+  }
+}

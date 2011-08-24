@@ -1,0 +1,123 @@
+{
+  String[] result=new String[3];
+  StringBuilder lunName=new StringBuilder("lun-");
+  LunVO lun=null;
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  PoolVO pool=_poolDao.findPool(poolName);
+  if (pool == null) {
+    throw new InvalidParameterValueException("Cannot find pool " + poolName);
+  }
+  if (lunSize <= 0) {
+    throw new InvalidParameterValueException("Please specify a valid lun size in Gb");
+  }
+  String algorithm=pool.getAlgorithm();
+  NetappVolumeVO selectedVol=null;
+  int numVolsInPool=_volumeDao.listVolumes(poolName).size();
+  if (numVolsInPool == 0) {
+    throw new InvalidParameterValueException("No volumes exist in the given pool");
+  }
+  pool=_poolDao.acquireInLockTable(pool.getId());
+  if (pool == null) {
+    s_logger.warn("Failed to acquire lock on the pool " + poolName);
+    return result;
+  }
+  NaServer s=null;
+  try {
+    if (algorithm == null || algorithm.equals(Algorithm.roundrobin.toString())) {
+      selectedVol=_netappAllocator.chooseVolumeFromPool(poolName,lunSize);
+    }
+ else     if (algorithm.equals(Algorithm.leastfull.toString())) {
+      selectedVol=_netappAllocator.chooseLeastFullVolumeFromPool(poolName,lunSize);
+    }
+    if (selectedVol == null) {
+      throw new ResourceAllocationException("Could not find a suitable volume to create lun on");
+    }
+    if (s_logger.isDebugEnabled())     s_logger.debug("Request --> createLun " + "serverIp:" + selectedVol.getIpAddress());
+    StringBuilder exportPath=new StringBuilder("/vol/");
+    exportPath.append(selectedVol.getVolumeName());
+    exportPath.append("/");
+    lun=new LunVO(exportPath.toString(),selectedVol.getId(),lunSize,"","");
+    lun=_lunDao.persist(lun);
+    String lunIdStr=lun.getId().toString();
+    String zeroStr="000000";
+    int length=lunIdStr.length();
+    int offset=6 - length;
+    StringBuilder lunIdOnPath=new StringBuilder();
+    lunIdOnPath.append(zeroStr.substring(0,offset));
+    lunIdOnPath.append(lunIdStr);
+    exportPath.append("lun-").append(lunIdOnPath.toString());
+    lunName.append(lunIdOnPath.toString());
+    lun.setLunName(lunName.toString());
+    _lunDao.update(lun.getId(),lun);
+    NaElement xi;
+    NaElement xi1;
+    long lSizeBytes=1L * lunSize * 1024* 1024* 1024;
+    Long lunSizeBytes=new Long(lSizeBytes);
+    s=getServer(selectedVol.getIpAddress(),selectedVol.getUsername(),selectedVol.getPassword());
+    xi=new NaElement("lun-create-by-size");
+    xi.addNewChild("ostype","linux");
+    xi.addNewChild("path",exportPath.toString());
+    xi.addNewChild("size",(lunSizeBytes.toString()));
+    s.invokeElem(xi);
+    try {
+      xi1=new NaElement("igroup-create");
+      xi1.addNewChild("initiator-group-name",lunName.toString());
+      xi1.addNewChild("initiator-group-type","iscsi");
+      xi1.addNewChild("os-type","linux");
+      s.invokeElem(xi1);
+    }
+ catch (    NaAPIFailedException e) {
+      if (e.getErrno() == 9004) {
+        s_logger.warn("Igroup already exists");
+      }
+    }
+    NaElement xi4=new NaElement("iscsi-node-get-name");
+    NaElement xo=s.invokeElem(xi4);
+    String iqn=xo.getChildContent("node-name");
+    lun.setTargetIqn(iqn);
+    _lunDao.update(lun.getId(),lun);
+    NaElement xi3=new NaElement("lun-map");
+    xi3.addNewChild("force","true");
+    xi3.addNewChild("initiator-group",lunName.toString());
+    xi3.addNewChild("path",lun.getPath() + lun.getLunName());
+    xi3.addNewChild("lun-id",lunIdStr);
+    s.invokeElem(xi3);
+    txn.commit();
+    result[0]=lunName.toString();
+    result[1]=iqn;
+    result[2]=selectedVol.getIpAddress();
+    return result;
+  }
+ catch (  NaAPIFailedException naf) {
+    if (naf.getErrno() == 9023) {
+      result[0]=lunName.toString();
+      result[1]=lun.getTargetIqn();
+      result[2]=selectedVol.getIpAddress();
+      return result;
+    }
+    if (naf.getErrno() == 9024) {
+      result[0]=lunName.toString();
+      result[1]=lun.getTargetIqn();
+      result[2]=selectedVol.getIpAddress();
+      return result;
+    }
+  }
+catch (  NaException nae) {
+    txn.rollback();
+    throw new ServerException("Unable to create LUN",nae);
+  }
+catch (  IOException ioe) {
+    txn.rollback();
+    throw new ServerException("Unable to create LUN",ioe);
+  }
+ finally {
+    if (pool != null) {
+      _poolDao.releaseFromLockTable(pool.getId());
+    }
+    if (s != null) {
+      s.close();
+    }
+  }
+  return result;
+}

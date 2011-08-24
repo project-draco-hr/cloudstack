@@ -1,0 +1,50 @@
+@staticmethod
+def getDetails(vmName):
+    try:
+        vm = OvmVm()
+        try:
+            OvmHost()._getDomainIdByName(vmName)
+            vmPath = OvmHost()._vmNameToPath(vmName)
+            vifsFromConfig = False
+        except NoVmFoundException as e:
+            vmPath = OvmHost()._getVmPathFromPrimaryStorage(vmName)
+            vifsFromConfig = True
+        if (not isdir(vmPath)):
+            fakeDisk = OvmDisk()
+            vm.rootDisk = fakeDisk
+        else:
+            if vifsFromConfig:
+                vm.vifs.extend(vm._getVifsFromConfig(vmPath))
+            else:
+                vm.vifs.extend(vm._getVifs(vmName))
+            safeSetAttr(vm, 'name', vmName)
+            disks = successToMap(xen_get_vdisks(vmPath))['vdisks'].split(',')
+            rootDisk = None
+            for d in disks:
+                if (vmName in d):
+                    rootDisk = OvmDisk()
+                    safeSetAttr(rootDisk, 'path', d)
+                    safeSetAttr(rootDisk, 'type', 'w')
+                    continue
+                disk = OvmDisk()
+                safeSetAttr(disk, 'path', d)
+                safeSetAttr(disk, 'type', 'w')
+                vm.disks.append(disk)
+            if (not rootDisk):
+                raise Exception(('Cannot find root disk for vm %s' % vmName))
+            safeSetAttr(vm, 'rootDisk', rootDisk)
+            vcpus = int(successToMap(xen_get_vcpus(vmPath))['vcpus'])
+            safeSetAttr(vm, 'cpuNum', vcpus)
+            memory = MtoBytes(int(successToMap(xen_get_memory(vmPath))['memory']))
+            safeSetAttr(vm, 'memory', memory)
+            vmStatus = db_get_vm(vmPath)
+            safeSetAttr(vm, 'powerState', vmStatus['status'])
+            vmType = successToMap(xen_get_vm_type(vmPath))['type'].replace('hvm', 'HVM').replace('para', 'PV')
+            safeSetAttr(vm, 'type', vmType)
+        rs = fromOvmVm(vm)
+        logger.info(OvmVm.getDetails, rs)
+        return rs
+    except Exception as e:
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmVm.getDetails, errmsg)
+        raise XmlRpcFault(toErrCode(OvmVm, OvmVm.getDetails), errmsg)

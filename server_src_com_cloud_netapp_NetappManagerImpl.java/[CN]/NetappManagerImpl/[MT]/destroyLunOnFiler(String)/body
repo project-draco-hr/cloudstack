@@ -1,0 +1,72 @@
+{
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  LunVO lun=_lunDao.findByName(lunName);
+  if (lun == null)   throw new InvalidParameterValueException("Cannot find lun");
+  NetappVolumeVO vol=_volumeDao.acquireInLockTable(lun.getVolumeId());
+  if (vol == null) {
+    s_logger.warn("Failed to lock volume id= " + lun.getVolumeId());
+    return;
+  }
+  NaServer s=null;
+  try {
+    s=getServer(vol.getIpAddress(),vol.getUsername(),vol.getPassword());
+    if (s_logger.isDebugEnabled())     s_logger.debug("Request --> destroyLun " + ":serverIp:" + vol.getIpAddress());
+    try {
+      NaElement xi2=new NaElement("lun-unmap");
+      xi2.addNewChild("initiator-group",lunName);
+      xi2.addNewChild("path",lun.getPath() + lun.getLunName());
+      s.invokeElem(xi2);
+    }
+ catch (    NaAPIFailedException naf) {
+      if (naf.getErrno() == 9016)       s_logger.warn("no map exists excpn 9016 caught in deletelun, continuing with delete");
+    }
+    NaElement xi=new NaElement("lun-destroy");
+    xi.addNewChild("force","true");
+    xi.addNewChild("path",lun.getPath() + lun.getLunName());
+    s.invokeElem(xi);
+    NaElement xi1=new NaElement("igroup-destroy");
+    xi1.addNewChild("initiator-group-name",lunName);
+    s.invokeElem(xi1);
+    _lunDao.remove(lun.getId());
+    txn.commit();
+  }
+ catch (  UnknownHostException uhe) {
+    txn.rollback();
+    s_logger.warn("Failed to delete lun",uhe);
+    throw new ServerException("Failed to delete lun",uhe);
+  }
+catch (  IOException ioe) {
+    txn.rollback();
+    s_logger.warn("Failed to delete lun",ioe);
+    throw new ServerException("Failed to delete lun",ioe);
+  }
+catch (  NaAPIFailedException naf) {
+    if (naf.getErrno() == 9017) {
+      s_logger.warn("no such group exists excpn 9017 caught in deletelun, continuing with delete");
+      _lunDao.remove(lun.getId());
+      txn.commit();
+    }
+ else     if (naf.getErrno() == 9029) {
+      s_logger.warn("LUN maps for this initiator group exist errno 9029 caught in deletelun, continuing with delete");
+      _lunDao.remove(lun.getId());
+      txn.commit();
+    }
+ else {
+      txn.rollback();
+      s_logger.warn("Failed to delete lun",naf);
+      throw new ServerException("Failed to delete lun",naf);
+    }
+  }
+catch (  NaException nae) {
+    txn.rollback();
+    s_logger.warn("Failed to delete lun",nae);
+    throw new ServerException("Failed to delete lun",nae);
+  }
+ finally {
+    if (vol != null) {
+      _volumeDao.releaseFromLockTable(vol.getId());
+    }
+    if (s != null)     s.close();
+  }
+}

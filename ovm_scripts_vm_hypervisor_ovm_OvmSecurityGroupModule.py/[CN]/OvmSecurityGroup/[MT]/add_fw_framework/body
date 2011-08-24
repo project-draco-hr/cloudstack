@@ -1,0 +1,46 @@
+@staticmethod
+def add_fw_framework(bridge_name):
+    try:
+        cfo = ConfigFileOps('/etc/sysctl.conf')
+        cfo.addEntry('net.bridge.bridge-nf-call-arptables', '1')
+        cfo.addEntry('net.bridge.bridge-nf-call-iptables', '1')
+        cfo.addEntry('net.bridge.bridge-nf-call-ip6tables', '1')
+        cfo.save()
+        execute('sysctl -p /etc/sysctl.conf')
+    except:
+        logging.debug('failed to turn on bridge netfilter')
+        return False
+    brfw = ('BF-' + bridge_name)
+    try:
+        execute(('iptables -L ' + brfw))
+    except:
+        execute(('iptables -N ' + brfw))
+    brfwout = (brfw + '-OUT')
+    try:
+        execute(('iptables -L ' + brfwout))
+    except:
+        execute(('iptables -N ' + brfwout))
+    brfwin = (brfw + '-IN')
+    try:
+        execute(('iptables -L ' + brfwin))
+    except:
+        execute(('iptables -N ' + brfwin))
+    try:
+        refs = execute((((('iptables -n -L  ' + brfw) + ' |grep ') + brfw) + " | cut -d \\( -f2 | awk '{print $1}'")).strip()
+        if (refs == '0'):
+            execute((('iptables -I FORWARD -i ' + bridge_name) + ' -j DROP'))
+            execute((('iptables -I FORWARD -o ' + bridge_name) + ' -j DROP'))
+            execute(((('iptables -I FORWARD -i ' + bridge_name) + ' -m physdev --physdev-is-bridged -j ') + brfw))
+            execute(((('iptables -I FORWARD -o ' + bridge_name) + ' -m physdev --physdev-is-bridged -j ') + brfw))
+            phydev = execute((('brctl show |grep ' + bridge_name) + " | awk '{print $4}'")).strip()
+            execute((((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-out ') + phydev) + ' -j ACCEPT'))
+            execute((('iptables -A ' + brfw) + ' -m state --state RELATED,ESTABLISHED -j ACCEPT'))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-out -j ') + brfwout))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-in -j ') + brfwin))
+        return True
+    except:
+        try:
+            execute(('iptables -F ' + brfw))
+        except:
+            return False
+        return False

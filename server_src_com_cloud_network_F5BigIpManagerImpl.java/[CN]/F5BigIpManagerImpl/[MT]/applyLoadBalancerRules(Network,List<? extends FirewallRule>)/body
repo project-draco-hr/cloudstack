@@ -1,0 +1,41 @@
+{
+  long zoneId=network.getDataCenterId();
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  HostVO externalLoadBalancer=getExternalNetworkAppliance(zoneId,Host.Type.ExternalLoadBalancer);
+  if (externalLoadBalancer == null) {
+    return false;
+  }
+  if (network.getState() == Network.State.Allocated) {
+    s_logger.debug("F5BigIpManager was asked to apply LB rules for network with ID " + network.getId() + "; this network is not implemented. Skipping backend commands.");
+    return true;
+  }
+  List<LoadBalancingRule> loadBalancingRules=new ArrayList<LoadBalancingRule>();
+  for (  FirewallRule rule : rules) {
+    if (rule.getPurpose().equals(Purpose.LoadBalancing)) {
+      loadBalancingRules.add((LoadBalancingRule)rule);
+    }
+  }
+  LoadBalancerTO[] loadBalancers=new LoadBalancerTO[loadBalancingRules.size()];
+  for (int i=0; i < loadBalancingRules.size(); i++) {
+    LoadBalancingRule rule=loadBalancingRules.get(i);
+    boolean revoked=(rule.getState().equals(FirewallRule.State.Revoke));
+    String protocol=rule.getProtocol();
+    String algorithm=rule.getAlgorithm();
+    String srcIp=_networkMgr.getIp(rule.getSourceIpAddressId()).getAddress().addr();
+    int srcPort=rule.getSourcePortStart();
+    List<LbDestination> destinations=rule.getDestinations();
+    LoadBalancerTO loadBalancer=new LoadBalancerTO(srcIp,srcPort,protocol,algorithm,revoked,false,destinations);
+    loadBalancers[i]=loadBalancer;
+  }
+  if (loadBalancers.length > 0) {
+    LoadBalancerConfigCommand cmd=new LoadBalancerConfigCommand(loadBalancers);
+    Answer answer=_agentMgr.easySend(externalLoadBalancer.getId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      String details=(answer != null) ? answer.getDetails() : "details unavailable";
+      String msg="Unable to apply load balancer rules to the F5 BigIp appliance in zone " + zone.getName() + " due to: "+ details+ ".";
+      s_logger.error(msg);
+      throw new ResourceUnavailableException(msg,DataCenter.class,network.getDataCenterId());
+    }
+  }
+  return true;
+}

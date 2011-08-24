@@ -1,0 +1,90 @@
+@staticmethod
+def prepareOCFS2Nodes(clusterName, nodeString):
+
+    def compareClusterConfig(nodes):
+
+        def sortNodes(nodes):
+            ns = []
+            for n in nodes:
+                ns.insert(int(n['number']), n)
+            return ns
+
+        def compareNodes(ns1, ns2):
+            if (len(ns1) != len(ns2)):
+                return False
+            for i in range(0, len(ns1)):
+                n1 = ns1[i]
+                n2 = ns2[i]
+                if ((n1['ip_address'] != n2['ip_address']) or (n1['number'] != n2['number']) or (n1['name'] != n2['name'])):
+                    return False
+            return True
+        if exists(OCFS2_CLUSTER_CONF):
+            oldConf = parse_ocfs2_cluster_conf()
+            cluster = oldConf['cluster']
+            nodesNum = cluster['node_count']
+            if (len(nodes) != nodesNum):
+                return False
+            new = sortNodes(nodes)
+            old = sortNodes(oldConf['nodes'])
+            return compareNodes(new, old)
+        else:
+            return False
+
+    def configureEtcHosts(nodes):
+        if (not exists(ETC_HOSTS)):
+            orignalConf = ''
+        else:
+            fd = open(ETC_HOSTS, 'r')
+            orignalConf = fd.read()
+            fd.close()
+        pattern = '(.*%s.*)|(.*%s.*)'
+        newlines = []
+        for n in nodes:
+            p = (pattern % (n['ip_address'], n['name']))
+            orignalConf = re.sub(p, '', orignalConf)
+            newlines.append(('%s\t%s\n' % (n['ip_address'], n['name'])))
+        orignalConf = (orignalConf + ''.join(newlines))
+        orignalConf = re.sub('\\n\\s*\\n*', '\n', orignalConf)
+        logger.debug(OvmStoragePool.prepareOCFS2Nodes, ('Configure /etc/hosts:%s\n' % orignalConf))
+        fd = open(ETC_HOSTS, 'w')
+        fd.write(orignalConf)
+        fd.close()
+    try:
+        nodeString = nodeString.strip(';')
+        nodes = []
+        for n in nodeString.split(';'):
+            params = n.split(':')
+            if (len(params) != 3):
+                raise Exception(('Wrong parameter(%s) in node string(%s)' % (n, nodeString)))
+            dict = {'number': params[0], 'ip_address': params[1], 'name': params[2], }
+            nodes.append(dict)
+        if (len(nodes) > 255):
+            raise Exception(('%s nodes beyond maximum 255 allowed by OCFS2' % len(nodes)))
+        if compareClusterConfig(nodes):
+            logger.debug(OvmStoragePool.prepareOCFS2Nodes, 'Nodes configure are the same, return')
+            rs = SUCC()
+            return rs
+        lines = []
+        for n in nodes:
+            lines.append('node:\n')
+            lines.append(('\tip_port     = %s\n' % '7777'))
+            lines.append(('\tip_address  = %s\n' % n['ip_address']))
+            lines.append(('\tnumber      = %s\n' % n['number']))
+            lines.append(('\tname        = %s\n' % n['name']))
+            lines.append(('\tcluster     = %s\n' % clusterName))
+            lines.append('\n')
+        lines.append('cluster:\n')
+        lines.append(('\tnode_count  = %d\n' % len(nodes)))
+        lines.append(('\tname        = %s\n' % clusterName))
+        lines.append('\n')
+        conf = ''.join(lines)
+        clusterm_set_ocfs2_cluster_conf(conf)
+        clusterm_start_o2cb_service()
+        logger.debug(OvmStoragePool.prepareOCFS2Nodes, ('Configure cluster.conf to:\n%s' % conf))
+        configureEtcHosts(nodes)
+        rs = SUCC()
+        return rs
+    except Exception as e:
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmStoragePool.prepareOCFS2Nodes, errmsg)
+        raise XmlRpcFault(toErrCode(OvmStoragePool, OvmStoragePool.prepareOCFS2Nodes), errmsg)

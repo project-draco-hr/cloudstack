@@ -1,0 +1,51 @@
+{
+  final String vmName=cmd.getVmName();
+  Long bytesReceived=new Long(0);
+  Long bytesSent=new Long(0);
+  State state=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  try {
+    Connect conn=LibvirtConnection.getConnection();
+    try {
+      Domain dm=conn.domainLookupByUUID(UUID.nameUUIDFromBytes(vmName.getBytes()));
+    }
+ catch (    LibvirtException e) {
+      state=State.Stopped;
+      return new StopAnswer(cmd,null,0,bytesSent,bytesReceived);
+    }
+    String macAddress=null;
+    if (vmName.startsWith("i-")) {
+      List<InterfaceDef> nics=getInterfaces(conn,vmName);
+      if (!nics.isEmpty()) {
+        macAddress=nics.get(0).getMacAddress();
+      }
+    }
+    destroy_network_rules_for_vm(conn,vmName);
+    String result=stopVM(conn,vmName,defineOps.UNDEFINE_VM);
+    try {
+      cleanupVnet(conn,cmd.getVnet());
+      _dhcpSnooper.cleanup(macAddress,vmName);
+      _vmDataServer.handleVmStopped(cmd.getVmName());
+    }
+ catch (    Exception e) {
+    }
+    state=State.Stopped;
+    return new StopAnswer(cmd,result,0,bytesSent,bytesReceived);
+  }
+ catch (  LibvirtException e) {
+    return new StopAnswer(cmd,e.getMessage());
+  }
+ finally {
+synchronized (_vms) {
+      if (state != null) {
+        _vms.put(vmName,state);
+      }
+ else {
+        _vms.remove(vmName);
+      }
+    }
+  }
+}

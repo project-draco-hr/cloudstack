@@ -1,0 +1,154 @@
+{
+  String zoneToken=startup.getDataCenter();
+  if (zoneToken == null) {
+    s_logger.warn("No Zone Token passed in, cannot not find zone for the agent");
+    throw new AgentAuthnException("No Zone Token passed in, cannot not find zone for agent");
+  }
+  DataCenterVO zone=_zoneDao.findByToken(zoneToken);
+  if (zone == null) {
+    zone=_zoneDao.findByName(zoneToken);
+    if (zone == null) {
+      try {
+        long zoneId=Long.parseLong(zoneToken);
+        zone=_zoneDao.findById(zoneId);
+        if (zone == null) {
+          throw new AgentAuthnException("Could not find zone for agent with token " + zoneToken);
+        }
+      }
+ catch (      NumberFormatException nfe) {
+        throw new AgentAuthnException("Could not find zone for agent with token " + zoneToken);
+      }
+    }
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Successfully loaded the DataCenter from the zone token passed in ");
+  }
+  long zoneId=zone.getId();
+  DcDetailVO maxHostsInZone=_zoneDetailsDao.findDetail(zoneId,ZoneConfig.MaxHosts.key());
+  if (maxHostsInZone != null) {
+    long maxHosts=new Long(maxHostsInZone.getValue()).longValue();
+    long currentCountOfHosts=_hostDao.countRoutingHostsByDataCenter(zoneId);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Number of hosts in Zone:" + currentCountOfHosts + ", max hosts limit: "+ maxHosts);
+    }
+    if (currentCountOfHosts >= maxHosts) {
+      throw new AgentAuthnException("Number of running Routing hosts in the Zone:" + zone.getName() + " is already at the max limit:"+ maxHosts+ ", cannot start one more host");
+    }
+  }
+  HostPodVO pod=null;
+  if (startup.getPrivateIpAddress() == null) {
+    s_logger.warn("No private IP address passed in for the agent, cannot not find pod for agent");
+    throw new AgentAuthnException("No private IP address passed in for the agent, cannot not find pod for agent");
+  }
+  if (startup.getPrivateNetmask() == null) {
+    s_logger.warn("No netmask passed in for the agent, cannot not find pod for agent");
+    throw new AgentAuthnException("No netmask passed in for the agent, cannot not find pod for agent");
+  }
+  if (host.getPodId() != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Pod is already created for this agent, looks like agent is reconnecting...");
+    }
+    pod=_podDao.findById(host.getPodId());
+    if (!checkCIDR(type,pod,startup.getPrivateIpAddress(),startup.getPrivateNetmask())) {
+      pod=null;
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Subnet of Pod does not match the subnet of the agent, not using this Pod: " + host.getPodId());
+      }
+    }
+ else {
+      updatePodNetmaskIfNeeded(pod,startup.getPrivateNetmask());
+    }
+  }
+  if (pod == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Trying to detect the Pod to use from the agent's ip address and netmask passed in ");
+    }
+    boolean podFound=false;
+    List<HostPodVO> podsInZone=_podDao.listByDataCenterId(zoneId);
+    for (    HostPodVO hostPod : podsInZone) {
+      if (checkCIDR(type,hostPod,startup.getPrivateIpAddress(),startup.getPrivateNetmask())) {
+        pod=hostPod;
+        updatePodNetmaskIfNeeded(pod,startup.getPrivateNetmask());
+        podFound=true;
+        break;
+      }
+    }
+    if (!podFound) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating a new Pod since no default Pod found that matches the agent's ip address and netmask passed in ");
+      }
+      if (startup.getGatewayIpAddress() == null) {
+        s_logger.warn("No Gateway IP address passed in for the agent, cannot create a new pod for the agent");
+        throw new AgentAuthnException("No Gateway IP address passed in for the agent, cannot create a new pod for the agent");
+      }
+      String podName="POD-" + (podsInZone.size() + 1);
+      try {
+        String gateway=startup.getGatewayIpAddress();
+        String cidr=NetUtils.getCidrFromGatewayAndNetmask(gateway,startup.getPrivateNetmask());
+        String[] cidrPair=cidr.split("\\/");
+        String cidrAddress=cidrPair[0];
+        long cidrSize=Long.parseLong(cidrPair[1]);
+        String startIp=NetUtils.getIpRangeStartIpFromCidr(cidrAddress,cidrSize);
+        String endIp=NetUtils.getIpRangeEndIpFromCidr(cidrAddress,cidrSize);
+        pod=_configurationManager.createPod(-1,podName,zoneId,gateway,cidr,startIp,endIp,null,true);
+      }
+ catch (      Exception e) {
+        throw new CloudRuntimeException("Unable to create new Pod " + podName + " in Zone: "+ zoneId,e);
+      }
+    }
+  }
+  final StartupRoutingCommand scc=(StartupRoutingCommand)startup;
+  ClusterVO cluster=null;
+  if (host.getClusterId() != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Cluster is already created for this agent, looks like agent is reconnecting...");
+    }
+    cluster=_clusterDao.findById(host.getClusterId());
+  }
+  if (cluster == null) {
+    String clusterName="Cluster-" + startup.getPrivateIpAddress();
+    ClusterVO existingCluster=_clusterDao.findBy(clusterName,pod.getId());
+    if (existingCluster != null) {
+      cluster=existingCluster;
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating a new Cluster for this agent with name: " + clusterName + " in Pod: "+ pod.getId()+ ", in Zone:"+ zoneId);
+      }
+      cluster=new ClusterVO(zoneId,pod.getId(),clusterName);
+      cluster.setHypervisorType(scc.getHypervisorType().toString());
+      try {
+        cluster=_clusterDao.persist(cluster);
+      }
+ catch (      Exception e) {
+        throw new CloudRuntimeException("Unable to create cluster " + clusterName + " in pod "+ pod.getId()+ " and data center "+ zoneId,e);
+      }
+    }
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Detected Zone: " + zoneId + ", Pod: "+ pod.getId()+ ", Cluster:"+ cluster.getId());
+  }
+  host.setDataCenterId(zone.getId());
+  host.setPodId(pod.getId());
+  host.setClusterId(cluster.getId());
+  host.setPrivateIpAddress(startup.getPrivateIpAddress());
+  host.setPrivateNetmask(startup.getPrivateNetmask());
+  host.setPrivateMacAddress(startup.getPrivateMacAddress());
+  host.setPublicIpAddress(startup.getPublicIpAddress());
+  host.setPublicMacAddress(startup.getPublicMacAddress());
+  host.setPublicNetmask(startup.getPublicNetmask());
+  host.setStorageIpAddress(startup.getStorageIpAddress());
+  host.setStorageMacAddress(startup.getStorageMacAddress());
+  host.setStorageNetmask(startup.getStorageNetmask());
+  host.setVersion(startup.getVersion());
+  host.setName(startup.getName());
+  host.setType(type);
+  host.setStorageUrl(startup.getIqn());
+  host.setLastPinged(System.currentTimeMillis() >> 10);
+  host.setCaps(scc.getCapabilities());
+  host.setCpus(scc.getCpus());
+  host.setTotalMemory(scc.getMemory());
+  host.setSpeed(scc.getSpeed());
+  HypervisorType hyType=scc.getHypervisorType();
+  host.setHypervisorType(hyType);
+}

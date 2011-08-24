@@ -1,0 +1,41 @@
+{
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  String vmName=vmSpec.getName();
+  State state=State.Stopped;
+  OvmVm.Details vmDetails=null;
+  try {
+synchronized (_vms) {
+      _vms.put(vmName,State.Starting);
+    }
+    vmDetails=new OvmVm.Details();
+    applySpecToVm(vmDetails,vmSpec);
+    createVbds(vmDetails,vmSpec);
+    createVifs(vmDetails,vmSpec);
+    startVm(vmDetails);
+    NicTO[] nics=vmSpec.getNics();
+    for (    NicTO nic : nics) {
+      if (nic.isSecurityGroupEnabled()) {
+        if (vmSpec.getType().equals(VirtualMachine.Type.User)) {
+          defaultNetworkRulesForUserVm(vmName,vmSpec.getId(),nic);
+        }
+      }
+    }
+    state=State.Running;
+    return new StartAnswer(cmd);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Start vm " + vmName + " failed",e);
+    cleanup(vmDetails);
+    return new StartAnswer(cmd,e.getMessage());
+  }
+ finally {
+synchronized (_vms) {
+      if (state != State.Stopped) {
+        _vms.put(vmName,state);
+      }
+ else {
+        _vms.remove(vmName);
+      }
+    }
+  }
+}

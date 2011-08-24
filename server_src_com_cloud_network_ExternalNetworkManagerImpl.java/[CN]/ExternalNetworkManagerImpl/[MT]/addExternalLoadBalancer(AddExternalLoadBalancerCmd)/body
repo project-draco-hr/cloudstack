@@ -1,0 +1,83 @@
+{
+  long zoneId=cmd.getZoneId();
+  ServerResource resource=null;
+  String guid;
+  String deviceType;
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  String zoneName;
+  if (zone == null) {
+    throw new InvalidParameterValueException("Could not find zone with ID: " + zoneId);
+  }
+ else {
+    zoneName=zone.getName();
+  }
+  List<HostVO> externalLoadBalancersInZone=_hostDao.listByTypeDataCenter(Host.Type.ExternalLoadBalancer,zoneId);
+  if (externalLoadBalancersInZone.size() != 0) {
+    throw new InvalidParameterValueException("Already found an external load balancer in zone: " + zoneName);
+  }
+  URI uri;
+  try {
+    uri=new URI(cmd.getUrl());
+  }
+ catch (  Exception e) {
+    s_logger.debug(e);
+    throw new InvalidParameterValueException(e.getMessage());
+  }
+  String ipAddress=uri.getHost();
+  String username=cmd.getUsername();
+  String password=cmd.getPassword();
+  Map<String,String> params=new HashMap<String,String>();
+  UrlUtil.parseQueryParameters(uri.getQuery(),true,params);
+  String publicInterface=params.get("publicinterface");
+  String privateInterface=params.get("privateinterface");
+  String numRetries=params.get("numretries");
+  boolean inline=Boolean.parseBoolean(params.get("inline"));
+  if (publicInterface == null) {
+    throw new InvalidParameterValueException("Please specify a public interface.");
+  }
+  if (privateInterface == null) {
+    throw new InvalidParameterValueException("Please specify a private interface.");
+  }
+  if (numRetries == null) {
+    numRetries="1";
+  }
+  deviceType=cmd.getType();
+  if (deviceType == null) {
+    deviceType=ExternalNetworkDeviceType.F5BigIP.getName();
+  }
+  if (deviceType.equalsIgnoreCase(ExternalNetworkDeviceType.F5BigIP.getName())) {
+    resource=new F5BigIpResource();
+    guid=getExternalNetworkResourceGuid(zoneId,ExternalNetworkResourceName.F5BigIp,ipAddress);
+  }
+ else {
+    throw new CloudRuntimeException("An unsupported networt device type is added as external load balancer.");
+  }
+  Map hostDetails=new HashMap<String,String>();
+  hostDetails.put("zoneId",String.valueOf(zoneId));
+  hostDetails.put("ip",ipAddress);
+  hostDetails.put("username",username);
+  hostDetails.put("password",password);
+  hostDetails.put("publicInterface",publicInterface);
+  hostDetails.put("privateInterface",privateInterface);
+  hostDetails.put("numRetries",numRetries);
+  hostDetails.put("guid",guid);
+  hostDetails.put("name",guid);
+  hostDetails.put("inline",String.valueOf(inline));
+  try {
+    resource.configure(guid,hostDetails);
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+  Host host=_agentMgr.addHost(zoneId,resource,Host.Type.ExternalLoadBalancer,hostDetails);
+  if (host != null) {
+    if (deviceType.equalsIgnoreCase(ExternalNetworkDeviceType.F5BigIP.getName())) {
+      zone.setLoadBalancerProvider(Network.Provider.F5BigIp.getName());
+    }
+    _dcDao.update(zone.getId(),zone);
+    return host;
+  }
+ else {
+    return null;
+  }
+}

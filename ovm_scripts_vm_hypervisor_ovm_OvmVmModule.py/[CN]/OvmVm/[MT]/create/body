@@ -1,0 +1,133 @@
+@staticmethod
+def create(jsonString):
+
+    def dumpCfg(vmName, cfgPath):
+        cfgFd = open(cfgPath, 'r')
+        cfg = cfgFd.readlines()
+        cfgFd.close()
+        logger.info(OvmVm.create, ('Start %s with configure:\n\n%s\n' % (vmName, ''.join(cfg))))
+
+    def setVifsType(vifs, type):
+        for vif in vifs:
+            vif.type = type
+
+    def hddBoot(vm, vmPath):
+        vmType = vm.type
+        if (vmType == 'FROMCONFIGFILE'):
+            vmType = OvmVm()._getVmTypeFromConfigFile(vmPath)
+        cfgDict = {}
+        if (vmType == 'HVM'):
+            cfgDict['builder'] = "'hvm'"
+            cfgDict['acpi'] = '1'
+            cfgDict['apic'] = '1'
+            cfgDict['device_model'] = "'/usr/lib/xen/bin/qemu-dm'"
+            cfgDict['kernel'] = "'/usr/lib/xen/boot/hvmloader'"
+            vifType = 'ioemu'
+        else:
+            cfgDict['bootloader'] = "'/usr/bin/pygrub'"
+            vifType = 'netfront'
+        cfgDict['name'] = ("'%s'" % vm.name)
+        cfgDict['disk'] = '[]'
+        cfgDict['vcpus'] = "''"
+        cfgDict['memory'] = "''"
+        cfgDict['on_crash'] = "'destroy'"
+        cfgDict['on_reboot'] = "'restart'"
+        cfgDict['vif'] = '[]'
+        items = []
+        for k in cfgDict.keys():
+            item = ' = '.join([k, cfgDict[k]])
+            items.append(item)
+        vmSpec = '\n'.join(items)
+        vmCfg = open(join(vmPath, 'vm.cfg'), 'w')
+        vmCfg.write(vmSpec)
+        vmCfg.close()
+        setVifsType(vm.vifs, vifType)
+        raiseExceptionIfFail(xen_set_vcpus(vmPath, vm.cpuNum))
+        raiseExceptionIfFail(xen_set_memory(vmPath, BytesToM(vm.memory)))
+        raiseExceptionIfFail(xen_add_disk(vmPath, vm.rootDisk.path, mode=vm.rootDisk.type))
+        vifs = [OvmVif.toXenString(v) for v in vm.vifs]
+        for vif in vifs:
+            raiseExceptionIfFail(xen_set_vifs(vmPath, vif))
+        for disk in vm.disks:
+            raiseExceptionIfFail(xen_add_disk(vmPath, disk.path, mode=disk.type))
+        raiseExceptionIfFail(xen_set_vm_vnc_password(vmPath, ''))
+        cfgFile = join(vmPath, 'vm.cfg')
+        if (vmType == 'HVM'):
+            raiseExceptionIfFail(xen_config_boot_sequence(vmPath, 'd'))
+            raiseExceptionIfFail(xen_config_boot_sequence(vmPath, 'c'))
+        raiseExceptionIfFail(xen_correct_cfg(cfgFile, vmPath))
+        xen_correct_qos_cfg(cfgFile)
+        dumpCfg(vm.name, cfgFile)
+        server = successToMap(get_master_ip())['ip']
+        raiseExceptionIfFail(start_vm(vmPath, server))
+        rs = SUCC()
+        return rs
+
+    def cdBoot(vm, vmPath):
+        isoMountPath = None
+        try:
+            cdrom = None
+            for disk in vm.disks:
+                if (disk.isIso == True):
+                    cdrom = disk
+                    break
+            if (not cdrom):
+                raise Exception('Cannot find Iso in disks')
+            isoOnSecStorage = dirname(cdrom.path)
+            isoName = basename(cdrom.path)
+            isoMountPath = OvmVm()._getIsoMountPath(vmPath)
+            OvmStoragePool()._mount(isoOnSecStorage, isoMountPath)
+            isoPath = join(isoMountPath, isoName)
+            if (not exists(isoPath)):
+                raise Exception(('Cannot found iso %s at %s which mounts to %s' % (isoName, isoOnSecStorage, isoMountPath)))
+            stdout = run_cmd(args=['file', isoPath])
+            if (not stdout.strip().endswith('(bootable)')):
+                raise Exception(('ISO %s is not bootable' % cdrom.path))
+            cdrom.path = isoPath
+            if (len(vm.vifs) != 0):
+                vif = vm.vifs[0]
+                vifCfg = ','.join([vif.mac, vif.bridge, 'ioemu'])
+            else:
+                vifCfg = ''
+            rootDiskSize = os.path.getsize(vm.rootDisk.path)
+            rooDiskCfg = ':'.join([join(vmPath, basename(vm.rootDisk.path)), str(BytesToG(rootDiskSize)), 'True'])
+            disks = [rooDiskCfg]
+            for d in vm.disks:
+                if d.isIso:
+                    continue
+                size = os.path.getsize(d.path)
+                cfg = ':'.join([d.path, str(BytesToG(size)), 'True'])
+                disks.append(cfg)
+            disksCfg = ','.join(disks)
+            server = successToMap(get_master_ip())['ip']
+            raiseExceptionIfFail(install_vm_hvm(vmPath, BytesToM(vm.memory), vm.cpuNum, vifCfg, disksCfg, cdrom.path, vncpassword='', dedicated_server=server))
+            rs = SUCC()
+            return rs
+        except Exception as e:
+            if (isoMountPath and OvmStoragePool()._isMounted(isoMountPath)):
+                doCmd(['umount', '-f', isoMountPath])
+            errmsg = fmt_err_msg(e)
+            raise Exception(errmsg)
+    try:
+        vm = toOvmVm(jsonString)
+        logger.debug(OvmVm.create, ('creating vm, spec:%s' % jsonString))
+        rootDiskPath = vm.rootDisk.path
+        if (not exists(rootDiskPath)):
+            raise Exception(('Cannot find root disk %s' % rootDiskPath))
+        rootDiskDir = dirname(rootDiskPath)
+        vmPath = join(dirname(rootDiskDir), vm.name)
+        if (not exists(vmPath)):
+            doCmd(['ln', '-s', rootDiskDir, vmPath])
+        vmNameFile = open(join(rootDiskDir, 'vmName'), 'w')
+        vmNameFile.write(vm.name)
+        vmNameFile.close()
+        if (vm.bootDev == 'HDD'):
+            return hddBoot(vm, vmPath)
+        elif (vm.bootDev == 'CD'):
+            return cdBoot(vm, vmPath)
+        else:
+            raise Exception(('Unkown bootdev %s for %s' % (vm.bootDev, vm.name)))
+    except Exception as e:
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmVm.create, errmsg)
+        raise XmlRpcFault(toErrCode(OvmVm, OvmVm.create), errmsg)

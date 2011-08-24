@@ -1,0 +1,67 @@
+{
+  try {
+    long guestVlanTag=Long.parseLong(cmd.getAccessDetail(NetworkElementCommand.GUEST_VLAN_TAG));
+    LoadBalancerTO[] loadBalancers=cmd.getLoadBalancers();
+    for (    LoadBalancerTO loadBalancer : loadBalancers) {
+      LbProtocol lbProtocol;
+      try {
+        if (loadBalancer.getProtocol() == null) {
+          lbProtocol=LbProtocol.tcp;
+        }
+ else {
+          lbProtocol=LbProtocol.valueOf(loadBalancer.getProtocol());
+        }
+      }
+ catch (      IllegalArgumentException e) {
+        throw new ExecutionException("Got invalid protocol: " + loadBalancer.getProtocol());
+      }
+      LbAlgorithm lbAlgorithm;
+      if (loadBalancer.getAlgorithm().equals("roundrobin")) {
+        lbAlgorithm=LbAlgorithm.RoundRobin;
+      }
+ else       if (loadBalancer.getAlgorithm().equals("leastconn")) {
+        lbAlgorithm=LbAlgorithm.LeastConn;
+      }
+ else {
+        throw new ExecutionException("Got invalid algorithm: " + loadBalancer.getAlgorithm());
+      }
+      String srcIp=_inline ? tagAddressWithRouteDomain(loadBalancer.getSrcIp(),guestVlanTag) : loadBalancer.getSrcIp();
+      int srcPort=loadBalancer.getSrcPort();
+      String virtualServerName=genVirtualServerName(lbProtocol,srcIp,srcPort);
+      boolean destinationsToAdd=false;
+      for (      DestinationTO destination : loadBalancer.getDestinations()) {
+        if (!destination.isRevoked()) {
+          destinationsToAdd=true;
+          break;
+        }
+      }
+      if (!loadBalancer.isRevoked() && destinationsToAdd) {
+        addPool(virtualServerName,lbAlgorithm);
+        List<String> activePoolMembers=new ArrayList<String>();
+        for (        DestinationTO destination : loadBalancer.getDestinations()) {
+          if (!destination.isRevoked()) {
+            String destIp=_inline ? tagAddressWithRouteDomain(destination.getDestIp(),guestVlanTag) : destination.getDestIp();
+            addPoolMember(virtualServerName,destIp,destination.getDestPort());
+            activePoolMembers.add(destIp + "-" + destination.getDestPort());
+          }
+        }
+        deleteInactivePoolMembers(virtualServerName,activePoolMembers);
+        addVirtualServer(virtualServerName,lbProtocol,srcIp,srcPort);
+      }
+ else {
+        deleteVirtualServerAndDefaultPool(virtualServerName);
+      }
+    }
+    saveConfiguration();
+    return new Answer(cmd);
+  }
+ catch (  ExecutionException e) {
+    s_logger.error("Failed to execute LoadBalancerConfigCommand due to " + e);
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+ else {
+      return new Answer(cmd,e);
+    }
+  }
+}

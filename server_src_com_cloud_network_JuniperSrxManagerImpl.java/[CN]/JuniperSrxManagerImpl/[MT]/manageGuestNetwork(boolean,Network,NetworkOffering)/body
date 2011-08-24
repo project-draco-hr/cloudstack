@@ -1,0 +1,52 @@
+{
+  if (network.getTrafficType() != TrafficType.Guest) {
+    s_logger.trace("JuniperSrxManager can only add/remove guest networks.");
+    return false;
+  }
+  long zoneId=network.getDataCenterId();
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  HostVO externalFirewall=getExternalNetworkAppliance(zoneId,Host.Type.ExternalFirewall);
+  if (externalFirewall == null) {
+    return false;
+  }
+  Account account=_accountDao.findByIdIncludingRemoved(network.getAccountId());
+  boolean sharedSourceNat=offering.isSharedSourceNatService();
+  String sourceNatIp=null;
+  if (!sharedSourceNat) {
+    List<IPAddressVO> sourceNatIps=_networkMgr.listPublicIpAddressesInVirtualNetwork(network.getAccountId(),zoneId,true,null);
+    if (sourceNatIps.size() != 1) {
+      String errorMsg="JuniperSrxManager was unable to find the source NAT IP address for account " + account.getAccountName();
+      return true;
+    }
+ else {
+      sourceNatIp=sourceNatIps.get(0).getAddress().addr();
+    }
+  }
+  long guestVlanTag=Long.parseLong(network.getBroadcastUri().getHost());
+  String guestVlanGateway=network.getGateway();
+  String guestVlanNetmask=NetUtils.cidr2Netmask(network.getCidr());
+  Integer networkRate=_networkMgr.getNetworkRate(network.getId(),null);
+  IpAddressTO ip=new IpAddressTO(network.getAccountId(),sourceNatIp,add,false,!sharedSourceNat,String.valueOf(guestVlanTag),guestVlanGateway,guestVlanNetmask,null,null,networkRate,false);
+  IpAddressTO[] ips=new IpAddressTO[1];
+  ips[0]=ip;
+  IpAssocCommand cmd=new IpAssocCommand(ips);
+  Answer answer=_agentMgr.easySend(externalFirewall.getId(),cmd);
+  if (answer == null || !answer.getResult()) {
+    String action=add ? "implement" : "shutdown";
+    String answerDetails=(answer != null) ? answer.getDetails() : "answer was null";
+    String msg="JuniperSrxManager was unable to " + action + " the guest network on the external firewall in zone "+ zone.getName()+ " due to "+ answerDetails;
+    s_logger.error(msg);
+    throw new ResourceUnavailableException(msg,DataCenter.class,zoneId);
+  }
+  List<String> reservedIpAddressesForGuestNetwork=_nicDao.listIpAddressInNetwork(network.getId());
+  if (add && (!reservedIpAddressesForGuestNetwork.contains(network.getGateway()))) {
+    NicVO nic=new NicVO(null,null,network.getId(),null);
+    nic.setIp4Address(network.getGateway());
+    nic.setReservationStrategy(ReservationStrategy.PlaceHolder);
+    nic.setState(State.Reserved);
+    _nicDao.persist(nic);
+  }
+  String action=add ? "implemented" : "shut down";
+  s_logger.debug("JuniperSrxManager has " + action + " the guest network for account "+ account.getAccountName()+ "(id = "+ account.getAccountId()+ ") with VLAN tag "+ guestVlanTag);
+  return true;
+}

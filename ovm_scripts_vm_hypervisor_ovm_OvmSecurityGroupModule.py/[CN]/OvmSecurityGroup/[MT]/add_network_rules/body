@@ -1,0 +1,62 @@
+@staticmethod
+def add_network_rules(vm_name, vm_id, vm_ip, signature, seqno, vm_mac, rules, vif, bridge_name):
+    try:
+        vm_chain = vm_name
+        dom_id = getDomId(vm_name)
+        changes = []
+        changes = OvmSecurityGroup.check_rule_log_for_vm(vm_name, vm_id, vm_ip, dom_id, signature, seqno)
+        if (not (1 in changes)):
+            logging.debug(('Rules already programmed for vm ' + vm_name))
+            return True
+        if (changes[0] or changes[1] or changes[2] or changes[3]):
+            if (not OvmSecurityGroup.default_network_rules(vm_name, vm_id, vm_ip, vm_mac, vif, bridge_name)):
+                return False
+        if ((rules == '') or (rules == None)):
+            lines = []
+        else:
+            lines = rules.split(';')[:(-1)]
+        logging.debug(((('Programming network rules for  IP: ' + vm_ip) + ' vmname=') + vm_name))
+        execute(('iptables -F ' + vm_chain))
+        for line in lines:
+            tokens = line.split(':')
+            if (len(tokens) != 4):
+                continue
+            protocol = tokens[0]
+            start = tokens[1]
+            end = tokens[2]
+            cidrs = tokens.pop()
+            ips = cidrs.split(',')
+            ips.pop()
+            allow_any = False
+            if ('0.0.0.0/0' in ips):
+                i = ips.index('0.0.0.0/0')
+                del ips[i]
+                allow_any = True
+            port_range = ((start + ':') + end)
+            if ips:
+                if (protocol == 'all'):
+                    for ip in ips:
+                        execute((((('iptables -I ' + vm_chain) + ' -m state --state NEW -s ') + ip) + ' -j ACCEPT'))
+                elif (protocol != 'icmp'):
+                    for ip in ips:
+                        execute((((((((((('iptables -I ' + vm_chain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + port_range) + ' -m state --state NEW -s ') + ip) + ' -j ACCEPT'))
+                else:
+                    port_range = ((start + '/') + end)
+                    if (start == '-1'):
+                        port_range = 'any'
+                        for ip in ips:
+                            execute((((((('iptables -I ' + vm_chain) + ' -p icmp --icmp-type ') + port_range) + ' -s ') + ip) + ' -j ACCEPT'))
+            if (allow_any and (protocol != 'all')):
+                if (protocol != 'icmp'):
+                    execute((((((((('iptables -I ' + vm_chain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + port_range) + ' -m state --state NEW -j ACCEPT'))
+                else:
+                    port_range = ((start + '/') + end)
+                    if (start == '-1'):
+                        port_range = 'any'
+                        execute((((('iptables -I ' + vm_chain) + ' -p icmp --icmp-type ') + port_range) + ' -j ACCEPT'))
+        iptables = (('iptables -A ' + vm_chain) + ' -j DROP')
+        execute(iptables)
+        return OvmSecurityGroup.write_rule_log_for_vm(vm_name, vm_id, vm_ip, dom_id, signature, seqno)
+    except:
+        logging.debug(('Failed to network rule !: ' + sys.exc_type))
+        return False

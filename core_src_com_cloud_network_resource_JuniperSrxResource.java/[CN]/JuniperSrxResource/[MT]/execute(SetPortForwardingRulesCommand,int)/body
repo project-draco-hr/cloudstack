@@ -1,0 +1,36 @@
+{
+  PortForwardingRuleTO[] allRules=cmd.getRules();
+  Map<String,ArrayList<FirewallRuleTO>> activeRules=getActiveRules(allRules);
+  try {
+    openConfiguration();
+    Set<String> ipPairs=activeRules.keySet();
+    for (    String ipPair : ipPairs) {
+      String[] ipPairComponents=ipPair.split("-");
+      String publicIp=ipPairComponents[0];
+      String privateIp=ipPairComponents[1];
+      List<FirewallRuleTO> activeRulesForIpPair=activeRules.get(ipPair);
+      List<String[]> destNatRules=getDestNatRules(RuleMatchCondition.PUBLIC_PRIVATE_IPS,publicIp,privateIp,null,null);
+      Map<String,Long> publicVlanTags=getPublicVlanTagsForNatRules(destNatRules);
+      removeDestinationNatRules(null,publicVlanTags,destNatRules);
+      for (      FirewallRuleTO rule : activeRulesForIpPair) {
+        Long publicVlanTag=getVlanTag(rule.getSrcVlanTag());
+        PortForwardingRuleTO portForwardingRule=(PortForwardingRuleTO)rule;
+        addDestinationNatRule(getProtocol(rule.getProtocol()),publicVlanTag,portForwardingRule.getSrcIp(),portForwardingRule.getDstIp(),portForwardingRule.getSrcPortRange()[0],portForwardingRule.getSrcPortRange()[1],portForwardingRule.getDstPortRange()[0],portForwardingRule.getDstPortRange()[1]);
+      }
+    }
+    commitConfiguration();
+    return new Answer(cmd);
+  }
+ catch (  ExecutionException e) {
+    s_logger.error(e);
+    closeConfiguration();
+    if (numRetries > 0 && refreshSrxConnection()) {
+      int numRetriesRemaining=numRetries - 1;
+      s_logger.debug("Retrying SetPortForwardingRulesCommand. Number of retries remaining: " + numRetriesRemaining);
+      return execute(cmd,numRetriesRemaining);
+    }
+ else {
+      return new Answer(cmd,e);
+    }
+  }
+}

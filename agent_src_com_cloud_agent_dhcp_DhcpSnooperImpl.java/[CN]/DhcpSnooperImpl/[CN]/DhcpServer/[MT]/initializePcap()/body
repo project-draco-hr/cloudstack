@@ -1,0 +1,46 @@
+{
+  try {
+    List<PcapIf> alldevs=new ArrayList<PcapIf>();
+    StringBuilder errBuf=new StringBuilder();
+    int r=Pcap.findAllDevs(alldevs,errBuf);
+    if (r == Pcap.NOT_OK || alldevs.isEmpty()) {
+      return null;
+    }
+    PcapIf dev=null;
+    for (    PcapIf device : alldevs) {
+      if (device.getName().equalsIgnoreCase(_bridge)) {
+        dev=device;
+        break;
+      }
+    }
+    if (dev == null) {
+      s_logger.debug("Pcap: Can't find device: " + _bridge + " to listen on");
+      return null;
+    }
+    int snaplen=64 * 1024;
+    int flags=Pcap.MODE_PROMISCUOUS;
+    int timeout=10 * 1000;
+    Pcap pcap=Pcap.openLive(dev.getName(),snaplen,flags,timeout,errBuf);
+    if (pcap == null) {
+      s_logger.debug("Pcap: Can't open " + _bridge);
+      return null;
+    }
+    PcapBpfProgram program=new PcapBpfProgram();
+    String expr="dst port 68 or 67";
+    int optimize=0;
+    int netmask=0xFFFFFF00;
+    if (pcap.compile(program,expr,optimize,netmask) != Pcap.OK) {
+      s_logger.debug("Pcap: can't compile BPF");
+      return null;
+    }
+    if (pcap.setFilter(program) != Pcap.OK) {
+      s_logger.debug("Pcap: Can't set filter");
+      return null;
+    }
+    return pcap;
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to initialized: " + e.toString());
+  }
+  return null;
+}
