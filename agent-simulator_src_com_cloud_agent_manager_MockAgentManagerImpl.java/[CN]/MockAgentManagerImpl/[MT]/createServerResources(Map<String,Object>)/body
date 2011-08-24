@@ -1,0 +1,52 @@
+{
+  Map<String,String> args=new HashMap<String,String>();
+  Map<AgentResourceBase,Map<String,String>> newResources=new HashMap<AgentResourceBase,Map<String,String>>();
+  AgentResourceBase agentResource;
+  long cpuCore=Long.parseLong((String)params.get("cpucore"));
+  long cpuSpeed=Long.parseLong((String)params.get("cpuspeed"));
+  long memory=Long.parseLong((String)params.get("memory"));
+  long localStorageSize=Long.parseLong((String)params.get("localstorage"));
+synchronized (this) {
+    long dataCenterId=Long.parseLong((String)params.get("zone"));
+    long podId=Long.parseLong((String)params.get("pod"));
+    long clusterId=Long.parseLong((String)params.get("cluster"));
+    long cidrSize=getPodCidr(podId,dataCenterId).second();
+    int agentId=getNextAgentId(cidrSize);
+    String ipAddress=getIpAddress(agentId,dataCenterId,podId);
+    String macAddress=getMacAddress(dataCenterId,podId,clusterId,agentId);
+    MockHostVO mockHost=new MockHostVO();
+    mockHost.setDataCenterId(dataCenterId);
+    mockHost.setPodId(podId);
+    mockHost.setClusterId(clusterId);
+    mockHost.setCapabilities("hvm");
+    mockHost.setCpuCount(cpuCore);
+    mockHost.setCpuSpeed(cpuSpeed);
+    mockHost.setMemorySize(memory);
+    String guid=UUID.randomUUID().toString();
+    mockHost.setGuid(guid);
+    mockHost.setName("SimulatedAgent." + guid);
+    mockHost.setPrivateIpAddress(ipAddress);
+    mockHost.setPublicIpAddress(ipAddress);
+    mockHost.setStorageIpAddress(ipAddress);
+    mockHost.setPrivateMacAddress(macAddress);
+    mockHost.setPublicMacAddress(macAddress);
+    mockHost.setStorageMacAddress(macAddress);
+    mockHost.setVersion(this.getClass().getPackage().getImplementationVersion());
+    mockHost.setResource("com.cloud.agent.AgentRoutingResource");
+    mockHost=_mockHostDao.persist(mockHost);
+    _storageMgr.getLocalStorage(guid,localStorageSize);
+    agentResource=new AgentRoutingResource();
+    if (agentResource != null) {
+      try {
+        params.put("guid",mockHost.getGuid());
+        agentResource.start();
+        agentResource.configure(mockHost.getName(),params);
+        newResources.put(agentResource,args);
+      }
+ catch (      ConfigurationException e) {
+        s_logger.error("error while configuring server resource" + e.getMessage());
+      }
+    }
+  }
+  return newResources;
+}

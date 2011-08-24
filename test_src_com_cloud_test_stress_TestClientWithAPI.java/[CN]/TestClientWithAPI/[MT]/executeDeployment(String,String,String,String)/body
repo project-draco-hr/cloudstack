@@ -1,0 +1,339 @@
+{
+  String encodedUsername=URLEncoder.encode(username,"UTF-8");
+  String encryptedPassword=createMD5Password(username);
+  String encodedPassword=URLEncoder.encode(encryptedPassword,"UTF-8");
+  String url=server + "?command=createAccount&username=" + encodedUsername+ "&account="+ encodedUsername+ "&password="+ encodedPassword+ "&firstname=Test&lastname=Test&email=test@vmops.com&domainId=1&accounttype=0";
+  HttpClient client=new HttpClient();
+  HttpMethod method=new GetMethod(url);
+  int responseCode=client.executeMethod(method);
+  long accountId=-1;
+  if (responseCode == 200) {
+    InputStream is=method.getResponseBodyAsStream();
+    Map<String,String> accountValues=getSingleValueFromXML(is,new String[]{"id","name"});
+    String accountIdStr=accountValues.get("id");
+    s_logger.info("created account " + username + " with id "+ accountIdStr);
+    if (accountIdStr != null) {
+      accountId=Long.parseLong(accountIdStr);
+      _accountId.set(accountId);
+      _account.set(accountValues.get("name"));
+      if (accountId == -1) {
+        s_logger.error("create account (" + username + ") failed to retrieve a valid user id, aborting depolyment test");
+        return -1;
+      }
+    }
+  }
+ else {
+    s_logger.error("create account test failed for account " + username + " with error code :"+ responseCode+ ", aborting deployment test. The command was sent with url "+ url);
+    return -1;
+  }
+  url=server + "?command=listUsers&username=" + encodedUsername+ "&account="+ encodedUsername+ "&domainId=1";
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  long userId=-1;
+  if (responseCode == 200) {
+    InputStream is=method.getResponseBodyAsStream();
+    Map<String,String> userIdValues=getSingleValueFromXML(is,new String[]{"id"});
+    String userIdStr=userIdValues.get("id");
+    s_logger.info("listed user " + username + " with id "+ userIdStr);
+    if (userIdStr != null) {
+      userId=Long.parseLong(userIdStr);
+      _userId.set(userId);
+      if (userId == -1) {
+        s_logger.error("list user by username " + username + ") failed to retrieve a valid user id, aborting depolyment test");
+        return -1;
+      }
+    }
+  }
+ else {
+    s_logger.error("list user test failed for account " + username + " with error code :"+ responseCode+ ", aborting deployment test. The command was sent with url "+ url);
+    return -1;
+  }
+  _secretKey.set(executeRegistration(server,username,username));
+  if (_secretKey.get() == null) {
+    s_logger.error("FAILED to retrieve secret key during registration, skipping user: " + username);
+    return -1;
+  }
+ else {
+    s_logger.info("got secret key: " + _secretKey.get());
+    s_logger.info("got api key: " + _apiKey.get());
+  }
+  url=server + "?command=createNetwork&networkofferingid=" + networkOfferingId+ "&account="+ encodedUsername+ "&domainId=1"+ "&zoneId="+ zoneId+ "&name=virtualnetwork-"+ encodedUsername+ "&displaytext=virtualnetwork-"+ encodedUsername;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  if (responseCode == 200) {
+    InputStream is=method.getResponseBodyAsStream();
+    Map<String,String> networkValues=getSingleValueFromXML(is,new String[]{"id"});
+    String networkIdStr=networkValues.get("id");
+    s_logger.info("Created virtual network with name virtualnetwork-" + encodedUsername + " and id "+ networkIdStr);
+    if (networkIdStr != null) {
+      _networkId.set(networkIdStr);
+    }
+  }
+ else {
+    s_logger.error("Create virtual network failed for account " + username + " with error code :"+ responseCode+ ", aborting deployment test. The command was sent with url "+ url);
+    return -1;
+  }
+  String linuxVMPrivateIP=null;
+{
+    long templateId=4;
+    String encodedZoneId=URLEncoder.encode("" + zoneId,"UTF-8");
+    String encodedServiceOfferingId=URLEncoder.encode("" + serviceOfferingId,"UTF-8");
+    String encodedTemplateId=URLEncoder.encode("" + templateId,"UTF-8");
+    String encodedApiKey=URLEncoder.encode(_apiKey.get(),"UTF-8");
+    String encodedNetworkIds=URLEncoder.encode(_networkId.get() + ",206","UTF-8");
+    String requestToSign="apikey=" + encodedApiKey + "&command=deployVirtualMachine&diskofferingid="+ diskOfferingId+ "&networkids="+ encodedNetworkIds+ "&serviceofferingid="+ encodedServiceOfferingId+ "&templateid="+ encodedTemplateId+ "&zoneid="+ encodedZoneId;
+    requestToSign=requestToSign.toLowerCase();
+    String signature=signRequest(requestToSign,_secretKey.get());
+    String encodedSignature=URLEncoder.encode(signature,"UTF-8");
+    url=developerServer + "?command=deployVirtualMachine" + "&zoneid="+ encodedZoneId+ "&serviceofferingid="+ encodedServiceOfferingId+ "&diskofferingid="+ diskOfferingId+ "&networkids="+ encodedNetworkIds+ "&templateid="+ encodedTemplateId+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      Map<String,String> values=getSingleValueFromXML(el,new String[]{"id","ipaddress"});
+      if ((values.get("ipaddress") == null) || (values.get("id") == null)) {
+        s_logger.info("deploy linux vm response code: 401, the command was sent with url " + url);
+        return 401;
+      }
+ else {
+        s_logger.info("deploy linux vm response code: " + responseCode);
+        long linuxVMId=Long.parseLong(values.get("id"));
+        s_logger.info("got linux virtual machine id: " + linuxVMId);
+        _linuxVmId.set(values.get("id"));
+        linuxVMPrivateIP=values.get("ipaddress");
+        _linuxPassword.set(vmPassword);
+        s_logger.info("got linux virtual machine password: " + _linuxPassword.get());
+      }
+    }
+ else {
+      s_logger.error("deploy linux vm failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    String ipAddr=null;
+    String encodedApiKey=URLEncoder.encode(_apiKey.get(),"UTF-8");
+    String requestToSign="apikey=" + encodedApiKey + "&command=associateIpAddress"+ "&zoneid="+ zoneId;
+    requestToSign=requestToSign.toLowerCase();
+    String signature=signRequest(requestToSign,_secretKey.get());
+    String encodedSignature=URLEncoder.encode(signature,"UTF-8");
+    url=developerServer + "?command=associateIpAddress" + "&apikey="+ encodedApiKey+ "&zoneid="+ zoneId+ "&signature="+ encodedSignature;
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Element associpel=queryAsyncJobResult(server,is);
+      Map<String,String> values=getSingleValueFromXML(associpel,new String[]{"id","ipaddress"});
+      if ((values.get("ipaddress") == null) || (values.get("id") == null)) {
+        s_logger.info("associate ip for Windows response code: 401, the command was sent with url " + url);
+        return 401;
+      }
+ else {
+        s_logger.info("Associate IP Address response code: " + responseCode);
+        long publicIpId=Long.parseLong(values.get("id"));
+        s_logger.info("Associate IP's Id: " + publicIpId);
+        _publicIpId.set(values.get("id"));
+      }
+    }
+ else {
+      s_logger.error("associate ip address for windows vm failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+    String encodedPublicIpId=URLEncoder.encode(_publicIpId.get(),"UTF-8");
+    requestToSign="apikey=" + encodedApiKey + "&command=listPublicIpAddresses"+ "&id="+ encodedPublicIpId;
+    requestToSign=requestToSign.toLowerCase();
+    signature=signRequest(requestToSign,_secretKey.get());
+    encodedSignature=URLEncoder.encode(signature,"UTF-8");
+    url=developerServer + "?command=listPublicIpAddresses&apikey=" + encodedApiKey+ "&id="+ encodedPublicIpId+ "&signature="+ encodedSignature;
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("url is " + url);
+    s_logger.info("list ip addresses for user " + userId + " response code: "+ responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      List<String> ipAddressValues=getIPs(is,false);
+      if ((ipAddressValues != null) && !ipAddressValues.isEmpty()) {
+        _windowsIpId.set(ipAddressValues.get(0));
+        _windowsIP.set(ipAddressValues.get(1));
+        s_logger.info("For Windows, using non-sourceNat IP address ID: " + ipAddressValues.get(0));
+        s_logger.info("For Windows, using non-sourceNat IP address: " + ipAddressValues.get(1));
+      }
+    }
+ else {
+      s_logger.error("list ip addresses failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+{
+      requestToSign="apikey=" + encodedApiKey + "&command=listPublicIpAddresses";
+      requestToSign=requestToSign.toLowerCase();
+      signature=signRequest(requestToSign,_secretKey.get());
+      encodedSignature=URLEncoder.encode(signature,"UTF-8");
+      url=developerServer + "?command=listPublicIpAddresses&apikey=" + encodedApiKey+ "&signature="+ encodedSignature;
+      client=new HttpClient();
+      method=new GetMethod(url);
+      responseCode=client.executeMethod(method);
+      s_logger.info("url is " + url);
+      s_logger.info("list ip addresses for user " + userId + " response code: "+ responseCode);
+      if (responseCode == 200) {
+        InputStream is=method.getResponseBodyAsStream();
+        List<String> ipAddressValues=getIPs(is,true);
+        if ((ipAddressValues != null) && !ipAddressValues.isEmpty()) {
+          _linuxIpId.set(ipAddressValues.get(0));
+          _linuxIP.set(ipAddressValues.get(1));
+          s_logger.info("For linux, using sourceNat IP address ID: " + ipAddressValues.get(0));
+          s_logger.info("For linux, using sourceNat IP address: " + ipAddressValues.get(1));
+        }
+      }
+ else {
+        s_logger.error("list ip addresses failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+        return responseCode;
+      }
+    }
+    String encodedSourceNatPublicIpId=URLEncoder.encode(_linuxIpId.get(),"UTF-8");
+    String encodedVmId=URLEncoder.encode(_linuxVmId.get(),"UTF-8");
+    String encodedIpAddress=URLEncoder.encode(_linuxIpId.get(),"UTF-8");
+    requestToSign="apikey=" + encodedApiKey + "&command=createPortForwardingRule&ipaddressid="+ encodedIpAddress+ "&privateport=22&protocol=TCP&publicport=22"+ "&virtualmachineid="+ encodedVmId;
+    requestToSign=requestToSign.toLowerCase();
+    signature=signRequest(requestToSign,_secretKey.get());
+    encodedSignature=URLEncoder.encode(signature,"UTF-8");
+    url=developerServer + "?command=createPortForwardingRule&apikey=" + encodedApiKey+ "&ipaddressid="+ encodedIpAddress+ "&privateport=22&protocol=TCP&publicport=22&virtualmachineid="+ encodedVmId+ "&signature="+ encodedSignature;
+    s_logger.info("Created port forwarding rule with " + url);
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      Map<String,String> values=getSingleValueFromXML(el,new String[]{"id"});
+      s_logger.info("Port forwarding rule was assigned successfully to Linux VM");
+      long ipfwdid=Long.parseLong(values.get("id"));
+      s_logger.info("got Port Forwarding Rule's Id:" + ipfwdid);
+      _linipfwdid.set(values.get("id"));
+    }
+ else {
+      s_logger.error("Port forwarding rule creation failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+    if (snapshot_test.equals("yes")) {
+{
+        url=server + "?command=listVolumes&virtualMachineId=" + _linuxVmId.get()+ "&type=root";
+        s_logger.info("Getting rootDisk id of Centos vm");
+        client=new HttpClient();
+        method=new GetMethod(url);
+        responseCode=client.executeMethod(method);
+        s_logger.info("List volumes response code: " + responseCode);
+        if (responseCode == 200) {
+          InputStream is=method.getResponseBodyAsStream();
+          Map<String,String> success=getSingleValueFromXML(is,new String[]{"id"});
+          if (success.get("id") == null) {
+            s_logger.error("Unable to get root volume for linux vm. Followin url was sent: " + url);
+          }
+          s_logger.info("Got rootVolume for linux vm with id " + success.get("id"));
+          _rootVolume.set(success.get("id"));
+        }
+ else {
+          s_logger.error("List volumes for linux vm failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+          return responseCode;
+        }
+      }
+{
+        String encodedTimeZone=URLEncoder.encode("America/Los Angeles","UTF-8");
+        url=server + "?command=createSnapshotPolicy&intervaltype=hourly&schedule=10&maxsnaps=4&volumeid=" + _rootVolume.get()+ "&timezone="+ encodedTimeZone;
+        s_logger.info("Creating recurring snapshot policy for linux vm ROOT disk");
+        client=new HttpClient();
+        method=new GetMethod(url);
+        responseCode=client.executeMethod(method);
+        s_logger.info("Create recurring snapshot policy for linux vm ROOT disk: " + responseCode);
+        if (responseCode != 200) {
+          s_logger.error("Create recurring snapshot policy for linux vm ROOT disk failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+          return responseCode;
+        }
+      }
+    }
+ else {
+      String windowsVMPrivateIP=null;
+{
+        long templateId=4;
+        String encodedZoneId=URLEncoder.encode("" + zoneId,"UTF-8");
+        String encodedServiceOfferingId=URLEncoder.encode("" + serviceOfferingId,"UTF-8");
+        String encodedTemplateId=URLEncoder.encode("" + templateId,"UTF-8");
+        encodedApiKey=URLEncoder.encode(_apiKey.get(),"UTF-8");
+        String encodedNetworkIds=URLEncoder.encode(_networkId.get() + ",206","UTF-8");
+        requestToSign="apikey=" + encodedApiKey + "&command=deployVirtualMachine&diskofferingid="+ diskOfferingId+ "&networkids="+ encodedNetworkIds+ "&serviceofferingid="+ encodedServiceOfferingId+ "&templateid="+ encodedTemplateId+ "&zoneid="+ encodedZoneId;
+        requestToSign=requestToSign.toLowerCase();
+        signature=signRequest(requestToSign,_secretKey.get());
+        encodedSignature=URLEncoder.encode(signature,"UTF-8");
+        url=developerServer + "?command=deployVirtualMachine" + "&zoneid="+ encodedZoneId+ "&serviceofferingid="+ encodedServiceOfferingId+ "&diskofferingid="+ diskOfferingId+ "&networkids="+ encodedNetworkIds+ "&templateid="+ encodedTemplateId+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+        method=new GetMethod(url);
+        responseCode=client.executeMethod(method);
+        if (responseCode == 200) {
+          InputStream input=method.getResponseBodyAsStream();
+          Element el=queryAsyncJobResult(server,input);
+          Map<String,String> values=getSingleValueFromXML(el,new String[]{"id","ipaddress"});
+          if ((values.get("ipaddress") == null) || (values.get("id") == null)) {
+            s_logger.info("deploy windows vm response code: 401, the command was sent with url " + url);
+            return 401;
+          }
+ else {
+            s_logger.info("deploy windows vm response code: " + responseCode);
+            windowsVMPrivateIP=values.get("ipaddress");
+            long windowsVMId=Long.parseLong(values.get("id"));
+            s_logger.info("got windows virtual machine id: " + windowsVMId);
+            _windowsVmId.set(values.get("id"));
+          }
+        }
+ else {
+          s_logger.error("deploy windows vm failes with error code: " + responseCode + ". Following URL was sent: "+ url);
+          return responseCode;
+        }
+      }
+      encodedVmId=URLEncoder.encode(_windowsVmId.get(),"UTF-8");
+      encodedPublicIpId=URLEncoder.encode(_publicIpId.get(),"UTF-8");
+      requestToSign="apikey=" + encodedApiKey + "&command=enableStaticNat"+ "&ipaddressid="+ encodedPublicIpId+ "&virtualMachineId="+ encodedVmId;
+      requestToSign=requestToSign.toLowerCase();
+      signature=signRequest(requestToSign,_secretKey.get());
+      encodedSignature=URLEncoder.encode(signature,"UTF-8");
+      url=developerServer + "?command=enableStaticNat&apikey=" + encodedApiKey+ "&ipaddressid="+ encodedPublicIpId+ "&signature="+ encodedSignature+ "&virtualMachineId="+ encodedVmId;
+      client=new HttpClient();
+      method=new GetMethod(url);
+      responseCode=client.executeMethod(method);
+      s_logger.info("url is " + url);
+      s_logger.info("list ip addresses for user " + userId + " response code: "+ responseCode);
+      if (responseCode == 200) {
+        InputStream is=method.getResponseBodyAsStream();
+        Map<String,String> success=getSingleValueFromXML(is,new String[]{"success"});
+        s_logger.info("Enable Static NAT..success? " + success.get("success"));
+      }
+ else {
+        s_logger.error("Enable Static NAT failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+        return responseCode;
+      }
+      encodedIpAddress=URLEncoder.encode(_windowsIpId.get(),"UTF-8");
+      requestToSign="apikey=" + encodedApiKey + "&command=createIpForwardingRule&endPort=22&ipaddressid="+ encodedIpAddress+ "&protocol=TCP&startPort=22";
+      requestToSign=requestToSign.toLowerCase();
+      signature=signRequest(requestToSign,_secretKey.get());
+      encodedSignature=URLEncoder.encode(signature,"UTF-8");
+      url=developerServer + "?command=createIpForwardingRule&apikey=" + encodedApiKey+ "&endPort=22&ipaddressid="+ encodedIpAddress+ "&protocol=TCP&signature="+ encodedSignature+ "&startPort=22";
+      s_logger.info("Created Ip forwarding rule with " + url);
+      method=new GetMethod(url);
+      responseCode=client.executeMethod(method);
+      if (responseCode == 200) {
+        InputStream input=method.getResponseBodyAsStream();
+        Element el=queryAsyncJobResult(server,input);
+        Map<String,String> values=getSingleValueFromXML(el,new String[]{"id"});
+        s_logger.info("Port forwarding rule was assigned successfully to Windows VM");
+        long ipfwdid=Long.parseLong(values.get("id"));
+        s_logger.info("got Ip Forwarding Rule's Id:" + ipfwdid);
+        _winipfwdid.set(values.get("id"));
+      }
+ else {
+        s_logger.error("Port forwarding rule creation failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+        return responseCode;
+      }
+    }
+  }
+  return responseCode;
+}

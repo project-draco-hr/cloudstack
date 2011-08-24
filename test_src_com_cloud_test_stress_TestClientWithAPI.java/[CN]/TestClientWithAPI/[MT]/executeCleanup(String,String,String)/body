@@ -1,0 +1,306 @@
+{
+  String userId=_userId.get().toString();
+  String encodedUserId=URLEncoder.encode(userId,"UTF-8");
+  String url=server + "?command=listUsers&id=" + encodedUserId;
+  s_logger.info("Cleaning up resources for user: " + userId + " with url "+ url);
+  HttpClient client=new HttpClient();
+  HttpMethod method=new GetMethod(url);
+  int responseCode=client.executeMethod(method);
+  s_logger.info("get user response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream is=method.getResponseBodyAsStream();
+    Map<String,String> userInfo=getSingleValueFromXML(is,new String[]{"username","id","account"});
+    if (!username.equals(userInfo.get("username"))) {
+      s_logger.error("get user failed to retrieve requested user, aborting cleanup test" + ". Following URL was sent: " + url);
+      return -1;
+    }
+  }
+ else {
+    s_logger.error("get user failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+{
+    url=server + "?command=updateUser&id=" + userId+ "&firstname=delete&lastname=me";
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("update user response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Map<String,String> success=getSingleValueFromXML(is,new String[]{"success"});
+      s_logger.info("update user..success? " + success.get("success"));
+    }
+ else {
+      s_logger.error("update user failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=listVolumes&virtualMachineId=" + _linuxVmId.get()+ "&type=dataDisk";
+    s_logger.info("Getting dataDisk id of Centos vm");
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("List volumes response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Map<String,String> success=getSingleValueFromXML(is,new String[]{"id"});
+      s_logger.info("Got dataDiskVolume with id " + success.get("id"));
+      _dataVolume.set(success.get("id"));
+    }
+ else {
+      s_logger.error("List volumes failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=detachVolume&id=" + _dataVolume.get();
+    s_logger.info("Detaching volume with id " + _dataVolume.get());
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("Detach data volume response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      s_logger.info("The volume was detached successfully");
+    }
+ else {
+      s_logger.error("Detach data disk failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=deleteVolume&id=" + _dataVolume.get();
+    s_logger.info("Deleting volume with id " + _dataVolume.get());
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("Delete data volume response code: " + responseCode);
+    if (responseCode == 200) {
+      s_logger.info("The volume was deleted successfully");
+    }
+ else {
+      s_logger.error("Delete volume failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=createVolume&diskofferingid=" + diskOfferingId+ "&zoneid="+ zoneId+ "&name=newvolume&account="+ _account.get()+ "&domainid=1";
+    s_logger.info("Creating volume....");
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      Map<String,String> values=getSingleValueFromXML(el,new String[]{"id"});
+      if (values.get("id") == null) {
+        s_logger.info("create volume response code: 401");
+        return 401;
+      }
+ else {
+        s_logger.info("create volume response code: " + responseCode);
+        long volumeId=Long.parseLong(values.get("id"));
+        s_logger.info("got volume id: " + volumeId);
+        _newVolume.set(values.get("id"));
+      }
+    }
+ else {
+      s_logger.error("create volume failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=attachVolume&id=" + _newVolume.get()+ "&virtualmachineid="+ _linuxVmId.get();
+    s_logger.info("Attaching volume with id " + _newVolume.get() + " to the vm "+ _linuxVmId.get());
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("Attach data volume response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      s_logger.info("The volume was attached successfully");
+    }
+ else {
+      s_logger.error("Attach volume failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=listVolumes&virtualMachineId=" + _linuxVmId.get()+ "&type=root";
+    s_logger.info("Getting rootDisk id of Centos vm");
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("List volumes response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Map<String,String> success=getSingleValueFromXML(is,new String[]{"id"});
+      if (success.get("id") == null) {
+        s_logger.error("Unable to get root volume. Followin url was sent: " + url);
+      }
+      s_logger.info("Got rootVolume with id " + success.get("id"));
+      _rootVolume.set(success.get("id"));
+    }
+ else {
+      s_logger.error("List volumes failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+  String encodedApiKey=URLEncoder.encode(_apiKey.get(),"UTF-8");
+  String requestToSign="apikey=" + encodedApiKey + "&command=createSnapshot&volumeid="+ _rootVolume.get();
+  requestToSign=requestToSign.toLowerCase();
+  String signature=signRequest(requestToSign,_secretKey.get());
+  String encodedSignature=URLEncoder.encode(signature,"UTF-8");
+  url=developerServer + "?command=createSnapshot&volumeid=" + _rootVolume.get()+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  s_logger.info("Create snapshot response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream input=method.getResponseBodyAsStream();
+    Element el=queryAsyncJobResult(server,input);
+    Map<String,String> values=getSingleValueFromXML(el,new String[]{"id"});
+    if (values.get("id") == null) {
+      s_logger.info("create snapshot response code: 401");
+      return 401;
+    }
+ else {
+      s_logger.info("create snapshot response code: " + responseCode + ". Got snapshot with id "+ values.get("id"));
+      _snapshot.set(values.get("id"));
+    }
+  }
+ else {
+    s_logger.error("create snapshot failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+  requestToSign="apikey=" + encodedApiKey + "&command=rebootVirtualMachine&id="+ _windowsVmId.get();
+  requestToSign=requestToSign.toLowerCase();
+  signature=signRequest(requestToSign,_secretKey.get());
+  encodedSignature=URLEncoder.encode(signature,"UTF-8");
+  url=developerServer + "?command=rebootVirtualMachine&id=" + _windowsVmId.get()+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  s_logger.info("Reboot windows Vm response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream input=method.getResponseBodyAsStream();
+    Element el=queryAsyncJobResult(server,input);
+    Map<String,String> success=getSingleValueFromXML(el,new String[]{"success"});
+    s_logger.info("Windows VM was rebooted with the status: " + success.get("success"));
+  }
+ else {
+    s_logger.error("Reboot windows VM test failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+  requestToSign="apikey=" + encodedApiKey + "&command=stopVirtualMachine&id="+ _linuxVmId.get();
+  requestToSign=requestToSign.toLowerCase();
+  signature=signRequest(requestToSign,_secretKey.get());
+  encodedSignature=URLEncoder.encode(signature,"UTF-8");
+  url=developerServer + "?command=stopVirtualMachine&id=" + _linuxVmId.get()+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  s_logger.info("Stop linux Vm response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream input=method.getResponseBodyAsStream();
+    Element el=queryAsyncJobResult(server,input);
+    Map<String,String> success=getSingleValueFromXML(el,new String[]{"success"});
+    s_logger.info("Linux VM was stopped with the status: " + success.get("success"));
+  }
+ else {
+    s_logger.error("Stop linux VM test failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+  requestToSign="apikey=" + encodedApiKey + "&command=createTemplate"+ "&displaytext="+ _account.get()+ "&name="+ _account.get()+ "&ostypeid=11"+ "&snapshotid="+ _snapshot.get();
+  requestToSign=requestToSign.toLowerCase();
+  signature=signRequest(requestToSign,_secretKey.get());
+  encodedSignature=URLEncoder.encode(signature,"UTF-8");
+  url=developerServer + "?command=createTemplate" + "&displaytext="+ _account.get()+ "&name="+ _account.get()+ "&ostypeid=11"+ "&snapshotid="+ _snapshot.get()+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  s_logger.info("Create private template response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream input=method.getResponseBodyAsStream();
+    Element el=queryAsyncJobResult(server,input);
+    Map<String,String> values=getSingleValueFromXML(el,new String[]{"id"});
+    if (values.get("id") == null) {
+      s_logger.info("create private template response code: 401");
+      return 401;
+    }
+ else {
+      s_logger.info("create private template response code: " + responseCode);
+    }
+  }
+ else {
+    s_logger.error("create private template failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+  requestToSign="apikey=" + encodedApiKey + "&command=startVirtualMachine&id="+ _windowsVmId.get();
+  requestToSign=requestToSign.toLowerCase();
+  signature=signRequest(requestToSign,_secretKey.get());
+  encodedSignature=URLEncoder.encode(signature,"UTF-8");
+  url=developerServer + "?command=startVirtualMachine&id=" + _windowsVmId.get()+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+  client=new HttpClient();
+  method=new GetMethod(url);
+  responseCode=client.executeMethod(method);
+  s_logger.info("Start linux Vm response code: " + responseCode);
+  if (responseCode != 200) {
+    s_logger.error("Start linux VM test failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+{
+    url=server + "?command=listRouters&zoneid=" + zoneId+ "&account="+ _account.get()+ "&domainid=1";
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("List domain routers response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Map<String,String> success=getSingleValueFromXML(is,new String[]{"id"});
+      s_logger.info("Got the domR with id " + success.get("id"));
+      _domainRouterId.set(success.get("id"));
+    }
+ else {
+      s_logger.error("List domain routers failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=rebootRouter&id=" + _domainRouterId.get();
+    s_logger.info("Rebooting domR with id " + _domainRouterId.get());
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("Reboot domain router response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      s_logger.info("Domain router was rebooted successfully");
+    }
+ else {
+      s_logger.error("Reboot domain routers failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+{
+    url=server + "?command=deleteAccount&id=" + _accountId.get();
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("delete account response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream input=method.getResponseBodyAsStream();
+      Element el=queryAsyncJobResult(server,input);
+      s_logger.info("Deleted account successfully");
+    }
+ else {
+      s_logger.error("delete account failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+  }
+  return responseCode;
+}

@@ -1,0 +1,96 @@
+{
+  String userId=_userId.get().toString();
+  String encodedUserId=URLEncoder.encode(userId,"UTF-8");
+  String url=server + "?command=listUsers&id=" + encodedUserId;
+  s_logger.info("Stopping resources for user: " + username);
+  HttpClient client=new HttpClient();
+  HttpMethod method=new GetMethod(url);
+  int responseCode=client.executeMethod(method);
+  s_logger.info("get user response code: " + responseCode);
+  if (responseCode == 200) {
+    InputStream is=method.getResponseBodyAsStream();
+    Map<String,String> userIdValues=getSingleValueFromXML(is,new String[]{"id"});
+    String userIdStr=userIdValues.get("id");
+    if (userIdStr != null) {
+      userId=userIdStr;
+      if (userId == null) {
+        s_logger.error("get user failed to retrieve a valid user id, aborting depolyment test" + ". Following URL was sent: " + url);
+        return -1;
+      }
+    }
+  }
+ else {
+    s_logger.error("get user failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+    return responseCode;
+  }
+{
+    String encodedApiKey=URLEncoder.encode(_apiKey.get(),"UTF-8");
+    String requestToSign="apikey=" + encodedApiKey + "&command=listVirtualMachines";
+    requestToSign=requestToSign.toLowerCase();
+    String signature=signRequest(requestToSign,_secretKey.get());
+    String encodedSignature=URLEncoder.encode(signature,"UTF-8");
+    url=developerServer + "?command=listVirtualMachines&apikey=" + encodedApiKey+ "&signature="+ encodedSignature;
+    s_logger.info("Listing all virtual machines for the user with url " + url);
+    String[] vmIds=null;
+    client=new HttpClient();
+    method=new GetMethod(url);
+    responseCode=client.executeMethod(method);
+    s_logger.info("list virtual machines response code: " + responseCode);
+    if (responseCode == 200) {
+      InputStream is=method.getResponseBodyAsStream();
+      Map<String,List<String>> vmIdValues=getMultipleValuesFromXML(is,new String[]{"id"});
+      if (vmIdValues.containsKey("id")) {
+        List<String> vmIdList=vmIdValues.get("id");
+        if (vmIdList != null) {
+          vmIds=new String[vmIdList.size()];
+          vmIdList.toArray(vmIds);
+          String vmIdLogStr="";
+          if ((vmIds != null) && (vmIds.length > 0)) {
+            vmIdLogStr=vmIds[0];
+            for (int i=1; i < vmIds.length; i++) {
+              vmIdLogStr=vmIdLogStr + "," + vmIds[i];
+            }
+          }
+          s_logger.info("got virtual machine ids: " + vmIdLogStr);
+        }
+      }
+    }
+ else {
+      s_logger.error("list virtual machines test failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+      return responseCode;
+    }
+    if (vmIds != null) {
+      for (      String vmId : vmIds) {
+        requestToSign="apikey=" + encodedApiKey + "&command=stopVirtualMachine&id="+ vmId;
+        requestToSign=requestToSign.toLowerCase();
+        signature=signRequest(requestToSign,_secretKey.get());
+        encodedSignature=URLEncoder.encode(signature,"UTF-8");
+        url=developerServer + "?command=stopVirtualMachine&id=" + vmId+ "&apikey="+ encodedApiKey+ "&signature="+ encodedSignature;
+        client=new HttpClient();
+        method=new GetMethod(url);
+        responseCode=client.executeMethod(method);
+        s_logger.info("StopVirtualMachine" + " [" + vmId + "] response code: "+ responseCode);
+        if (responseCode == 200) {
+          InputStream input=method.getResponseBodyAsStream();
+          Element el=queryAsyncJobResult(server,input);
+          Map<String,String> success=getSingleValueFromXML(el,new String[]{"success"});
+          s_logger.info("StopVirtualMachine..success? " + success.get("success"));
+        }
+ else {
+          s_logger.error("Stop virtual machine test failed with error code: " + responseCode + ". Following URL was sent: "+ url);
+          return responseCode;
+        }
+      }
+    }
+  }
+  _linuxIP.set("");
+  _linuxVmId.set("");
+  _linuxPassword.set("");
+  _windowsIP.set("");
+  _secretKey.set("");
+  _apiKey.set("");
+  _userId.set(Long.parseLong("0"));
+  _account.set("");
+  _domainRouterId.set("");
+  return responseCode;
+}

@@ -1,0 +1,75 @@
+{
+  if (TestCaseEngine._printUrl == true) {
+    s_logger.info("url is " + this.command);
+  }
+  if (this.getCommandType() == CommandType.SCRIPT) {
+    try {
+      s_logger.info("Executing command " + this.command);
+      Runtime rtime=Runtime.getRuntime();
+      Process child=rtime.exec(this.command);
+      Thread.sleep(10000);
+      int retCode=child.waitFor();
+      if (retCode != 0) {
+        this.responseCode=retCode;
+      }
+ else {
+        this.responseCode=200;
+      }
+    }
+ catch (    Exception ex) {
+      s_logger.error("Unable to execute a command " + this.command,ex);
+    }
+  }
+ else   if (this.getCommandType() == CommandType.MYSQL) {
+    try {
+      Statement stmt=conn.createStatement();
+      this.result=stmt.executeQuery(this.command);
+      this.responseCode=200;
+    }
+ catch (    Exception ex) {
+      this.responseCode=400;
+      s_logger.error("Unable to execute mysql query " + this.command,ex);
+    }
+  }
+ else {
+    HttpMethod method=new GetMethod(this.command);
+    try {
+      this.responseCode=client.executeMethod(method);
+      if (this.responseCode == 200) {
+        InputStream is=method.getResponseBodyAsStream();
+        DocumentBuilderFactory factory=DocumentBuilderFactory.newInstance();
+        DocumentBuilder builder=factory.newDocumentBuilder();
+        Document doc=builder.parse(is);
+        doc.getDocumentElement().normalize();
+        if (!(this.isAsync)) {
+          this.responseBody=doc.getDocumentElement();
+        }
+ else {
+          Element jobTag=(Element)doc.getDocumentElement().getElementsByTagName("jobid").item(0);
+          String jobId=jobTag.getTextContent();
+          Element responseBodyAsyncEl=queryAsyncJobResult(jobId);
+          if (responseBodyAsyncEl == null) {
+            s_logger.error("Can't get a async result");
+          }
+ else {
+            this.responseBody=responseBodyAsyncEl;
+            Element jobStatusTag=(Element)responseBodyAsyncEl.getElementsByTagName("jobstatus").item(0);
+            String jobStatus=jobStatusTag.getTextContent();
+            if (!jobStatus.equals("1")) {
+              this.responseCode=400;
+            }
+          }
+        }
+      }
+      if (TestCaseEngine._printUrl == true) {
+        s_logger.info("Response code is " + this.responseCode);
+      }
+    }
+ catch (    Exception ex) {
+      s_logger.error("Command " + command + " failed with exception "+ ex.getMessage());
+    }
+ finally {
+      method.releaseConnection();
+    }
+  }
+}
