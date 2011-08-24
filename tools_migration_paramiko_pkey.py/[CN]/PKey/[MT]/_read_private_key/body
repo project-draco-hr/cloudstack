@@ -1,0 +1,40 @@
+def _read_private_key(self, tag, f, password=None):
+    lines = f.readlines()
+    start = 0
+    while ((start < len(lines)) and (lines[start].strip() != (('-----BEGIN ' + tag) + ' PRIVATE KEY-----'))):
+        start += 1
+    if (start >= len(lines)):
+        raise SSHException((('not a valid ' + tag) + ' private key file'))
+    headers = {}
+    start += 1
+    while (start < len(lines)):
+        l = lines[start].split(': ')
+        if (len(l) == 1):
+            break
+        headers[l[0].lower()] = l[1].strip()
+        start += 1
+    end = start
+    while ((lines[end].strip() != (('-----END ' + tag) + ' PRIVATE KEY-----')) and (end < len(lines))):
+        end += 1
+    try:
+        data = base64.decodestring(''.join(lines[start:end]))
+    except base64.binascii.Error as e:
+        raise SSHException(('base64 decoding error: ' + str(e)))
+    if ('proc-type' not in headers):
+        return data
+    if (headers['proc-type'] != '4,ENCRYPTED'):
+        raise SSHException(('Unknown private key structure "%s"' % headers['proc-type']))
+    try:
+        (encryption_type, saltstr) = headers['dek-info'].split(',')
+    except:
+        raise SSHException("Can't parse DEK-info in private key file")
+    if (encryption_type not in self._CIPHER_TABLE):
+        raise SSHException(('Unknown private key cipher "%s"' % encryption_type))
+    if (password is None):
+        raise PasswordRequiredException('Private key file is encrypted')
+    cipher = self._CIPHER_TABLE[encryption_type]['cipher']
+    keysize = self._CIPHER_TABLE[encryption_type]['keysize']
+    mode = self._CIPHER_TABLE[encryption_type]['mode']
+    salt = unhexlify(saltstr)
+    key = util.generate_key_bytes(MD5, salt, password, keysize)
+    return cipher.new(key, mode, salt).decrypt(data)

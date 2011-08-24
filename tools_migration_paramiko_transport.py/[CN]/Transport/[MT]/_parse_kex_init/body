@@ -1,0 +1,65 @@
+def _parse_kex_init(self, m):
+    cookie = m.get_bytes(16)
+    kex_algo_list = m.get_list()
+    server_key_algo_list = m.get_list()
+    client_encrypt_algo_list = m.get_list()
+    server_encrypt_algo_list = m.get_list()
+    client_mac_algo_list = m.get_list()
+    server_mac_algo_list = m.get_list()
+    client_compress_algo_list = m.get_list()
+    server_compress_algo_list = m.get_list()
+    client_lang_list = m.get_list()
+    server_lang_list = m.get_list()
+    kex_follows = m.get_boolean()
+    unused = m.get_int()
+    self._log(DEBUG, ((((((((((((((((((((('kex algos:' + str(kex_algo_list)) + ' server key:') + str(server_key_algo_list)) + ' client encrypt:') + str(client_encrypt_algo_list)) + ' server encrypt:') + str(server_encrypt_algo_list)) + ' client mac:') + str(client_mac_algo_list)) + ' server mac:') + str(server_mac_algo_list)) + ' client compress:') + str(client_compress_algo_list)) + ' server compress:') + str(server_compress_algo_list)) + ' client lang:') + str(client_lang_list)) + ' server lang:') + str(server_lang_list)) + ' kex follows?') + str(kex_follows)))
+    if self.server_mode:
+        agreed_kex = filter(self._preferred_kex.__contains__, kex_algo_list)
+    else:
+        agreed_kex = filter(kex_algo_list.__contains__, self._preferred_kex)
+    if (len(agreed_kex) == 0):
+        raise SSHException('Incompatible ssh peer (no acceptable kex algorithm)')
+    self.kex_engine = self._kex_info[agreed_kex[0]](self)
+    if self.server_mode:
+        available_server_keys = filter(self.server_key_dict.keys().__contains__, self._preferred_keys)
+        agreed_keys = filter(available_server_keys.__contains__, server_key_algo_list)
+    else:
+        agreed_keys = filter(server_key_algo_list.__contains__, self._preferred_keys)
+    if (len(agreed_keys) == 0):
+        raise SSHException('Incompatible ssh peer (no acceptable host key)')
+    self.host_key_type = agreed_keys[0]
+    if (self.server_mode and (self.get_server_key() is None)):
+        raise SSHException("Incompatible ssh peer (can't match requested host key type)")
+    if self.server_mode:
+        agreed_local_ciphers = filter(self._preferred_ciphers.__contains__, server_encrypt_algo_list)
+        agreed_remote_ciphers = filter(self._preferred_ciphers.__contains__, client_encrypt_algo_list)
+    else:
+        agreed_local_ciphers = filter(client_encrypt_algo_list.__contains__, self._preferred_ciphers)
+        agreed_remote_ciphers = filter(server_encrypt_algo_list.__contains__, self._preferred_ciphers)
+    if ((len(agreed_local_ciphers) == 0) or (len(agreed_remote_ciphers) == 0)):
+        raise SSHException('Incompatible ssh server (no acceptable ciphers)')
+    self.local_cipher = agreed_local_ciphers[0]
+    self.remote_cipher = agreed_remote_ciphers[0]
+    self._log(DEBUG, ('Ciphers agreed: local=%s, remote=%s' % (self.local_cipher, self.remote_cipher)))
+    if self.server_mode:
+        agreed_remote_macs = filter(self._preferred_macs.__contains__, client_mac_algo_list)
+        agreed_local_macs = filter(self._preferred_macs.__contains__, server_mac_algo_list)
+    else:
+        agreed_local_macs = filter(client_mac_algo_list.__contains__, self._preferred_macs)
+        agreed_remote_macs = filter(server_mac_algo_list.__contains__, self._preferred_macs)
+    if ((len(agreed_local_macs) == 0) or (len(agreed_remote_macs) == 0)):
+        raise SSHException('Incompatible ssh server (no acceptable macs)')
+    self.local_mac = agreed_local_macs[0]
+    self.remote_mac = agreed_remote_macs[0]
+    if self.server_mode:
+        agreed_remote_compression = filter(self._preferred_compression.__contains__, client_compress_algo_list)
+        agreed_local_compression = filter(self._preferred_compression.__contains__, server_compress_algo_list)
+    else:
+        agreed_local_compression = filter(client_compress_algo_list.__contains__, self._preferred_compression)
+        agreed_remote_compression = filter(server_compress_algo_list.__contains__, self._preferred_compression)
+    if ((len(agreed_local_compression) == 0) or (len(agreed_remote_compression) == 0)):
+        raise SSHException(('Incompatible ssh server (no acceptable compression) %r %r %r' % (agreed_local_compression, agreed_remote_compression, self._preferred_compression)))
+    self.local_compression = agreed_local_compression[0]
+    self.remote_compression = agreed_remote_compression[0]
+    self._log(DEBUG, ('using kex %s; server key type %s; cipher: local %s, remote %s; mac: local %s, remote %s; compression: local %s, remote %s' % (agreed_kex[0], self.host_key_type, self.local_cipher, self.remote_cipher, self.local_mac, self.remote_mac, self.local_compression, self.remote_compression)))
+    self.remote_kex_init = (chr(MSG_KEXINIT) + m.get_so_far())

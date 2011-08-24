@@ -1,0 +1,43 @@
+@basicLogDecorator('Changing disk name for VDI...')
+def changeBootableDeviceName(self):
+    system = self.volume.system
+    xenapi = system.xenapi
+    controlDomainRef = system.controlDomainRef
+    vbdRef = None
+    try:
+        vbd = {'bootable': True, 'userdevice': '0', 'VDI': self.ref, 'other_config': {}, 'VM': controlDomainRef, 'mode': 'rw', 'qos_algorithm_type': '', 'qos_algorithm_params': {}, 'type': 'Disk', 'empty': False, 'unpluggable': True, }
+        vbdRef = xenapi.VBD.create(vbd)
+        xenapi.VBD.plug(vbdRef)
+        if (not system.runSshCommand('mkdir -p /root/temp')):
+            raise Exception('Failed to create directory /root/temp')
+        xvda1Exists = system.runSshCommand('ls /dev/xvda1')
+        if (not xvda1Exists):
+            if (not system.runSshCommand('mount /dev/xvda /root/temp')):
+                raise Exception('Failed to mount /dev/xvda to /root/temp')
+            writeToLog('Using /dev/xvda to change bootable device name.', False)
+        else:
+            if (not system.runSshCommand('mount /dev/xvda1 /root/temp')):
+                raise Exception('Failed to mount /dev/xvda1 to /root/temp')
+            if system.runSshCommand('ls /root/temp/boot'):
+                writeToLog('Using /dev/xvda1 to change bootable device name.', False)
+            else:
+                if (not system.runSshCommand('ls /dev/xvda2')):
+                    raise Exception("/dev/xvda1 exists but /dev/xvda2 doesn't exist")
+                if (not system.runSshCommand('umount /root/temp')):
+                    raise Exception('Failed to unmount /dev/xvda1')
+                if (not system.runSshCommand('mount /dev/xvda2 /root/temp')):
+                    raise Exception('Failed to mount /dev/xvda2')
+                writeToLog('Using /dev/xvda2 to change bootable device name.', False)
+        for fileToModify in ['/root/temp/etc/fstab', '/root/temp/boot/grub/grub.conf', '/root/temp/boot/grub/device.map']:
+            if system.runSshCommand(('ls ' + fileToModify)):
+                if (not system.runSshCommand(("sed -i 's_/dev/sda_/dev/xvda_' " + fileToModify))):
+                    raise Exception(('Failed to modify ' + fileToModify))
+    finally:
+        if system.runSshCommand("mount | grep '/root/temp'"):
+            if (not system.runSshCommand('umount /root/temp')):
+                raise Exception('Failed to unmount /root/temp')
+        system.runSshCommand('rm -rf /root/temp')
+        if (vbdRef != None):
+            xenapi.VBD.unplug(vbdRef)
+            xenapi.VBD.destroy(vbdRef)
+    return True

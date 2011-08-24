@@ -1,0 +1,47 @@
+def open_channel(self, kind, dest_addr=None, src_addr=None):
+    '\n        Request a new channel to the server.  L{Channel}s are socket-like\n        objects used for the actual transfer of data across the session.\n        You may only request a channel after negotiating encryption (using\n        L{connect} or L{start_client}) and authenticating.\n\n        @param kind: the kind of channel requested (usually C{"session"},\n            C{"forwarded-tcpip"}, C{"direct-tcpip"}, or C{"x11"})\n        @type kind: str\n        @param dest_addr: the destination address of this port forwarding,\n            if C{kind} is C{"forwarded-tcpip"} or C{"direct-tcpip"} (ignored\n            for other channel types)\n        @type dest_addr: (str, int)\n        @param src_addr: the source address of this port forwarding, if\n            C{kind} is C{"forwarded-tcpip"}, C{"direct-tcpip"}, or C{"x11"}\n        @type src_addr: (str, int)\n        @return: a new L{Channel} on success\n        @rtype: L{Channel}\n\n        @raise SSHException: if the request is rejected or the session ends\n            prematurely\n        '
+    chan = None
+    if (not self.active):
+        return None
+    self.lock.acquire()
+    try:
+        chanid = self._next_channel()
+        m = Message()
+        m.add_byte(chr(MSG_CHANNEL_OPEN))
+        m.add_string(kind)
+        m.add_int(chanid)
+        m.add_int(self.window_size)
+        m.add_int(self.max_packet_size)
+        if ((kind == 'forwarded-tcpip') or (kind == 'direct-tcpip')):
+            m.add_string(dest_addr[0])
+            m.add_int(dest_addr[1])
+            m.add_string(src_addr[0])
+            m.add_int(src_addr[1])
+        elif (kind == 'x11'):
+            m.add_string(src_addr[0])
+            m.add_int(src_addr[1])
+        chan = Channel(chanid)
+        self._channels.put(chanid, chan)
+        self.channel_events[chanid] = event = threading.Event()
+        self.channels_seen[chanid] = True
+        chan._set_transport(self)
+        chan._set_window(self.window_size, self.max_packet_size)
+    finally:
+        self.lock.release()
+    self._send_user_message(m)
+    while True:
+        event.wait(0.1)
+        if (not self.active):
+            e = self.get_exception()
+            if (e is None):
+                e = SSHException('Unable to open channel.')
+            raise e
+        if event.isSet():
+            break
+    chan = self._channels.get(chanid)
+    if (chan is not None):
+        return chan
+    e = self.get_exception()
+    if (e is None):
+        e = SSHException('Unable to open channel.')
+    raise e

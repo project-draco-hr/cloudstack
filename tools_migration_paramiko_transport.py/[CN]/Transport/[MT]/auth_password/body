@@ -1,0 +1,29 @@
+def auth_password(self, username, password, event=None, fallback=True):
+    '\n        Authenticate to the server using a password.  The username and password\n        are sent over an encrypted link.\n\n        If an C{event} is passed in, this method will return immediately, and\n        the event will be triggered once authentication succeeds or fails.  On\n        success, L{is_authenticated} will return C{True}.  On failure, you may\n        use L{get_exception} to get more detailed error information.\n\n        Since 1.1, if no event is passed, this method will block until the\n        authentication succeeds or fails.  On failure, an exception is raised.\n        Otherwise, the method simply returns.\n\n        Since 1.5, if no event is passed and C{fallback} is C{True} (the\n        default), if the server doesn\'t support plain password authentication\n        but does support so-called "keyboard-interactive" mode, an attempt\n        will be made to authenticate using this interactive mode.  If it fails,\n        the normal exception will be thrown as if the attempt had never been\n        made.  This is useful for some recent Gentoo and Debian distributions,\n        which turn off plain password authentication in a misguided belief\n        that interactive authentication is "more secure".  (It\'s not.)\n\n        If the server requires multi-step authentication (which is very rare),\n        this method will return a list of auth types permissible for the next\n        step.  Otherwise, in the normal case, an empty list is returned.\n\n        @param username: the username to authenticate as\n        @type username: str\n        @param password: the password to authenticate with\n        @type password: str or unicode\n        @param event: an event to trigger when the authentication attempt is\n            complete (whether it was successful or not)\n        @type event: threading.Event\n        @param fallback: C{True} if an attempt at an automated "interactive"\n            password auth should be made if the server doesn\'t support normal\n            password auth\n        @type fallback: bool\n        @return: list of auth types permissible for the next stage of\n            authentication (normally empty)\n        @rtype: list\n\n        @raise BadAuthenticationType: if password authentication isn\'t\n            allowed by the server for this user (and no event was passed in)\n        @raise AuthenticationException: if the authentication failed (and no\n            event was passed in)\n        @raise SSHException: if there was a network error\n        '
+    if ((not self.active) or (not self.initial_kex_done)):
+        raise SSHException('No existing session')
+    if (event is None):
+        my_event = threading.Event()
+    else:
+        my_event = event
+    self.auth_handler = AuthHandler(self)
+    self.auth_handler.auth_password(username, password, my_event)
+    if (event is not None):
+        return []
+    try:
+        return self.auth_handler.wait_for_response(my_event)
+    except BadAuthenticationType as x:
+        if ((not fallback) or ('keyboard-interactive' not in x.allowed_types)):
+            raise
+        try:
+
+            def handler(title, instructions, fields):
+                if (len(fields) > 1):
+                    raise SSHException('Fallback authentication failed.')
+                if (len(fields) == 0):
+                    return []
+                return [password]
+            return self.auth_interactive(username, handler)
+        except SSHException as ignored:
+            raise x
+    return None

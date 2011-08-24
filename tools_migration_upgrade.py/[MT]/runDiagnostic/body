@@ -1,0 +1,31 @@
+@basicLogDecorator('Running diagnostic...')
+def runDiagnostic():
+    if (((GLOBALS.get('DEST_XENSERVER_IP') == None) and ((GLOBALS.get('DEST_XENSERVER_PASSWORD') != None) or (GLOBALS.get('DEST_XENSERVER_PASSWORDS') == None))) or ((GLOBALS.get('DEST_XENSERVER_IP') != None) and ((GLOBALS.get('DEST_XENSERVER_PASSWORD') == None) or (GLOBALS.get('DEST_XENSERVER_PASSWORDS') != None)))):
+        raise Exception('Please specify the IP and root password for one XenServer (if all XenServers have the same root password), or the IPs and root passwords of all XenServers.')
+    GLOBALS['SRC_SYSTEM'] = System(GLOBALS['SRC_MANAGEMENT_SERVER_IP'], False, None, None, None, 'vmops', GLOBALS['SRC_DB_LOGIN'], GLOBALS.get('SRC_DB_PASSWORD'), GLOBALS['SRC_ZONE_ID'], None, None, None, None)
+    GLOBALS['DEST_SYSTEM'] = System(GLOBALS['DEST_MANAGEMENT_SERVER_IP'], True, GLOBALS.get('DEST_XENSERVER_IP'), GLOBALS.get('DEST_XENSERVER_PASSWORD'), GLOBALS.get('DEST_XENSERVER_PASSWORDS'), 'cloud', GLOBALS['DEST_DB_LOGIN'], GLOBALS.get('DEST_DB_PASSWORD'), GLOBALS['DEST_ZONE_ID'], GLOBALS['DEST_TEMPLATE_ID'], GLOBALS['DEST_ISO_ID'], GLOBALS['DEST_SERVICE_OFFERING_ID'], GLOBALS['DEST_DISK_OFFERING_ID'])
+    srcSystemServiceOfferings = ServiceOffering.getSrcSystemServiceOfferings()
+    for srcSystemServiceOffering in srcSystemServiceOfferings:
+        destSystemServiceOffering = ServiceOffering.getCorrespondingServiceOffering(srcSystemServiceOffering.id)
+        if (destSystemServiceOffering == None):
+            raise Exception(('No corresponding service offering found for: ' + str(srcSystemServiceOffering)))
+        destSystemDiskOffering = DiskOffering.getCorrespondingDiskOffering(srcSystemServiceOffering.id)
+        if (destSystemDiskOffering == None):
+            raise Exception(('No corresponding disk offering found for: ' + str(srcSystemServiceOffering)))
+    srcSystemTemplateIds = VM.getTemplateIds(GLOBALS['SRC_SYSTEM'])
+    for templateId in srcSystemTemplateIds:
+        if (not GLOBALS['GUEST_OS_MAP'].has_key(templateId)):
+            raise Exception(('No corresponding guest OS ID for templateId: ' + templateId))
+        else:
+            guestOsId = GLOBALS['GUEST_OS_MAP'][templateId]
+            guestOsName = VM.getGuestOsName(GLOBALS['DEST_SYSTEM'], guestOsId)
+            if (guestOsName == None):
+                raise Exception((('The guest OS ID that corresponds to template ID: ' + templateId) + ' is not valid.'))
+    template = VM.getTemplate(GLOBALS['DEST_SYSTEM'], GLOBALS['DEST_ISO_ID'])
+    if ((template == None) or (template['format'] != 'ISO')):
+        raise Exception('The dest system ISO ID is not valid.')
+    storageHostIps = Host.getStorageHostIps()
+    for ip in storageHostIps:
+        if (ip not in GLOBALS['STORAGE_HOST_PASSWORDS'].keys()):
+            raise Exception((('The storage host IP: ' + str(ip)) + ' has no entry in STORAGE_HOST_PASSWORDS.'))
+    return True

@@ -1,0 +1,29 @@
+def doUpgrade(userId, onlyMigratePublicIps):
+    srcUser = User.get(GLOBALS['SRC_SYSTEM'], userId)
+    writeToLog(('\nStarting migration for ' + str(srcUser)), True)
+    destUser = User.create(GLOBALS['DEST_SYSTEM'], srcUser)
+    if (not srcUser.alreadyMigrated()):
+        allocatedPublicIps = PublicIp.migrateAllocatedPublicIps(srcUser, destUser)
+        if onlyMigratePublicIps:
+            writeToLog(('\nMigrated public IPs for ' + str(srcUser)), True)
+            return
+        srcUserDomR = DomainRouter(srcUser)
+        if (srcUserDomR.id != None):
+            srcUserDomR.stop()
+            destUserDomR = DomainRouter(destUser)
+            tempVm = None
+            if (destUserDomR.id == None):
+                tempVm = VM(None, destUser, None, None, None)
+                tempVm.deployTemp()
+                destUserDomR.id = destUserDomR.getId()
+            else:
+                tempVm = VM.getTempVm(destUser)
+            vmIdMap = VM.migrateVirtualMachines(srcUser, destUser)
+            ForwardingRule.migrateForwardingRules(srcUser, destUser, allocatedPublicIps, vmIdMap)
+            destUserDomR.reboot()
+            if (tempVm != None):
+                tempVm.destroy()
+        srcUser.tagAsMigrated()
+    else:
+        writeToLog((('\n' + str(srcUser)) + ' has already been migrated.'), True)
+    writeToLog(('\nMigration was successful for ' + str(srcUser)), True)

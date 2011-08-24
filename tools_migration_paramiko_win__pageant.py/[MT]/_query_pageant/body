@@ -1,0 +1,31 @@
+def _query_pageant(msg):
+    hwnd = _get_pageant_window_object()
+    if (not hwnd):
+        return None
+    filename = tempfile.mktemp('.pag')
+    map_filename = os.path.basename(filename)
+    f = open(filename, 'w+b')
+    f.write(msg)
+    f.write(('\x00' * (_AGENT_MAX_MSGLEN - len(msg))))
+    pymap = mmap.mmap(f.fileno(), _AGENT_MAX_MSGLEN, tagname=map_filename, access=mmap.ACCESS_WRITE)
+    try:
+        char_buffer = array.array('c', (map_filename + '\x00'))
+        (char_buffer_address, char_buffer_size) = char_buffer.buffer_info()
+        cds = struct.pack('LLP', _AGENT_COPYDATA_ID, char_buffer_size, char_buffer_address)
+        if _has_win32all:
+            response = win32gui.SendMessage(hwnd, win32con_WM_COPYDATA, len(cds), cds)
+        elif _has_ctypes:
+            _buf = array.array('B', cds)
+            (_addr, _size) = _buf.buffer_info()
+            response = ctypes.windll.user32.SendMessageA(hwnd, win32con_WM_COPYDATA, _size, _addr)
+        else:
+            response = 0
+        if (response > 0):
+            datalen = pymap.read(4)
+            retlen = struct.unpack('>I', datalen)[0]
+            return (datalen + pymap.read(retlen))
+        return None
+    finally:
+        pymap.close()
+        f.close()
+        os.unlink(filename)

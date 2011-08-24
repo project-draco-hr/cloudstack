@@ -1,0 +1,63 @@
+@staticmethod
+@basicLogDecorator("Migrating the user's VMs...")
+def migrateVirtualMachines(srcUser, destUser):
+    vmIdMap = dict()
+    srcVms = VM.getVms(srcUser)
+    for srcVm in srcVms:
+        destVm = VM.getCorrespondingVm(destUser, srcVm)
+        if (destVm == None):
+            destVm = VM(None, destUser, srcVm.serviceOfferingId, srcVm.guestOsId, srcVm.guestOsCategoryId)
+            destVm.deploy(srcVm)
+        vmIdMap[srcVm.id] = destVm.id
+        srcVolumes = Volume.getSrcVolumes(srcUser, srcVm)
+        vmAlreadyMigrated = True
+        for srcVolume in srcVolumes:
+            destVolume = Volume.getDestVolume(None, destVm, srcVolume.type)
+            if (destVolume == None):
+                vmAlreadyMigrated = False
+                break
+            elif (srcVolume.id != destVolume.name.split('-')[(-1)]):
+                vmAlreadyMigrated = False
+                break
+        if vmAlreadyMigrated:
+            writeToLog((('\n' + str(srcVm)) + ' has already been migrated.'), True)
+            continue
+        else:
+            writeToLog(('\nMigrating volumes for source VM: ' + str(srcVm)), True)
+        destVm.stop()
+        srcVm.stop()
+        for srcVolume in srcVolumes:
+            destVolume = None
+            if (srcVolume.type == 'DATADISK'):
+                destVolume = Volume.getDestVolume(None, destVm, 'DATADISK')
+                if (destVolume == None):
+                    diskOffering = DiskOffering.getCorrespondingDiskOffering(srcVm.serviceOfferingId)
+                    destVolume = Volume(GLOBALS['DEST_SYSTEM'], None, (str(destVm.id) + '-DATADISK'), None, None, None, 'DATA', diskOffering.id)
+                    destVolume.createAndAttach(destVm)
+            else:
+                destVolume = Volume.getDestVolume(None, destVm, 'ROOT')
+            if (srcVolume.id == destVolume.name.split('-')[(-1)]):
+                writeToLog((str(srcVolume) + ' has already been migrated.'))
+                continue
+            srcHost = Host.getHost(GLOBALS['SRC_SYSTEM'], srcVolume.hostId)
+            srcSR = SR.getExistingSrcSr(srcHost.ip, srcHost.iqn)
+            if (srcSR == None):
+                srcSR = SR(GLOBALS['DEST_SYSTEM'], srcHost.ip, srcHost.iqn, None)
+                srcSR.create()
+            else:
+                writeToLog(('Found existing SR: ' + str(srcSR)), False)
+            srcVdi = VDI(srcSR, srcVolume, None)
+            destStoragePool = StoragePool.getStoragePool(GLOBALS['DEST_SYSTEM'], destVolume.poolId)
+            destSR = SR(GLOBALS['DEST_SYSTEM'], None, None, destStoragePool.uuid)
+            destSR.find()
+            copiedVdiUuid = srcVdi.copy(destSR)
+            destVdi = VDI(destSR, destVolume, copiedVdiUuid)
+            if ((destVolume.type == 'ROOT') and srcVm.isLinuxVm()):
+                destVdi.changeBootableDeviceName()
+            oldDestVdi = VDI(destSR, destVolume, destVolume.path)
+            oldDestVdi.destroy()
+            destVolume.update(copiedVdiUuid, destVdi.getVirtualSize(), ((destVolume.name + '-') + srcVolume.id))
+        destVm.detachIso()
+        destVm.updateGuestOsId()
+        destVm.start()
+    return vmIdMap

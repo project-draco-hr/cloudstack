@@ -1,0 +1,81 @@
+def _parse_channel_open(self, m):
+    kind = m.get_string()
+    chanid = m.get_int()
+    initial_window_size = m.get_int()
+    max_packet_size = m.get_int()
+    reject = False
+    if ((kind == 'x11') and (self._x11_handler is not None)):
+        origin_addr = m.get_string()
+        origin_port = m.get_int()
+        self._log(DEBUG, ('Incoming x11 connection from %s:%d' % (origin_addr, origin_port)))
+        self.lock.acquire()
+        try:
+            my_chanid = self._next_channel()
+        finally:
+            self.lock.release()
+    elif ((kind == 'forwarded-tcpip') and (self._tcp_handler is not None)):
+        server_addr = m.get_string()
+        server_port = m.get_int()
+        origin_addr = m.get_string()
+        origin_port = m.get_int()
+        self._log(DEBUG, ('Incoming tcp forwarded connection from %s:%d' % (origin_addr, origin_port)))
+        self.lock.acquire()
+        try:
+            my_chanid = self._next_channel()
+        finally:
+            self.lock.release()
+    elif (not self.server_mode):
+        self._log(DEBUG, ('Rejecting "%s" channel request from server.' % kind))
+        reject = True
+        reason = OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+    else:
+        self.lock.acquire()
+        try:
+            my_chanid = self._next_channel()
+        finally:
+            self.lock.release()
+        if (kind == 'direct-tcpip'):
+            dest_addr = m.get_string()
+            dest_port = m.get_int()
+            origin_addr = m.get_string()
+            origin_port = m.get_int()
+            reason = self.server_object.check_channel_direct_tcpip_request(my_chanid, (origin_addr, origin_port), (dest_addr, dest_port))
+        else:
+            reason = self.server_object.check_channel_request(kind, my_chanid)
+        if (reason != OPEN_SUCCEEDED):
+            self._log(DEBUG, ('Rejecting "%s" channel request from client.' % kind))
+            reject = True
+    if reject:
+        msg = Message()
+        msg.add_byte(chr(MSG_CHANNEL_OPEN_FAILURE))
+        msg.add_int(chanid)
+        msg.add_int(reason)
+        msg.add_string('')
+        msg.add_string('en')
+        self._send_message(msg)
+        return
+    chan = Channel(my_chanid)
+    self.lock.acquire()
+    try:
+        self._channels.put(my_chanid, chan)
+        self.channels_seen[my_chanid] = True
+        chan._set_transport(self)
+        chan._set_window(self.window_size, self.max_packet_size)
+        chan._set_remote_channel(chanid, initial_window_size, max_packet_size)
+    finally:
+        self.lock.release()
+    m = Message()
+    m.add_byte(chr(MSG_CHANNEL_OPEN_SUCCESS))
+    m.add_int(chanid)
+    m.add_int(my_chanid)
+    m.add_int(self.window_size)
+    m.add_int(self.max_packet_size)
+    self._send_message(m)
+    self._log(INFO, 'Secsh channel %d (%s) opened.', my_chanid, kind)
+    if (kind == 'x11'):
+        self._x11_handler(chan, (origin_addr, origin_port))
+    elif (kind == 'forwarded-tcpip'):
+        chan.origin_addr = (origin_addr, origin_port)
+        self._tcp_handler(chan, (origin_addr, origin_port), (server_addr, server_port))
+    else:
+        self._queue_incoming_channel(chan)
