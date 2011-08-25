@@ -1,0 +1,119 @@
+{
+  Account ctxAccount=UserContext.current().getCaller();
+  Account resourceAccount=null;
+  Long accountId=null;
+  if (isPublic == null) {
+    isPublic=Boolean.FALSE;
+  }
+  if (zoneId.longValue() == -1) {
+    zoneId=null;
+  }
+  if (isIso) {
+    if (bootable == null) {
+      bootable=Boolean.TRUE;
+    }
+    GuestOS noneGuestOs=ApiDBUtils.findGuestOSByDisplayName(ApiConstants.ISO_GUEST_OS_NONE);
+    if ((guestOSId == null || guestOSId == noneGuestOs.getId()) && bootable == true) {
+      throw new InvalidParameterValueException("Please pass a valid GuestOS Id");
+    }
+    if (bootable == false) {
+      guestOSId=noneGuestOs.getId();
+    }
+  }
+ else {
+    if (bits == null) {
+      bits=Integer.valueOf(64);
+    }
+    if (passwordEnabled == null) {
+      passwordEnabled=false;
+    }
+    if (requiresHVM == null) {
+      requiresHVM=true;
+    }
+  }
+  if (isExtractable == null) {
+    isExtractable=Boolean.FALSE;
+  }
+  if ((accountName == null) ^ (domainId == null)) {
+    throw new InvalidParameterValueException("Please specify both account and domainId or dont specify any of them");
+  }
+  if ((ctxAccount == null) || isAdmin(ctxAccount.getType())) {
+    if (domainId != null) {
+      if ((ctxAccount != null) && !_domainDao.isChildDomain(ctxAccount.getDomainId(),domainId)) {
+        throw new PermissionDeniedException("Failed to register template, invalid domain id (" + domainId + ") given.");
+      }
+      if (accountName != null) {
+        resourceAccount=_accountDao.findActiveAccount(accountName,domainId);
+        if (resourceAccount == null) {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=resourceAccount.getId();
+      }
+    }
+ else {
+      accountId=((ctxAccount != null) ? ctxAccount.getId() : null);
+    }
+  }
+ else {
+    accountId=ctxAccount.getId();
+  }
+  if (null == accountId && null == accountName && null == domainId && null == ctxAccount) {
+    accountId=1L;
+  }
+  if (null == accountId) {
+    throw new InvalidParameterValueException("No valid account specified for registering template.");
+  }
+  boolean isAdmin=_accountDao.findById(accountId).getType() == Account.ACCOUNT_TYPE_ADMIN;
+  if (!isAdmin && zoneId == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone Id.");
+  }
+  if (url.toLowerCase().contains("file://")) {
+    throw new InvalidParameterValueException("File:// type urls are currently unsupported");
+  }
+  boolean allowPublicUserTemplates=Boolean.parseBoolean(_configDao.getValue("allow.public.user.templates"));
+  if (!isAdmin && !allowPublicUserTemplates && isPublic) {
+    throw new InvalidParameterValueException("Only private templates/ISO can be created.");
+  }
+  if (!isAdmin || featured == null) {
+    featured=Boolean.FALSE;
+  }
+  if (userId == null) {
+    userId=Long.valueOf(1);
+  }
+  ImageFormat imgfmt=ImageFormat.valueOf(format.toUpperCase());
+  if (imgfmt == null) {
+    throw new IllegalArgumentException("Image format is incorrect " + format + ". Supported formats are "+ EnumUtils.listValues(ImageFormat.values()));
+  }
+  UserVO user=_userDao.findById(userId);
+  if (user == null) {
+    throw new IllegalArgumentException("Unable to find user with id " + userId);
+  }
+  AccountVO account=_accountDao.findById(accountId);
+  if (_accountMgr.resourceLimitExceeded(account,ResourceType.template)) {
+    ResourceAllocationException rae=new ResourceAllocationException("Maximum number of templates and ISOs for account: " + account.getAccountName() + " has been exceeded.");
+    rae.setResourceType("template");
+    throw rae;
+  }
+  if (account.getType() != Account.ACCOUNT_TYPE_ADMIN && zoneId == null) {
+    throw new IllegalArgumentException("Only admins can create templates in all zones");
+  }
+  if (zoneId != null) {
+    DataCenterVO zone=_dcDao.findById(zoneId);
+    if (zone == null) {
+      throw new IllegalArgumentException("Please specify a valid zone.");
+    }
+    Account caller=UserContext.current().getCaller();
+    if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
+      throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
+    }
+  }
+  List<VMTemplateVO> systemvmTmplts=_tmpltDao.listAllSystemVMTemplates();
+  for (  VMTemplateVO template : systemvmTmplts) {
+    if (template.getName().equalsIgnoreCase(name) || template.getDisplayText().equalsIgnoreCase(displayText)) {
+      throw new IllegalArgumentException("Cannot use reserved names for templates");
+    }
+  }
+  Long id=_tmpltDao.getNextInSequence(Long.class,"id");
+  UserContext.current().setEventDetails("Id: " + id + " name: "+ name);
+  return new TemplateProfile(id,userId,name,displayText,bits,passwordEnabled,requiresHVM,url,isPublic,featured,isExtractable,imgfmt,guestOSId,zoneId,hypervisorType,accountName,domainId,accountId,chksum,true,templateTag);
+}
