@@ -1,0 +1,33 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  PreparedStatement stmtInsert=null;
+  int size=workItems.size();
+  int count=0;
+  Iterator<Long> workIter=workItems.iterator();
+  int remaining=size;
+  try {
+    for (    int stmtSize : cacheStringSizes) {
+      int numStmts=remaining / stmtSize;
+      if (numStmts > 0) {
+        String pstmt=cachedPrepStmtStrings.get(stmtSize);
+        stmtInsert=txn.prepareAutoCloseStatement(pstmt);
+        for (int i=0; i < numStmts; i++) {
+          for (int argIndex=1; argIndex <= stmtSize; argIndex++) {
+            Long vmId=workIter.next();
+            stmtInsert.setLong(argIndex,vmId);
+          }
+          int numUpdated=stmtInsert.executeUpdate();
+          if (s_logger.isTraceEnabled()) {
+            s_logger.trace("Inserted or updated " + numUpdated + " rows");
+          }
+          count+=stmtSize;
+        }
+        remaining=remaining - numStmts * stmtSize;
+      }
+    }
+  }
+ catch (  SQLException sqe) {
+    s_logger.warn("Failed to execute multi insert ",sqe);
+  }
+  return count;
+}
