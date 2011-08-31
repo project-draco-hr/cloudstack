@@ -1,42 +1,43 @@
 {
-  Account account=UserContext.current().getCaller();
+  Account caller=UserContext.current().getCaller();
   Long domainId=cmd.getId();
   Boolean cleanup=cmd.getCleanup();
-  if ((domainId == DomainVO.ROOT_DOMAIN) || ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId))) {
-    throw new PermissionDeniedException("Unable to delete domain " + domainId + ", permission denied.");
+  DomainVO domain=_domainDao.findById(domainId);
+  if (domain == null) {
+    throw new InvalidParameterValueException("Failed to delete domain " + domainId + ", domain not found");
   }
+ else   if (domainId == DomainVO.ROOT_DOMAIN) {
+    throw new PermissionDeniedException("Can't delete ROOT domain");
+  }
+  _accountMgr.checkAccess(caller,domain);
+  s_logger.debug("Marking domain id=" + domainId + " as "+ Domain.State.Inactive+ " before actually deleting it");
+  domain.setState(Domain.State.Inactive);
+  _domainDao.update(domainId,domain);
   try {
-    DomainVO domain=_domainDao.findById(domainId);
-    if (domain != null) {
-      long ownerId=domain.getAccountId();
-      if ((cleanup != null) && cleanup.booleanValue()) {
-        boolean success=cleanupDomain(domainId,ownerId);
-        if (!success) {
-          s_logger.error("Failed to clean up domain resources and sub domains, delete failed on domain " + domain.getName() + " (id: "+ domainId+ ").");
-          return false;
-        }
+    long ownerId=domain.getAccountId();
+    if ((cleanup != null) && cleanup.booleanValue()) {
+      if (!cleanupDomain(domainId,ownerId)) {
+        s_logger.error("Failed to clean up domain resources and sub domains, delete failed on domain " + domain.getName() + " (id: "+ domainId+ ").");
+        return false;
       }
+    }
  else {
+      List<AccountVO> accountsForCleanup=_accountDao.findCleanupsForRemovedAccounts(domainId);
+      if (accountsForCleanup.isEmpty()) {
         if (!_domainDao.remove(domainId)) {
           s_logger.error("Delete failed on domain " + domain.getName() + " (id: "+ domainId+ "); please make sure all users and sub domains have been removed from the domain before deleting");
           return false;
         }
- else {
-          domain.setState(Domain.State.Inactive);
-          _domainDao.update(domainId,domain);
-        }
       }
-    }
  else {
-      throw new InvalidParameterValueException("Failed to delete domain " + domainId + ", domain not found");
+        s_logger.warn("Can't delete the domain yet because it has " + accountsForCleanup.size() + "accounts that need a cleanup");
+        return false;
+      }
     }
     cleanupDomainOfferings(domainId);
     return true;
   }
- catch (  InvalidParameterValueException ex) {
-    throw ex;
-  }
-catch (  Exception ex) {
+ catch (  Exception ex) {
     s_logger.error("Exception deleting domain with id " + domainId,ex);
     return false;
   }

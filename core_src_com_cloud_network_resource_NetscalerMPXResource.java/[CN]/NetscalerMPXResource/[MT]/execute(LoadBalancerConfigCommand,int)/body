@@ -1,0 +1,160 @@
+{
+  try {
+    String lbProtocol;
+    String lbMethod;
+    LoadBalancerTO[] loadBalancers=cmd.getLoadBalancers();
+    for (    LoadBalancerTO loadBalancer : loadBalancers) {
+      if (loadBalancer.getProtocol() == null) {
+        lbProtocol="TCP";
+      }
+ else       if (loadBalancer.getProtocol().equals(NetUtils.TCP_PROTO)) {
+        lbProtocol="TCP";
+      }
+ else       if (loadBalancer.getProtocol().equals(NetUtils.UDP_PROTO)) {
+        lbProtocol="UDP";
+      }
+ else {
+        throw new ExecutionException("Got invalid protocol: " + loadBalancer.getProtocol());
+      }
+      if (loadBalancer.getAlgorithm().equals("roundrobin")) {
+        lbMethod="ROUNDROBIN";
+      }
+ else       if (loadBalancer.getAlgorithm().equals("leastconn")) {
+        lbMethod="LEASTCONNECTION";
+      }
+ else {
+        throw new ExecutionException("Got invalid load balancing algorithm: " + loadBalancer.getAlgorithm());
+      }
+      String srcIp=loadBalancer.getSrcIp();
+      int srcPort=loadBalancer.getSrcPort();
+      String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort,lbProtocol);
+      boolean destinationsToAdd=false;
+      for (      DestinationTO destination : loadBalancer.getDestinations()) {
+        if (!destination.isRevoked()) {
+          destinationsToAdd=true;
+          break;
+        }
+      }
+      if (!loadBalancer.isRevoked() && destinationsToAdd) {
+        addLBVirtualServer(nsVirtualServerName,srcIp,srcPort,lbMethod,lbProtocol);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Created load balancing virtual server " + nsVirtualServerName + " on the Netscaler device");
+        }
+        List<String> activePoolMembers=new ArrayList<String>();
+        for (        DestinationTO destination : loadBalancer.getDestinations()) {
+          String nsServerName=generateNSServerName(destination.getDestIp());
+          String nsServiceName=generateNSServiceName(destination.getDestIp(),destination.getDestPort());
+          if (!destination.isRevoked()) {
+            if (!nsServerExists(nsServerName)) {
+              com.citrix.netscaler.nitro.resource.config.basic.server nsServer=new com.citrix.netscaler.nitro.resource.config.basic.server();
+              nsServer.set_name(nsServerName);
+              nsServer.set_ipaddress(destination.getDestIp());
+              apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.server.add(nsService,nsServer);
+              if ((apiCallResult.errorcode != 0) && (apiCallResult.errorcode != NitroError.NS_RESOURCE_EXISTS)) {
+                throw new ExecutionException("Failed to add server " + destination.getDestIp() + " due to"+ apiCallResult.message);
+              }
+            }
+            if (!nsServiceExists(nsServiceName)) {
+              com.citrix.netscaler.nitro.resource.config.basic.service newService=new com.citrix.netscaler.nitro.resource.config.basic.service();
+              newService.set_name(nsServiceName);
+              newService.set_port(destination.getDestPort());
+              newService.set_servername(nsServerName);
+              newService.set_state("ENABLED");
+              newService.set_servicetype(lbProtocol);
+              apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.service.add(nsService,newService);
+              if (apiCallResult.errorcode != 0) {
+                throw new ExecutionException("Failed to create service " + nsServiceName + " using server "+ nsServerName+ " due to"+ apiCallResult.message);
+              }
+            }
+            if (!nsServiceBindingExists(nsVirtualServerName,nsServiceName)) {
+              com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding svcBinding=new com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding();
+              svcBinding.set_name(nsVirtualServerName);
+              svcBinding.set_servicename(nsServiceName);
+              apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.add(nsService,svcBinding);
+              if (apiCallResult.errorcode != 0) {
+                throw new ExecutionException("Failed to bind service: " + nsServiceName + " to the lb virtual server: "+ nsVirtualServerName+ " on Netscaler device");
+              }
+            }
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Successfully added LB destination: " + destination.getDestIp() + ":"+ destination.getDestPort()+ " to load balancer "+ srcIp+ ":"+ srcPort);
+            }
+          }
+ else {
+            com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding[] serviceBindings=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.get(nsService,nsVirtualServerName);
+            if (serviceBindings != null) {
+              for (              com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding binding : serviceBindings) {
+                if (nsServiceName.equalsIgnoreCase(binding.get_servicename())) {
+                  apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.delete(nsService,binding);
+                  if (apiCallResult.errorcode != 0) {
+                    throw new ExecutionException("Failed to delete the binding between the virtual server: " + nsVirtualServerName + " and service:"+ nsServiceName);
+                  }
+                  apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.service.delete(nsService,nsServiceName);
+                  if (apiCallResult.errorcode != 0) {
+                    throw new ExecutionException("Failed to delete service: " + nsServiceName);
+                  }
+                  server_service_binding[] services=server_service_binding.get(nsService,nsServerName);
+                  if ((services == null) || (services.length == 0)) {
+                    apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.server.delete(nsService,nsServerName);
+                    if (apiCallResult.errorcode != 0) {
+                      throw new ExecutionException("Failed to remove server:" + nsServerName);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+ else {
+        lbvserver lbserver=lbvserver.get(nsService,nsVirtualServerName);
+        if (lbserver == null) {
+          throw new ExecutionException("Failed to find virtual server with name:" + nsVirtualServerName);
+        }
+        com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding[] serviceBindings=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.get(nsService,nsVirtualServerName);
+        if (serviceBindings != null) {
+          for (          com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding binding : serviceBindings) {
+            String serviceName=binding.get_servicename();
+            apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.delete(nsService,binding);
+            if (apiCallResult.errorcode != 0) {
+              throw new ExecutionException("Failed to unbind servic from the lb virtual server: " + nsVirtualServerName);
+            }
+            com.citrix.netscaler.nitro.resource.config.basic.service svc=com.citrix.netscaler.nitro.resource.config.basic.service.get(nsService,serviceName);
+            String nsServerName=svc.get_servername();
+            com.citrix.netscaler.nitro.resource.config.basic.service.delete(nsService,serviceName);
+            server_service_binding[] services=server_service_binding.get(nsService,nsServerName);
+            if ((services == null) || (services.length == 0)) {
+              apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.server.delete(nsService,nsServerName);
+              if (apiCallResult.errorcode != 0) {
+                throw new ExecutionException("Failed to remove server:" + nsServerName);
+              }
+            }
+          }
+        }
+        removeLBVirtualServer(nsVirtualServerName);
+      }
+    }
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Successfully executed resource LoadBalancerConfigCommand: " + _gson.toJson(cmd));
+    }
+    saveConfiguration();
+    return new Answer(cmd);
+  }
+ catch (  ExecutionException e) {
+    s_logger.error("Failed to execute LoadBalancerConfigCommand due to " + e.getMessage());
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+ else {
+      return new Answer(cmd,e);
+    }
+  }
+catch (  Exception e) {
+    s_logger.error("Failed to execute LoadBalancerConfigCommand due to " + e.getMessage());
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+ else {
+      return new Answer(cmd,e);
+    }
+  }
+}
