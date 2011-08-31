@@ -49,6 +49,30 @@ def prepareOCFS2Nodes(clusterName, nodeString):
         fd = open(ETC_HOSTS, 'w')
         fd.write(orignalConf)
         fd.close()
+
+    def configureHostName(nodes):
+        myIp = successToMap(get_master_ip())['ip']
+        nodeName = None
+        for n in nodes:
+            if (myIp == n['ip_address']):
+                nodeName = n['name']
+                break
+        if (nodeName == None):
+            raise Exception(('Cannot find node equals to my ip address:%s' % myIp))
+        if (not exists(HOSTNAME_FILE)):
+            originalConf = ''
+        else:
+            fd = open(HOSTNAME_FILE, 'r')
+            originalConf = fd.read()
+            fd.close()
+        pattern = 'HOSTNAME=(.*)'
+        originalConf = re.sub(pattern, '', originalConf)
+        originalConf = ((re.sub('\\n\\s*\\n*', '\n', originalConf) + '\n') + ('HOSTNAME=%s' % nodeName))
+        logger.debug(OvmStoragePool.prepareOCFS2Nodes, ('Configure %s:%s\n' % (HOSTNAME_FILE, originalConf)))
+        fd = open(HOSTNAME_FILE, 'w')
+        fd.write(originalConf)
+        fd.close()
+        doCmd(['hostname', nodeName])
     try:
         nodeString = nodeString.strip(';')
         nodes = []
@@ -78,10 +102,11 @@ def prepareOCFS2Nodes(clusterName, nodeString):
         lines.append(('\tname        = %s\n' % clusterName))
         lines.append('\n')
         conf = ''.join(lines)
+        configureHostName(nodes)
+        configureEtcHosts(nodes)
         clusterm_set_ocfs2_cluster_conf(conf)
         clusterm_start_o2cb_service()
         logger.debug(OvmStoragePool.prepareOCFS2Nodes, ('Configure cluster.conf to:\n%s' % conf))
-        configureEtcHosts(nodes)
         rs = SUCC()
         return rs
     except Exception as e:
