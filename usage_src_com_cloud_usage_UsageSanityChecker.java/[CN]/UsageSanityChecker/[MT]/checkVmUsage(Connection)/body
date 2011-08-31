@@ -1,0 +1,32 @@
+{
+  boolean success=true;
+  PreparedStatement pstmt=conn.prepareStatement("select count(*) from cloud_usage.cloud_usage cu inner join cloud.vm_instance vm where vm.type = 'User' " + "and cu.usage_type in (1 , 2) and cu.usage_id = vm.id and cu.start_date > vm.removed" + lastCheckId);
+  ResultSet rs=pstmt.executeQuery();
+  if (rs.next() && (rs.getInt(1) > 0)) {
+    errors.append("Error: Found " + rs.getInt(1) + " Vm usage records which are created after Vm is destroyed");
+    errors.append("\n");
+    success=false;
+  }
+  pstmt=conn.prepareStatement("select sum(cnt) from (select count(*) as cnt from cloud_usage.usage_vm_instance where usage_type =1 " + "and end_date is null group by vm_instance_id having count(vm_instance_id) > 1) c ;");
+  rs=pstmt.executeQuery();
+  if (rs.next() && (rs.getInt(1) > 0)) {
+    errors.append("Error: Found " + rs.getInt(1) + " duplicate running Vm entries in vm usage helper table");
+    errors.append("\n");
+    success=false;
+  }
+  pstmt=conn.prepareStatement("select sum(cnt) from (select count(*) as cnt from cloud_usage.usage_vm_instance where usage_type =2 " + "and end_date is null group by vm_instance_id having count(vm_instance_id) > 1) c ;");
+  rs=pstmt.executeQuery();
+  if (rs.next() && (rs.getInt(1) > 0)) {
+    errors.append("Error: Found " + rs.getInt(1) + " duplicate allocated Vm entries in vm usage helper table");
+    errors.append("\n");
+    success=false;
+  }
+  pstmt=conn.prepareStatement("select count(vm_instance_id) from cloud_usage.usage_vm_instance o where o.end_date is null and o.usage_type=1 and not exists " + "(select 1 from cloud_usage.usage_vm_instance i where i.vm_instance_id=o.vm_instance_id and usage_type=2 and i.end_date is null)");
+  rs=pstmt.executeQuery();
+  if (rs.next() && (rs.getInt(1) > 0)) {
+    errors.append("Error: Found " + rs.getInt(1) + " running Vm entries without corresponding allocated entries in vm usage helper table");
+    errors.append("\n");
+    success=false;
+  }
+  return success;
+}

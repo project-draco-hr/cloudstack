@@ -1,0 +1,55 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all VMInstance usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageVMInstanceVO> usageInstances=m_usageInstanceDao.getUsageRecords(account.getId(),startDate,endDate);
+  Map<String,Pair<String,Long>> usageVMUptimeMap=new HashMap<String,Pair<String,Long>>();
+  Map<String,Pair<String,Long>> allocatedVMMap=new HashMap<String,Pair<String,Long>>();
+  Map<String,VMInfo> vmServiceOfferingMap=new HashMap<String,VMInfo>();
+  for (  UsageVMInstanceVO usageInstance : usageInstances) {
+    long vmId=usageInstance.getVmInstanceId();
+    long soId=usageInstance.getSerivceOfferingId();
+    long zoneId=usageInstance.getZoneId();
+    long tId=usageInstance.getTemplateId();
+    int usageType=usageInstance.getUsageType();
+    String key=vmId + "-" + soId+ "-"+ usageType;
+    vmServiceOfferingMap.put(key,new VMInfo(vmId,zoneId,soId,tId,usageInstance.getHypervisorType()));
+    Date vmStartDate=usageInstance.getStartDate();
+    Date vmEndDate=usageInstance.getEndDate();
+    if ((vmEndDate == null) || vmEndDate.after(endDate)) {
+      vmEndDate=endDate;
+    }
+    if (vmStartDate.before(startDate)) {
+      vmStartDate=startDate;
+    }
+    long currentDuration=(vmEndDate.getTime() - vmStartDate.getTime()) + 1;
+switch (usageType) {
+case UsageTypes.ALLOCATED_VM:
+      updateVmUsageData(allocatedVMMap,key,usageInstance.getVmName(),currentDuration);
+    break;
+case UsageTypes.RUNNING_VM:
+  updateVmUsageData(usageVMUptimeMap,key,usageInstance.getVmName(),currentDuration);
+break;
+}
+}
+for (String vmIdKey : usageVMUptimeMap.keySet()) {
+Pair<String,Long> vmUptimeInfo=usageVMUptimeMap.get(vmIdKey);
+long runningTime=vmUptimeInfo.second().longValue();
+if (runningTime > 0L) {
+VMInfo info=vmServiceOfferingMap.get(vmIdKey);
+createUsageRecord(UsageTypes.RUNNING_VM,runningTime,startDate,endDate,account,info.getVirtualMachineId(),vmUptimeInfo.first(),info.getZoneId(),info.getServiceOfferingId(),info.getTemplateId(),info.getHypervisorType());
+}
+}
+for (String vmIdKey : allocatedVMMap.keySet()) {
+Pair<String,Long> vmAllocInfo=allocatedVMMap.get(vmIdKey);
+long allocatedTime=vmAllocInfo.second().longValue();
+if (allocatedTime > 0L) {
+VMInfo info=vmServiceOfferingMap.get(vmIdKey);
+createUsageRecord(UsageTypes.ALLOCATED_VM,allocatedTime,startDate,endDate,account,info.getVirtualMachineId(),vmAllocInfo.first(),info.getZoneId(),info.getServiceOfferingId(),info.getTemplateId(),info.getHypervisorType());
+}
+}
+return true;
+}

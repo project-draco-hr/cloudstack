@@ -1,0 +1,31 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Starting Usage Manager");
+  }
+  m_scheduledFuture=m_executor.scheduleAtFixedRate(this,m_jobExecTime.getTimeInMillis() - System.currentTimeMillis(),m_aggregationDuration * 60 * 1000,TimeUnit.MILLISECONDS);
+  m_heartbeat=m_heartbeatExecutor.scheduleAtFixedRate(new Heartbeat(),15 * 1000,60 * 1000,TimeUnit.MILLISECONDS);
+  if (m_sanityCheckInterval > 0) {
+    m_sanity=m_sanityExecutor.scheduleAtFixedRate(new SanityCheck(),1,m_sanityCheckInterval,TimeUnit.DAYS);
+  }
+  Transaction usageTxn=Transaction.open(Transaction.USAGE_DB);
+  try {
+    if (m_heartbeatLock.lock(3)) {
+      try {
+        UsageJobVO job=m_usageJobDao.getLastJob();
+        if (job == null) {
+          m_usageJobDao.createNewJob(m_hostname,m_pid,UsageJobVO.JOB_TYPE_RECURRING);
+        }
+      }
+  finally {
+        m_heartbeatLock.unlock();
+      }
+    }
+ else {
+      if (s_logger.isTraceEnabled())       s_logger.trace("Heartbeat lock is in use by others, returning true as someone else will take over the job if required");
+    }
+  }
+  finally {
+    usageTxn.close();
+  }
+  return true;
+}

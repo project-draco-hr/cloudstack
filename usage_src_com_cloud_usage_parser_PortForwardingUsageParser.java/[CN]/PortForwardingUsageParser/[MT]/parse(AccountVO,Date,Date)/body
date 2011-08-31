@@ -1,0 +1,39 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all PortForwardingRule usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsagePortForwardingRuleVO> usagePFs=m_usagePFRuleDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate,false,0);
+  if (usagePFs.isEmpty()) {
+    s_logger.debug("No port forwarding usage events for this period");
+    return true;
+  }
+  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
+  Map<String,PFInfo> pfMap=new HashMap<String,PFInfo>();
+  for (  UsagePortForwardingRuleVO usagePF : usagePFs) {
+    long pfId=usagePF.getId();
+    String key="" + pfId;
+    pfMap.put(key,new PFInfo(pfId,usagePF.getZoneId()));
+    Date pfCreateDate=usagePF.getCreated();
+    Date pfDeleteDate=usagePF.getDeleted();
+    if ((pfDeleteDate == null) || pfDeleteDate.after(endDate)) {
+      pfDeleteDate=endDate;
+    }
+    if (pfCreateDate.before(startDate)) {
+      pfCreateDate=startDate;
+    }
+    long currentDuration=(pfDeleteDate.getTime() - pfCreateDate.getTime()) + 1;
+    updatePFUsageData(usageMap,key,usagePF.getId(),currentDuration);
+  }
+  for (  String pfIdKey : usageMap.keySet()) {
+    Pair<Long,Long> sgtimeInfo=usageMap.get(pfIdKey);
+    long useTime=sgtimeInfo.second().longValue();
+    if (useTime > 0L) {
+      PFInfo info=pfMap.get(pfIdKey);
+      createUsageRecord(UsageTypes.PORT_FORWARDING_RULE,useTime,startDate,endDate,account,info.getId(),info.getZoneId());
+    }
+  }
+  return true;
+}

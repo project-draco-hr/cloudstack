@@ -1,0 +1,268 @@
+{
+  boolean success=false;
+  long timeStart=System.currentTimeMillis();
+  long deleteOldStatsTimeMillis=0L;
+  try {
+    if ((endDateMillis == 0) || (endDateMillis > timeStart)) {
+      endDateMillis=timeStart;
+    }
+    long lastSuccess=m_usageJobDao.getLastJobSuccessDateMillis();
+    if (lastSuccess != 0) {
+      startDateMillis=lastSuccess + 1;
+    }
+    if (startDateMillis >= endDateMillis) {
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("not parsing usage records since start time mills (" + startDateMillis + ") is on or after end time millis ("+ endDateMillis+ ")");
+      }
+      Transaction jobUpdateTxn=Transaction.open(Transaction.USAGE_DB);
+      try {
+        jobUpdateTxn.start();
+        m_usageJobDao.updateJobSuccess(job.getId(),startDateMillis,endDateMillis,System.currentTimeMillis() - timeStart,success);
+        if (job.getJobType() == UsageJobVO.JOB_TYPE_RECURRING) {
+          m_usageJobDao.createNewJob(m_hostname,m_pid,UsageJobVO.JOB_TYPE_RECURRING);
+        }
+        jobUpdateTxn.commit();
+      }
+  finally {
+        jobUpdateTxn.close();
+      }
+      return;
+    }
+    deleteOldStatsTimeMillis=startDateMillis;
+    Date startDate=new Date(startDateMillis);
+    Date endDate=new Date(endDateMillis);
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Parsing usage records between " + startDate + " and "+ endDate);
+    }
+    List<AccountVO> accounts=null;
+    List<UserStatisticsVO> userStats=null;
+    Map<String,UsageNetworkVO> networkStats=null;
+    Transaction userTxn=Transaction.open(Transaction.CLOUD_DB);
+    try {
+      Long limit=Long.valueOf(500);
+      Long offset=Long.valueOf(0);
+      Long lastAccountId=m_usageDao.getLastAccountId();
+      if (lastAccountId == null) {
+        lastAccountId=Long.valueOf(0);
+      }
+      do {
+        Filter filter=new Filter(AccountVO.class,"id",true,offset,limit);
+        accounts=m_accountDao.findActiveAccounts(lastAccountId,filter);
+        if ((accounts != null) && !accounts.isEmpty()) {
+          m_usageDao.updateAccounts(accounts);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((accounts != null) && !accounts.isEmpty());
+      offset=Long.valueOf(0);
+      do {
+        Filter filter=new Filter(AccountVO.class,"id",true,offset,limit);
+        accounts=m_accountDao.findRecentlyDeletedAccounts(lastAccountId,startDate,filter);
+        if ((accounts != null) && !accounts.isEmpty()) {
+          m_usageDao.updateAccounts(accounts);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((accounts != null) && !accounts.isEmpty());
+      offset=Long.valueOf(0);
+      do {
+        Filter filter=new Filter(AccountVO.class,"id",true,offset,limit);
+        accounts=m_accountDao.findNewAccounts(lastAccountId,filter);
+        if ((accounts != null) && !accounts.isEmpty()) {
+          m_usageDao.saveAccounts(accounts);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((accounts != null) && !accounts.isEmpty());
+      offset=Long.valueOf(0);
+      Long lastUserStatsId=m_usageDao.getLastUserStatsId();
+      if (lastUserStatsId == null) {
+        lastUserStatsId=Long.valueOf(0);
+      }
+      SearchCriteria<UserStatisticsVO> sc2=m_userStatsDao.createSearchCriteria();
+      sc2.addAnd("id",SearchCriteria.Op.LTEQ,lastUserStatsId);
+      do {
+        Filter filter=new Filter(UserStatisticsVO.class,"id",true,offset,limit);
+        userStats=m_userStatsDao.search(sc2,filter);
+        if ((userStats != null) && !userStats.isEmpty()) {
+          m_usageDao.updateUserStats(userStats);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((userStats != null) && !userStats.isEmpty());
+      offset=Long.valueOf(0);
+      sc2=m_userStatsDao.createSearchCriteria();
+      sc2.addAnd("id",SearchCriteria.Op.GT,lastUserStatsId);
+      do {
+        Filter filter=new Filter(UserStatisticsVO.class,"id",true,offset,limit);
+        userStats=m_userStatsDao.search(sc2,filter);
+        if ((userStats != null) && !userStats.isEmpty()) {
+          m_usageDao.saveUserStats(userStats);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((userStats != null) && !userStats.isEmpty());
+    }
+  finally {
+      userTxn.close();
+    }
+    List<UsageEventVO> events=_usageEventDao.getRecentEvents(new Date(endDateMillis));
+    Transaction usageTxn=Transaction.open(Transaction.USAGE_DB);
+    try {
+      usageTxn.start();
+      if ((events != null) && (events.size() > 0)) {
+        Date oldestEventDate=events.get(0).getCreateDate();
+        if (oldestEventDate.getTime() < startDateMillis) {
+          startDateMillis=oldestEventDate.getTime();
+          startDate=new Date(startDateMillis);
+        }
+        for (        UsageEventVO event : events) {
+          event.setProcessed(true);
+          _usageEventDao.update(event.getId(),event);
+          createHelperRecord(event);
+        }
+      }
+      networkStats=m_usageNetworkDao.getRecentNetworkStats();
+      Calendar recentlyDeletedCal=Calendar.getInstance(m_usageTimezone);
+      recentlyDeletedCal.setTimeInMillis(startDateMillis);
+      recentlyDeletedCal.add(Calendar.MINUTE,-1 * THREE_DAYS_IN_MINUTES);
+      Date recentlyDeletedDate=recentlyDeletedCal.getTime();
+      Map<String,UserStatisticsVO> aggregatedStats=new HashMap<String,UserStatisticsVO>();
+      int startIndex=0;
+      do {
+        userStats=m_userStatsDao.listActiveAndRecentlyDeleted(recentlyDeletedDate,startIndex,500);
+        if (userStats != null) {
+          for (          UserStatisticsVO userStat : userStats) {
+            if (userStat.getDeviceId() != null) {
+              String hostKey=userStat.getDataCenterId() + "-" + userStat.getAccountId()+ "-Host-"+ userStat.getDeviceId();
+              UserStatisticsVO hostAggregatedStat=aggregatedStats.get(hostKey);
+              if (hostAggregatedStat == null) {
+                hostAggregatedStat=new UserStatisticsVO(userStat.getAccountId(),userStat.getDataCenterId(),userStat.getPublicIpAddress(),userStat.getDeviceId(),userStat.getDeviceType(),userStat.getNetworkId());
+              }
+              hostAggregatedStat.setNetBytesSent(hostAggregatedStat.getNetBytesSent() + userStat.getNetBytesSent());
+              hostAggregatedStat.setNetBytesReceived(hostAggregatedStat.getNetBytesReceived() + userStat.getNetBytesReceived());
+              hostAggregatedStat.setCurrentBytesSent(hostAggregatedStat.getCurrentBytesSent() + userStat.getCurrentBytesSent());
+              hostAggregatedStat.setCurrentBytesReceived(hostAggregatedStat.getCurrentBytesReceived() + userStat.getCurrentBytesReceived());
+              aggregatedStats.put(hostKey,hostAggregatedStat);
+            }
+          }
+        }
+        startIndex+=500;
+      }
+ while ((userStats != null) && !userStats.isEmpty());
+      int numAcctsProcessed=0;
+      for (      String key : aggregatedStats.keySet()) {
+        UsageNetworkVO currentNetworkStats=null;
+        if (networkStats != null) {
+          currentNetworkStats=networkStats.get(key);
+        }
+        createNetworkHelperEntry(aggregatedStats.get(key),currentNetworkStats,endDateMillis);
+        numAcctsProcessed++;
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("created network stats helper entries for " + numAcctsProcessed + " accts");
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("deleting old network stats helper entries older than " + deleteOldStatsTimeMillis);
+      }
+      m_usageNetworkDao.deleteOldStats(deleteOldStatsTimeMillis);
+      usageTxn.commit();
+      usageTxn.start();
+      boolean parsed=false;
+      numAcctsProcessed=0;
+      Date currentStartDate=startDate;
+      Date currentEndDate=endDate;
+      Date tempDate=endDate;
+      Calendar aggregateCal=Calendar.getInstance(m_usageTimezone);
+      while ((tempDate.after(startDate)) && ((tempDate.getTime() - startDate.getTime()) > 60000)) {
+        currentEndDate=tempDate;
+        aggregateCal.setTime(tempDate);
+        aggregateCal.add(Calendar.MINUTE,-m_aggregationDuration);
+        tempDate=aggregateCal.getTime();
+      }
+      while (!currentEndDate.after(endDate) || (currentEndDate.getTime() - endDate.getTime() < 60000)) {
+        Long offset=Long.valueOf(0);
+        Long limit=Long.valueOf(500);
+        do {
+          Filter filter=new Filter(AccountVO.class,"id",true,offset,limit);
+          accounts=m_accountDao.listAll(filter);
+          if ((accounts != null) && !accounts.isEmpty()) {
+            for (            AccountVO account : accounts) {
+              parsed=parseHelperTables(account,currentStartDate,currentEndDate);
+              numAcctsProcessed++;
+            }
+          }
+          offset=new Long(offset.longValue() + limit.longValue());
+        }
+ while ((accounts != null) && !accounts.isEmpty());
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("processed VM/Network Usage for " + numAcctsProcessed + " ACTIVE accts");
+        }
+        numAcctsProcessed=0;
+        offset=Long.valueOf(0);
+        do {
+          Filter filter=new Filter(AccountVO.class,"id",true,offset,limit);
+          accounts=m_accountDao.findRecentlyDeletedAccounts(null,recentlyDeletedDate,filter);
+          if ((accounts != null) && !accounts.isEmpty()) {
+            for (            AccountVO account : accounts) {
+              parsed=parseHelperTables(account,currentStartDate,currentEndDate);
+              List<Long> publicTemplates=m_usageDao.listPublicTemplatesByAccount(account.getId());
+              for (              Long templateId : publicTemplates) {
+                List<UsageStorageVO> storageVOs=m_usageStorageDao.listById(account.getId(),templateId,StorageTypes.TEMPLATE);
+                if (storageVOs.size() > 1) {
+                  s_logger.warn("More that one usage entry for storage: " + templateId + " assigned to account: "+ account.getId()+ "; marking them all as deleted...");
+                }
+                for (                UsageStorageVO storageVO : storageVOs) {
+                  if (s_logger.isDebugEnabled()) {
+                    s_logger.debug("deleting template: " + storageVO.getId() + " from account: "+ storageVO.getAccountId());
+                  }
+                  storageVO.setDeleted(account.getRemoved());
+                  m_usageStorageDao.update(storageVO);
+                }
+              }
+              numAcctsProcessed++;
+            }
+          }
+          offset=new Long(offset.longValue() + limit.longValue());
+        }
+ while ((accounts != null) && !accounts.isEmpty());
+        currentStartDate=new Date(currentEndDate.getTime() + 1);
+        aggregateCal.setTime(currentEndDate);
+        aggregateCal.add(Calendar.MINUTE,m_aggregationDuration);
+        currentEndDate=aggregateCal.getTime();
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("processed Usage for " + numAcctsProcessed + " RECENTLY DELETED accts");
+      }
+      if (!parsed) {
+        usageTxn.rollback();
+      }
+ else {
+        success=true;
+      }
+    }
+ catch (    Exception ex) {
+      s_logger.error("Exception in usage manager",ex);
+      usageTxn.rollback();
+    }
+ finally {
+      m_usageJobDao.updateJobSuccess(job.getId(),startDateMillis,endDateMillis,System.currentTimeMillis() - timeStart,success);
+      if (job.getJobType() == UsageJobVO.JOB_TYPE_RECURRING) {
+        m_usageJobDao.createNewJob(m_hostname,m_pid,UsageJobVO.JOB_TYPE_RECURRING);
+      }
+      usageTxn.commit();
+      usageTxn.close();
+      Transaction swap=Transaction.open(Transaction.CLOUD_DB);
+      if (!success) {
+        _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USAGE_SERVER_RESULT,0,new Long(0),"Usage job failed. Job id: " + job.getId(),"Usage job failed. Job id: " + job.getId());
+      }
+ else {
+        _alertMgr.clearAlert(AlertManager.ALERT_TYPE_USAGE_SERVER_RESULT,0,0);
+      }
+      swap.close();
+    }
+  }
+ catch (  Exception e) {
+    s_logger.error("Usage Manager error",e);
+  }
+}
