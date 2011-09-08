@@ -1,0 +1,58 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all Network usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  SearchCriteria<UsageNetworkVO> sc=m_usageNetworkDao.createSearchCriteria();
+  sc.addAnd("accountId",SearchCriteria.Op.EQ,account.getId());
+  sc.addAnd("eventTimeMillis",SearchCriteria.Op.BETWEEN,startDate.getTime(),endDate.getTime());
+  List<UsageNetworkVO> usageNetworkVOs=m_usageNetworkDao.search(sc,null);
+  Map<String,NetworkInfo> networkUsageByZone=new HashMap<String,NetworkInfo>();
+  for (  UsageNetworkVO usageNetwork : usageNetworkVOs) {
+    long zoneId=usageNetwork.getZoneId();
+    String key="" + zoneId;
+    if (usageNetwork.getHostId() != 0) {
+      key+="-Host" + usageNetwork.getHostId();
+    }
+    NetworkInfo networkInfo=networkUsageByZone.get(key);
+    long bytesSent=usageNetwork.getBytesSent();
+    long bytesReceived=usageNetwork.getBytesReceived();
+    if (networkInfo != null) {
+      bytesSent+=networkInfo.getBytesSent();
+      bytesReceived+=networkInfo.getBytesRcvd();
+    }
+    networkUsageByZone.put(key,new NetworkInfo(zoneId,usageNetwork.getHostId(),usageNetwork.getHostType(),usageNetwork.getNetworkId(),bytesSent,bytesReceived));
+  }
+  for (  String key : networkUsageByZone.keySet()) {
+    NetworkInfo networkInfo=networkUsageByZone.get(key);
+    long totalBytesSent=networkInfo.getBytesSent();
+    long totalBytesReceived=networkInfo.getBytesRcvd();
+    if ((totalBytesSent > 0L) || (totalBytesReceived > 0L)) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating usage record, total bytes sent:" + totalBytesSent + ", total bytes received: "+ totalBytesReceived+ " for account: "+ account.getId()+ " in availability zone "+ networkInfo.getZoneId()+ ", start: "+ startDate+ ", end: "+ endDate);
+      }
+      Long hostId=null;
+      String usageDesc="network bytes sent";
+      if (networkInfo.getHostId() != 0) {
+        hostId=networkInfo.getHostId();
+        usageDesc+=" for Host: " + networkInfo.getHostId();
+      }
+      UsageVO usageRecord=new UsageVO(networkInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,totalBytesSent + " bytes sent",UsageTypes.NETWORK_BYTES_SENT,new Double(totalBytesSent),hostId,networkInfo.getHostType(),networkInfo.getNetworkId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+      usageDesc="network bytes received";
+      if (networkInfo.getHostId() != 0) {
+        usageDesc+=" for Host: " + networkInfo.getHostId();
+      }
+      usageRecord=new UsageVO(networkInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,totalBytesReceived + " bytes received",UsageTypes.NETWORK_BYTES_RECEIVED,new Double(totalBytesReceived),hostId,networkInfo.getHostType(),networkInfo.getNetworkId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("No usage record (0 bytes used) generated for account: " + account.getId());
+      }
+    }
+  }
+  return true;
+}

@@ -1,0 +1,40 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all NetworkOffering usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageNetworkOfferingVO> usageNOs=m_usageNetworkOfferingDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate,false,0);
+  if (usageNOs.isEmpty()) {
+    s_logger.debug("No NetworkOffering usage events for this period");
+    return true;
+  }
+  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
+  Map<String,NOInfo> noMap=new HashMap<String,NOInfo>();
+  for (  UsageNetworkOfferingVO usageNO : usageNOs) {
+    long vmId=usageNO.getVmInstanceId();
+    long noId=usageNO.getNetworkOfferingId();
+    String key="" + vmId + "NO"+ noId;
+    noMap.put(key,new NOInfo(vmId,usageNO.getZoneId(),noId,usageNO.isDefault()));
+    Date noCreateDate=usageNO.getCreated();
+    Date noDeleteDate=usageNO.getDeleted();
+    if ((noDeleteDate == null) || noDeleteDate.after(endDate)) {
+      noDeleteDate=endDate;
+    }
+    if (noCreateDate.before(startDate)) {
+      noCreateDate=startDate;
+    }
+    long currentDuration=(noDeleteDate.getTime() - noCreateDate.getTime()) + 1;
+    updateNOUsageData(usageMap,key,usageNO.getVmInstanceId(),currentDuration);
+  }
+  for (  String noIdKey : usageMap.keySet()) {
+    Pair<Long,Long> notimeInfo=usageMap.get(noIdKey);
+    long useTime=notimeInfo.second().longValue();
+    if (useTime > 0L) {
+      NOInfo info=noMap.get(noIdKey);
+      createUsageRecord(UsageTypes.NETWORK_OFFERING,useTime,startDate,endDate,account,info.getVmId(),info.getNOId(),info.getZoneId(),info.isDefault());
+    }
+  }
+  return true;
+}

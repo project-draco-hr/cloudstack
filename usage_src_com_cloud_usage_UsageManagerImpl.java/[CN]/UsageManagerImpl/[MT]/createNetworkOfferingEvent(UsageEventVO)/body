@@ -1,0 +1,33 @@
+{
+  long zoneId=-1L;
+  long vmId=event.getResourceId();
+  long networkOfferingId=event.getOfferingId();
+  if (EventTypes.EVENT_NETWORK_OFFERING_CREATE.equals(event.getType()) || EventTypes.EVENT_NETWORK_OFFERING_ASSIGN.equals(event.getType())) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Creating networking offering: " + networkOfferingId + " for Vm: "+ vmId+ " for account: "+ event.getAccountId());
+    }
+    zoneId=event.getZoneId();
+    Account acct=m_accountDao.findByIdIncludingRemoved(event.getAccountId());
+    boolean isDefault=(event.getSize() == 1) ? true : false;
+    UsageNetworkOfferingVO networkOffering=new UsageNetworkOfferingVO(zoneId,event.getAccountId(),acct.getDomainId(),vmId,networkOfferingId,isDefault,event.getCreateDate(),null);
+    m_usageNetworkOfferingDao.persist(networkOffering);
+  }
+ else   if (EventTypes.EVENT_NETWORK_OFFERING_DELETE.equals(event.getType()) || EventTypes.EVENT_NETWORK_OFFERING_REMOVE.equals(event.getType())) {
+    SearchCriteria<UsageNetworkOfferingVO> sc=m_usageNetworkOfferingDao.createSearchCriteria();
+    sc.addAnd("accountId",SearchCriteria.Op.EQ,event.getAccountId());
+    sc.addAnd("vmInstanceId",SearchCriteria.Op.EQ,vmId);
+    sc.addAnd("networkOfferingId",SearchCriteria.Op.EQ,networkOfferingId);
+    sc.addAnd("deleted",SearchCriteria.Op.NULL);
+    List<UsageNetworkOfferingVO> noVOs=m_usageNetworkOfferingDao.search(sc,null);
+    if (noVOs.size() > 1) {
+      s_logger.warn("More that one usage entry for networking offering: " + networkOfferingId + " for Vm: "+ vmId+ " assigned to account: "+ event.getAccountId()+ "; marking them all as deleted...");
+    }
+    for (    UsageNetworkOfferingVO noVO : noVOs) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("deleting network offering: " + noVO.getNetworkOfferingId() + " from Vm: "+ noVO.getVmInstanceId());
+      }
+      noVO.setDeleted(event.getCreateDate());
+      m_usageNetworkOfferingDao.update(noVO);
+    }
+  }
+}

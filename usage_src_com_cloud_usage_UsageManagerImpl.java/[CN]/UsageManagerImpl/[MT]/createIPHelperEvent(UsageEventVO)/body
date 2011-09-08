@@ -1,0 +1,32 @@
+{
+  String ipAddress=event.getResourceName();
+  if (EventTypes.EVENT_NET_IP_ASSIGN.equals(event.getType())) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("assigning ip address: " + ipAddress + " to account: "+ event.getAccountId());
+    }
+    Account acct=m_accountDao.findByIdIncludingRemoved(event.getAccountId());
+    long zoneId=event.getZoneId();
+    long id=event.getResourceId();
+    long sourceNat=event.getSize();
+    boolean isSourceNat=(sourceNat == 1) ? true : false;
+    UsageIPAddressVO ipAddressVO=new UsageIPAddressVO(id,event.getAccountId(),acct.getDomainId(),zoneId,ipAddress,isSourceNat,event.getCreateDate(),null);
+    m_usageIPAddressDao.persist(ipAddressVO);
+  }
+ else   if (EventTypes.EVENT_NET_IP_RELEASE.equals(event.getType())) {
+    SearchCriteria<UsageIPAddressVO> sc=m_usageIPAddressDao.createSearchCriteria();
+    sc.addAnd("accountId",SearchCriteria.Op.EQ,event.getAccountId());
+    sc.addAnd("address",SearchCriteria.Op.EQ,ipAddress);
+    sc.addAnd("released",SearchCriteria.Op.NULL);
+    List<UsageIPAddressVO> ipAddressVOs=m_usageIPAddressDao.search(sc,null);
+    if (ipAddressVOs.size() > 1) {
+      s_logger.warn("More that one usage entry for ip address: " + ipAddress + " assigned to account: "+ event.getAccountId()+ "; marking them all as released...");
+    }
+    for (    UsageIPAddressVO ipAddressVO : ipAddressVOs) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("releasing ip address: " + ipAddressVO.getAddress() + " from account: "+ ipAddressVO.getAccountId());
+      }
+      ipAddressVO.setReleased(event.getCreateDate());
+      m_usageIPAddressDao.update(ipAddressVO);
+    }
+  }
+}

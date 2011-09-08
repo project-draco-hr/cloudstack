@@ -1,0 +1,43 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all Storage usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageStorageVO> usageUsageStorages=m_usageStorageDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate,false,0);
+  if (usageUsageStorages.isEmpty()) {
+    s_logger.debug("No Storage usage events for this period");
+    return true;
+  }
+  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
+  Map<String,StorageInfo> storageMap=new HashMap<String,StorageInfo>();
+  for (  UsageStorageVO usageStorage : usageUsageStorages) {
+    long storageId=usageStorage.getId();
+    int storage_type=usageStorage.getStorageType();
+    long size=usageStorage.getSize();
+    long zoneId=usageStorage.getZoneId();
+    Long sourceId=usageStorage.getSourceId();
+    String key="" + storageId + "Z"+ zoneId+ "T"+ storage_type;
+    storageMap.put(key,new StorageInfo(zoneId,storageId,storage_type,sourceId,size));
+    Date storageCreateDate=usageStorage.getCreated();
+    Date storageDeleteDate=usageStorage.getDeleted();
+    if ((storageDeleteDate == null) || storageDeleteDate.after(endDate)) {
+      storageDeleteDate=endDate;
+    }
+    if (storageCreateDate.before(startDate)) {
+      storageCreateDate=startDate;
+    }
+    long currentDuration=(storageDeleteDate.getTime() - storageCreateDate.getTime()) + 1;
+    updateStorageUsageData(usageMap,key,usageStorage.getId(),currentDuration);
+  }
+  for (  String storageIdKey : usageMap.keySet()) {
+    Pair<Long,Long> storagetimeInfo=usageMap.get(storageIdKey);
+    long useTime=storagetimeInfo.second().longValue();
+    if (useTime > 0L) {
+      StorageInfo info=storageMap.get(storageIdKey);
+      createUsageRecord(info.getZoneId(),info.getStorageType(),useTime,startDate,endDate,account,info.getStorageId(),info.getSourceId(),info.getSize());
+    }
+  }
+  return true;
+}

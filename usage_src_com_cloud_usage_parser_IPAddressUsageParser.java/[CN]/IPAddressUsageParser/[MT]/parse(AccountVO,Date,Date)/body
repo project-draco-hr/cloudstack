@@ -1,0 +1,39 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing IP Address usage for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageIPAddressVO> usageIPAddress=m_usageIPAddressDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate);
+  if (usageIPAddress.isEmpty()) {
+    s_logger.debug("No IP Address usage for this period");
+    return true;
+  }
+  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
+  Map<String,IpInfo> IPMap=new HashMap<String,IpInfo>();
+  for (  UsageIPAddressVO usageIp : usageIPAddress) {
+    long IpId=usageIp.getId();
+    String key="" + IpId;
+    IPMap.put(key,new IpInfo(usageIp.getZoneId(),IpId,usageIp.getAddress(),usageIp.isSourceNat()));
+    Date IpAssignDate=usageIp.getAssigned();
+    Date IpReleaseDeleteDate=usageIp.getReleased();
+    if ((IpReleaseDeleteDate == null) || IpReleaseDeleteDate.after(endDate)) {
+      IpReleaseDeleteDate=endDate;
+    }
+    if (IpAssignDate.before(startDate)) {
+      IpAssignDate=startDate;
+    }
+    long currentDuration=(IpReleaseDeleteDate.getTime() - IpAssignDate.getTime()) + 1;
+    updateIpUsageData(usageMap,key,usageIp.getId(),currentDuration);
+  }
+  for (  String ipIdKey : usageMap.keySet()) {
+    Pair<Long,Long> ipTimeInfo=usageMap.get(ipIdKey);
+    long useTime=ipTimeInfo.second().longValue();
+    if (useTime > 0L) {
+      IpInfo info=IPMap.get(ipIdKey);
+      createUsageRecord(info.getZoneId(),useTime,startDate,endDate,account,info.getIpId(),info.getIPAddress(),info.isSourceNat());
+    }
+  }
+  return true;
+}

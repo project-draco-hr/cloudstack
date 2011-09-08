@@ -1,0 +1,39 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all LoadBalancerPolicy usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageLoadBalancerPolicyVO> usageLBs=m_usageLoadBalancerPolicyDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate,false,0);
+  if (usageLBs.isEmpty()) {
+    s_logger.debug("No load balancer usage events for this period");
+    return true;
+  }
+  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
+  Map<String,LBInfo> lbMap=new HashMap<String,LBInfo>();
+  for (  UsageLoadBalancerPolicyVO usageLB : usageLBs) {
+    long lbId=usageLB.getId();
+    String key="" + lbId;
+    lbMap.put(key,new LBInfo(lbId,usageLB.getZoneId()));
+    Date lbCreateDate=usageLB.getCreated();
+    Date lbDeleteDate=usageLB.getDeleted();
+    if ((lbDeleteDate == null) || lbDeleteDate.after(endDate)) {
+      lbDeleteDate=endDate;
+    }
+    if (lbCreateDate.before(startDate)) {
+      lbCreateDate=startDate;
+    }
+    long currentDuration=(lbDeleteDate.getTime() - lbCreateDate.getTime()) + 1;
+    updateLBUsageData(usageMap,key,usageLB.getId(),currentDuration);
+  }
+  for (  String lbIdKey : usageMap.keySet()) {
+    Pair<Long,Long> sgtimeInfo=usageMap.get(lbIdKey);
+    long useTime=sgtimeInfo.second().longValue();
+    if (useTime > 0L) {
+      LBInfo info=lbMap.get(lbIdKey);
+      createUsageRecord(UsageTypes.LOAD_BALANCER_POLICY,useTime,startDate,endDate,account,info.getId(),info.getZoneId());
+    }
+  }
+  return true;
+}
