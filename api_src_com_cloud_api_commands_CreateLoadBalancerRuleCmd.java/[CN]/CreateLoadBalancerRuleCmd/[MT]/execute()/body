@@ -1,19 +1,27 @@
 {
-  if (cidrlist != null) {
-    throw new InvalidParameterValueException("Parameter cidrList is deprecated; if you need to open firewall rule for the specific cidr, please refer to createFirewallRule command");
-  }
+  UserContext callerContext=UserContext.current();
+  boolean success=true;
+  LoadBalancer rule=null;
   try {
-    LoadBalancer result=_lbService.createLoadBalancerRule(this,getOpenFirewall());
-    LoadBalancerResponse response=_responseGenerator.createLoadBalancerResponse(result);
-    response.setResponseName(getCommandName());
-    this.setResponseObject(response);
+    UserContext.current().setEventDetails("Rule Id: " + getEntityId());
+    if (getOpenFirewall()) {
+      success=success && _firewallService.applyFirewallRules(publicIpId,callerContext.getCaller());
+    }
+    rule=_entityMgr.findById(LoadBalancer.class,getEntityId());
+    LoadBalancerResponse lbResponse=new LoadBalancerResponse();
+    if (rule != null) {
+      lbResponse=_responseGenerator.createLoadBalancerResponse(rule);
+      setResponseObject(lbResponse);
+    }
+    lbResponse.setResponseName(getCommandName());
   }
- catch (  NetworkRuleConflictException e) {
-    s_logger.warn("Exception: ",e);
-    throw new ServerApiException(BaseCmd.NETWORK_RULE_CONFLICT_ERROR,e.getMessage());
-  }
-catch (  InsufficientAddressCapacityException e) {
-    s_logger.warn("Exception: ",e);
-    throw new ServerApiException(BaseCmd.INSUFFICIENT_CAPACITY_ERROR,e.getMessage());
+  finally {
+    if (!success || rule == null) {
+      _lbService.deleteLoadBalancerRule(getEntityId(),false);
+      if (getOpenFirewall()) {
+        _firewallService.revokeRelatedFirewallRule(getEntityId(),true);
+      }
+      throw new ServerApiException(BaseCmd.INTERNAL_ERROR,"Failed to create load balancer rule");
+    }
   }
 }
