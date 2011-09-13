@@ -1,34 +1,35 @@
 {
   long numResources=((count.length == 0) ? 1 : count[0]);
-  long accountType=account.getType();
-  if (accountType == Account.ACCOUNT_TYPE_ADMIN || accountType == Account.ACCOUNT_ID_SYSTEM) {
+  if (isAdmin(account.getType())) {
     return false;
   }
-  if (m_resourceCountLock.lock(120)) {
-    try {
-      AccountVO accountVo=_accountDao.findById(account.getAccountId());
-      long accountLimit=findCorrectResourceLimit(accountVo,type);
-      long potentialCount=_resourceCountDao.getAccountCount(account.getId(),type) + numResources;
-      if (accountLimit != -1 && potentialCount > accountLimit) {
-        return true;
-      }
-      Long domainId=account.getDomainId();
-      while (domainId != null) {
-        ResourceLimitVO domainLimit=_resourceLimitDao.findByDomainIdAndType(domainId,type);
-        if (domainLimit != null) {
-          long domainCount=_resourceCountDao.getDomainCount(domainId,type);
-          if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
-            return true;
-          }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdateForAccount(account.getId(),account.getDomainId(),type);
+    SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
+    sc.setParameters("id",rowIdsToLock.toArray());
+    _resourceCountDao.lockRows(sc,null,true);
+    long accountLimit=findCorrectResourceLimit(account.getId(),type);
+    long potentialCount=_resourceCountDao.getAccountCount(account.getId(),type) + numResources;
+    if (potentialCount > accountLimit) {
+      return true;
+    }
+    Long domainId=account.getDomainId();
+    while (domainId != null) {
+      ResourceLimitVO domainLimit=_resourceLimitDao.findByDomainIdAndType(domainId,type);
+      if (domainLimit != null) {
+        long domainCount=_resourceCountDao.getDomainCount(domainId,type);
+        if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
+          return true;
         }
-        DomainVO domain=_domainDao.findById(domainId);
-        domainId=domain.getParent();
       }
-      return false;
+      DomainVO domain=_domainDao.findById(domainId);
+      domainId=domain.getParent();
     }
-  finally {
-      m_resourceCountLock.unlock();
-    }
+    return false;
   }
-  return true;
+  finally {
+    txn.commit();
+  }
 }

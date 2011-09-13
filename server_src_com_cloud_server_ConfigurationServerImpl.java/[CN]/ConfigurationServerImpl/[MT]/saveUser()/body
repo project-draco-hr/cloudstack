@@ -1,25 +1,21 @@
 {
   String insertSql="INSERT INTO `cloud`.`account` (id, account_name, type, domain_id) VALUES (1, 'system', '1', '1')";
   Transaction txn=Transaction.currentTxn();
-  try {
-    PreparedStatement stmt=txn.prepareAutoCloseStatement(insertSql);
-    stmt.executeUpdate();
-  }
- catch (  SQLException ex) {
-  }
-  insertSql="INSERT INTO `cloud`.`user` (id, username, password, account_id, firstname, lastname, created) VALUES (1, 'system', '', 1, 'system', 'cloud', now())";
-  txn=Transaction.currentTxn();
-  try {
-    PreparedStatement stmt=txn.prepareAutoCloseStatement(insertSql);
-    stmt.executeUpdate();
-  }
- catch (  SQLException ex) {
-  }
-  long id=2;
-  String username="admin";
-  String firstname="admin";
-  String lastname="cloud";
-  String password="password";
+  txn.start();
+  AccountVO systemAccount=new AccountVO(1);
+  systemAccount.setAccountName("system");
+  systemAccount.setType(Account.ACCOUNT_TYPE_ADMIN);
+  ;
+  systemAccount.setDomainId(1);
+  systemAccount.setState(Account.State.enabled);
+  _accountDao.persist(systemAccount);
+  AccountVO adminAccount=new AccountVO(1);
+  adminAccount.setAccountName("admin");
+  adminAccount.setType(Account.ACCOUNT_TYPE_ADMIN);
+  ;
+  adminAccount.setDomainId(1);
+  adminAccount.setState(Account.State.enabled);
+  _accountDao.persist(adminAccount);
   MessageDigest md5=null;
   try {
     md5=MessageDigest.getInstance("MD5");
@@ -27,6 +23,7 @@
  catch (  NoSuchAlgorithmException e) {
     return;
   }
+  String password="password";
   md5.reset();
   BigInteger pwInt=new BigInteger(1,md5.digest(password.getBytes()));
   String pwStr=pwInt.toString(16);
@@ -36,21 +33,29 @@
     sb.append('0');
   }
   sb.append(pwStr);
-  insertSql="INSERT INTO `cloud`.`account` (id, account_name, type, domain_id) VALUES (" + id + ", '"+ username+ "', '1', '1')";
-  txn=Transaction.currentTxn();
+  password=sb.toString();
+  UserVO systemUser=new UserVO(1);
+  systemUser.setUsername("system");
+  systemUser.setPassword("");
+  systemUser.setAccountId(1);
+  systemUser.setFirstname("system");
+  systemUser.setLastname("system");
+  systemUser.setState(Account.State.enabled);
+  _userDao.persist(systemUser);
+  UserVO adminUser=new UserVO(2);
+  adminUser.setUsername("admin");
+  adminUser.setPassword(password);
+  adminUser.setAccountId(2);
+  adminUser.setFirstname("admin");
+  adminUser.setLastname("cloud");
+  adminUser.setState(Account.State.enabled);
+  _userDao.persist(adminUser);
   try {
-    PreparedStatement stmt=txn.prepareAutoCloseStatement(insertSql);
-    stmt.executeUpdate();
+    _resourceCountDao.createResourceCounts(1,OwnerType.Account);
+    _resourceCountDao.createResourceCounts(2,OwnerType.Account);
   }
- catch (  SQLException ex) {
-  }
-  insertSql="INSERT INTO `cloud`.`user` (id, username, password, account_id, firstname, lastname, created) " + "VALUES (" + id + ",'"+ username+ "','"+ sb.toString()+ "', 2, '"+ firstname+ "','"+ lastname+ "',now())";
-  txn=Transaction.currentTxn();
-  try {
-    PreparedStatement stmt=txn.prepareAutoCloseStatement(insertSql);
-    stmt.executeUpdate();
-  }
- catch (  SQLException ex) {
+ catch (  Exception ex) {
+    s_logger.warn("Failed to create initial resource counts for system/admin accounts");
   }
   try {
     String tableName="security_group";
@@ -72,7 +77,6 @@
  else {
         insertSql="INSERT INTO " + tableName + " (name, description, account_id, domain_id, account_name) "+ "VALUES ('default', 'Default Security Group', 2, 1, 'admin')";
       }
-      txn=Transaction.currentTxn();
       try {
         stmt=txn.prepareAutoCloseStatement(insertSql);
         stmt.executeUpdate();
@@ -85,5 +89,8 @@
   }
  catch (  Exception ex) {
     s_logger.warn("Failed to create default security group for default admin account due to ",ex);
+  }
+ finally {
+    txn.commit();
   }
 }
