@@ -1,38 +1,52 @@
 {
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Parsing IP Address usage for account: " + account.getId());
-  }
+  s_logger.info("Parsing all ip address usage events");
   if ((endDate == null) || endDate.after(new Date())) {
     endDate=new Date();
   }
-  List<UsageIPAddressVO> usageIPAddress=m_usageIPAddressDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate);
-  if (usageIPAddress.isEmpty()) {
-    s_logger.debug("No IP Address usage for this period");
-    return true;
+  List<UsageIPAddressVO> usageInstances=m_usageIPAddressDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate,false,null,null);
+  Calendar startCal=Calendar.getInstance();
+  startCal.setTime(startDate);
+  startCal.set(Calendar.DAY_OF_MONTH,1);
+  startCal.set(Calendar.HOUR_OF_DAY,0);
+  startCal.set(Calendar.MINUTE,0);
+  startCal.set(Calendar.SECOND,0);
+  startCal.set(Calendar.MILLISECOND,0);
+  Calendar endCal=Calendar.getInstance();
+  endCal.setTime(endDate);
+  endCal.set(Calendar.DAY_OF_MONTH,endCal.getActualMaximum(Calendar.DAY_OF_MONTH));
+  int numberOfMonths=0;
+  while (startCal.before(endCal)) {
+    numberOfMonths++;
+    startCal.roll(Calendar.MONTH,true);
   }
-  Map<String,Pair<Long,Long>> usageMap=new HashMap<String,Pair<Long,Long>>();
-  Map<String,IpInfo> IPMap=new HashMap<String,IpInfo>();
-  for (  UsageIPAddressVO usageIp : usageIPAddress) {
-    long IpId=usageIp.getId();
-    String key="" + IpId;
-    IPMap.put(key,new IpInfo(usageIp.getZoneId(),IpId,usageIp.getAddress(),usageIp.isSourceNat()));
-    Date IpAssignDate=usageIp.getAssigned();
-    Date IpReleaseDeleteDate=usageIp.getReleased();
-    if ((IpReleaseDeleteDate == null) || IpReleaseDeleteDate.after(endDate)) {
-      IpReleaseDeleteDate=endDate;
-    }
-    if (IpAssignDate.before(startDate)) {
-      IpAssignDate=startDate;
-    }
-    long currentDuration=(IpReleaseDeleteDate.getTime() - IpAssignDate.getTime()) + 1;
-    updateIpUsageData(usageMap,key,usageIp.getId(),currentDuration);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("processing " + numberOfMonths + " month(s) worth of ip address data");
   }
-  for (  String ipIdKey : usageMap.keySet()) {
-    Pair<Long,Long> ipTimeInfo=usageMap.get(ipIdKey);
-    long useTime=ipTimeInfo.second().longValue();
-    if (useTime > 0L) {
-      IpInfo info=IPMap.get(ipIdKey);
-      createUsageRecord(info.getZoneId(),useTime,startDate,endDate,account,info.getIpId(),info.getIPAddress(),info.isSourceNat());
+  for (  UsageIPAddressVO usageInstance : usageInstances) {
+    String ipAddress=usageInstance.getAddress();
+    Date assignedDate=usageInstance.getAssigned();
+    Date releasedDate=usageInstance.getReleased();
+    if (releasedDate == null) {
+      releasedDate=new Date();
+    }
+    startCal.setTime(startDate);
+    startCal.set(Calendar.DAY_OF_MONTH,1);
+    startCal.set(Calendar.HOUR_OF_DAY,0);
+    startCal.set(Calendar.MINUTE,0);
+    startCal.set(Calendar.SECOND,0);
+    startCal.set(Calendar.MILLISECOND,0);
+    for (int i=0; i < numberOfMonths; i++) {
+      if (assignedDate.before(startCal.getTime())) {
+        assignedDate=startCal.getTime();
+      }
+      startCal.roll(Calendar.MONTH,true);
+      Date nextMonth=startCal.getTime();
+      startCal.add(Calendar.MILLISECOND,-1);
+      if (releasedDate.before(startCal.getTime())) {
+        startCal.setTime(releasedDate);
+      }
+      createUsageRecord(assignedDate,startCal.getTime(),account,ipAddress,startDate,endDate);
+      startCal.setTime(nextMonth);
     }
   }
   return true;
