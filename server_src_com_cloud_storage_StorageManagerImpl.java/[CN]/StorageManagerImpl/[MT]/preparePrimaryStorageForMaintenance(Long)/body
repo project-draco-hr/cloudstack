@@ -20,8 +20,30 @@
     if (!primaryStorage.getStatus().equals(StoragePoolStatus.Up) && !primaryStorage.getStatus().equals(StoragePoolStatus.ErrorInMaintenance)) {
       throw new InvalidParameterValueException("Primary storage with id " + primaryStorageId + " is not ready for migration, as the status is:"+ primaryStorage.getStatus().toString());
     }
-    primaryStorage.setStatus(StoragePoolStatus.PrepareForMaintenance);
-    _storagePoolDao.update(primaryStorageId,primaryStorage);
+    List<HostVO> hosts=_hostDao.listByClusterStatus(primaryStorage.getClusterId(),Status.Up);
+    if (hosts == null || hosts.size() == 0) {
+      primaryStorage.setStatus(StoragePoolStatus.Maintenance);
+      _storagePoolDao.update(primaryStorageId,primaryStorage);
+      return _storagePoolDao.findById(primaryStorageId);
+    }
+ else {
+      primaryStorage.setStatus(StoragePoolStatus.PrepareForMaintenance);
+      _storagePoolDao.update(primaryStorageId,primaryStorage);
+    }
+    for (    HostVO host : hosts) {
+      ModifyStoragePoolCommand cmd=new ModifyStoragePoolCommand(false,primaryStorage);
+      final Answer answer=_agentMgr.easySend(host.getId(),cmd);
+      if (answer == null || !answer.getResult()) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("ModifyStoragePool false failed due to " + ((answer == null) ? "answer null" : answer.getDetails()));
+        }
+      }
+ else {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("ModifyStoragePool false secceeded");
+        }
+      }
+    }
     List<StoragePoolVO> upPools=_storagePoolDao.listByStatus(StoragePoolStatus.Up);
     if (upPools == null || upPools.size() == 0) {
       restart=false;
