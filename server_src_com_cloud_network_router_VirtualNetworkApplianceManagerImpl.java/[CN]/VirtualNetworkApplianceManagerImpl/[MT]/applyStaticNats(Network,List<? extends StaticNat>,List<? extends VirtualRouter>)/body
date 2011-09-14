@@ -10,6 +10,13 @@
   for (  VirtualRouter router : routers) {
     if (router.getState() == State.Running) {
       s_logger.debug("Applying " + rules.size() + " static nat in network "+ network);
+      if (router.isStopPending()) {
+        if (_hostDao.findById(router.getHostId()).getStatus() == Status.Up) {
+          throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",VirtualRouter.class,router.getId());
+        }
+        s_logger.debug("Router " + router.getInstanceName() + " is stop pending, so not sending apply firewall rules commands to the backend");
+        continue;
+      }
       try {
         result=applyStaticNat(router,rules);
         connectedRouters.add(router);
@@ -31,7 +38,7 @@
     }
   }
   if (!connectedRouters.isEmpty()) {
-    stopDisconnectedRouters(disconnectedRouters,true,msg);
+    handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
   }
  else   if (!disconnectedRouters.isEmpty()) {
     for (    VirtualRouter router : disconnectedRouters) {
