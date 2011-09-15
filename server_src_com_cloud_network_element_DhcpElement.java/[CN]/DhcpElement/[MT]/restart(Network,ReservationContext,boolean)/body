@@ -11,19 +11,25 @@
     s_logger.trace("Can't find dhcp element in network " + network.getId());
     return true;
   }
-  VirtualRouter result=null;
-  boolean ret=true;
+  Long host_id=new Long(0);
   for (  DomainRouterVO router : routers) {
-    if (router.getState() == State.Stopped) {
-      result=_routerMgr.startRouter(router.getId(),false);
+    if (host_id == null || host_id == 0) {
+      host_id=(router.getHostId() != null ? router.getHostId() : router.getLastHostId());
     }
- else {
-      result=_routerMgr.rebootRouter(router.getId(),false);
-    }
-    if (result == null) {
-      s_logger.warn("Failed to restart dhcp element " + router + " as a part of netowrk "+ network+ " restart");
-      ret=false;
+    if (cleanup) {
+      if (router.getState() != State.Stopped && _routerMgr.stopRouter(router.getId(),false) == null) {
+        s_logger.warn("Failed to stop dhcp element " + router + " as a part of network "+ network+ " restart");
+      }
+      if (_routerMgr.destroyRouter(router.getId()) == null) {
+        s_logger.warn("Failed to destroy dhcp element " + router + " as a part of network "+ network+ " restart");
+      }
     }
   }
-  return ret;
+  if (host_id == null || host_id == 0) {
+    throw new ResourceUnavailableException("Fail to locate dhcp element in network " + network.getId(),this.getClass(),0);
+  }
+  Cluster cluster=_configMgr.getCluster(_hostDao.findById(host_id).getClusterId());
+  Pod pod=_configMgr.getPod(_hostDao.findById(host_id).getPodId());
+  dest=new DeployDestination(dc,pod,cluster,null);
+  return implement(network,offering,dest,context);
 }
