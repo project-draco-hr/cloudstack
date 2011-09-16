@@ -12,13 +12,32 @@
     }
     return true;
   }
+  ItWorkVO work=_workDao.findByOutstandingWork(vm.getId(),vm.getState());
+  if (work != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Found an outstanding work item for this vm " + vm + " with state:"+ vm.getState()+ ", work id:"+ work.getId());
+    }
+  }
   Long hostId=vm.getHostId();
   if (hostId == null) {
+    if (!forced) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("HostId is null but this is not a forced stop, cannot stop vm " + vm + " with state:"+ vm.getState());
+      }
+      return false;
+    }
     try {
       stateTransitTo(vm,Event.AgentReportStopped,null,null);
     }
  catch (    NoTransitionException e) {
       s_logger.warn(e.getMessage());
+    }
+    if (work != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Updating work item to Done, id:" + work.getId());
+      }
+      work.setStep(Step.Done);
+      _workDao.update(work.getId(),work);
     }
     return true;
   }
@@ -33,21 +52,47 @@
     if (!forced) {
       throw new CloudRuntimeException("We cannot stop " + vm + " when it is in state "+ vm.getState());
     }
-    s_logger.debug("Unable to transition the state but we're moving on because it's forced stop");
-    if (state == State.Starting || state == State.Stopping || state == State.Migrating) {
-      ItWorkVO work=_workDao.findByOutstandingWork(vm.getId(),vm.getState());
+    boolean doCleanup=false;
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Unable to transition the state but we're moving on because it's forced stop");
+    }
+    if (state == State.Starting || state == State.Migrating) {
       if (work != null) {
-        if (cleanup(vmGuru,new VirtualMachineProfileImpl<T>(vm),work,Event.StopRequested,forced,user,account)) {
-          try {
-            return stateTransitTo(vm,Event.AgentReportStopped,null);
-          }
- catch (          NoTransitionException e) {
-            s_logger.warn("Unable to cleanup " + vm);
-            return false;
-          }
+        doCleanup=true;
+      }
+ else {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Unable to cleanup VM: " + vm + " ,since outstanding work item is not found");
         }
+        throw new CloudRuntimeException("Work item not found, We cannot stop " + vm + " when it is in state "+ vm.getState());
       }
     }
+ else     if (state == State.Stopping) {
+      doCleanup=true;
+    }
+    if (doCleanup) {
+      if (cleanup(vmGuru,new VirtualMachineProfileImpl<T>(vm),work,Event.StopRequested,forced,user,account)) {
+        try {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Updating work item to Done, id:" + work.getId());
+          }
+          return changeState(vm,Event.AgentReportStopped,null,work,Step.Done);
+        }
+ catch (        NoTransitionException e) {
+          s_logger.warn("Unable to cleanup " + vm);
+          return false;
+        }
+      }
+ else {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Failed to cleanup VM: " + vm);
+        }
+        throw new CloudRuntimeException("Failed to cleanup " + vm + " , current state "+ vm.getState());
+      }
+    }
+  }
+  if (vm.getState() != State.Stopping) {
+    throw new CloudRuntimeException("We cannot proceed with stop VM " + vm + " since it is not in 'Stopping' state, current state: "+ vm.getState());
   }
   String routerPrivateIp=null;
   if (vm.getType() == VirtualMachine.Type.DomainRouter) {
@@ -106,6 +151,13 @@ catch (  OperationTimedoutException e) {
     s_logger.warn("Unable to release storage resources.",e);
   }
   try {
+    if (work != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Updating the outstanding work item to Done, id:" + work.getId());
+      }
+      work.setStep(Step.Done);
+      _workDao.update(work.getId(),work);
+    }
     return stateTransitTo(vm,Event.OperationSucceeded,null,null);
   }
  catch (  NoTransitionException e) {
