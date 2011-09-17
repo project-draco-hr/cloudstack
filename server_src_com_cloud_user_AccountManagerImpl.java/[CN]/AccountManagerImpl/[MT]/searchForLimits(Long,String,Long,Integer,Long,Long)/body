@@ -1,0 +1,126 @@
+{
+  Account caller=UserContext.current().getCaller();
+  List<ResourceLimitVO> limits=new ArrayList<ResourceLimitVO>();
+  boolean isAccount=true;
+  Long accountId=null;
+  if (!isAdmin(caller.getType())) {
+    accountId=caller.getId();
+    domainId=null;
+  }
+ else {
+    if (domainId != null) {
+      Domain domain=_domainDao.findById(domainId);
+      if (domain == null) {
+        return limits;
+      }
+      checkAccess(caller,domain);
+      if (accountName != null) {
+        Account account=_accountDao.findAccount(accountName,domainId);
+        if (account == null) {
+          return limits;
+        }
+        checkAccess(caller,null,account);
+        accountId=account.getId();
+        domainId=null;
+      }
+    }
+  }
+  ResourceType resourceType=null;
+  if (type != null) {
+    try {
+      resourceType=ResourceType.values()[type];
+    }
+ catch (    ArrayIndexOutOfBoundsException e) {
+      throw new InvalidParameterValueException("Please specify a valid resource type.");
+    }
+  }
+  if (id != null) {
+    ResourceLimitVO vo=_resourceLimitDao.findById(id);
+    if (vo.getAccountId() != null) {
+      checkAccess(caller,null,_accountDao.findById(vo.getAccountId()));
+      limits.add(vo);
+    }
+ else     if (vo.getDomainId() != null) {
+      checkAccess(caller,_domainDao.findById(vo.getDomainId()));
+      limits.add(vo);
+    }
+    return limits;
+  }
+  if (accountId == null) {
+    if (domainId == null) {
+      accountId=caller.getId();
+      isAccount=true;
+    }
+ else {
+      isAccount=false;
+    }
+  }
+ else {
+    isAccount=true;
+  }
+  SearchBuilder<ResourceLimitVO> sb=_resourceLimitDao.createSearchBuilder();
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
+  SearchCriteria<ResourceLimitVO> sc=sb.create();
+  Filter filter=new Filter(ResourceLimitVO.class,"id",true,startIndex,pageSizeVal);
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    sc.setParameters("accountId",null);
+  }
+  if (resourceType != null) {
+    sc.setParameters("type",resourceType);
+  }
+  List<ResourceLimitVO> foundLimits=_resourceLimitDao.search(sc,filter);
+  if (resourceType != null) {
+    if (foundLimits.isEmpty()) {
+      if (isAccount) {
+        limits.add(new ResourceLimitVO(null,accountId,resourceType,findCorrectResourceLimit(accountId,resourceType)));
+      }
+ else {
+        limits.add(new ResourceLimitVO(domainId,null,resourceType,findCorrectResourceLimit(_domainDao.findById(domainId),resourceType)));
+      }
+    }
+ else {
+      limits.addAll(foundLimits);
+    }
+  }
+ else {
+    limits.addAll(foundLimits);
+    ResourceType[] resourceTypes=ResourceCount.ResourceType.values();
+    if (foundLimits.size() != resourceTypes.length) {
+      List<String> accountLimitStr=new ArrayList<String>();
+      List<String> domainLimitStr=new ArrayList<String>();
+      for (      ResourceLimitVO foundLimit : foundLimits) {
+        if (foundLimit.getAccountId() != null) {
+          accountLimitStr.add(foundLimit.getType().toString());
+        }
+ else {
+          domainLimitStr.add(foundLimit.getType().toString());
+        }
+      }
+      if (isAccount) {
+        if (accountLimitStr.size() < resourceTypes.length) {
+          for (          ResourceType rt : resourceTypes) {
+            if (!accountLimitStr.contains(rt.toString())) {
+              limits.add(new ResourceLimitVO(null,accountId,rt,findCorrectResourceLimit(accountId,rt)));
+            }
+          }
+        }
+      }
+ else {
+        if (domainLimitStr.size() < resourceTypes.length) {
+          for (          ResourceType rt : resourceTypes) {
+            if (!domainLimitStr.contains(rt.toString())) {
+              limits.add(new ResourceLimitVO(domainId,null,rt,findCorrectResourceLimit(_domainDao.findById(domainId),rt)));
+            }
+          }
+        }
+      }
+    }
+  }
+  return limits;
+}
