@@ -1,0 +1,35 @@
+{
+  long numResources=((count.length == 0) ? 1 : count[0]);
+  if (_accountMgr.isAdmin(account.getType())) {
+    return false;
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  try {
+    Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdate(account.getId(),ResourceOwnerType.Account,type);
+    SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
+    sc.setParameters("id",rowIdsToLock.toArray());
+    _resourceCountDao.lockRows(sc,null,true);
+    long accountLimit=findCorrectResourceLimitForAccount(account.getId(),type);
+    long potentialCount=_resourceCountDao.getResourceCount(account.getId(),ResourceOwnerType.Account,type) + numResources;
+    if (accountLimit != -1 && potentialCount > accountLimit) {
+      return true;
+    }
+    Long domainId=account.getDomainId();
+    while (domainId != null) {
+      ResourceLimitVO domainLimit=_resourceLimitDao.findByOwnerIdAndType(domainId,ResourceOwnerType.Domain,type);
+      if (domainLimit != null) {
+        long domainCount=_resourceCountDao.getResourceCount(domainId,ResourceOwnerType.Domain,type);
+        if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
+          return true;
+        }
+      }
+      DomainVO domain=_domainDao.findById(domainId);
+      domainId=domain.getParent();
+    }
+    return false;
+  }
+  finally {
+    txn.commit();
+  }
+}

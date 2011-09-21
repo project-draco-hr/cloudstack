@@ -1,0 +1,42 @@
+{
+  Account caller=UserContext.current().getCaller();
+  User user=_userDao.findById(userId);
+  if (user == null || user.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find user by id");
+  }
+  Account account=_accountDao.findById(user.getAccountId());
+  if ((account != null) && (account.getId() == Account.ACCOUNT_ID_SYSTEM)) {
+    throw new PermissionDeniedException("user id : " + userId + " is a system user, locking is not allowed");
+  }
+  checkAccess(caller,null,account);
+  boolean success=true;
+  if (user.getState().equals(State.locked)) {
+    return _userAccountDao.findById(userId);
+  }
+ else   if (user.getState().equals(State.enabled)) {
+    success=doSetUserStatus(user.getId(),State.locked);
+    boolean lockAccount=true;
+    List<UserVO> allUsersByAccount=_userDao.listByAccount(user.getAccountId());
+    for (    UserVO oneUser : allUsersByAccount) {
+      if (oneUser.getState().equals(State.enabled)) {
+        lockAccount=false;
+        break;
+      }
+    }
+    if (lockAccount) {
+      success=(success && lockAccountInternal(user.getAccountId()));
+    }
+  }
+ else {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Attempting to lock a non-enabled user, current state is " + user.getState() + " (userId: "+ user.getId()+ "), locking failed.");
+    }
+    success=false;
+  }
+  if (success) {
+    return _userAccountDao.findById(userId);
+  }
+ else {
+    throw new CloudRuntimeException("Unable to lock user " + userId);
+  }
+}

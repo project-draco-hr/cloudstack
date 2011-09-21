@@ -1,0 +1,30 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=caller;
+  if ((accountName != null && domainId == null) || (domainId != null && accountName == null)) {
+    throw new InvalidParameterValueException("Account name and domain id must be specified together");
+  }
+  if (accountName != null) {
+    owner=_accountMgr.finalizeOwner(caller,accountName,domainId);
+  }
+  if (_projectDao.findByNameAndDomain(name,owner.getDomainId()) != null) {
+    throw new InvalidParameterValueException("Project with name " + name + " already exists in domain id="+ owner.getDomainId());
+  }
+  Domain ownerDomain=_domainDao.findById(owner.getDomainId());
+  _resourceLimitMgr.resourceLimitExceededForDomain(ownerDomain,ResourceType.project);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  StringBuilder dmnNm=new StringBuilder("PrjDmn-");
+  dmnNm.append(name).append("-").append(owner.getDomainId());
+  Domain projectDomain=_domainMgr.createDomain(dmnNm.toString(),Domain.ROOT_DOMAIN,Account.ACCOUNT_ID_SYSTEM,null,Domain.Type.Project);
+  StringBuilder acctNm=new StringBuilder("PrjAcct-");
+  acctNm.append(name).append("-").append(owner.getDomainId());
+  Account projectAccount=_accountMgr.createAccount(acctNm.toString(),Account.ACCOUNT_TYPE_PROJECT,projectDomain.getId(),null);
+  Project project=_projectDao.persist(new ProjectVO(name,displayText,owner.getDomainId(),projectAccount.getId(),projectDomain.getId()));
+  assignAccountToProject(project,owner.getId(),ProjectAccount.Role.Owner);
+  if (project != null) {
+    UserContext.current().setEventDetails("Project id=" + project.getId());
+  }
+  txn.commit();
+  return project;
+}

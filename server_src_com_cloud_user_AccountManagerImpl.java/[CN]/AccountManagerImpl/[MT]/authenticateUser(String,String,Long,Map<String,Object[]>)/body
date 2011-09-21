@@ -1,0 +1,97 @@
+{
+  UserAccount user=null;
+  if (password != null) {
+    user=getUserAccount(username,password,domainId);
+  }
+ else {
+    String key=_configDao.getValue("security.singlesignon.key");
+    if (key == null) {
+      return null;
+    }
+    String singleSignOnTolerance=_configDao.getValue("security.singlesignon.tolerance.millis");
+    if (singleSignOnTolerance == null) {
+      return null;
+    }
+    long tolerance=Long.parseLong(singleSignOnTolerance);
+    String signature=null;
+    long timestamp=0L;
+    String unsignedRequest=null;
+    List<String> parameterNames=new ArrayList<String>();
+    for (    Object paramNameObj : requestParameters.keySet()) {
+      parameterNames.add((String)paramNameObj);
+    }
+    Collections.sort(parameterNames);
+    try {
+      for (      String paramName : parameterNames) {
+        String paramValue=((String[])requestParameters.get(paramName))[0];
+        if ("signature".equalsIgnoreCase(paramName)) {
+          signature=paramValue;
+        }
+ else {
+          if ("timestamp".equalsIgnoreCase(paramName)) {
+            String timestampStr=paramValue;
+            try {
+              timestamp=Long.parseLong(timestampStr);
+              long currentTime=System.currentTimeMillis();
+              if (Math.abs(currentTime - timestamp) > tolerance) {
+                if (s_logger.isDebugEnabled()) {
+                  s_logger.debug("Expired timestamp passed in to login, current time = " + currentTime + ", timestamp = "+ timestamp);
+                }
+                return null;
+              }
+            }
+ catch (            NumberFormatException nfe) {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Invalid timestamp passed in to login: " + timestampStr);
+              }
+              return null;
+            }
+          }
+          if (unsignedRequest == null) {
+            unsignedRequest=paramName + "=" + URLEncoder.encode(paramValue,"UTF-8").replaceAll("\\+","%20");
+          }
+ else {
+            unsignedRequest=unsignedRequest + "&" + paramName+ "="+ URLEncoder.encode(paramValue,"UTF-8").replaceAll("\\+","%20");
+          }
+        }
+      }
+      if ((signature == null) || (timestamp == 0L)) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Missing parameters in login request, signature = " + signature + ", timestamp = "+ timestamp);
+        }
+        return null;
+      }
+      unsignedRequest=unsignedRequest.toLowerCase();
+      Mac mac=Mac.getInstance("HmacSHA1");
+      SecretKeySpec keySpec=new SecretKeySpec(key.getBytes(),"HmacSHA1");
+      mac.init(keySpec);
+      mac.update(unsignedRequest.getBytes());
+      byte[] encryptedBytes=mac.doFinal();
+      String computedSignature=new String(Base64.encodeBase64(encryptedBytes));
+      boolean equalSig=signature.equals(computedSignature);
+      if (!equalSig) {
+        s_logger.info("User signature: " + signature + " is not equaled to computed signature: "+ computedSignature);
+      }
+ else {
+        user=_userAccountDao.getUserAccount(username,domainId);
+      }
+    }
+ catch (    Exception ex) {
+      s_logger.error("Exception authenticating user",ex);
+      return null;
+    }
+  }
+  if (user != null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("User: " + username + " in domain "+ domainId+ " has successfully logged in");
+    }
+    EventUtils.saveEvent(user.getId(),user.getAccountId(),EventTypes.EVENT_USER_LOGIN,"user has logged in");
+    return user;
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("User: " + username + " in domain "+ domainId+ " has failed to log in");
+    }
+    return null;
+  }
+}
