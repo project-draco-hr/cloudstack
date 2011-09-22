@@ -1,0 +1,91 @@
+{
+  StartupCommand startup=cmds[0];
+  HostVO host=_hostDao.findByGuid(startup.getGuid());
+  if (host == null) {
+    host=_hostDao.findByGuid(startup.getGuidWithoutResource());
+  }
+  if (host == null) {
+    host=new HostVO(startup.getGuid());
+    host.setResource(resource.getClass().getName());
+    host=_hostDao.persist(host);
+  }
+  String dataCenter=startup.getDataCenter();
+  String pod=startup.getPod();
+  String cluster=startup.getCluster();
+  if (pod != null && dataCenter != null && pod.equalsIgnoreCase("default") && dataCenter.equalsIgnoreCase("default")) {
+    List<HostPodVO> pods=_podDao.listAllIncludingRemoved();
+    for (    HostPodVO hpv : pods) {
+      if (checkCIDR(hpv,startup.getPrivateIpAddress(),startup.getPrivateNetmask())) {
+        pod=hpv.getName();
+        dataCenter=_dcDao.findById(hpv.getDataCenterId()).getName();
+        break;
+      }
+    }
+  }
+  long dcId=-1;
+  DataCenterVO dc=_dcDao.findByName(dataCenter);
+  if (dc == null) {
+    try {
+      dcId=Long.parseLong(dataCenter);
+      dc=_dcDao.findById(dcId);
+    }
+ catch (    final NumberFormatException e) {
+    }
+  }
+  if (dc == null) {
+    throw new IllegalArgumentException("Host " + startup.getPrivateIpAddress() + " sent incorrect data center: "+ dataCenter);
+  }
+  dcId=dc.getId();
+  HostPodVO p=_podDao.findByName(pod,dcId);
+  if (p == null) {
+    try {
+      final long podId=Long.parseLong(pod);
+      p=_podDao.findById(podId);
+    }
+ catch (    final NumberFormatException e) {
+    }
+  }
+  Long podId=(p == null ? null : p.getId());
+  Long clusterId=null;
+  if (cluster != null) {
+    try {
+      clusterId=Long.valueOf(cluster);
+    }
+ catch (    NumberFormatException e) {
+      ClusterVO c=_clusterDao.findBy(cluster,podId);
+      if (c == null) {
+        c=new ClusterVO(dcId,podId,cluster);
+        c=_clusterDao.persist(c);
+      }
+      clusterId=c.getId();
+    }
+  }
+  host.setDataCenterId(dc.getId());
+  host.setPodId(podId);
+  host.setClusterId(clusterId);
+  host.setPrivateIpAddress(startup.getPrivateIpAddress());
+  host.setPrivateNetmask(startup.getPrivateNetmask());
+  host.setPrivateMacAddress(startup.getPrivateMacAddress());
+  host.setPublicIpAddress(startup.getPublicIpAddress());
+  host.setPublicMacAddress(startup.getPublicMacAddress());
+  host.setPublicNetmask(startup.getPublicNetmask());
+  host.setStorageIpAddress(startup.getStorageIpAddress());
+  host.setStorageMacAddress(startup.getStorageMacAddress());
+  host.setStorageNetmask(startup.getStorageNetmask());
+  host.setVersion(startup.getVersion());
+  host.setName(startup.getName());
+  host.setManagementServerId(_nodeId);
+  host.setStorageUrl(startup.getIqn());
+  host.setLastPinged(System.currentTimeMillis() >> 10);
+  host.setHostTags(hostTags);
+  host.setDetails(details);
+  if (startup.getStorageIpAddressDeux() != null) {
+    host.setStorageIpAddressDeux(startup.getStorageIpAddressDeux());
+    host.setStorageMacAddressDeux(startup.getStorageMacAddressDeux());
+    host.setStorageNetmaskDeux(startup.getStorageNetmaskDeux());
+  }
+  host=(HostVO)dispatchToStateAdapters(stateEvent,true,host,cmds,resource,details,hostTags);
+  _hostDao.update(host.getId(),host);
+  _agentMgr.agentStatusTransitTo(host,Status.Event.AgentConnected,_nodeId);
+  return host;
+}
