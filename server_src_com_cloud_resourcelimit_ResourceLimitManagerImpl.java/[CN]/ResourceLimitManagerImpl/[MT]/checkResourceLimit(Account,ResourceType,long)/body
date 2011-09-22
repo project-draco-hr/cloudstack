@@ -1,7 +1,11 @@
 {
   long numResources=((count.length == 0) ? 1 : count[0]);
+  Project project=null;
   if (_accountMgr.isAdmin(account.getType())) {
-    return false;
+    return;
+  }
+  if (account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    project=_projectDao.findByProjectAccountId(account.getId());
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
@@ -10,24 +14,33 @@
     SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
     sc.setParameters("id",rowIdsToLock.toArray());
     _resourceCountDao.lockRows(sc,null,true);
-    long accountLimit=findCorrectResourceLimitForAccount(account.getId(),type);
+    long accountLimit=findCorrectResourceLimitForAccount(account,type);
     long potentialCount=_resourceCountDao.getResourceCount(account.getId(),ResourceOwnerType.Account,type) + numResources;
     if (accountLimit != -1 && potentialCount > accountLimit) {
-      return true;
+      String message="Maximum number of resources of type \"" + type + "\" for account name="+ account.getAccountName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
+      if (project != null) {
+        message="Maximum number of resources of type \"" + type + "\" for project name="+ project.getName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
+      }
+      throw new ResourceAllocationException(message,type);
     }
-    Long domainId=account.getDomainId();
+    Long domainId=null;
+    if (project != null) {
+      domainId=project.getDomainId();
+    }
+ else {
+      domainId=account.getDomainId();
+    }
     while (domainId != null) {
+      DomainVO domain=_domainDao.findById(domainId);
       ResourceLimitVO domainLimit=_resourceLimitDao.findByOwnerIdAndType(domainId,ResourceOwnerType.Domain,type);
       if (domainLimit != null) {
         long domainCount=_resourceCountDao.getResourceCount(domainId,ResourceOwnerType.Domain,type);
         if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
-          return true;
+          throw new ResourceAllocationException("Maximum number of resources of type \"" + type + "\" for domain id="+ domainId+ " has been exceeded.",type);
         }
       }
-      DomainVO domain=_domainDao.findById(domainId);
       domainId=domain.getParent();
     }
-    return false;
   }
   finally {
     txn.commit();
