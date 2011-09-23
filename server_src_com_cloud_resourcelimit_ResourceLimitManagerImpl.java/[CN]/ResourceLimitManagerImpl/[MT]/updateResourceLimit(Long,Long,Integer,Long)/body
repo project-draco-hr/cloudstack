@@ -1,0 +1,59 @@
+{
+  Account caller=UserContext.current().getCaller();
+  if (max == null) {
+    max=new Long(-1);
+  }
+ else   if (max < -1) {
+    throw new InvalidParameterValueException("Please specify either '-1' for an infinite limit, or a limit that is at least '0'.");
+  }
+  ResourceType resourceType=null;
+  if (typeId != null) {
+    for (    ResourceType type : Resource.ResourceType.values()) {
+      if (type.getOrdinal() == typeId.intValue()) {
+        resourceType=type;
+      }
+    }
+    if (resourceType == null) {
+      throw new InvalidParameterValueException("Please specify valid resource type");
+    }
+  }
+  ResourceOwnerType ownerType=null;
+  Long ownerId=null;
+  if (accountId != null) {
+    Account account=_entityMgr.findById(Account.class,accountId);
+    if (account.getType() == Account.ACCOUNT_ID_SYSTEM) {
+      throw new InvalidParameterValueException("Can't update system account");
+    }
+    _accountMgr.checkAccess(caller,null,account);
+    ownerType=ResourceOwnerType.Account;
+    ownerId=accountId;
+  }
+ else   if (domainId != null) {
+    Domain domain=_entityMgr.findById(Domain.class,domainId);
+    _accountMgr.checkAccess(caller,domain);
+    if ((caller.getDomainId() == domainId.longValue()) && caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
+      throw new PermissionDeniedException("Unable to update resource limit for domain " + domainId + ", permission denied");
+    }
+    Long parentDomainId=domain.getParent();
+    if (parentDomainId != null) {
+      DomainVO parentDomain=_domainDao.findById(parentDomainId);
+      long parentMaximum=findCorrectResourceLimitForDomain(parentDomain,resourceType);
+      if ((parentMaximum >= 0) && (max.longValue() > parentMaximum)) {
+        throw new InvalidParameterValueException("Domain " + domain.getName() + "(id: "+ parentDomain.getId()+ ") has maximum allowed resource limit "+ parentMaximum+ " for "+ resourceType+ ", please specify a value less that or equal to "+ parentMaximum);
+      }
+    }
+    ownerType=ResourceOwnerType.Domain;
+    ownerId=domainId;
+  }
+  if (ownerId == null) {
+    throw new InvalidParameterValueException("AccountId or domainId have to be specified in order to update resource limit");
+  }
+  ResourceLimitVO limit=_resourceLimitDao.findByOwnerIdAndType(ownerId,ownerType,resourceType);
+  if (limit != null) {
+    _resourceLimitDao.update(limit.getId(),max);
+    return _resourceLimitDao.findById(limit.getId());
+  }
+ else {
+    return _resourceLimitDao.persist(new ResourceLimitVO(resourceType,max,ownerId,ownerType));
+  }
+}

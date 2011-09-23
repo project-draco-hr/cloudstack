@@ -1,0 +1,124 @@
+{
+  Account caller=UserContext.current().getCaller();
+  List<ResourceLimitVO> limits=new ArrayList<ResourceLimitVO>();
+  boolean isAccount=true;
+  if (!_accountMgr.isAdmin(caller.getType())) {
+    accountId=caller.getId();
+    domainId=null;
+  }
+ else {
+    if (domainId != null) {
+      Domain domain=_domainDao.findById(domainId);
+      if (domain == null) {
+        return limits;
+      }
+      _accountMgr.checkAccess(caller,domain);
+      if (accountId != null) {
+        Account account=_accountDao.findById(accountId);
+        if (account == null) {
+          return limits;
+        }
+        _accountMgr.checkAccess(caller,null,account);
+        domainId=null;
+      }
+    }
+  }
+  ResourceType resourceType=null;
+  if (type != null) {
+    try {
+      resourceType=ResourceType.values()[type];
+    }
+ catch (    ArrayIndexOutOfBoundsException e) {
+      throw new InvalidParameterValueException("Please specify a valid resource type.");
+    }
+  }
+  if (id != null) {
+    ResourceLimitVO vo=_resourceLimitDao.findById(id);
+    if (vo.getAccountId() != null) {
+      _accountMgr.checkAccess(caller,null,_accountDao.findById(vo.getAccountId()));
+      limits.add(vo);
+    }
+ else     if (vo.getDomainId() != null) {
+      _accountMgr.checkAccess(caller,_domainDao.findById(vo.getDomainId()));
+      limits.add(vo);
+    }
+    return limits;
+  }
+  if (accountId == null) {
+    if (domainId == null) {
+      accountId=caller.getId();
+      isAccount=true;
+    }
+ else {
+      isAccount=false;
+    }
+  }
+ else {
+    isAccount=true;
+  }
+  SearchBuilder<ResourceLimitVO> sb=_resourceLimitDao.createSearchBuilder();
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
+  SearchCriteria<ResourceLimitVO> sc=sb.create();
+  Filter filter=new Filter(ResourceLimitVO.class,"id",true,startIndex,pageSizeVal);
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+  if (domainId != null) {
+    sc.setParameters("domainId",domainId);
+    sc.setParameters("accountId",null);
+  }
+  if (resourceType != null) {
+    sc.setParameters("type",resourceType);
+  }
+  List<ResourceLimitVO> foundLimits=_resourceLimitDao.search(sc,filter);
+  if (resourceType != null) {
+    if (foundLimits.isEmpty()) {
+      if (isAccount) {
+        limits.add(new ResourceLimitVO(resourceType,findCorrectResourceLimitForAccount(_accountMgr.getAccount(accountId),resourceType),accountId,ResourceOwnerType.Account));
+      }
+ else {
+        limits.add(new ResourceLimitVO(resourceType,findCorrectResourceLimitForDomain(_domainDao.findById(domainId),resourceType),domainId,ResourceOwnerType.Domain));
+      }
+    }
+ else {
+      limits.addAll(foundLimits);
+    }
+  }
+ else {
+    limits.addAll(foundLimits);
+    ResourceType[] resourceTypes=ResourceCount.ResourceType.values();
+    if (foundLimits.size() != resourceTypes.length) {
+      List<String> accountLimitStr=new ArrayList<String>();
+      List<String> domainLimitStr=new ArrayList<String>();
+      for (      ResourceLimitVO foundLimit : foundLimits) {
+        if (foundLimit.getAccountId() != null) {
+          accountLimitStr.add(foundLimit.getType().toString());
+        }
+ else {
+          domainLimitStr.add(foundLimit.getType().toString());
+        }
+      }
+      if (isAccount) {
+        if (accountLimitStr.size() < resourceTypes.length) {
+          for (          ResourceType rt : resourceTypes) {
+            if (!accountLimitStr.contains(rt.toString()) && rt.supportsOwner(ResourceOwnerType.Account)) {
+              limits.add(new ResourceLimitVO(rt,findCorrectResourceLimitForAccount(_accountMgr.getAccount(accountId),rt),accountId,ResourceOwnerType.Account));
+            }
+          }
+        }
+      }
+ else {
+        if (domainLimitStr.size() < resourceTypes.length) {
+          for (          ResourceType rt : resourceTypes) {
+            if (!domainLimitStr.contains(rt.toString()) && rt.supportsOwner(ResourceOwnerType.Domain)) {
+              limits.add(new ResourceLimitVO(rt,findCorrectResourceLimitForDomain(_domainDao.findById(domainId),rt),domainId,ResourceOwnerType.Domain));
+            }
+          }
+        }
+      }
+    }
+  }
+  return limits;
+}
