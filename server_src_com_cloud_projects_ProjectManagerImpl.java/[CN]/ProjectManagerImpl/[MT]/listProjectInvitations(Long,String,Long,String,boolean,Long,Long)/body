@@ -1,0 +1,58 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Long accountId=null;
+  String domainPath=null;
+  if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    if (domainId == null) {
+      domainPath=_domainMgr.getDomain(caller.getDomainId()).getPath();
+    }
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    accountId=caller.getId();
+  }
+  if (domainId != null) {
+    Domain domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Domain id=" + domainId + " doesn't exist");
+    }
+    _accountMgr.checkAccess(caller,domain,null);
+    if (accountName != null) {
+      Account account=_accountDao.findActiveAccount(accountName,domainId);
+      if (account == null) {
+        throw new InvalidParameterValueException("Unable to find account by name " + accountName + " in domain "+ domainId);
+      }
+      _accountMgr.checkAccess(caller,null,account);
+      accountId=account.getId();
+    }
+  }
+  Filter searchFilter=new Filter(ProjectInvitationVO.class,"id",true,startIndex,pageSizeVal);
+  SearchBuilder<ProjectInvitationVO> sb=_projectInvitationDao.createSearchBuilder();
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("projectId",sb.entity().getProjectId(),SearchCriteria.Op.EQ);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  sb.and("created",sb.entity().getCreated(),SearchCriteria.Op.GT);
+  if (domainPath != null) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<ProjectInvitationVO> sc=sb.create();
+  if (domainPath != null) {
+    sc.setJoinParameters("domainSearch","path",domainPath);
+  }
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+  if (projectId != null) {
+    sc.setParameters("projectId",projectId);
+  }
+  if (state != null) {
+    sc.setParameters("state",state);
+  }
+  if (activeOnly) {
+    sc.setParameters("state",ProjectInvitation.State.Pending);
+    sc.setParameters("created",new Date((System.currentTimeMillis() >> 10) - _invitationTimeOut));
+  }
+  return _projectInvitationDao.search(sc,searchFilter);
+}

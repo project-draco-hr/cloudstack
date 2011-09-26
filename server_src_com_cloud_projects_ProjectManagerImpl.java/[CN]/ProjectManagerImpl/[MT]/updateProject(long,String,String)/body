@@ -1,0 +1,37 @@
+{
+  Account caller=UserContext.current().getCaller();
+  ProjectVO project=getProject(projectId);
+  if (project == null) {
+    throw new InvalidParameterValueException("Unable to find the project id=" + projectId);
+  }
+  _accountMgr.checkAccess(caller,_domainDao.findById(project.getProjectDomainId()),AccessType.ModifyProject);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  if (displayText != null) {
+    project.setDisplayText(displayText);
+    _projectDao.update(projectId,project);
+  }
+  if (newOwnerName != null) {
+    Account futureOwnerAccount=_accountMgr.getActiveAccountByName(newOwnerName,project.getDomainId());
+    if (futureOwnerAccount == null) {
+      throw new InvalidParameterValueException("Unable to find account name=" + newOwnerName + " in domain id="+ project.getDomainId());
+    }
+    Account currentOwnerAccount=getProjectOwner(projectId);
+    if (currentOwnerAccount.getId() != futureOwnerAccount.getId()) {
+      ProjectAccountVO futureOwner=_projectAccountDao.findByProjectIdAccountId(projectId,futureOwnerAccount.getAccountId());
+      if (futureOwner == null) {
+        throw new InvalidParameterValueException("Account " + newOwnerName + " doesn't belong to the project. Add it to the project first and then change the project's ownership");
+      }
+      ProjectAccountVO currentOwner=_projectAccountDao.findByProjectIdAccountId(projectId,currentOwnerAccount.getId());
+      currentOwner.setAccountRole(Role.Regular);
+      _projectAccountDao.update(currentOwner.getId(),currentOwner);
+      futureOwner.setAccountRole(Role.Owner);
+      _projectAccountDao.update(futureOwner.getId(),futureOwner);
+    }
+ else {
+      s_logger.trace("Future owner " + newOwnerName + "is already the owner of the project id="+ projectId);
+    }
+  }
+  txn.commit();
+  return _projectDao.findById(projectId);
+}
