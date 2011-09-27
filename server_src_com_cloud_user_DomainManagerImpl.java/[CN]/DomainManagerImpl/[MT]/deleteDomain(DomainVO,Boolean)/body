@@ -1,0 +1,33 @@
+{
+  s_logger.debug("Marking domain id=" + domain.getId() + " as "+ Domain.State.Inactive+ " before actually deleting it");
+  domain.setState(Domain.State.Inactive);
+  _domainDao.update(domain.getId(),domain);
+  try {
+    long ownerId=domain.getAccountId();
+    if ((cleanup != null) && cleanup.booleanValue()) {
+      if (!cleanupDomain(domain.getId(),ownerId)) {
+        s_logger.error("Failed to clean up domain resources and sub domains, delete failed on domain " + domain.getName() + " (id: "+ domain.getId()+ ").");
+        return false;
+      }
+    }
+ else {
+      List<AccountVO> accountsForCleanup=_accountDao.findCleanupsForRemovedAccounts(domain.getId());
+      if (accountsForCleanup.isEmpty()) {
+        if (!_domainDao.remove(domain.getId())) {
+          s_logger.error("Delete failed on domain " + domain.getName() + " (id: "+ domain.getId()+ "); please make sure all users and sub domains have been removed from the domain before deleting");
+          return false;
+        }
+      }
+ else {
+        s_logger.warn("Can't delete the domain yet because it has " + accountsForCleanup.size() + "accounts that need a cleanup");
+        return false;
+      }
+    }
+    cleanupDomainOfferings(domain.getId());
+    return true;
+  }
+ catch (  Exception ex) {
+    s_logger.error("Exception deleting domain with id " + domain.getId(),ex);
+    return false;
+  }
+}
