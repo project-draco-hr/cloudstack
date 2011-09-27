@@ -1,10 +1,9 @@
 {
-  final HashMap<String,State> vmStates=new HashMap<String,State>();
-  Set<VM> vms=null;
+  final HashMap<String,Pair<String,State>> vmStates=new HashMap<String,Pair<String,State>>();
+  Map<VM,VM.Record> vm_map=null;
   for (int i=0; i < 2; i++) {
     try {
-      Host host=Host.getByUuid(conn,_host.uuid);
-      vms=host.getResidentVMs(conn);
+      vm_map=VM.getAllRecords(conn);
       break;
     }
  catch (    final Throwable e) {
@@ -16,31 +15,10 @@
  catch (    final InterruptedException ex) {
     }
   }
-  if (vms == null) {
+  if (vm_map == null) {
     return null;
   }
-  for (  VM vm : vms) {
-    VM.Record record=null;
-    for (int i=0; i < 2; i++) {
-      try {
-        record=vm.getRecord(conn);
-        break;
-      }
- catch (      XenAPIException e1) {
-        s_logger.debug("VM.getRecord failed on host:" + _host.uuid + " due to "+ e1.toString());
-      }
-catch (      XmlRpcException e1) {
-        s_logger.debug("VM.getRecord failed on host:" + _host.uuid + " due to "+ e1.getMessage());
-      }
-      try {
-        Thread.sleep(1000);
-      }
- catch (      final InterruptedException ex) {
-      }
-    }
-    if (record == null) {
-      continue;
-    }
+  for (  VM.Record record : vm_map.values()) {
     if (record.isControlDomain || record.isASnapshot || record.isATemplate) {
       continue;
     }
@@ -49,7 +27,23 @@ catch (      XmlRpcException e1) {
     if (s_logger.isTraceEnabled()) {
       s_logger.trace("VM " + record.nameLabel + ": powerstate = "+ ps+ "; vm state="+ state.toString());
     }
-    vmStates.put(record.nameLabel,state);
+    Host host=record.residentOn;
+    String host_uuid=null;
+    if (!isRefNull(host)) {
+      try {
+        host_uuid=host.getUuid(conn);
+      }
+ catch (      BadServerResponse e) {
+        e.printStackTrace();
+      }
+catch (      XenAPIException e) {
+        e.printStackTrace();
+      }
+catch (      XmlRpcException e) {
+        e.printStackTrace();
+      }
+      vmStates.put(record.nameLabel,new Pair<String,State>(host_uuid,state));
+    }
   }
   return vmStates;
 }
