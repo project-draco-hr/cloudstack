@@ -1,0 +1,41 @@
+{
+  Connection conn=getConnection();
+  try {
+    String result=callHostPluginPremium(conn,"check_heartbeat","host",cmd.getHostGuid(),"interval",Integer.toString(_heartbeatInterval * 2));
+    if (!result.contains("> DEAD <")) {
+      s_logger.debug("Heart beat is still going so unable to fence");
+      return new FenceAnswer(cmd,false,"Heartbeat is still going on unable to fence");
+    }
+    Set<VM> vms=VM.getByNameLabel(conn,cmd.getVmName());
+    for (    VM vm : vms) {
+      Set<VDI> vdis=new HashSet<VDI>();
+      Set<VBD> vbds=vm.getVBDs(conn);
+      for (      VBD vbd : vbds) {
+        VDI vdi=vbd.getVDI(conn);
+        if (!isRefNull(vdi)) {
+          vdis.add(vdi);
+        }
+      }
+      vm.powerStateReset(conn);
+      vm.destroy(conn);
+      for (      VDI vdi : vdis) {
+        Map<String,String> smConfig=vdi.getSmConfig(conn);
+        for (        String key : smConfig.keySet()) {
+          if (key.startsWith("host_")) {
+            vdi.removeFromSmConfig(conn,key);
+            break;
+          }
+        }
+      }
+    }
+    return new FenceAnswer(cmd);
+  }
+ catch (  XmlRpcException e) {
+    s_logger.warn("Unable to fence",e);
+    return new FenceAnswer(cmd,false,e.getMessage());
+  }
+catch (  XenAPIException e) {
+    s_logger.warn("Unable to fence",e);
+    return new FenceAnswer(cmd,false,e.getMessage());
+  }
+}
