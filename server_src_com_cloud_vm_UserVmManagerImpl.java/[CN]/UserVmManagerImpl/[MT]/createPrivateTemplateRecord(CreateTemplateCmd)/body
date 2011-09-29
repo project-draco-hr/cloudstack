@@ -1,10 +1,7 @@
 {
   Long userId=UserContext.current().getCallerUserId();
-  if (userId == null) {
-    userId=User.UID_SYSTEM;
-  }
-  Account account=UserContext.current().getCaller();
-  boolean isAdmin=((account == null) || isAdmin(account.getType()));
+  Account caller=UserContext.current().getCaller();
+  boolean isAdmin=((caller == null) || isAdmin(caller.getType()));
   VMTemplateVO privateTemplate=null;
   UserVO user=_userDao.findById(userId);
   if (user == null) {
@@ -15,7 +12,7 @@
     throw new InvalidParameterValueException("Template name cannot be null and should be less than 32 characters");
   }
   if (cmd.getTemplateTag() != null) {
-    if (!_accountService.isRootAdmin(account.getType())) {
+    if (!_accountService.isRootAdmin(caller.getType())) {
       throw new PermissionDeniedException("Parameter templatetag can only be specified by a Root Admin, permission denied");
     }
   }
@@ -51,6 +48,7 @@
     if (volume == null) {
       throw new InvalidParameterValueException("Failed to create private template record, unable to find volume " + volumeId);
     }
+    _accountMgr.checkAccess(caller,null,volume);
     if (!_storageMgr.volumeInactive(volume)) {
       String msg="Unable to create private template for volume: " + volume.getName() + "; volume is attached to a non-stopped VM, please stop the VM first";
       if (s_logger.isInfoEnabled()) {
@@ -67,6 +65,7 @@
     if (snapshot == null) {
       throw new InvalidParameterValueException("Failed to create private template record, unable to find snapshot " + snapshotId);
     }
+    _accountMgr.checkAccess(caller,null,snapshot);
     if (snapshot.getStatus() != Snapshot.Status.BackedUp) {
       throw new InvalidParameterValueException("Snapshot id=" + snapshotId + " is not in "+ Snapshot.Status.BackedUp+ " state yet and can't be used for template creation");
     }
@@ -74,14 +73,6 @@
     accountId=snapshot.getAccountId();
     hyperType=snapshot.getHypervisorType();
     volume=_volsDao.findById(snapshot.getVolumeId());
-  }
-  if (!isAdmin) {
-    if (account.getId() != accountId) {
-      throw new PermissionDeniedException("Unable to create a template permission denied.");
-    }
-  }
- else   if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
-    throw new PermissionDeniedException("Unable to create a template permission denied.");
   }
   VMTemplateVO existingTemplate=_templateDao.findByTemplateNameAccountId(name,accountId);
   if (existingTemplate != null) {

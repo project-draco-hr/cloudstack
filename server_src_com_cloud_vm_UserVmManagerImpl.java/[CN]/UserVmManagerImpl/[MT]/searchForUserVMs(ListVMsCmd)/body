@@ -4,8 +4,9 @@
   String accountName=cmd.getAccountName();
   Boolean isRecursive=cmd.isRecursive();
   String hypervisor=cmd.getHypervisor();
-  Long accountId=null;
+  List<Long> permittedAccounts=new ArrayList<Long>();
   String path=null;
+  Long projectId=cmd.getProjectId();
   if (isRecursive != null && isRecursive && domainId == null) {
     throw new InvalidParameterValueException("Please enter a parent domain id for listing vms recursively");
   }
@@ -20,11 +21,11 @@
   if (_accountMgr.isAdmin(caller.getType())) {
     isAdmin=true;
     if (accountName != null && domainId != null) {
-      caller=_accountDao.findActiveAccount(accountName,domainId);
-      if (caller == null) {
+      Account account=_accountDao.findActiveAccount(accountName,domainId);
+      if (account == null) {
         throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
       }
-      accountId=caller.getId();
+      permittedAccounts.add(caller.getId());
     }
     if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
       if (isRecursive == null) {
@@ -37,7 +38,7 @@
     if (domainId != null && domainId.longValue() != caller.getDomainId()) {
       throw new PermissionDeniedException("Caller is not authorised to see domain id=" + domainId + " entries");
     }
-    accountId=caller.getId();
+    permittedAccounts.add(caller.getId());
   }
   if (isRecursive != null && isRecursive && isAdmin) {
     if (isRecursive) {
@@ -45,6 +46,19 @@
       path=domain.getPath();
       domainId=null;
     }
+  }
+  if (projectId != null) {
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    if (!_projectMgr.canAccessAccount(caller,project.getProjectAccountId())) {
+      throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+    }
+    permittedAccounts.add(project.getProjectAccountId());
+  }
+ else {
+    permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
   }
   Criteria c=new Criteria("id",Boolean.TRUE,cmd.getStartIndex(),cmd.getPageSizeVal());
   c.addCriteria(Criteria.KEYWORD,cmd.getKeyword());
@@ -72,8 +86,8 @@
     c.addCriteria(Criteria.HOSTID,cmd.getHostId());
     c.addCriteria(Criteria.STORAGE_ID,cmd.getStorageId());
   }
-  if (accountId != null) {
-    c.addCriteria(Criteria.ACCOUNTID,new Object[]{accountId});
+  if (!permittedAccounts.isEmpty()) {
+    c.addCriteria(Criteria.ACCOUNTID,permittedAccounts.toArray());
   }
   c.addCriteria(Criteria.ISADMIN,isAdmin);
   return searchForUserVMs(c);
