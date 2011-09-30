@@ -1,23 +1,24 @@
 {
-  Account account=UserContext.current().getCaller();
+  Account caller=UserContext.current().getCaller();
   Long domainId=cmd.getDomainId();
   String accountName=cmd.getAccountName();
-  Long accountId=null;
+  List<Long> permittedAccounts=new ArrayList<Long>();
   boolean isAdmin=false;
   Boolean isRecursive=cmd.isRecursive();
+  Long projectId=cmd.getProjectId();
   if (isRecursive == null) {
     isRecursive=false;
   }
-  if ((account == null) || isAdmin(account.getType())) {
+  if ((caller == null) || isAdmin(caller.getType())) {
     isAdmin=true;
     if (domainId != null) {
-      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+      if ((caller != null) && !_domainDao.isChildDomain(caller.getDomainId(),domainId)) {
         throw new PermissionDeniedException("Invalid domain id (" + domainId + ") given, unable to list volumes.");
       }
       if (accountName != null) {
         Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
         if (userAccount != null) {
-          accountId=userAccount.getId();
+          permittedAccounts.add(userAccount.getId());
         }
  else {
           throw new InvalidParameterValueException("could not find account " + accountName + " in domain "+ domainId);
@@ -25,12 +26,26 @@
       }
     }
  else {
-      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+      domainId=((caller == null) ? DomainVO.ROOT_DOMAIN : caller.getDomainId());
       isRecursive=true;
     }
   }
  else {
-    accountId=account.getId();
+    permittedAccounts.add(caller.getId());
+  }
+  if (projectId != null) {
+    permittedAccounts.clear();
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+      throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+    }
+    permittedAccounts.add(project.getProjectAccountId());
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
   }
   Filter searchFilter=new Filter(VolumeVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   Object id=cmd.getId();
@@ -50,7 +65,6 @@
   SearchBuilder<VolumeVO> sb=_volumeDao.createSearchBuilder();
   sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
-  sb.and("accountIdEQ",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
   sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
   sb.and("volumeType",sb.entity().getVolumeType(),SearchCriteria.Op.LIKE);
   sb.and("instanceId",sb.entity().getInstanceId(),SearchCriteria.Op.EQ);
@@ -60,12 +74,12 @@
   SearchBuilder<DiskOfferingVO> diskOfferingSearch=_diskOfferingDao.createSearchBuilder();
   diskOfferingSearch.and("systemUse",diskOfferingSearch.entity().getSystemUse(),SearchCriteria.Op.NEQ);
   sb.join("diskOfferingSearch",diskOfferingSearch,sb.entity().getDiskOfferingId(),diskOfferingSearch.entity().getId(),JoinBuilder.JoinType.LEFTOUTER);
-  if (((accountId == null) && (domainId != null) && isRecursive)) {
+  if (((permittedAccounts.isEmpty()) && (domainId != null) && isRecursive)) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
- else   if ((accountId == null) && (domainId != null) && !isRecursive) {
+ else   if ((permittedAccounts.isEmpty()) && (domainId != null) && !isRecursive) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.EQ);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
@@ -87,8 +101,8 @@
   if (id != null) {
     sc.setParameters("id",id);
   }
-  if (accountId != null) {
-    sc.setParameters("accountIdEQ",accountId);
+  if (!permittedAccounts.isEmpty()) {
+    sc.setParameters("accountIdIN",permittedAccounts.toArray());
     sc.setJoinParameters("diskOfferingSearch","systemUse",1);
   }
  else   if (domainId != null) {

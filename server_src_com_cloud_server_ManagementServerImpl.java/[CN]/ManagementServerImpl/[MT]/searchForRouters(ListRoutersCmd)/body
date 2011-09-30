@@ -1,25 +1,8 @@
 {
-  Long domainId=cmd.getDomainId();
-  String accountName=cmd.getAccountName();
-  Long accountId=null;
-  Account account=UserContext.current().getCaller();
-  if (domainId != null) {
-    if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
-      throw new PermissionDeniedException("Invalid domain id (" + domainId + ") given, unable to list routers");
-    }
-    if (accountName != null) {
-      Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
-      if (userAccount != null) {
-        accountId=userAccount.getId();
-      }
- else {
-        throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
-      }
-    }
-  }
- else {
-    domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
-  }
+  Account caller=UserContext.current().getCaller();
+  Pair<List<Long>,Long> accountDomainPair=_accountMgr.finalizeAccountDomainForList(caller,cmd.getAccountName(),cmd.getDomainId(),cmd.getProjectId());
+  List<Long> permittedAccounts=accountDomainPair.first();
+  Long domainId=accountDomainPair.second();
   Filter searchFilter=new Filter(DomainRouterVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
   Object id=cmd.getId();
   Object name=cmd.getRouterName();
@@ -37,7 +20,7 @@
   sb.and("dataCenterId",sb.entity().getDataCenterIdToDeployIn(),SearchCriteria.Op.EQ);
   sb.and("podId",sb.entity().getPodIdToDeployIn(),SearchCriteria.Op.EQ);
   sb.and("hostId",sb.entity().getHostId(),SearchCriteria.Op.EQ);
-  if ((accountId == null) && (domainId != null)) {
+  if ((permittedAccounts.isEmpty()) && (domainId != null)) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
@@ -64,8 +47,8 @@
   if (id != null) {
     sc.setParameters("id",id);
   }
-  if (accountId != null) {
-    sc.setParameters("accountId",accountId);
+  if (!permittedAccounts.isEmpty()) {
+    sc.setParameters("accountId",permittedAccounts.toArray());
   }
  else   if (domainId != null) {
     DomainVO domain=_domainDao.findById(domainId);

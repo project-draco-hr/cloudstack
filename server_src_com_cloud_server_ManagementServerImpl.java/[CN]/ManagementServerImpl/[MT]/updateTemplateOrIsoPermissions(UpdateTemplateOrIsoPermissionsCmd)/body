@@ -3,7 +3,7 @@
   Long id=cmd.getId();
   Account caller=UserContext.current().getCaller();
   List<String> accountNames=cmd.getAccountNames();
-  Long userId=UserContext.current().getCallerUserId();
+  List<Long> projectIds=cmd.getProjectIds();
   Boolean isFeatured=cmd.isFeatured();
   Boolean isPublic=cmd.isPublic();
   Boolean isExtractable=cmd.isExtractable();
@@ -25,10 +25,19 @@
       throw new InvalidParameterValueException("Please provide a valid iso");
     }
   }
-  _accountMgr.checkAccess(caller,AccessType.ModifyEntry,template);
-  if (userId == null) {
-    userId=Long.valueOf(User.UID_SYSTEM);
+  if (projectIds != null) {
+    for (    Long projectId : projectIds) {
+      Project project=_projectMgr.getProject(projectId);
+      if (project == null) {
+        throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+      }
+      if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+        throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+      }
+      accountNames.add(_accountMgr.getAccount(project.getProjectAccountId()).getAccountName());
+    }
   }
+  _accountMgr.checkAccess(caller,AccessType.ModifyEntry,template);
   if (template.getRemoved() != null) {
     s_logger.error("unable to update permissions for " + mediaType + " with id "+ id+ " as it is removed  ");
     throw new InvalidParameterValueException("unable to update permissions for " + mediaType + " with id "+ id+ " as it is removed ");
@@ -64,8 +73,7 @@
     throw new InvalidParameterValueException("Only ROOT admins are allowed to modify this attribute.");
   }
   _templateDao.update(template.getId(),updatedTemplate);
-  Long domainId;
-  domainId=caller.getDomainId();
+  Long domainId=caller.getDomainId();
   if ("add".equalsIgnoreCase(operation)) {
     txn.start();
     for (    String accountName : accountNames) {

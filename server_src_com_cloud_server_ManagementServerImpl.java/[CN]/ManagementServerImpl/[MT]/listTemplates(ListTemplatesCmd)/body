@@ -1,17 +1,35 @@
 {
   TemplateFilter templateFilter=TemplateFilter.valueOf(cmd.getTemplateFilter());
-  Long accountId=null;
-  Account account=UserContext.current().getCaller();
+  List<Account> permittedAccounts=new ArrayList<Account>();
+  Account caller=UserContext.current().getCaller();
   Long domainId=cmd.getDomainId();
   String accountName=cmd.getAccountName();
+  Long projectId=cmd.getProjectId();
   if (accountName != null && domainId != null) {
-    accountId=_accountMgr.finalizeOwner(account,accountName,domainId).getAccountId();
+    permittedAccounts.add(_accountMgr.finalizeOwner(caller,accountName,domainId,null));
   }
  else {
-    accountId=account.getId();
+    permittedAccounts.add(caller);
   }
-  boolean isAccountSpecific=(account == null || isAdmin(account.getType())) && (accountName != null) && (domainId != null);
+  if (projectId != null) {
+    permittedAccounts.clear();
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+      throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+    }
+    permittedAccounts.add(_accountMgr.getAccount(project.getProjectAccountId()));
+  }
+ else {
+    List<Long> permittedAccountIds=_projectMgr.listPermittedProjectAccounts(caller.getId());
+    for (    Long permittedAccountId : permittedAccountIds) {
+      permittedAccounts.add(_accountMgr.getAccount(permittedAccountId));
+    }
+  }
+  boolean isAccountSpecific=(caller == null || isAdmin(caller.getType())) && (accountName != null) && (domainId != null);
   boolean showDomr=((templateFilter != TemplateFilter.selfexecutable) && (templateFilter != TemplateFilter.featured));
   HypervisorType hypervisorType=HypervisorType.getType(cmd.getHypervisor());
-  return listTemplates(cmd.getId(),cmd.getTemplateName(),cmd.getKeyword(),templateFilter,false,null,accountId,cmd.getPageSizeVal(),cmd.getStartIndex(),cmd.getZoneId(),hypervisorType,isAccountSpecific,showDomr,cmd.listInReadyState());
+  return listTemplates(cmd.getId(),cmd.getTemplateName(),cmd.getKeyword(),templateFilter,false,null,cmd.getPageSizeVal(),cmd.getStartIndex(),cmd.getZoneId(),hypervisorType,isAccountSpecific,showDomr,cmd.listInReadyState(),permittedAccounts,caller);
 }

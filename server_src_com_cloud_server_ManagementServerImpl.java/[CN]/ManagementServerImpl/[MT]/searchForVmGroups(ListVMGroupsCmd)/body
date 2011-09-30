@@ -1,29 +1,43 @@
 {
-  Account account=UserContext.current().getCaller();
+  Account caller=UserContext.current().getCaller();
   Long domainId=cmd.getDomainId();
   String accountName=cmd.getAccountName();
-  Long accountId=null;
-  if ((account == null) || isAdmin(account.getType())) {
+  Long projectId=cmd.getProjectId();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  if ((caller == null) || isAdmin(caller.getType())) {
     if (domainId != null) {
-      if ((account != null) && !_domainDao.isChildDomain(account.getDomainId(),domainId)) {
+      if ((caller != null) && !_domainDao.isChildDomain(caller.getDomainId(),domainId)) {
         throw new InvalidParameterValueException("Invalid domain id (" + domainId + ") given, unable to list vm groups.");
       }
       if (accountName != null) {
-        account=_accountDao.findActiveAccount(accountName,domainId);
-        if (account == null) {
+        caller=_accountDao.findActiveAccount(accountName,domainId);
+        if (caller == null) {
           throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
         }
-        accountId=account.getId();
+        permittedAccounts.add(caller.getId());
       }
     }
  else {
-      domainId=((account == null) ? DomainVO.ROOT_DOMAIN : account.getDomainId());
+      domainId=((caller == null) ? DomainVO.ROOT_DOMAIN : caller.getDomainId());
     }
   }
  else {
-    accountName=account.getAccountName();
-    accountId=account.getId();
-    domainId=account.getDomainId();
+    permittedAccounts.add(caller.getId());
+    domainId=caller.getDomainId();
+  }
+  if (projectId != null) {
+    permittedAccounts.clear();
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+      throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+    }
+    permittedAccounts.add(project.getProjectAccountId());
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
   }
   Filter searchFilter=new Filter(InstanceGroupVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
   Object id=cmd.getId();
@@ -32,8 +46,8 @@
   SearchBuilder<InstanceGroupVO> sb=_vmGroupDao.createSearchBuilder();
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
   sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
-  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
-  if ((accountId == null) && (domainId != null)) {
+  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  if ((permittedAccounts.isEmpty()) && (domainId != null)) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
@@ -49,8 +63,8 @@
   if (name != null) {
     sc.setParameters("name","%" + name + "%");
   }
-  if (accountId != null) {
-    sc.setParameters("accountId",accountId);
+  if (!permittedAccounts.isEmpty()) {
+    sc.setParameters("accountId",permittedAccounts.toArray());
   }
  else   if (domainId != null) {
     DomainVO domain=_domainDao.findById(domainId);

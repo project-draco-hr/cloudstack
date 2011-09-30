@@ -10,7 +10,8 @@
   Boolean isSystem=cmd.getIsSystem();
   Boolean isShared=cmd.getIsShared();
   Boolean isDefault=cmd.isDefault();
-  Long accountId=null;
+  Long projectId=cmd.getProjectId();
+  List<Long> permittedAccounts=new ArrayList<Long>();
   String path=null;
   Long sharedNetworkDomainId=null;
   if ((isSystem == null || caller.getType() == Account.ACCOUNT_TYPE_NORMAL) && id == null) {
@@ -31,11 +32,25 @@
         throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
       }
       _accountMgr.checkAccess(caller,null,owner);
-      accountId=owner.getId();
+      permittedAccounts.add(owner.getId());
     }
   }
   if (!_accountMgr.isAdmin(caller.getType())) {
-    accountId=caller.getId();
+    permittedAccounts.add(caller.getId());
+  }
+  if (projectId != null) {
+    permittedAccounts.clear();
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+      throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
+    }
+    permittedAccounts.add(project.getProjectAccountId());
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+    permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
   }
   path=_domainDao.findById(caller.getDomainId()).getPath();
   if ((isSystem == null || !isSystem) && (isShared == null || isShared)) {
@@ -76,8 +91,8 @@
       sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
       networksToReturn.addAll(listDomainSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter,path));
     }
-    if (accountId != null || (domainId == null && accountName == null)) {
-      networksToReturn.addAll(listAccountSpecificAndZoneLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter,accountId,path));
+    if (!permittedAccounts.isEmpty() || (domainId == null && accountName == null && projectId == null)) {
+      networksToReturn.addAll(listAccountSpecificAndZoneLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,type,isDefault,trafficType,isShared),searchFilter,path,permittedAccounts));
     }
     return networksToReturn;
   }
