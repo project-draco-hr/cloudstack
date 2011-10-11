@@ -1,6 +1,28 @@
 {
   Pair<ManagedObjectReference,String> networkInfo=HypervisorHostHelper.preparePublicNetwork(this._publicNetworkVSwitchName,vmMo.getRunningHost(),vlanId,null,null,this._ops_timeout,true);
-  VmwareManager mgr=getServiceContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
-  VirtualDevice nic=VmwareHelper.prepareNicDevice(vmMo,networkInfo.first(),VirtualEthernetCardType.Vmxnet3,networkInfo.second(),vifMacAddress,-1,1,true,true);
-  vmMo.plugDevice(nic);
+  int nicIndex=allocPublicNicIndex(vmMo);
+  try {
+    VirtualDevice[] nicDevices=vmMo.getNicDevices();
+    VirtualEthernetCard device=(VirtualEthernetCard)nicDevices[nicIndex];
+    VirtualEthernetCardNetworkBackingInfo nicBacking=new VirtualEthernetCardNetworkBackingInfo();
+    nicBacking.setDeviceName(networkInfo.second());
+    nicBacking.setNetwork(networkInfo.first());
+    device.setBacking(nicBacking);
+    VirtualMachineConfigSpec vmConfigSpec=new VirtualMachineConfigSpec();
+    VirtualDeviceConfigSpec[] deviceConfigSpecArray=new VirtualDeviceConfigSpec[1];
+    deviceConfigSpecArray[0]=new VirtualDeviceConfigSpec();
+    deviceConfigSpecArray[0].setDevice(device);
+    deviceConfigSpecArray[0].setOperation(VirtualDeviceConfigSpecOperation.edit);
+    vmConfigSpec.setDeviceChange(deviceConfigSpecArray);
+    if (!vmMo.configureVm(vmConfigSpec)) {
+      throw new Exception("Failed to configure devices when plugPublicNic");
+    }
+  }
+ catch (  Exception e) {
+    String nicMasksStr=vmMo.getCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK);
+    int nicMasks=Integer.parseInt(nicMasksStr);
+    nicMasks&=~(1 << nicIndex);
+    vmMo.setCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK,String.valueOf(nicMasks));
+    throw e;
+  }
 }
