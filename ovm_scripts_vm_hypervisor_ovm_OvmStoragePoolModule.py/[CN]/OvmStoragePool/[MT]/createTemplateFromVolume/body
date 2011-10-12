@@ -1,0 +1,40 @@
+@staticmethod
+def createTemplateFromVolume(secStorageMountPath, installPath, volumePath):
+    try:
+        secMountPoint = ''
+        if (not isfile(volumePath)):
+            raise Exception(('Cannot find %s' % volumePath))
+        vmCfg = join(dirname(volumePath), 'vm.cfg')
+        cfgs = parseVmConfigureFile(vmCfg)
+        if (len(cfgs) == 0):
+            raise Exception(("Cannot find vm.cfg, this volume(%s) seems not the ROOT volume. We don't support create template from non-ROOT volume" % volumePath))
+        vmName = cfgs['name']
+        if (vmName in doCmd(['xm', 'list'])):
+            raise Exception(('%s is still running, please stop it first then create template again' % vmName))
+        tmpUuid = get_uuid()
+        secMountPoint = join('/var/cloud/', tmpUuid)
+        OvmStoragePool()._mount(secStorageMountPath, secMountPoint)
+        installPath = installPath.lstrip('/')
+        destPath = join(secMountPoint, installPath)
+        if exists(destPath):
+            logger.warning(('%s is already here, delete it since it is most likely stale' % destPath))
+            doCmd(['rm', '-rf', destPath])
+        OvmStoragePool()._checkDirSizeForImage(secMountPoint, volumePath)
+        os.makedirs(destPath)
+        newName = (get_uuid() + '.raw')
+        destName = join(destPath, newName)
+        doCmd(['cp', volumePath, destName])
+        size = os.path.getsize(destName)
+        resInstallPath = join(installPath, newName)
+        OvmStoragePool()._umount(secMountPoint)
+        rs = toGson({'installPath': resInstallPath, 'templateFileName': newName, 'virtualSize': size, 'physicalSize': size, })
+        return rs
+    except Exception as e:
+        try:
+            if exists(secMountPoint):
+                OvmStoragePool()._umount(secMountPoint)
+        except Exception as e:
+            logger.warning(OvmStoragePool.createTemplateFromVolume, ('umount %s failed' % secMountPoint))
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmStoragePool.createTemplateFromVolume, errmsg)
+        raise XmlRpcFault(toErrCode(OvmStoragePool, OvmStoragePool.createTemplateFromVolume), errmsg)
