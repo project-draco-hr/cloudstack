@@ -4,6 +4,8 @@
   String name=cmd.getNetworkOfferingName();
   String availabilityStr=cmd.getAvailability();
   Availability availability=null;
+  Boolean sgEnabled=cmd.getSecurityGroupEnabled();
+  String state=cmd.getState();
   UserContext.current().setEventDetails(" Id: " + id);
   NetworkOfferingVO offeringToUpdate=_networkOfferingDao.findById(id);
   if (offeringToUpdate == null) {
@@ -12,15 +14,24 @@
   if (offeringToUpdate.isSystemOnly()) {
     throw new InvalidParameterValueException("Can't update system network offerings");
   }
-  if (offeringToUpdate.isDefault() && offeringToUpdate.getGuestType() == GuestIpType.Direct) {
-    throw new InvalidParameterValueException("Can't update Default Direct network offering");
-  }
   NetworkOfferingVO offering=_networkOfferingDao.createForUpdate(id);
   if (name != null) {
     offering.setName(name);
   }
   if (displayText != null) {
     offering.setDisplayText(displayText);
+  }
+  if (state != null) {
+    boolean validState=false;
+    for (    NetworkOffering.State st : NetworkOffering.State.values()) {
+      if (st.name().equalsIgnoreCase(state)) {
+        validState=true;
+        offering.setState(st);
+      }
+    }
+    if (!validState) {
+      throw new InvalidParameterValueException("Incorrect state value: " + state);
+    }
   }
   if (availabilityStr != null) {
     for (    Availability avlb : Availability.values()) {
@@ -35,9 +46,85 @@
       offering.setAvailability(availability);
     }
   }
-  if (_networkOfferingDao.update(id,offering)) {
-    offering=_networkOfferingDao.findById(id);
-    return offering;
+  Long networks=_networkDao.getNetworkCountByOfferingId(id);
+  boolean networksExist=(networks != null && networks.longValue() > 0);
+  if (sgEnabled != null) {
+    if (networksExist) {
+      throw new InvalidParameterValueException("Unable to reset securityGroupEnabled property as there are existing networks using this network offering");
+    }
+    offering.setSecurityGroupEnabled(sgEnabled);
+  }
+  Map<Network.Service,Set<Network.Provider>> serviceProviderMap=new HashMap<Network.Service,Set<Network.Provider>>();
+  Set<Network.Provider> defaultProviders=new HashSet<Network.Provider>();
+  defaultProviders.add(Network.Provider.defaultProvider);
+  if (cmd.getDhcpService()) {
+    serviceProviderMap.put(Network.Service.Dhcp,defaultProviders);
+  }
+  if (cmd.getDnsService()) {
+    serviceProviderMap.put(Network.Service.Dns,defaultProviders);
+  }
+  if (cmd.getFirewallService()) {
+    serviceProviderMap.put(Network.Service.Firewall,defaultProviders);
+  }
+  if (cmd.getGatewayService()) {
+    serviceProviderMap.put(Network.Service.Gateway,defaultProviders);
+  }
+  if (cmd.getLbService()) {
+    serviceProviderMap.put(Network.Service.Lb,defaultProviders);
+  }
+  if (cmd.getSourceNatService()) {
+    serviceProviderMap.put(Network.Service.SourceNat,defaultProviders);
+  }
+  if (cmd.getUserdataService()) {
+    serviceProviderMap.put(Network.Service.UserData,defaultProviders);
+  }
+  if (cmd.getVpnService()) {
+    serviceProviderMap.put(Network.Service.Vpn,defaultProviders);
+  }
+  Map<String,List<String>> svcPrv=(Map<String,List<String>>)cmd.getServiceProviders();
+  if (svcPrv != null) {
+    for (    String serviceStr : svcPrv.keySet()) {
+      Network.Service service=Network.Service.getService(serviceStr);
+      if (serviceProviderMap.containsKey(service)) {
+        serviceProviderMap.clear();
+        Set<Provider> providers=new HashSet<Provider>();
+        for (        String prvNameStr : svcPrv.get(serviceStr)) {
+          Network.Provider provider;
+          provider=Network.Provider.getProvider(prvNameStr);
+          if (provider == null) {
+            throw new InvalidParameterValueException("Invalid service provider: " + prvNameStr);
+          }
+          providers.add(provider);
+        }
+        serviceProviderMap.put(service,providers);
+      }
+ else {
+        throw new InvalidParameterValueException("Service " + serviceStr + " is not enabled for the network offering, can't add a provider to it");
+      }
+    }
+  }
+  if (svcPrv != null && !svcPrv.isEmpty()) {
+    if (networksExist) {
+      throw new InvalidParameterValueException("Unable to reset service providers as there are existing networks using this network offering");
+    }
+  }
+  boolean success=true;
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  success=success && _networkOfferingDao.update(id,offering);
+  _ntwkOffServiceMapDao.deleteByOfferingId(id);
+  if (serviceProviderMap != null) {
+    for (    Network.Service service : serviceProviderMap.keySet()) {
+      for (      Network.Provider provider : serviceProviderMap.get(service)) {
+        NetworkOfferingServiceMapVO offService=new NetworkOfferingServiceMapVO(offering.getId(),service,provider);
+        _ntwkOffServiceMapDao.persist(offService);
+        s_logger.trace("Added service for the network offering: " + offService);
+      }
+    }
+  }
+  txn.commit();
+  if (success) {
+    return _networkOfferingDao.findById(id);
   }
  else {
     return null;

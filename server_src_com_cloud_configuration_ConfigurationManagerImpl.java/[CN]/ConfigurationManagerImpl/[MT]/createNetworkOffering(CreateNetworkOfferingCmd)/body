@@ -12,6 +12,7 @@
   TrafficType trafficType=null;
   GuestIpType guestIpType=null;
   Availability availability=null;
+  Network.Type type=null;
   for (  TrafficType tType : TrafficType.values()) {
     if (tType.name().equalsIgnoreCase(trafficTypeString)) {
       trafficType=tType;
@@ -30,6 +31,15 @@
   if (guestIpType == null) {
     throw new InvalidParameterValueException("Invalid guest IP type; can have Direct or Virtual value");
   }
+  for (  Network.Type offType : Network.Type.values()) {
+    if (offType.name().equalsIgnoreCase(cmd.getType())) {
+      type=offType;
+      break;
+    }
+  }
+  if (type == null) {
+    throw new InvalidParameterValueException("Invalid type is given; can have Shared and Isolated values");
+  }
   for (  Availability avlb : Availability.values()) {
     if (avlb.name().equalsIgnoreCase(availabilityStr)) {
       availability=avlb;
@@ -39,48 +49,54 @@
     throw new InvalidParameterValueException("Invalid value for Availability. Supported types: " + Availability.Required + ", "+ Availability.Optional+ ", "+ Availability.Unavailable);
   }
   Integer maxConnections=cmd.getMaxconnections();
-  Map<Network.Service,Network.Provider> serviceProviderMap=new HashMap<Network.Service,Network.Provider>();
+  Map<Network.Service,Set<Network.Provider>> serviceProviderMap=new HashMap<Network.Service,Set<Network.Provider>>();
+  Set<Network.Provider> defaultProviders=new HashSet<Network.Provider>();
+  defaultProviders.add(Network.Provider.defaultProvider);
   if (cmd.getDhcpService()) {
-    serviceProviderMap.put(Network.Service.Dhcp,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Dhcp,defaultProviders);
   }
   if (cmd.getDnsService()) {
-    serviceProviderMap.put(Network.Service.Dns,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Dns,defaultProviders);
   }
   if (cmd.getFirewallService()) {
-    serviceProviderMap.put(Network.Service.Firewall,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Firewall,defaultProviders);
   }
   if (cmd.getGatewayService()) {
-    serviceProviderMap.put(Network.Service.Gateway,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Gateway,defaultProviders);
   }
   if (cmd.getLbService()) {
-    serviceProviderMap.put(Network.Service.Lb,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Lb,defaultProviders);
   }
   if (cmd.getSourceNatService()) {
-    serviceProviderMap.put(Network.Service.SourceNat,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.SourceNat,defaultProviders);
   }
   if (cmd.getUserdataService()) {
-    serviceProviderMap.put(Network.Service.UserData,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.UserData,defaultProviders);
   }
   if (cmd.getVpnService()) {
-    serviceProviderMap.put(Network.Service.Vpn,Network.Provider.defaultProvider);
+    serviceProviderMap.put(Network.Service.Vpn,defaultProviders);
   }
-  Map<String,String> svcPrv=(Map<String,String>)cmd.getServiceProviderList();
+  Map<String,List<String>> svcPrv=(Map<String,List<String>>)cmd.getServiceProviders();
   if (svcPrv != null) {
     for (    String serviceStr : svcPrv.keySet()) {
       Network.Service service=Network.Service.getService(serviceStr);
       if (serviceProviderMap.containsKey(service)) {
-        Network.Provider provider;
-        String prvNameStr=svcPrv.get(serviceStr);
-        provider=Network.Provider.getProvider(prvNameStr);
-        if (provider == null) {
-          throw new InvalidParameterValueException("Invalid service provider: " + prvNameStr);
+        serviceProviderMap.clear();
+        Set<Provider> providers=new HashSet<Provider>();
+        for (        String prvNameStr : svcPrv.get(serviceStr)) {
+          Network.Provider provider;
+          provider=Network.Provider.getProvider(prvNameStr);
+          if (provider == null) {
+            throw new InvalidParameterValueException("Invalid service provider: " + prvNameStr);
+          }
+          providers.add(provider);
         }
-        serviceProviderMap.put(service,provider);
+        serviceProviderMap.put(service,providers);
       }
  else {
         throw new InvalidParameterValueException("Service " + serviceStr + " is not enabled for the network offering, can't add a provider to it");
       }
     }
   }
-  return createNetworkOffering(userId,name,displayText,trafficType,tags,maxConnections,specifyVlan,availability,guestIpType,networkRate,serviceProviderMap,false,isSecurityGroupEnabled);
+  return createNetworkOffering(userId,name,displayText,trafficType,tags,maxConnections,specifyVlan,availability,guestIpType,networkRate,serviceProviderMap,false,isSecurityGroupEnabled,type);
 }
