@@ -9,7 +9,7 @@
   }
   _accountMgr.checkAccess(caller,null,network);
   NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
-  if (offering.isSystemOnly() && network.getTrafficType() != TrafficType.Guest) {
+  if (offering.isSystemOnly()) {
     throw new InvalidParameterValueException("Can't update system networks");
   }
   if (domainSuffix != null) {
@@ -21,11 +21,8 @@
     if (isUpdateDnsSupported == null || !Boolean.valueOf(isUpdateDnsSupported)) {
       throw new InvalidParameterValueException("Domain name change is not supported for network id=" + network.getNetworkOfferingId() + " in zone id="+ network.getDataCenterId());
     }
-    List<DomainRouterVO> routers=_routerDao.listActive(networkId);
-    if (!routers.isEmpty()) {
-      restartNetwork=true;
-    }
     network.setNetworkDomain(domainSuffix);
+    restartNetwork=true;
   }
   if (name != null) {
     network.setName(name);
@@ -42,13 +39,16 @@
     if (networkOffering == null || networkOffering.isSystemOnly()) {
       throw new InvalidParameterValueException("Unable to find network offering by id " + networkOfferingId);
     }
-    if (networkOffering.getAvailability() == Availability.Unavailable) {
-      throw new InvalidParameterValueException("Can't update network; network offering id=" + networkOfferingId + " is "+ networkOffering.getAvailability());
+    if (networkOffering.getAvailability() == Availability.Unavailable || networkOffering.getState() == NetworkOffering.State.Disabled || networkOffering.getState() == NetworkOffering.State.Inactive) {
+      throw new InvalidParameterValueException("Can't update network; network offering id=" + networkOfferingId + " is "+ networkOffering.getAvailability()+ " and "+ networkOffering.getState());
     }
-    network.setNetworkOfferingId(networkOfferingId);
-  }
-  if ((networkOfferingId != 0) && (networkOfferingId != oldNetworkOfferingId)) {
-    restartNetwork=true;
+    if (networkOfferingId != oldNetworkOfferingId) {
+      if (!canUpgrade(oldNetworkOfferingId,networkOfferingId)) {
+        throw new InvalidParameterValueException("Can't upgrade from network offering " + oldNetworkOfferingId + " to "+ networkOfferingId+ "; check logs for more information");
+      }
+      network.setNetworkOfferingId(networkOfferingId);
+      restartNetwork=true;
+    }
   }
   boolean success=_networksDao.update(networkId,network);
   if (success && restartNetwork && (network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup)) {
