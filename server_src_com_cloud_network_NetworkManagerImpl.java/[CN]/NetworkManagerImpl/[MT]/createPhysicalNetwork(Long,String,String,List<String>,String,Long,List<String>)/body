@@ -1,0 +1,66 @@
+{
+  if (zoneId == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  if (tags != null && tags.size() > 1) {
+    throw new InvalidParameterException("Only one tag can be specified for a physical network at this time");
+  }
+  if (isolationMethods != null && isolationMethods.size() > 1) {
+    throw new InvalidParameterException("Only one isolationMethod can be specified for a physical network at this time");
+  }
+  int vnetStart=0;
+  int vnetEnd=0;
+  if (vnetRange != null) {
+    String[] tokens=vnetRange.split("-");
+    try {
+      vnetStart=Integer.parseInt(tokens[0]);
+      if (tokens.length == 1) {
+        vnetEnd=vnetStart;
+      }
+ else {
+        vnetEnd=Integer.parseInt(tokens[1]);
+      }
+    }
+ catch (    NumberFormatException e) {
+      throw new InvalidParameterValueException("Please specify valid integers for the vlan range.");
+    }
+    if ((vnetStart > vnetEnd) || (vnetStart < 0) || (vnetEnd > 4096)) {
+      s_logger.warn("Invalid vnet range: start range:" + vnetStart + " end range:"+ vnetEnd);
+      throw new InvalidParameterValueException("Vnet range should be between 0-4096 and start range should be lesser than or equal to end range");
+    }
+  }
+  BroadcastDomainRange broadcastDomainRange=null;
+  if (broadcastDomainRangeStr != null && !broadcastDomainRangeStr.isEmpty()) {
+    try {
+      broadcastDomainRange=PhysicalNetwork.BroadcastDomainRange.valueOf(broadcastDomainRangeStr);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve broadcastDomainRange '" + broadcastDomainRangeStr + "' to a supported value {Pod or Zone}");
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    PhysicalNetworkVO pNetwork=new PhysicalNetworkVO(zoneId,vnetRange,networkSpeed,domainId,broadcastDomainRange);
+    pNetwork.setTags(tags);
+    pNetwork.setIsolationMethods(isolationMethods);
+    pNetwork=_physicalNetworkDao.persist(pNetwork);
+    if (vnetRange != null) {
+      _dcDao.addVnet(zone.getId(),pNetwork.getId(),vnetStart,vnetEnd);
+    }
+    txn.commit();
+    return pNetwork;
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    s_logger.warn("Exception: ",ex);
+    throw new CloudRuntimeException("Fail to create a physical network");
+  }
+ finally {
+    txn.close();
+  }
+}
