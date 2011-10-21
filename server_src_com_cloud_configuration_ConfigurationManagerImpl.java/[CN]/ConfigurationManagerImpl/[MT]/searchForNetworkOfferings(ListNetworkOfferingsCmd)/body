@@ -1,7 +1,8 @@
 {
+  Account caller=UserContext.current().getCaller();
   Filter searchFilter=new Filter(NetworkOfferingVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchCriteria<NetworkOfferingVO> sc=_networkOfferingDao.createSearchCriteria();
-  Object id=cmd.getId();
+  Long id=cmd.getId();
   Object name=cmd.getNetworkOfferingName();
   Object displayText=cmd.getDisplayText();
   Object trafficType=cmd.getTrafficType();
@@ -14,6 +15,7 @@
   Object state=cmd.getState();
   Long zoneId=cmd.getZoneId();
   DataCenter zone=null;
+  Long networkId=cmd.getNetworkId();
   if (zoneId != null) {
     zone=getZone(zoneId);
   }
@@ -23,9 +25,6 @@
     ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     sc.addAnd("name",SearchCriteria.Op.SC,ssc);
-  }
-  if (id != null) {
-    sc.addAnd("id",SearchCriteria.Op.EQ,id);
   }
   if (guestIpType != null) {
     sc.addAnd("guestType",SearchCriteria.Op.EQ,guestIpType);
@@ -66,5 +65,26 @@
     }
   }
   sc.addAnd("systemOnly",SearchCriteria.Op.EQ,false);
+  if (networkId != null) {
+    Network network=_networkMgr.getNetwork(networkId);
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to find the network by id=" + networkId);
+    }
+    NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
+    if (offering.isSystemOnly()) {
+      throw new InvalidParameterValueException("Can't update system networks");
+    }
+    _accountMgr.checkAccess(caller,null,network);
+    List<Long> offeringIds=_networkMgr.listNetworkOfferingsForUpgrade(networkId);
+    if (!offeringIds.isEmpty()) {
+      sc.addAnd("id",SearchCriteria.Op.IN,offeringIds.toArray());
+    }
+ else {
+      return new ArrayList<NetworkOffering>();
+    }
+  }
+  if (id != null) {
+    sc.addAnd("id",SearchCriteria.Op.EQ,id);
+  }
   return _networkOfferingDao.search(sc,searchFilter);
 }
