@@ -1,0 +1,44 @@
+{
+  VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
+  long vmId=vm.getId();
+  vm=vmGuru.findById(vmId);
+  try {
+    stateTransitTo(vm,VirtualMachine.Event.StorageMigrationRequested,null);
+  }
+ catch (  NoTransitionException e) {
+    s_logger.debug("Unable to migrate vm: " + e.toString());
+    throw new CloudRuntimeException("Unable to migrate vm: " + e.toString());
+  }
+  VirtualMachineProfile<VMInstanceVO> profile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
+  boolean migrationResult=false;
+  try {
+    try {
+      migrationResult=_storageMgr.StorageMigration(profile,destPool);
+    }
+ catch (    ConcurrentOperationException e) {
+    }
+  }
+  finally {
+    if (migrationResult) {
+      try {
+        vm.setLastHostId(null);
+        stateTransitTo(vm,VirtualMachine.Event.AgentReportStopped,null);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.debug("Failed to migrate vm: " + e.toString());
+        throw new CloudRuntimeException("Failed to migrate vm: " + e.toString());
+      }
+    }
+ else {
+      s_logger.debug("storage migration failed: ");
+      try {
+        stateTransitTo(vm,VirtualMachine.Event.AgentReportStopped,null);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.debug("Failed to change vm state: " + e.toString());
+        throw new CloudRuntimeException("Failed to change vm state: " + e.toString());
+      }
+    }
+  }
+  return vm;
+}

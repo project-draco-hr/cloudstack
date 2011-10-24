@@ -1,13 +1,15 @@
 {
-  VolumeVO v=_volsDao.findById(volumeId);
-  Account owner=_accountMgr.getAccount(v.getAccountId());
+  VolumeVO volume=_volsDao.findById(volumeId);
+  if (volume == null) {
+    throw new InvalidParameterValueException("No such volume exist");
+  }
+  Account owner=_accountMgr.getAccount(volume.getAccountId());
   SnapshotVO snapshot=null;
-  VolumeVO volume=null;
   boolean backedUp=false;
-  _accountMgr.checkAccess(UserContext.current().getCaller(),null,v);
+  _accountMgr.checkAccess(UserContext.current().getCaller(),null,volume);
   try {
-    if (v != null && _volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
-      UserVmVO uservm=_vmDao.findById(v.getInstanceId());
+    if (volume != null && _volsDao.getHypervisorType(volume.getId()).equals(HypervisorType.KVM)) {
+      UserVmVO uservm=_vmDao.findById(volume.getInstanceId());
       if (uservm != null) {
         UserVmVO vm=_vmDao.acquireInLockTable(uservm.getId(),10);
         if (vm == null) {
@@ -15,12 +17,12 @@
         }
       }
     }
-    Long poolId=v.getPoolId();
+    Long poolId=volume.getPoolId();
     if (poolId == null) {
       throw new CloudRuntimeException("You cannot take a snapshot of a volume until it has been attached to an instance");
     }
-    if (_volsDao.getHypervisorType(v.getId()).equals(HypervisorType.KVM)) {
-      StoragePoolVO storagePool=_storagePoolDao.findById(v.getPoolId());
+    if (_volsDao.getHypervisorType(volume.getId()).equals(HypervisorType.KVM)) {
+      StoragePoolVO storagePool=_storagePoolDao.findById(volume.getPoolId());
       ClusterVO cluster=_clusterDao.findById(storagePool.getClusterId());
       List<HostVO> hosts=_hostDao.listByCluster(cluster.getId());
       if (hosts != null && !hosts.isEmpty()) {
@@ -31,28 +33,29 @@
         }
       }
     }
-    if (v.getInstanceId() != null) {
-      UserVmVO userVm=_vmDao.findById(v.getInstanceId());
+    if (volume.getInstanceId() != null) {
+      UserVmVO userVm=_vmDao.findById(volume.getInstanceId());
       if (userVm != null) {
         if (userVm.getState().equals(State.Destroyed) || userVm.getState().equals(State.Expunging)) {
           _snapshotDao.expunge(snapshotId);
           throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is associated with vm:"+ userVm.getInstanceName()+ " is in "+ userVm.getState().toString()+ " state");
         }
         if (userVm.getHypervisorType() == HypervisorType.VMware) {
-          List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(v.getInstanceId(),Snapshot.Status.Creating,Snapshot.Status.CreatedOnPrimary,Snapshot.Status.BackingUp);
+          List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(volume.getInstanceId(),Snapshot.Status.Creating,Snapshot.Status.CreatedOnPrimary,Snapshot.Status.BackingUp);
           if (activeSnapshots.size() > 1)           throw new CloudRuntimeException("There is other active snapshot tasks on the instance to which the volume is attached, please try again later");
         }
       }
     }
-    volume=_volsDao.acquireInLockTable(volumeId,10);
-    if (volume == null) {
-      _snapshotDao.expunge(snapshotId);
-      volume=_volsDao.findById(volumeId);
-      if (volume == null) {
-        throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " doesn't exist");
-      }
- else {
-        volume=null;
+    boolean stateTransit=false;
+    try {
+      stateTransit=_storageMgr.stateTransitTo(volume,Volume.Event.SnapshotRequested);
+    }
+ catch (    NoTransitionException e) {
+      s_logger.debug("Failed transit volume state: " + e.toString());
+    }
+ finally {
+      if (!stateTransit) {
+        _snapshotDao.expunge(snapshotId);
         throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is being used, try it later ");
       }
     }
@@ -84,7 +87,7 @@
       postCreateSnapshot(volumeId,snapshot.getId(),policyId,backedUp);
       SnapshotVO freshSnapshot=_snapshotDao.findById(snapshot.getId());
       if ((freshSnapshot != null) && backedUp) {
-        UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,v.getSize());
+        UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,volume.getSize());
         _usageEventDao.persist(usageEvent);
       }
       if (!backedUp) {
@@ -102,8 +105,11 @@
         _snapshotDao.update(snapshotId,snapshot);
       }
     }
-    if (volume != null) {
-      _volsDao.releaseFromLockTable(volumeId);
+    try {
+      _storageMgr.stateTransitTo(volume,Volume.Event.OperationSucceeded);
+    }
+ catch (    NoTransitionException e) {
+      s_logger.debug("Failed to transit volume state: " + e.toString());
     }
   }
   return snapshot;
