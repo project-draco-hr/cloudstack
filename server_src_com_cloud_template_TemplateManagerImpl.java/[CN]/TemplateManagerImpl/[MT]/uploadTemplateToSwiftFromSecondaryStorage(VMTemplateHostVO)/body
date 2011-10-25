@@ -1,0 +1,39 @@
+{
+  Long templateId=templateHostRef.getTemplateId();
+  VMTemplateVO template=_tmpltDao.findById(templateId);
+  if (template == null) {
+    String errMsg=" Can not find template " + templateId;
+    s_logger.warn(errMsg);
+    return errMsg;
+  }
+  SwiftTO swift=_snapshotMgr.getSwiftTO(null);
+  if (swift == null) {
+    String errMsg=" There is no Swift in this setup ";
+    s_logger.warn(errMsg);
+    return errMsg;
+  }
+  HostVO secHost=_hostDao.findById(templateHostRef.getHostId());
+  if (secHost == null) {
+    String errMsg="Can not find secondary storage " + templateHostRef.getHostId();
+    s_logger.warn(errMsg);
+    return errMsg;
+  }
+  uploadTemplateToSwiftFromSecondaryStorageCommand cmd=new uploadTemplateToSwiftFromSecondaryStorageCommand(swift,secHost.getName(),secHost.getDataCenterId(),template.getAccountId(),templateId,_primaryStorageDownloadWait);
+  Answer answer=null;
+  try {
+    answer=_agentMgr.sendToSSVM(secHost.getDataCenterId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      String errMsg="Failed to upload template to Swift from secondary storage due to " + ((answer == null) ? "null" : answer.getDetails());
+      s_logger.warn(errMsg);
+      throw new CloudRuntimeException(errMsg);
+    }
+    VMTemplateSwiftVO tmpltSwift=new VMTemplateSwiftVO(swift.getId(),secHost.getId(),new Date(),templateHostRef.getSize(),templateHostRef.getPhysicalSize());
+    _tmpltSwiftDao.persist(tmpltSwift);
+  }
+ catch (  Exception e) {
+    String errMsg="Failed to upload template to Swift from secondary storage due to " + e.toString();
+    s_logger.warn(errMsg);
+    throw new CloudRuntimeException(errMsg);
+  }
+  return null;
+}
