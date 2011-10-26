@@ -44,10 +44,29 @@
     gatewayNic.setDefaultNic(true);
     networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
     networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
-    VMTemplateVO template=_templateDao.findRoutingTemplate(dest.getCluster().getHypervisorType());
-    router=new DomainRouterVO(id,_offering.getId(),0,VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),false,0,false,RedundantState.UNKNOWN,_offering.getOfferHA(),false);
-    router.setRole(Role.DHCP_USERDATA);
-    router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+    List<HypervisorType> supportedHypervisors=_resourceMgr.getSupportedHypervisorTypes(dest.getDataCenter().getId());
+    int retry=0;
+    for (    HypervisorType hType : supportedHypervisors) {
+      try {
+        s_logger.debug("Allocating the domR with the hypervisor type " + hType);
+        VMTemplateVO template=_templateDao.findRoutingTemplate(hType);
+        router=new DomainRouterVO(id,_offering.getId(),0,VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),false,0,false,RedundantState.UNKNOWN,_offering.getOfferHA(),false);
+        router.setRole(Role.DHCP_USERDATA);
+        router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+        break;
+      }
+ catch (      InsufficientCapacityException ex) {
+        if (retry < 2) {
+          s_logger.debug("Failed to allocate the domR with hypervisor type " + hType + ", retrying one more time");
+        }
+ else {
+          throw ex;
+        }
+      }
+ finally {
+        retry++;
+      }
+    }
     routers.add(router);
     UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
     if (stats == null) {

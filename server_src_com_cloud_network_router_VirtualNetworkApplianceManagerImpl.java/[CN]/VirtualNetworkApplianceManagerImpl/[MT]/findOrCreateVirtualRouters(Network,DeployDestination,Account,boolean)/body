@@ -19,6 +19,9 @@
     if (routers.size() >= routerCount) {
       return routers;
     }
+    if (routers.size() >= 5) {
+      s_logger.error("Too much redundant routers!");
+    }
     NicProfile defaultNic=new NicProfile();
     if (_networkMgr.isServiceSupportedByNetworkOffering(guestNetwork.getNetworkOfferingId(),Service.SourceNat)) {
       PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountService.getSystemUser().getId());
@@ -61,12 +64,29 @@
       gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
       networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
       networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
-      VMTemplateVO template=_templateDao.findRoutingTemplate(dest.getCluster().getHypervisorType());
-      if (routers.size() >= 5) {
-        s_logger.error("Too much redundant routers!");
+      List<HypervisorType> supportedHypervisors=_resourceMgr.getSupportedHypervisorTypes(dest.getDataCenter().getId());
+      int retry=0;
+      for (      HypervisorType hType : supportedHypervisors) {
+        try {
+          s_logger.debug("Allocating the domR with the hypervisor type " + hType);
+          VMTemplateVO template=_templateDao.findRoutingTemplate(hType);
+          router=new DomainRouterVO(id,_offering.getId(),0,VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,_offering.getOfferHA(),false);
+          router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+          break;
+        }
+ catch (        InsufficientCapacityException ex) {
+          if (retry < 2) {
+            s_logger.debug("Failed to allocate the domR with hypervisor type " + hType + ", retrying one more time");
+          }
+ else {
+            throw ex;
+          }
+        }
+ finally {
+          retry++;
+        }
       }
-      router=new DomainRouterVO(id,_offering.getId(),0,VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,_offering.getOfferHA(),false);
-      router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+      routers.add(router);
       UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
       if (stats == null) {
         if (s_logger.isDebugEnabled()) {
@@ -75,7 +95,6 @@
         stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
         _userStatsDao.persist(stats);
       }
-      routers.add(router);
     }
   }
   finally {

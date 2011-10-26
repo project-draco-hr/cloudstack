@@ -1,0 +1,72 @@
+{
+  boolean restartNetwork=false;
+  NetworkVO network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Network id=" + networkId + "doesn't exist in the system");
+  }
+  if (tags != null && tags.size() > 1) {
+    throw new InvalidParameterException("Unable to support more than one tag on network yet");
+  }
+  _accountMgr.checkAccess(caller,null,network);
+  NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
+  if (offering.isSystemOnly()) {
+    throw new InvalidParameterValueException("Can't update system networks");
+  }
+  if (domainSuffix != null) {
+    if (!NetUtils.verifyDomainName(domainSuffix)) {
+      throw new InvalidParameterValueException("Invalid network domain. Total length shouldn't exceed 190 chars. Each domain label must be between 1 and 63 characters long, can contain ASCII letters 'a' through 'z', the digits '0' through '9', " + "and the hyphen ('-'); can't start or end with \"-\"");
+    }
+    Map<Network.Capability,String> dnsCapabilities=getServiceCapabilities(network.getNetworkOfferingId(),Service.Dns);
+    String isUpdateDnsSupported=dnsCapabilities.get(Capability.AllowDnsSuffixModification);
+    if (isUpdateDnsSupported == null || !Boolean.valueOf(isUpdateDnsSupported)) {
+      throw new InvalidParameterValueException("Domain name change is not supported for network id=" + network.getNetworkOfferingId() + " in zone id="+ network.getDataCenterId());
+    }
+    network.setNetworkDomain(domainSuffix);
+    restartNetwork=true;
+  }
+  if (name != null) {
+    network.setName(name);
+  }
+  if (displayText != null) {
+    network.setDisplayText(displayText);
+  }
+  if (tags != null) {
+    network.setTags(tags);
+  }
+  long oldNetworkOfferingId=network.getNetworkOfferingId();
+  if (networkOfferingId != null) {
+    NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
+    if (networkOffering == null || networkOffering.isSystemOnly()) {
+      throw new InvalidParameterValueException("Unable to find network offering by id " + networkOfferingId);
+    }
+    if (networkOffering.getState() != NetworkOffering.State.Enabled) {
+      throw new InvalidParameterValueException("Network offering " + networkOffering + " is not in "+ NetworkOffering.State.Enabled+ " state, can't upgrade to it");
+    }
+    if (networkOffering.getAvailability() == Availability.Unavailable || networkOffering.getState() == NetworkOffering.State.Disabled || networkOffering.getState() == NetworkOffering.State.Inactive) {
+      throw new InvalidParameterValueException("Can't update network; network offering id=" + networkOfferingId + " is "+ networkOffering.getAvailability()+ " and "+ networkOffering.getState());
+    }
+    if (networkOfferingId != oldNetworkOfferingId) {
+      if (!canUpgrade(oldNetworkOfferingId,networkOfferingId)) {
+        throw new InvalidParameterValueException("Can't upgrade from network offering " + oldNetworkOfferingId + " to "+ networkOfferingId+ "; check logs for more information");
+      }
+      restartNetwork=true;
+    }
+  }
+  boolean success=_networksDao.update(networkId,network);
+  if (success && restartNetwork && (network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup)) {
+    s_logger.info("Restarting network " + network + " as a part of update network call");
+    try {
+      success=restartNetwork(networkId,caller,networkOfferingId);
+    }
+ catch (    Exception e) {
+      success=false;
+    }
+    if (success) {
+      s_logger.debug("Successully restarted the network " + network + " as a part of updateNetwork call");
+    }
+ else {
+      s_logger.warn("Failed to restart the network " + network + " as a part of updateNetwork call");
+    }
+  }
+  return network;
+}
