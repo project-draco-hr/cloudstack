@@ -1,20 +1,42 @@
 {
   ServerResource resource=null;
   String guid;
-  String url=(String)deviceParamList.get(ApiConstants.URL);
-  String username=(String)deviceParamList.get(ApiConstants.USERNAME);
-  String password=(String)deviceParamList.get(ApiConstants.PASSWORD);
-  DataCenterVO zone=_dcDao.findById(zoneId);
-  String zoneName;
-  if (zone == null) {
-    throw new InvalidParameterValueException("Could not find zone with ID: " + zoneId);
+  PhysicalNetworkVO pNetwork=null;
+  DataCenterVO zone=null;
+  NetworkDevice ntwkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  String url=null;
+  String username=null;
+  String password=null;
+  if (deviceParamList != null) {
+    url=(String)deviceParamList.get(ApiConstants.URL);
+    username=(String)deviceParamList.get(ApiConstants.USERNAME);
+    password=(String)deviceParamList.get(ApiConstants.PASSWORD);
   }
- else {
-    zoneName=zone.getName();
+  if (((zoneId == null) && (physicalNetworkId == null)) || (ntwkDevice == null) || (url == null)|| (username == null)|| (password == null)) {
+    throw new InvalidParameterValueException("Atleast one of the required parameters (url, username, password," + " zone id/physical network id) is not specified or a valid parameter.");
   }
-  List<HostVO> externalLoadBalancersInZone=_hostDao.listByTypeDataCenter(Host.Type.ExternalLoadBalancer,zoneId);
-  if (externalLoadBalancersInZone.size() != 0) {
-    throw new InvalidParameterValueException("Already found an external load balancer in zone: " + zoneName);
+  if (physicalNetworkId != null) {
+    pNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNetwork == null) {
+      throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+    }
+  }
+  if (zoneId != null) {
+    zone=_dcDao.findById(zoneId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("Could not find zone with ID: " + zoneId);
+    }
+    if (pNetwork == null) {
+      List<PhysicalNetworkVO> physicalNetworks=_physicalNetworkDao.listByZone(zoneId);
+      if ((physicalNetworks == null) || (physicalNetworks.size() > 1)) {
+        throw new InvalidParameterValueException("There are multiple physical networks configured in zone with ID: " + zoneId + ". Physical network ID must be passed to select a physical network in this zonea.");
+      }
+      pNetwork=physicalNetworks.get(0);
+    }
+  }
+  PhysicalNetworkServiceProviderVO ntwkSvcProider=_physicalNetworkServiceProviderDao.findByServiceProvider(pNetwork.getId(),ntwkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProider.getState() != PhysicalNetworkServiceProvider.State.Enabled) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProider.getProviderName() + " is not in enabled state in the physical network: "+ physicalNetworkId+ "to add this device");
   }
   URI uri;
   try {
@@ -40,15 +62,12 @@
   if (numRetries == null) {
     numRetries="1";
   }
-  if (deviceType == null) {
-    deviceType=NetworkDeviceType.NetscalerLoadBalancer.getName();
-  }
-  if (deviceType.equalsIgnoreCase(NetworkDeviceType.F5BigIpLoadBalancer.getName())) {
+  if (deviceName.equalsIgnoreCase(NetworkDevice.F5BigIpLoadBalancer.getName())) {
     resource=new F5BigIpResource();
     guid=getExternalNetworkResourceGuid(zoneId,ExternalNetworkResourceName.F5BigIp,ipAddress);
   }
- else   if (deviceType.equalsIgnoreCase(NetworkDeviceType.NetscalerLoadBalancer.getName())) {
-    resource=new NetscalerMPXResource();
+ else   if (deviceName.equalsIgnoreCase(NetworkDevice.NetscalerLoadBalancer.getName())) {
+    resource=new NetscalerResource();
     guid=getExternalNetworkResourceGuid(zoneId,ExternalNetworkResourceName.NetscalerMPX,ipAddress);
   }
  else {
@@ -73,13 +92,11 @@
   }
   Host host=_agentMgr.addHost(zoneId,resource,Host.Type.ExternalLoadBalancer,hostDetails);
   if (host != null) {
-    if (deviceType.equalsIgnoreCase(NetworkDeviceType.F5BigIpLoadBalancer.getName())) {
-      zone.setLoadBalancerProvider(Network.Provider.F5BigIp.getName());
-    }
- else     if (deviceType.equalsIgnoreCase(NetworkDeviceType.NetscalerLoadBalancer.getName())) {
-      zone.setLoadBalancerProvider(Network.Provider.NetscalerMPX.getName());
-    }
-    _dcDao.update(zone.getId(),zone);
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    PhysicalNetworkExternalDeviceVO device=new PhysicalNetworkExternalDeviceVO(ntwkSvcProider.getId(),host.getId());
+    _physicalNetworkExternalDeviceDao.persist(device);
+    txn.commit();
     return host;
   }
  else {
