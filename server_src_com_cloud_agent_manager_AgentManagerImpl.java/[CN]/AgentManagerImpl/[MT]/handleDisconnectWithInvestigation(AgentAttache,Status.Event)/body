@@ -1,0 +1,60 @@
+{
+  long hostId=attache.getId();
+  HostVO host=_hostDao.findById(hostId);
+  if (host != null) {
+    Status nextStatus=null;
+    try {
+      nextStatus=host.getStatus().getNextStatus(event);
+    }
+ catch (    NoTransitionException ne) {
+    }
+    if (nextStatus == Status.Alert) {
+      s_logger.info("Investigating why host " + hostId + " has disconnected with event "+ event);
+      final Status determinedState=investigate(attache);
+      final Status currentStatus=host.getStatus();
+      s_logger.info("The state determined is " + determinedState);
+      if (determinedState == null || determinedState == Status.Down) {
+        s_logger.error("Host is down: " + host.getId() + "-"+ host.getName()+ ".  Starting HA on the VMs");
+        event=Status.Event.HostDown;
+      }
+ else       if (determinedState == Status.Up) {
+        s_logger.info("Agent is determined to be up and running");
+        agentStatusTransitTo(host,Status.Event.Ping,_nodeId);
+        return false;
+      }
+ else       if (determinedState == Status.Disconnected) {
+        s_logger.warn("Agent is disconnected but the host is still up: " + host.getId() + "-"+ host.getName());
+        if (currentStatus == Status.Disconnected) {
+          if (((System.currentTimeMillis() >> 10) - host.getLastPinged()) > _alertWait) {
+            s_logger.warn("Host " + host.getId() + " has been disconnected pass the time it should be disconnected.");
+            event=Status.Event.WaitedTooLong;
+          }
+ else {
+            s_logger.debug("Host has been determined to be disconnected but it hasn't passed the wait time yet.");
+            return false;
+          }
+        }
+ else         if (currentStatus == Status.Up) {
+          DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+          HostPodVO podVO=_podDao.findById(host.getPodId());
+          String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+          if ((host.getType() != Host.Type.SecondaryStorage) && (host.getType() != Host.Type.ConsoleProxy)) {
+            _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,host.getDataCenterId(),host.getPodId(),"Host disconnected, " + hostDesc,"If the agent for host [" + hostDesc + "] is not restarted within "+ _alertWait+ " seconds, HA will begin on the VMs");
+          }
+          event=Status.Event.AgentDisconnected;
+        }
+      }
+ else {
+        DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+        HostPodVO podVO=_podDao.findById(host.getPodId());
+        String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+        _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,host.getDataCenterId(),host.getPodId(),"Host in ALERT state, " + hostDesc,"In availability zone " + host.getDataCenterId() + ", host is in alert state: "+ host.getId()+ "-"+ host.getName());
+      }
+    }
+ else {
+      s_logger.debug("The next status of Agent " + host.getId() + " is not Alert, no need to investigate what happened");
+    }
+  }
+  handleDisconnectWithoutInvestigation(attache,event);
+  return true;
+}

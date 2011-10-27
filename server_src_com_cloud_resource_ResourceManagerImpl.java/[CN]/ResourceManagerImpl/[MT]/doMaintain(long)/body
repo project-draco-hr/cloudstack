@@ -1,0 +1,33 @@
+{
+  HostVO host=_hostDao.findById(hostId);
+  MaintainAnswer answer=(MaintainAnswer)_agentMgr.easySend(hostId,new MaintainCommand());
+  if (answer == null || !answer.getResult()) {
+    s_logger.warn("Unable to put host in maintainance mode: " + hostId);
+    return false;
+  }
+  try {
+    resourceStateTransitTo(host,ResourceState.Event.AdminAskMaintenace,_nodeId);
+  }
+ catch (  NoTransitionException e) {
+    String err="Cannot transimit resource state of host " + host.getId() + " to "+ ResourceState.Maintenance;
+    s_logger.debug(err,e);
+    throw new CloudRuntimeException(err + e.getMessage());
+  }
+  _agentMgr.pullAgentToMaintenance(hostId);
+  if (host.getType() == Host.Type.Routing) {
+    final List<VMInstanceVO> vms=_vmDao.listByHostId(hostId);
+    if (vms.size() == 0) {
+      return true;
+    }
+    List<HostVO> hosts=listAllUpAndEnabledHosts(Host.Type.Routing,host.getClusterId(),host.getPodId(),host.getDataCenterId());
+    for (    final VMInstanceVO vm : vms) {
+      if (hosts == null || hosts.size() <= 1 || !answer.getMigrate()) {
+        _haMgr.scheduleStop(vm,hostId,WorkType.ForceStop);
+      }
+ else {
+        _haMgr.scheduleMigration(vm);
+      }
+    }
+  }
+  return true;
+}

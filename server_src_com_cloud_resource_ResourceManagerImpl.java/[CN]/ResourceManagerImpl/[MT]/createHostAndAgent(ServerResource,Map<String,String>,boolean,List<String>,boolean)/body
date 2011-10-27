@@ -1,0 +1,45 @@
+{
+  HostVO host=null;
+  AgentAttache attache=null;
+  StartupCommand[] cmds=null;
+  try {
+    cmds=resource.initialize();
+    if (cmds == null) {
+      s_logger.info("Unable to fully initialize the agent because no StartupCommands are returned");
+      return null;
+    }
+    if (s_logger.isDebugEnabled()) {
+      new Request(-1l,-1l,cmds,true,false).logD("Startup request from directly connected host: ",true);
+    }
+    if (old) {
+      StartupCommand firstCmd=cmds[0];
+      host=findHostByGuid(firstCmd.getGuid());
+      if (host == null) {
+        host=findHostByGuid(firstCmd.getGuidWithoutResource());
+      }
+      if (host != null && host.getRemoved() == null) {
+        s_logger.debug("Found the host " + host.getId() + " by guid: "+ firstCmd.getGuid()+ ", old host reconnected as new");
+        return null;
+      }
+    }
+    host=createHostVO(cmds,resource,details,hostTags,ResourceStateAdapter.Event.CREATE_HOST_VO_FOR_DIRECT_CONNECT);
+    if (host != null) {
+      attache=_agentMgr.handleDirectConnectAgent(host,cmds,resource,forRebalance);
+      host=_hostDao.findById(host.getId());
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to connect due to ",e);
+  }
+ finally {
+    if (attache == null) {
+      if (cmds != null) {
+        resource.disconnected();
+      }
+      if (host != null) {
+        _agentMgr.agentStatusTransitTo(host,Status.Event.AgentDisconnected,_nodeId);
+      }
+    }
+  }
+  return host;
+}

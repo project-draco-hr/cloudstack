@@ -1,0 +1,28 @@
+{
+  HostVO host;
+  host=_hostDao.findById(hostId);
+  if (host == null || host.getRemoved() != null) {
+    s_logger.warn("Unable to find host " + hostId);
+    return true;
+  }
+  if (host.getResourceState() != ResourceState.PrepareForMaintenance && host.getResourceState() != ResourceState.Maintenance && host.getResourceState() != ResourceState.ErrorInMaintenance) {
+    throw new CloudRuntimeException("Cannot perform cancelMaintenance when resource state is " + host.getResourceState() + ", hostId = "+ hostId);
+  }
+  _haMgr.cancelScheduledMigrations(host);
+  List<VMInstanceVO> vms=_haMgr.findTakenMigrationWork();
+  for (  VMInstanceVO vm : vms) {
+    if (vm.getHostId() != null && vm.getHostId() == hostId) {
+      s_logger.info("Unable to cancel migration because the vm is being migrated: " + vm);
+      return false;
+    }
+  }
+  try {
+    resourceStateTransitTo(host,ResourceState.Event.AdminCancelMaintenance,_nodeId);
+    _agentMgr.pullAgentOutMaintenance(hostId);
+    return true;
+  }
+ catch (  NoTransitionException e) {
+    s_logger.debug("Cannot transmit host " + host.getId() + "to Enabled state",e);
+    return false;
+  }
+}
