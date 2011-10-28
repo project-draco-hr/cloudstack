@@ -1,0 +1,61 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Long accountId=null;
+  boolean result=true;
+  if (accountName == null && token == null) {
+    accountName=caller.getAccountName();
+  }
+  Project project=getProject(projectId);
+  if (project == null) {
+    throw new InvalidParameterValueException("Unable to find the project id=" + projectId);
+  }
+  if (accountName != null) {
+    Account account=_accountMgr.getActiveAccountByName(accountName,project.getDomainId());
+    if (account == null) {
+      throw new InvalidParameterValueException("Unable to find account name=" + accountName + " in domain id="+ project.getDomainId());
+    }
+    _accountMgr.checkAccess(caller,null,account);
+    accountId=account.getId();
+  }
+ else {
+    accountId=caller.getId();
+  }
+  ProjectInvitationVO invite=null;
+  if (token == null) {
+    invite=_projectInvitationDao.findPendingByAccountIdProjectId(accountId,projectId);
+  }
+ else {
+    invite=_projectInvitationDao.findPendingByTokenAndProjectId(token,projectId);
+  }
+  if (invite != null) {
+    if (!_projectInvitationDao.isActive(invite.getId(),_invitationTimeOut) && accept) {
+      expireInvitation(invite);
+      throw new InvalidParameterValueException("Invitation is expired for account id=" + accountName + " to the project id="+ projectId);
+    }
+ else {
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      ProjectInvitation.State newState=accept ? ProjectInvitation.State.Completed : ProjectInvitation.State.Declined;
+      s_logger.debug("Marking invitation " + invite + " with state "+ newState);
+      invite.setState(newState);
+      result=_projectInvitationDao.update(invite.getId(),invite);
+      if (result && accept) {
+        ProjectAccount projectAccount=_projectAccountDao.findByProjectIdAccountId(projectId,accountId);
+        if (projectAccount != null) {
+          s_logger.debug("Account " + accountName + " already added to the project id="+ projectId);
+        }
+ else {
+          assignAccountToProject(project,accountId,ProjectAccount.Role.Regular);
+        }
+      }
+ else {
+        s_logger.warn("Failed to update project invitation " + invite + " with state "+ newState);
+      }
+      txn.commit();
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("Unable to find invitation for account name=" + accountName + " to the project id="+ projectId);
+  }
+  return result;
+}
