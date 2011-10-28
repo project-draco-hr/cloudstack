@@ -1,15 +1,24 @@
 {
-  Boolean swiftEnable=Boolean.valueOf(_configDao.getValue(Config.SwiftEnable.key()));
-  if (!swiftEnable) {
-    return;
-  }
   GlobalLock swiftTemplateSyncLock=GlobalLock.getInternLock("templatemgr.swiftTemplateSync");
   try {
+    Boolean swiftEnable=Boolean.valueOf(_configDao.getValue(Config.SwiftEnable.key()));
+    if (!swiftEnable) {
+      return;
+    }
+    List<HypervisorType> hypers=_clusterDao.getAvailableHypervisorInZone(null);
+    List<VMTemplateVO> templates=_tmpltDao.listByHypervisorType(hypers);
+    List<Long> templateIds=new ArrayList<Long>();
+    for (    VMTemplateVO template : templates) {
+      templateIds.add(template.getId());
+    }
     if (swiftTemplateSyncLock.lock(3)) {
       try {
         List<VMTemplateHostVO> templtHostRefs=_tmpltHostDao.listByState(VMTemplateHostVO.Status.DOWNLOADED);
         List<VMTemplateSwiftVO> templtSwiftRefs=_tmpltSwiftDao.listAll();
         for (        VMTemplateHostVO templtHostRef : templtHostRefs) {
+          if (!templateIds.contains(templtHostRef.getId())) {
+            continue;
+          }
           boolean found=false;
           for (          VMTemplateSwiftVO templtSwiftRef : templtSwiftRefs) {
             if (templtHostRef.getTemplateId() == templtSwiftRef.getTemplateId()) {
@@ -35,7 +44,10 @@
       }
     }
   }
-  finally {
+ catch (  Throwable e) {
+    s_logger.error("Problem with sync swift template due to " + e.toString(),e);
+  }
+ finally {
     swiftTemplateSyncLock.releaseRef();
   }
 }
