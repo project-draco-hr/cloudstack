@@ -12,12 +12,42 @@
   }
   Long clusterId=agent.getClusterId();
   long agentId=agent.getId();
-  ClusterSyncCommand syncCmd=new ClusterSyncCommand(Integer.parseInt(Config.ClusterDeltaSyncInterval.getDefaultValue()),Integer.parseInt(Config.ClusterFullSyncSkipSteps.getDefaultValue()),clusterId);
-  try {
-    long seq_no=_agentMgr.send(agentId,new Commands(syncCmd),this);
-    s_logger.debug("Cluster VM sync started with jobid " + seq_no);
+  if (agent.getHypervisorType() == HypervisorType.XenServer || agent.getHypervisorType() == HypervisorType.Xen) {
+    ClusterSyncCommand syncCmd=new ClusterSyncCommand(Integer.parseInt(Config.ClusterDeltaSyncInterval.getDefaultValue()),Integer.parseInt(Config.ClusterFullSyncSkipSteps.getDefaultValue()),clusterId);
+    try {
+      long seq_no=_agentMgr.send(agentId,new Commands(syncCmd),this);
+      s_logger.debug("Cluster VM sync started with jobid " + seq_no);
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.fatal("The Cluster VM sync process failed for cluster id " + clusterId + " with ",e);
+    }
   }
- catch (  AgentUnavailableException e) {
-    s_logger.fatal("The Cluster VM sync process failed for cluster id " + clusterId + " with ",e);
+ else {
+    StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+    Commands commands=fullHostSync(agentId,startup);
+    if (commands.size() > 0) {
+      s_logger.debug("Sending clean commands to the agent");
+      try {
+        boolean error=false;
+        Answer[] answers=_agentMgr.send(agentId,commands);
+        for (        Answer answer : answers) {
+          if (!answer.getResult()) {
+            s_logger.warn("Unable to stop a VM due to " + answer.getDetails());
+            error=true;
+          }
+        }
+        if (error) {
+          throw new ConnectionException(true,"Unable to stop VMs");
+        }
+      }
+ catch (      final AgentUnavailableException e) {
+        s_logger.warn("Agent is unavailable now",e);
+        throw new ConnectionException(true,"Unable to sync",e);
+      }
+catch (      final OperationTimedoutException e) {
+        s_logger.warn("Agent is unavailable now",e);
+        throw new ConnectionException(true,"Unable to sync",e);
+      }
+    }
   }
 }
