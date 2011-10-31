@@ -7,31 +7,47 @@
     }
     Long volumeId=volume.getId();
     Long dcId=volume.getDataCenterId();
-    String primaryStoragePoolNameLabel=_storageMgr.getPrimaryStorageNameLabel(volume);
     if (_snapshotDao.listByVolumeIdIncludingRemoved(volumeId).isEmpty()) {
       continue;
     }
     List<HostVO> ssHosts=_ssvmMgr.listSecondaryStorageHostsInOneZone(dcId);
-    for (    HostVO ssHost : ssHosts) {
-      DeleteSnapshotsDirCommand cmd=new DeleteSnapshotsDirCommand(primaryStoragePoolNameLabel,ssHost.getStorageUrl(),dcId,accountId,volumeId,volume.getPath());
-      Answer answer=null;
-      Long poolId=volume.getPoolId();
-      if (poolId != null) {
+    SwiftTO swift=_swiftDao.getSwiftTO(null);
+    if (swift == null) {
+      for (      HostVO ssHost : ssHosts) {
+        DeleteSnapshotBackupCommand cmd=new DeleteSnapshotBackupCommand(null,ssHost.getStorageUrl(),dcId,accountId,volumeId,"",true);
+        Answer answer=null;
         try {
-          answer=_storageMgr.sendToPool(poolId,cmd);
+          answer=_agentMgr.sendToSSVM(dcId,cmd);
         }
- catch (        StorageUnavailableException e) {
+ catch (        Exception e) {
+          s_logger.warn("Failed to delete all snapshot for volume " + volumeId + " on secondary storage "+ ssHost.getStorageUrl());
         }
+        if ((answer != null) && answer.getResult()) {
+          s_logger.debug("Deleted all snapshots for volume: " + volumeId + " under account: "+ accountId);
+        }
+ else {
+          success=false;
+          if (answer != null) {
+            s_logger.error(answer.getDetails());
+          }
+        }
+      }
+    }
+ else {
+      DeleteSnapshotBackupCommand cmd=new DeleteSnapshotBackupCommand(swift,"",dcId,accountId,volumeId,"",true);
+      Answer answer=null;
+      try {
+        answer=_agentMgr.sendToSSVM(dcId,cmd);
+      }
+ catch (      Exception e) {
+        s_logger.warn("Failed to delete all snapshot for volume " + volumeId + " on swift");
+      }
+      if ((answer != null) && answer.getResult()) {
+        s_logger.debug("Deleted all snapshots for volume: " + volumeId + " under account: "+ accountId);
       }
  else {
-        s_logger.info("Pool id for volume id: " + volumeId + " belonging to account id: "+ accountId+ " is null. Assuming the snapshotsDir for the account has already been deleted");
-      }
-      if (success) {
-        success=(answer != null) && answer.getResult();
-        if (success) {
-          s_logger.debug("Deleted snapshotsDir for volume: " + volumeId + " under account: "+ accountId);
-        }
- else         if (answer != null) {
+        success=false;
+        if (answer != null) {
           s_logger.error(answer.getDetails());
         }
       }

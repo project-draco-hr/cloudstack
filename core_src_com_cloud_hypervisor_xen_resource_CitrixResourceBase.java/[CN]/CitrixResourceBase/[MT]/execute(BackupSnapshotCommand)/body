@@ -4,7 +4,7 @@
   Long dcId=cmd.getDataCenterId();
   Long accountId=cmd.getAccountId();
   Long volumeId=cmd.getVolumeId();
-  String secondaryStoragePoolURL=cmd.getSecondaryStoragePoolURL();
+  String secondaryStorageUrl=cmd.getSecondaryStorageUrl();
   String snapshotUuid=cmd.getSnapshotUuid();
   String prevBackupUuid=cmd.getPrevBackupUuid();
   String prevSnapshotUuid=cmd.getPrevSnapshotUuid();
@@ -20,12 +20,13 @@
     }
     String psUuid=primaryStorageSR.getUuid(conn);
     Boolean isISCSI=IsISCSI(primaryStorageSR.getType(conn));
-    URI uri=new URI(secondaryStoragePoolURL);
+    URI uri=new URI(secondaryStorageUrl);
     String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
     VDI snapshotVdi=getVDIbyUuid(conn,snapshotUuid);
+    String snapshotPaUuid=null;
     if (prevBackupUuid != null) {
       try {
-        String snapshotPaUuid=getVhdParent(conn,psUuid,snapshotUuid,isISCSI);
+        snapshotPaUuid=getVhdParent(conn,psUuid,snapshotUuid,isISCSI);
         if (snapshotPaUuid != null) {
           String snashotPaPaPaUuid=getVhdParent(conn,psUuid,snapshotPaUuid,isISCSI);
           String prevSnashotPaUuid=getVhdParent(conn,psUuid,prevSnapshotUuid,isISCSI);
@@ -37,7 +38,6 @@
  catch (      Exception e) {
       }
     }
-    String filename=volumeId + "_" + cmd.getSnapshotId()+ "_"+ cmd.getSnapshotUuid();
     if (fullbackup) {
       String folder="snapshots/" + accountId + "/"+ volumeId;
       if (!createSecondaryStorageFolder(conn,secondaryStorageMountPath,folder)) {
@@ -45,7 +45,7 @@
         s_logger.warn(details);
         return new BackupSnapshotAnswer(cmd,false,details,null,false);
       }
-      String snapshotMountpoint=secondaryStoragePoolURL + "/" + folder;
+      String snapshotMountpoint=secondaryStorageUrl + "/" + folder;
       SR snapshotSr=null;
       try {
         snapshotSr=createNfsSRbyURI(conn,new URI(snapshotMountpoint),false);
@@ -53,13 +53,13 @@
         snapshotBackupUuid=backedVdi.getUuid(conn);
         if (cmd.getSwift() != null) {
           try {
-            swiftBackupSnapshot(cmd.getSwift(),snapshotSr.getUuid(conn),snapshotBackupUuid,filename,false);
-            snapshotBackupUuid=filename;
+            swiftBackupSnapshot(conn,cmd.getSwift(),snapshotSr.getUuid(conn),snapshotBackupUuid,"S-" + volumeId.toString(),false,wait);
           }
   finally {
             deleteSnapshotBackup(conn,dcId,accountId,volumeId,secondaryStorageMountPath,snapshotBackupUuid);
           }
         }
+        snapshotBackupUuid=snapshotBackupUuid + ".vhd";
         success=true;
       }
   finally {
@@ -71,8 +71,13 @@
  else {
       String primaryStorageSRUuid=primaryStorageSR.getUuid(conn);
       if (cmd.getSwift() != null) {
-        swiftBackupSnapshot(cmd.getSwift(),primaryStorageSRUuid,snapshotUuid,filename,isISCSI);
-        snapshotBackupUuid=filename;
+        swiftBackupSnapshot(conn,cmd.getSwift(),primaryStorageSRUuid,snapshotPaUuid,"S-" + volumeId.toString(),isISCSI,wait);
+        if (isISCSI) {
+          snapshotBackupUuid="VHD-" + snapshotPaUuid;
+        }
+ else {
+          snapshotBackupUuid=snapshotPaUuid + ".vhd";
+        }
         success=true;
       }
  else {
@@ -80,10 +85,10 @@
         success=(snapshotBackupUuid != null);
       }
     }
+    String volumeUuid=cmd.getVolumePath();
+    destroySnapshotOnPrimaryStorageExceptThis(conn,volumeUuid,snapshotUuid);
     if (success) {
       details="Successfully backedUp the snapshotUuid: " + snapshotUuid + " to secondary storage.";
-      String volumeUuid=cmd.getVolumePath();
-      destroySnapshotOnPrimaryStorageExceptThis(conn,volumeUuid,snapshotUuid);
     }
   }
  catch (  XenAPIException e) {
