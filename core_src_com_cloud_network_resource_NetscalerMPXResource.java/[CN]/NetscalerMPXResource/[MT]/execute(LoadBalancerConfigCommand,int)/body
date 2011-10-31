@@ -1,11 +1,32 @@
 {
   try {
+    String lbProtocol;
+    String lbMethod;
     LoadBalancerTO[] loadBalancers=cmd.getLoadBalancers();
     for (    LoadBalancerTO loadBalancer : loadBalancers) {
+      if (loadBalancer.getProtocol() == null) {
+        lbProtocol="TCP";
+      }
+ else       if (loadBalancer.getProtocol().equals(NetUtils.TCP_PROTO)) {
+        lbProtocol="TCP";
+      }
+ else       if (loadBalancer.getProtocol().equals(NetUtils.UDP_PROTO)) {
+        lbProtocol="UDP";
+      }
+ else {
+        throw new ExecutionException("Got invalid protocol: " + loadBalancer.getProtocol());
+      }
+      if (loadBalancer.getAlgorithm().equals("roundrobin")) {
+        lbMethod="ROUNDROBIN";
+      }
+ else       if (loadBalancer.getAlgorithm().equals("leastconn")) {
+        lbMethod="LEASTCONNECTION";
+      }
+ else {
+        throw new ExecutionException("Got invalid load balancing algorithm: " + loadBalancer.getAlgorithm());
+      }
       String srcIp=loadBalancer.getSrcIp();
       int srcPort=loadBalancer.getSrcPort();
-      String lbProtocol=loadBalancer.getProtocol();
-      String lbAlgorithm=loadBalancer.getAlgorithm();
       String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort,lbProtocol);
       boolean destinationsToAdd=false;
       for (      DestinationTO destination : loadBalancer.getDestinations()) {
@@ -15,7 +36,10 @@
         }
       }
       if (!loadBalancer.isRevoked() && destinationsToAdd) {
-        addLBVirtualServer(nsVirtualServerName,srcIp,srcPort,lbAlgorithm,lbProtocol);
+        addLBVirtualServer(nsVirtualServerName,srcIp,srcPort,lbMethod,lbProtocol);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Created load balancing virtual server " + nsVirtualServerName + " on the Netscaler device");
+        }
         for (        DestinationTO destination : loadBalancer.getDestinations()) {
           String nsServerName=generateNSServerName(destination.getDestIp());
           String nsServiceName=generateNSServiceName(destination.getDestIp(),destination.getDestPort());
@@ -61,17 +85,17 @@
                 if (nsServiceName.equalsIgnoreCase(binding.get_servicename())) {
                   apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.delete(nsService,binding);
                   if (apiCallResult.errorcode != 0) {
-                    throw new ExecutionException("Failed to delete the binding between the virtual server: " + nsVirtualServerName + " and service:"+ nsServiceName+ " due to"+ apiCallResult.message);
+                    throw new ExecutionException("Failed to delete the binding between the virtual server: " + nsVirtualServerName + " and service:"+ nsServiceName);
                   }
                   apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.service.delete(nsService,nsServiceName);
                   if (apiCallResult.errorcode != 0) {
-                    throw new ExecutionException("Failed to delete service: " + nsServiceName + " due to "+ apiCallResult.message);
+                    throw new ExecutionException("Failed to delete service: " + nsServiceName);
                   }
                   server_service_binding[] services=server_service_binding.get(nsService,nsServerName);
                   if ((services == null) || (services.length == 0)) {
                     apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.server.delete(nsService,nsServerName);
                     if (apiCallResult.errorcode != 0) {
-                      throw new ExecutionException("Failed to remove server:" + nsServerName + " due to "+ apiCallResult.message);
+                      throw new ExecutionException("Failed to remove server:" + nsServerName);
                     }
                   }
                 }
@@ -81,7 +105,7 @@
         }
       }
  else {
-        lbvserver lbserver=getVirtualServerIfExisits(nsVirtualServerName);
+        lbvserver lbserver=lbvserver.get(nsService,nsVirtualServerName);
         if (lbserver == null) {
           throw new ExecutionException("Failed to find virtual server with name:" + nsVirtualServerName);
         }
@@ -91,7 +115,7 @@
             String serviceName=binding.get_servicename();
             apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.delete(nsService,binding);
             if (apiCallResult.errorcode != 0) {
-              throw new ExecutionException("Failed to unbind service from the lb virtual server: " + nsVirtualServerName + " due to "+ apiCallResult.message);
+              throw new ExecutionException("Failed to unbind servic from the lb virtual server: " + nsVirtualServerName);
             }
             com.citrix.netscaler.nitro.resource.config.basic.service svc=com.citrix.netscaler.nitro.resource.config.basic.service.get(nsService,serviceName);
             String nsServerName=svc.get_servername();
@@ -100,7 +124,7 @@
             if ((services == null) || (services.length == 0)) {
               apiCallResult=com.citrix.netscaler.nitro.resource.config.basic.server.delete(nsService,nsServerName);
               if (apiCallResult.errorcode != 0) {
-                throw new ExecutionException("Failed to remove server:" + nsServerName + " due to "+ apiCallResult.message);
+                throw new ExecutionException("Failed to remove server:" + nsServerName);
               }
             }
           }
