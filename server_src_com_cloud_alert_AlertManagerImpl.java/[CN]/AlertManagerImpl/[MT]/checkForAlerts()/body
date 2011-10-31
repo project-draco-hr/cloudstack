@@ -11,7 +11,11 @@
   List<Short> clusterCapacityTypes=getCapacityTypesAtClusterLevel();
   for (  DataCenterVO dc : dataCenterList) {
     for (    Short capacityType : dataCenterCapacityTypes) {
-      List<SummedCapacity> capacity=_capacityDao.findCapacityBy(capacityType.intValue(),dc.getId(),null,null);
+      List<SummedCapacity> capacity=new ArrayList<SummedCapacity>();
+      capacity=_capacityDao.findCapacityBy(capacityType.intValue(),dc.getId(),null,null);
+      if (capacityType == Capacity.CAPACITY_TYPE_SECONDARY_STORAGE) {
+        capacity.add(getUsedStats(capacityType,dc.getId(),null,null));
+      }
       if (capacity == null || capacity.size() == 0) {
         continue;
       }
@@ -37,12 +41,20 @@
   }
   for (  ClusterVO cluster : clusterList) {
     for (    Short capacityType : clusterCapacityTypes) {
-      List<SummedCapacity> capacity=_capacityDao.findCapacityBy(capacityType.intValue(),cluster.getDataCenterId(),null,cluster.getId());
+      List<SummedCapacity> capacity=new ArrayList<SummedCapacity>();
+      float overProvFactor=1f;
+      capacity=_capacityDao.findCapacityBy(capacityType.intValue(),cluster.getDataCenterId(),null,cluster.getId());
+      if (capacityType == Capacity.CAPACITY_TYPE_STORAGE) {
+        capacity.add(getUsedStats(capacityType,cluster.getDataCenterId(),cluster.getPodId(),cluster.getId()));
+      }
       if (capacity == null || capacity.size() == 0) {
         continue;
       }
-      double totalCapacity=capacity.get(0).getTotalCapacity();
-      double usedCapacity=capacity.get(0).getUsedCapacity();
+      if (capacityType == Capacity.CAPACITY_TYPE_CPU) {
+        overProvFactor=ApiDBUtils.getCpuOverprovisioningFactor();
+      }
+      double totalCapacity=capacity.get(0).getTotalCapacity() * overProvFactor;
+      double usedCapacity=capacity.get(0).getUsedCapacity() + capacity.get(0).getReservedCapacity();
       if (totalCapacity != 0 && usedCapacity / totalCapacity > _capacityTypeThresholdMap.get(capacityType)) {
         generateEmailAlert(ApiDBUtils.findZoneById(cluster.getDataCenterId()),ApiDBUtils.findPodById(cluster.getPodId()),cluster,totalCapacity,usedCapacity,capacityType);
       }
