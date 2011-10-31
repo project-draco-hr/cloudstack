@@ -2,14 +2,17 @@
   Account oldAccount=UserContext.current().getCaller();
   Account newAccount=_accountService.getAccount(cmd.getAccountId());
   if (newAccount == null || newAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
-    throw new InvalidParameterValueException("Unable to find account " + newAccount + " in domain "+ oldAccount.getDomainId());
+    throw new InvalidParameterValueException("Invalid accountid=" + cmd.getAccountId() + " in domain "+ oldAccount.getDomainId());
   }
   if (oldAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
     throw new InvalidParameterValueException("Vm id=" + cmd.getVmId() + " belongs to the project and can't be moved");
   }
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
   UserVmVO vm=_vmDao.findById(cmd.getVmId());
-  if (vm.getState() == State.Running) {
+  if (vm == null) {
+    throw new InvalidParameterValueException("There is no vm by that id " + cmd.getVmId());
+  }
+ else   if (vm.getState() == State.Running) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is Running, unable to move the vm " + vm);
     }
@@ -23,16 +26,26 @@
   DomainVO domain=_domainDao.findById(oldAccount.getDomainId());
   _accountMgr.checkAccess(newAccount,domain);
   DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
+  if (zone.getNetworkType() != NetworkType.Advanced) {
+    throw new InvalidParameterValueException("Assing virtual machine to another account is only available for advanced networking " + vm);
+  }
   VMInstanceVO vmoi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
   VirtualMachineProfileImpl<VMInstanceVO> vmOldProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmoi);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
+  _resourceLimitMgr.decrementResourceCount(vm.getAccountId(),ResourceType.user_vm);
   vm.setAccountId(newAccount.getAccountId());
-  vm.setAccountId(newAccount.getId());
   _vmDao.persist(vm);
   List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   for (  VolumeVO volume : volumes) {
     volume.setAccountId(cmd.getAccountId());
+    _resourceLimitMgr.decrementResourceCount(vm.getAccountId(),ResourceType.volume,new Long(volumes.size()));
     _volsDao.persist(volume);
+    _resourceLimitMgr.incrementResourceCount(vm.getAccountId(),ResourceType.volume,new Long(volumes.size()));
   }
+  _resourceLimitMgr.incrementResourceCount(vm.getAccountId(),ResourceType.user_vm);
+  _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
   if (zone.getNetworkType() == NetworkType.Advanced) {
     _networkMgr.cleanupNics(vmOldProfile);
     _networkMgr.expungeNics(vmOldProfile);
@@ -77,5 +90,6 @@
       _networkMgr.allocate(vmProfile,networks);
     }
   }
+  txn.commit();
   return vm;
 }
