@@ -1,5 +1,5 @@
 {
-  long count=0;
+  long newCount=0;
   Transaction txn=Transaction.currentTxn();
   txn.start();
   try {
@@ -7,24 +7,29 @@
     SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
     sc.setParameters("id",rowIdsToLock.toArray());
     _resourceCountDao.lockRows(sc,null,true);
+    ResourceCountVO domainRC=_resourceCountDao.findByOwnerAndType(domainId,ResourceOwnerType.Domain,type);
+    long oldCount=domainRC.getCount();
     List<DomainVO> domainChildren=_domainDao.findImmediateChildrenForParent(domainId);
     if (type.supportsOwner(ResourceOwnerType.Domain)) {
       if (type == ResourceType.project) {
-        count=count + _projectDao.countProjectsForDomain(domainId);
+        newCount=newCount + _projectDao.countProjectsForDomain(domainId);
       }
       for (      DomainVO domainChild : domainChildren) {
         long domainCount=recalculateDomainResourceCount(domainChild.getId(),type);
-        count=count + domainCount;
+        newCount=newCount + domainCount;
       }
     }
     if (type.supportsOwner(ResourceOwnerType.Account)) {
       List<AccountVO> accounts=_accountDao.findActiveAccountsForDomain(domainId);
       for (      AccountVO account : accounts) {
         long accountCount=recalculateAccountResourceCount(account.getId(),type);
-        count=count + accountCount;
+        newCount=newCount + accountCount;
       }
     }
-    _resourceCountDao.setResourceCount(domainId,ResourceOwnerType.Domain,type,count);
+    _resourceCountDao.setResourceCount(domainId,ResourceOwnerType.Domain,type,newCount);
+    if (oldCount != newCount) {
+      s_logger.info("Discrepency in the resource count " + "(original count=" + oldCount + " correct count = "+ newCount+ ") for type "+ type+ " for domain ID "+ domainId+ " is fixed during resource count recalculation.");
+    }
   }
  catch (  Exception e) {
     throw new CloudRuntimeException("Failed to update resource count for domain with Id " + domainId);
@@ -32,5 +37,5 @@
  finally {
     txn.commit();
   }
-  return count;
+  return newCount;
 }

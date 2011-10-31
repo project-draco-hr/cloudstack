@@ -1,31 +1,36 @@
 {
-  Long count=null;
+  Long newCount=null;
   Transaction txn=Transaction.currentTxn();
   txn.start();
   SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
   sc.setParameters("accountId",accountId);
   _resourceCountDao.lockRows(sc,null,true);
+  ResourceCountVO accountRC=_resourceCountDao.findByOwnerAndType(accountId,ResourceOwnerType.Account,type);
+  long oldCount=accountRC.getCount();
   if (type == Resource.ResourceType.user_vm) {
-    count=_userVmDao.countAllocatedVMsForAccount(accountId);
+    newCount=_userVmDao.countAllocatedVMsForAccount(accountId);
   }
  else   if (type == Resource.ResourceType.volume) {
-    count=_volumeDao.countAllocatedVolumesForAccount(accountId);
+    newCount=_volumeDao.countAllocatedVolumesForAccount(accountId);
     long virtualRouterCount=_vmDao.countAllocatedVirtualRoutersForAccount(accountId);
-    count=count - virtualRouterCount;
+    newCount=newCount - virtualRouterCount;
   }
  else   if (type == Resource.ResourceType.snapshot) {
-    count=_snapshotDao.countSnapshotsForAccount(accountId);
+    newCount=_snapshotDao.countSnapshotsForAccount(accountId);
   }
  else   if (type == Resource.ResourceType.public_ip) {
-    count=_ipAddressDao.countAllocatedIPsForAccount(accountId);
+    newCount=_ipAddressDao.countAllocatedIPsForAccount(accountId);
   }
  else   if (type == Resource.ResourceType.template) {
-    count=_vmTemplateDao.countTemplatesForAccount(accountId);
+    newCount=_vmTemplateDao.countTemplatesForAccount(accountId);
   }
  else {
     throw new InvalidParameterValueException("Unsupported resource type " + type);
   }
-  _resourceCountDao.setResourceCount(accountId,ResourceOwnerType.Account,type,(count == null) ? 0 : count.longValue());
+  _resourceCountDao.setResourceCount(accountId,ResourceOwnerType.Account,type,(newCount == null) ? 0 : newCount.longValue());
+  if (oldCount != newCount) {
+    s_logger.info("Discrepency in the resource count " + "(original count=" + oldCount + " correct count = "+ newCount+ ") for type "+ type+ " for account ID "+ accountId+ " is fixed during resource count recalculation.");
+  }
   txn.commit();
-  return (count == null) ? 0 : count.longValue();
+  return (newCount == null) ? 0 : newCount.longValue();
 }
