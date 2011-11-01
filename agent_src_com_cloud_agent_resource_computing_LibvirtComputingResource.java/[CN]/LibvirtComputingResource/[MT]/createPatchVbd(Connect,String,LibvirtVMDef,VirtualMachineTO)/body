@@ -2,13 +2,24 @@
   List<DiskDef> disks=vm.getDevices().getDisks();
   DiskDef rootDisk=disks.get(0);
   VolumeTO rootVol=getVolume(vmSpec,Volume.Type.ROOT);
-  StoragePool pool=_storageResource.getStoragePool(conn,rootVol.getPoolUuid());
-  StorageVol tmplVol=_storageResource.createTmplDataDisk(conn,pool,10L * 1024 * 1024);
-  String datadiskPath=tmplVol.getKey();
+  KVMStoragePool pool=_storagePoolMgr.getStoragePool(rootVol.getPoolUuid());
+  KVMPhysicalDisk disk=pool.createPhysicalDisk(UUID.randomUUID().toString(),KVMPhysicalDisk.PhysicalDiskFormat.RAW,10L * 1024 * 1024);
+  final Script command=new Script(_createvmPath,_timeout,s_logger);
+  command.add("-f",disk.getPath());
+  String result=command.execute();
+  if (result != null) {
+    s_logger.debug("Failed to create data disk: " + result);
+    throw new InternalErrorException("Failed to create data disk: " + result);
+  }
+  String datadiskPath=disk.getPath();
   DiskDef patchDisk=new DiskDef();
-  patchDisk.defFileBasedDisk(rootDisk.getDiskPath(),1,rootDisk.getBusType(),DiskDef.diskFmtType.RAW);
+  if (pool.getType() == StoragePoolType.CLVM) {
+    patchDisk.defBlockBasedDisk(datadiskPath,1,rootDisk.getBusType());
+  }
+ else {
+    patchDisk.defFileBasedDisk(datadiskPath,1,rootDisk.getBusType(),DiskDef.diskFmtType.RAW);
+  }
   disks.add(patchDisk);
-  patchDisk.setDiskPath(datadiskPath);
   String bootArgs=vmSpec.getBootArgs();
   patchSystemVm(bootArgs,datadiskPath,vmName);
 }

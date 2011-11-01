@@ -6,60 +6,30 @@
   if (index < tmplturl.length() - 1) {
     tmpltname=tmplturl.substring(index + 1);
   }
-  StoragePool secondaryPool=null;
-  StoragePool primaryPool=null;
-  StorageVol tmplVol=null;
-  StorageVol primaryVol=null;
-  Connect conn=null;
+  KVMPhysicalDisk tmplVol=null;
   try {
-    conn=LibvirtConnection.getConnection();
-    secondaryPool=_storageResource.getStoragePoolbyURI(conn,new URI(mountpoint));
+    KVMStoragePool secondaryPool=_storagePoolMgr.getStoragePoolByURI(mountpoint);
     if (tmpltname == null) {
-      _storageResource.storagePoolRefresh(secondaryPool);
-      String[] volumes=secondaryPool.listVolumes();
-      if (volumes == null) {
-        return new PrimaryStorageDownloadAnswer("Failed to get volumes from pool: " + secondaryPool.getName());
+      secondaryPool.refresh();
+      List<KVMPhysicalDisk> disks=secondaryPool.listPhysicalDisks();
+      if (disks == null || disks.isEmpty()) {
+        return new PrimaryStorageDownloadAnswer("Failed to get volumes from pool: " + secondaryPool.getUuid());
       }
-      for (      String volumeName : volumes) {
-        if (volumeName.endsWith("qcow2")) {
-          tmpltname=volumeName;
+      for (      KVMPhysicalDisk disk : disks) {
+        if (disk.getName().endsWith("qcow2")) {
+          tmplVol=disk;
           break;
         }
       }
-      if (tmpltname == null) {
-        return new PrimaryStorageDownloadAnswer("Failed to get template from pool: " + secondaryPool.getName());
+      if (tmplVol == null) {
+        return new PrimaryStorageDownloadAnswer("Failed to get template from pool: " + secondaryPool.getUuid());
       }
     }
-    LibvirtStoragePoolDef poolDef=_storageResource.getStoragePoolDef(conn,secondaryPool);
-    tmplVol=_storageResource.getVolume(conn,secondaryPool,poolDef.getTargetPath() + File.separator + tmpltname);
-    primaryPool=_storageResource.getStoragePool(conn,cmd.getPoolUuid());
-    LibvirtStorageVolumeDef vol=new LibvirtStorageVolumeDef(UUID.randomUUID().toString(),tmplVol.getInfo().capacity,volFormat.QCOW2,null,null);
-    s_logger.debug(vol.toString());
-    primaryVol=_storageResource.copyVolume(primaryPool,vol,tmplVol,_cmdsTimeout);
-    StorageVolInfo priVolInfo=primaryVol.getInfo();
-    return new PrimaryStorageDownloadAnswer(primaryVol.getKey(),priVolInfo.allocation);
+    KVMStoragePool primaryPool=_storagePoolMgr.getStoragePool(cmd.getPoolUuid());
+    KVMPhysicalDisk primaryVol=_storagePoolMgr.copyPhysicalDisk(tmplVol,UUID.randomUUID().toString(),primaryPool);
+    return new PrimaryStorageDownloadAnswer(primaryVol.getName(),primaryVol.getSize());
   }
- catch (  LibvirtException e) {
-    s_logger.debug(e.toString());
+ catch (  CloudRuntimeException e) {
     return new PrimaryStorageDownloadAnswer(e.toString());
-  }
-catch (  URISyntaxException e) {
-    return new PrimaryStorageDownloadAnswer(e.toString());
-  }
- finally {
-    try {
-      if (primaryVol != null) {
-        primaryVol.free();
-      }
-      if (primaryPool != null) {
-        primaryPool.free();
-      }
-      if (tmplVol != null) {
-        tmplVol.free();
-      }
-      _storageResource.deleteStoragePool(conn,secondaryPool);
-    }
- catch (    LibvirtException l) {
-    }
   }
 }

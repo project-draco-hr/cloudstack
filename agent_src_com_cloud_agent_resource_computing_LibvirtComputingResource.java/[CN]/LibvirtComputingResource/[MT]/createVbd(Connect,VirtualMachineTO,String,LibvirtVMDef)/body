@@ -1,6 +1,20 @@
 {
   for (  VolumeTO volume : vmSpec.getDisks()) {
-    String volPath=getVolumePath(conn,volume);
+    KVMPhysicalDisk physicalDisk=null;
+    KVMStoragePool pool=null;
+    if (volume.getType() == Volume.Type.ISO && volume.getPath() != null) {
+      String volPath=volume.getPath();
+      int index=volPath.lastIndexOf("/");
+      String volDir=volPath.substring(0,index);
+      String volName=volPath.substring(index + 1);
+      KVMStoragePool secondaryStorage=_storagePoolMgr.getStoragePoolByURI(volDir);
+      physicalDisk=secondaryStorage.getPhysicalDisk(volName);
+    }
+ else {
+      pool=_storagePoolMgr.getStoragePool(volume.getPoolUuid());
+      physicalDisk=pool.getPhysicalDisk(volume.getPath());
+    }
+    String volPath=physicalDisk.getPath();
     DiskDef.diskBus diskBusType=getGuestDiskModel(vmSpec.getOs());
     DiskDef disk=new DiskDef();
     if (volume.getType() == Volume.Type.ISO) {
@@ -13,7 +27,12 @@
     }
  else {
       int devId=(int)volume.getDeviceId();
-      disk.defFileBasedDisk(volume.getPath(),devId,diskBusType,DiskDef.diskFmtType.QCOW2);
+      if (pool.getType() == StoragePoolType.CLVM) {
+        disk.defBlockBasedDisk(physicalDisk.getPath(),devId,diskBusType);
+      }
+ else {
+        disk.defFileBasedDisk(physicalDisk.getPath(),devId,diskBusType,DiskDef.diskFmtType.QCOW2);
+      }
     }
     if (volume.getType() == Volume.Type.DATADISK && diskBusType != DiskDef.diskBus.VIRTIO) {
       disk.setAttachDeferred(true);

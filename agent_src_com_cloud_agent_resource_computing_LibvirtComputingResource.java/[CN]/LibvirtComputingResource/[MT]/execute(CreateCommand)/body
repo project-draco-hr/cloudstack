@@ -1,45 +1,29 @@
 {
   StorageFilerTO pool=cmd.getPool();
   DiskProfile dskch=cmd.getDiskCharacteristics();
-  StorageVol tmplVol=null;
-  StoragePool primaryPool=null;
-  StorageVol vol=null;
+  KVMPhysicalDisk BaseVol=null;
+  KVMStoragePool primaryPool=null;
+  KVMPhysicalDisk vol=null;
   long disksize;
   try {
-    Connect conn=LibvirtConnection.getConnection();
-    primaryPool=_storageResource.getStoragePool(conn,pool.getUuid());
+    primaryPool=_storagePoolMgr.getStoragePool(pool.getUuid());
     if (cmd.getTemplateUrl() != null) {
-      tmplVol=_storageResource.getVolume(conn,primaryPool,cmd.getTemplateUrl());
-      vol=_storageResource.createVolumeFromTempl(primaryPool,tmplVol);
+      BaseVol=primaryPool.getPhysicalDisk(cmd.getTemplateUrl());
+      vol=_storagePoolMgr.createDiskFromTemplate(BaseVol,UUID.randomUUID().toString(),primaryPool);
       if (vol == null) {
         return new Answer(cmd,false," Can't create storage volume on storage pool");
       }
-      disksize=tmplVol.getInfo().capacity;
+      disksize=vol.getSize();
     }
  else {
       disksize=dskch.getSize();
-      vol=_storageResource.createVolume(conn,primaryPool,UUID.randomUUID().toString(),dskch.getSize(),volFormat.QCOW2);
+      vol=primaryPool.createPhysicalDisk(UUID.randomUUID().toString(),dskch.getSize());
     }
-    VolumeTO volume=new VolumeTO(cmd.getVolumeId(),dskch.getType(),pool.getType(),pool.getUuid(),pool.getPath(),vol.getName(),vol.getKey(),disksize,null);
+    VolumeTO volume=new VolumeTO(cmd.getVolumeId(),dskch.getType(),pool.getType(),pool.getUuid(),pool.getPath(),vol.getName(),vol.getName(),disksize,null);
     return new CreateAnswer(cmd,volume);
   }
- catch (  LibvirtException e) {
+ catch (  CloudRuntimeException e) {
     s_logger.debug("Failed to create volume: " + e.toString());
     return new CreateAnswer(cmd,e);
-  }
- finally {
-    try {
-      if (vol != null) {
-        vol.free();
-      }
-      if (tmplVol != null) {
-        tmplVol.free();
-      }
-      if (primaryPool != null) {
-        primaryPool.free();
-      }
-    }
- catch (    LibvirtException e) {
-    }
   }
 }
