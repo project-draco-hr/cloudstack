@@ -1,11 +1,16 @@
 {
   String templateFolder=cmd.getAccountId() + File.separator + cmd.getNewTemplateId();
   String templateInstallFolder="template/tmpl/" + templateFolder;
-  String snapshotPath=cmd.getSnapshotUuid();
   String tmplName=UUID.randomUUID().toString();
   String tmplFileName=tmplName + ".qcow2";
-  KVMStoragePool secondaryPool;
+  KVMStoragePool secondaryPool=null;
+  KVMStoragePool snapshotPool=null;
   try {
+    String snapshotPath=cmd.getSnapshotUuid();
+    int index=snapshotPath.lastIndexOf("/");
+    snapshotPath=snapshotPath.substring(0,index);
+    snapshotPool=_storagePoolMgr.getStoragePoolByURI(cmd.getSecondaryStorageUrl() + snapshotPath);
+    KVMPhysicalDisk snapshot=snapshotPool.getPhysicalDisk(cmd.getSnapshotName());
     secondaryPool=_storagePoolMgr.getStoragePoolByURI(cmd.getSecondaryStorageUrl());
     String templatePath=secondaryPool.getLocalPath() + File.separator + templateInstallFolder;
     _storage.mkdirs(templatePath);
@@ -13,7 +18,7 @@
     Script command=new Script(_createTmplPath,_timeout,s_logger);
     command.add("-t",templatePath);
     command.add("-n",tmplFileName);
-    command.add("-f",snapshotPath);
+    command.add("-f",snapshot.getPath());
     command.execute();
     Map<String,Object> params=new HashMap<String,Object>();
     params.put(StorageLayer.InstanceConfigKey,_storage);
@@ -37,5 +42,13 @@ catch (  IOException e) {
   }
 catch (  CloudRuntimeException e) {
     return new CreatePrivateTemplateAnswer(cmd,false,e.getMessage());
+  }
+ finally {
+    if (secondaryPool != null) {
+      secondaryPool.delete();
+    }
+    if (snapshotPool != null) {
+      snapshotPool.delete();
+    }
   }
 }
