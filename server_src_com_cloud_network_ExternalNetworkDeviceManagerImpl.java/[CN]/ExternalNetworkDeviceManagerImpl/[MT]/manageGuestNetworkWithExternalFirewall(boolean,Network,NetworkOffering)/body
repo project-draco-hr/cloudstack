@@ -7,9 +7,23 @@
   DataCenterVO zone=_dcDao.findById(zoneId);
   HostVO externalFirewall=null;
   if (add) {
-    externalFirewall=findSuitableExternalFirewallForNetwork(network);
-    if (externalFirewall == null) {
-      throw new InsufficientNetworkCapacityException("Unable to find a firewall provider with sufficient capcity " + " to implement the network",Network.class,network.getId());
+    GlobalLock deviceMapLock=GlobalLock.getInternLock("NetworkFirewallDeviceMap");
+    try {
+      if (deviceMapLock.lock(120)) {
+        try {
+          long externalFirewallId=findSuitableFirewallDeviceForNetwork(network);
+          NetworkExternalFirewallVO networkFW=new NetworkExternalFirewallVO(network.getId(),externalFirewallId);
+          _networkExternalFirewallDao.persist(networkFW);
+          ExternalFirewallDeviceVO device=_externalFirewallDeviceDao.findById(externalFirewallId);
+          externalFirewall=_hostDao.findById(device.getHostId());
+        }
+  finally {
+          deviceMapLock.unlock();
+        }
+      }
+    }
+  finally {
+      deviceMapLock.releaseRef();
     }
   }
  else {
