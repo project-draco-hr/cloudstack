@@ -1,2 +1,67 @@
 {
+  if (!(cmd instanceof StartupRoutingCommand)) {
+    return;
+  }
+  long hostId=host.getId();
+  StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+  String dataCenter=startup.getDataCenter();
+  long dcId=-1;
+  DataCenterVO dc=_dcDao.findByName(dataCenter);
+  if (dc == null) {
+    try {
+      dcId=Long.parseLong(dataCenter);
+      dc=_dcDao.findById(dcId);
+    }
+ catch (    final NumberFormatException e) {
+    }
+  }
+  if (dc == null) {
+    throw new IllegalArgumentException("Host " + startup.getPrivateIpAddress() + " sent incorrect data center: "+ dataCenter);
+  }
+  dcId=dc.getId();
+  HypervisorType hypervisorType=startup.getHypervisorType();
+  List<PhysicalNetworkSetupInfo> networkInfoList=new ArrayList<PhysicalNetworkSetupInfo>();
+  List<PhysicalNetworkVO> physicalNtwkList=_physicalNetworkDao.listByZone(dcId);
+  for (  PhysicalNetworkVO pNtwk : physicalNtwkList) {
+    String publicName=_pNTrafficTypeDao.getNetworkTag(pNtwk.getId(),TrafficType.Public,hypervisorType);
+    String privateName=_pNTrafficTypeDao.getNetworkTag(pNtwk.getId(),TrafficType.Management,hypervisorType);
+    String guestName=_pNTrafficTypeDao.getNetworkTag(pNtwk.getId(),TrafficType.Guest,hypervisorType);
+    String storageName=_pNTrafficTypeDao.getNetworkTag(pNtwk.getId(),TrafficType.Storage,hypervisorType);
+    PhysicalNetworkSetupInfo info=new PhysicalNetworkSetupInfo();
+    info.setPhysicalNetworkId(pNtwk.getId());
+    info.setGuestNetworkName(guestName);
+    info.setPrivateNetworkName(privateName);
+    info.setPublicNetworkName(publicName);
+    info.setStorageNetworkName(storageName);
+    PhysicalNetworkTrafficTypeVO mgmtTraffic=_pNTrafficTypeDao.findBy(pNtwk.getId(),TrafficType.Management);
+    if (mgmtTraffic != null) {
+      String vlan=mgmtTraffic.getVlan();
+      info.setMgmtVlan(vlan);
+    }
+    networkInfoList.add(info);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Sending CheckNetworkCommand to check the Network is setup correctly on Agent");
+  }
+  CheckNetworkCommand nwCmd=new CheckNetworkCommand(networkInfoList);
+  CheckNetworkAnswer answer=(CheckNetworkAnswer)_agentMgr.easySend(hostId,nwCmd);
+  if (answer == null) {
+    s_logger.warn("Unable to get an answer to the CheckNetworkCommand from agent:" + host.getId());
+    throw new ConnectionException(true,"Unable to get an answer to the CheckNetworkCommand from agent: " + host.getId());
+  }
+  if (!answer.getResult()) {
+    s_logger.warn("Unable to setup agent " + hostId + " due to "+ ((answer != null) ? answer.getDetails() : "return null"));
+    String msg="Incorrect Network setup on agent, Reinitialize agent after network names are setup, details : " + answer.getDetails();
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,dcId,host.getPodId(),msg,msg);
+    throw new ConnectionException(true,msg);
+  }
+ else {
+    if (answer.needReconnect()) {
+      throw new ConnectionException(false,"Reinitialize agent after network setup.");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Network setup is correct on Agent");
+    }
+    return;
+  }
 }
