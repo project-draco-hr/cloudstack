@@ -15,6 +15,7 @@
   String path=null;
   Long sharedNetworkDomainId=null;
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  Boolean sourceNatEnabled=cmd.getSourceNatEnabled();
   if ((isSystem == null || caller.getType() == Account.ACCOUNT_TYPE_NORMAL) && id == null) {
     isSystem=false;
   }
@@ -81,8 +82,8 @@
     sb.join("domainNetworkSearch",domainNetworkSearch,sb.entity().getId(),domainNetworkSearch.entity().getNetworkId(),JoinBuilder.JoinType.LEFTOUTER);
   }
   sb.and("removed",sb.entity().getRemoved(),Op.NULL);
+  List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
   if (isSystem == null || !isSystem) {
-    List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
     if (sharedNetworkDomainId != null) {
       networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,isShared,physicalNetworkId),searchFilter,sharedNetworkDomainId));
     }
@@ -95,9 +96,22 @@
     if (!permittedAccounts.isEmpty() || (domainId == null && accountName == null && projectId == null)) {
       networksToReturn.addAll(listAccountSpecificAndZoneLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,isShared,physicalNetworkId),searchFilter,path,permittedAccounts));
     }
-    return networksToReturn;
   }
  else {
-    return _networksDao.search(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,isShared,physicalNetworkId),searchFilter);
+    networksToReturn=_networksDao.search(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,isShared,physicalNetworkId),searchFilter);
+  }
+  if (sourceNatEnabled != null) {
+    List<Network> supportedNetworks=new ArrayList<Network>();
+    for (    Network network : networksToReturn) {
+      NetworkOffering offering=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+      boolean isSupported=areServicesSupportedByNetworkOffering(offering.getId(),Service.SourceNat);
+      if (isSupported == sourceNatEnabled.booleanValue()) {
+        supportedNetworks.add(network);
+      }
+    }
+    return supportedNetworks;
+  }
+ else {
+    return networksToReturn;
   }
 }
