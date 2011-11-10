@@ -2,8 +2,9 @@
   Boolean isAscending=Boolean.parseBoolean(_configDao.getValue("sortkey.algorithm"));
   isAscending=(isAscending == null ? true : isAscending);
   Filter searchFilter=new Filter(NetworkOfferingVO.class,"sortKey",isAscending,cmd.getStartIndex(),cmd.getPageSizeVal());
+  Account caller=UserContext.current().getCaller();
   SearchCriteria<NetworkOfferingVO> sc=_networkOfferingDao.createSearchCriteria();
-  Object id=cmd.getId();
+  Long id=cmd.getId();
   Object name=cmd.getNetworkOfferingName();
   Object displayText=cmd.getDisplayText();
   Object trafficType=cmd.getTrafficType();
@@ -11,9 +12,12 @@
   Object specifyVlan=cmd.getSpecifyVlan();
   Object isShared=cmd.getIsShared();
   Object availability=cmd.getAvailability();
-  Object guestIpType=cmd.getGuestIpType();
+  Object state=cmd.getState();
   Long zoneId=cmd.getZoneId();
   DataCenter zone=null;
+  Long networkId=cmd.getNetworkId();
+  String guestIpType=cmd.getGuestIpType();
+  List<String> supportedServicesStr=cmd.getSupportedServices();
   if (zoneId != null) {
     zone=getZone(zoneId);
   }
@@ -24,14 +28,11 @@
     ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     sc.addAnd("name",SearchCriteria.Op.SC,ssc);
   }
-  if (id != null) {
-    sc.addAnd("id",SearchCriteria.Op.EQ,id);
+  if (name != null) {
+    sc.addAnd("name",SearchCriteria.Op.LIKE,"%" + name + "%");
   }
   if (guestIpType != null) {
     sc.addAnd("guestType",SearchCriteria.Op.EQ,guestIpType);
-  }
-  if (name != null) {
-    sc.addAnd("name",SearchCriteria.Op.LIKE,"%" + name + "%");
   }
   if (displayText != null) {
     sc.addAnd("displayText",SearchCriteria.Op.LIKE,"%" + displayText + "%");
@@ -51,14 +52,60 @@
   if (availability != null) {
     sc.addAnd("availability",SearchCriteria.Op.EQ,availability);
   }
+  if (state != null) {
+    sc.addAnd("state",SearchCriteria.Op.EQ,state);
+  }
   if (zone != null) {
     if (zone.getNetworkType() == NetworkType.Basic) {
       return new ArrayList<NetworkOffering>();
     }
- else     if (zone.isSecurityGroupEnabled()) {
-      sc.addAnd("guestType",SearchCriteria.Op.EQ,GuestIpType.Direct);
-    }
   }
   sc.addAnd("systemOnly",SearchCriteria.Op.EQ,false);
-  return _networkOfferingDao.search(sc,searchFilter);
+  if (networkId != null) {
+    Network network=_networkMgr.getNetwork(networkId);
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to find the network by id=" + networkId);
+    }
+    NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
+    if (offering.isSystemOnly()) {
+      throw new InvalidParameterValueException("Can't update system networks");
+    }
+    _accountMgr.checkAccess(caller,null,network);
+    List<Long> offeringIds=_networkMgr.listNetworkOfferingsForUpgrade(networkId);
+    if (!offeringIds.isEmpty()) {
+      sc.addAnd("id",SearchCriteria.Op.IN,offeringIds.toArray());
+    }
+ else {
+      return new ArrayList<NetworkOffering>();
+    }
+  }
+  if (id != null) {
+    sc.addAnd("id",SearchCriteria.Op.EQ,id);
+  }
+  List<NetworkOfferingVO> offerings=_networkOfferingDao.search(sc,searchFilter);
+  ;
+  if (supportedServicesStr != null && !supportedServicesStr.isEmpty() && !offerings.isEmpty()) {
+    List<NetworkOfferingVO> supportedOfferings=new ArrayList<NetworkOfferingVO>();
+    Service[] suppportedServices=new Service[supportedServicesStr.size()];
+    int i=0;
+    for (    String supportedServiceStr : supportedServicesStr) {
+      Service service=Service.getService(supportedServiceStr);
+      if (service == null) {
+        throw new InvalidParameterValueException("Invalid service specified " + supportedServiceStr);
+      }
+ else {
+        suppportedServices[i]=service;
+      }
+      i++;
+    }
+    for (    NetworkOfferingVO offering : offerings) {
+      if (_networkMgr.areServicesSupportedByNetworkOffering(offering.getId(),suppportedServices)) {
+        supportedOfferings.add(offering);
+      }
+    }
+    return supportedOfferings;
+  }
+ else {
+    return offerings;
+  }
 }

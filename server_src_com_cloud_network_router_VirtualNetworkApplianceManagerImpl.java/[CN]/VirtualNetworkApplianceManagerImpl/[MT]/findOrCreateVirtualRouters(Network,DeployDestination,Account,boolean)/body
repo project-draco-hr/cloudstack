@@ -5,7 +5,30 @@
   }
   long dcId=dest.getDataCenter().getId();
   DataCenterDeployment plan=new DataCenterDeployment(dcId);
-  List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(guestNetwork.getId(),Role.DHCP_FIREWALL_LB_PASSWD_USERDATA);
+  boolean isPodBased=(dest.getDataCenter().getNetworkType() == NetworkType.Basic || _networkMgr.areServicesSupportedInNetwork(guestNetwork.getId(),Service.SecurityGroup)) && guestNetwork.getTrafficType() == TrafficType.Guest;
+  boolean publicNetwork=false;
+  if (_networkMgr.areServicesSupportedInNetwork(guestNetwork.getId(),Service.SourceNat)) {
+    publicNetwork=true;
+  }
+  if (isRedundant && !publicNetwork) {
+    s_logger.error("Didn't support redundant virtual router without public network!");
+    return null;
+  }
+  List<DomainRouterVO> routers;
+  if (publicNetwork) {
+    routers=_routerDao.listByNetworkAndRole(guestNetwork.getId(),Role.DHCP_FIREWALL_LB_PASSWD_USERDATA);
+  }
+ else {
+    Long podId=dest.getPod().getId();
+    if (isPodBased) {
+      routers=_routerDao.listByNetworkAndPodAndRole(guestNetwork.getId(),podId,Role.DHCP_USERDATA);
+      plan=new DataCenterDeployment(dcId,podId,null,null,null,null);
+    }
+ else {
+      routers=_routerDao.listByNetworkAndRole(guestNetwork.getId(),Role.DHCP_USERDATA);
+      plan=new DataCenterDeployment(dcId);
+    }
+  }
   try {
     int routerCount=1;
     if (isRedundant) {
@@ -19,17 +42,22 @@
     if (routers.size() >= routerCount) {
       return routers;
     }
-    PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountService.getSystemUser().getId());
+    if (routers.size() >= 5) {
+      s_logger.error("Too much redundant routers!");
+    }
     NicProfile defaultNic=new NicProfile();
-    defaultNic.setDefaultNic(true);
-    defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
-    defaultNic.setGateway(sourceNatIp.getGateway());
-    defaultNic.setNetmask(sourceNatIp.getNetmask());
-    defaultNic.setMacAddress(sourceNatIp.getMacAddress());
-    defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
-    defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
-    defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
-    defaultNic.setDeviceId(2);
+    if (publicNetwork) {
+      PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountService.getSystemUser().getId());
+      defaultNic.setDefaultNic(true);
+      defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
+      defaultNic.setGateway(sourceNatIp.getGateway());
+      defaultNic.setNetmask(sourceNatIp.getNetmask());
+      defaultNic.setMacAddress(sourceNatIp.getMacAddress());
+      defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+      defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setDeviceId(2);
+    }
     int count=routerCount - routers.size();
     for (int i=0; i < count; i++) {
       long id=_routerDao.getNextInSequence(Long.class,"id");
@@ -41,37 +69,94 @@
       NetworkOfferingVO controlOffering=offerings.get(0);
       NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false,false).get(0);
       List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(3);
-      NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
-      List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false,false);
-      networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),defaultNic));
-      NicProfile gatewayNic=new NicProfile();
-      if (isRedundant) {
-        gatewayNic.setIp4Address(_networkMgr.acquireGuestIpAddress(guestNetwork,null));
+      if (publicNetwork) {
+        NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
+        List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false,false);
+        networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),defaultNic));
+      }
+      String defaultNetworkStartIp=null;
+      if (guestNetwork.getCidr() != null && !publicNetwork) {
+        String startIp=_networkMgr.getStartIpAddress(guestNetwork.getId());
+        if (startIp != null && _ipAddressDao.findByIpAndSourceNetworkId(guestNetwork.getId(),startIp).getAllocatedTime() == null) {
+          defaultNetworkStartIp=startIp;
+        }
+ else         if (s_logger.isDebugEnabled()) {
+          s_logger.debug("First ip " + startIp + " in network id="+ guestNetwork.getId()+ " is already allocated, can't use it for domain router; will get random ip address from the range");
+        }
+      }
+      NicProfile gatewayNic=new NicProfile(defaultNetworkStartIp);
+      if (publicNetwork) {
+        if (isRedundant) {
+          gatewayNic.setIp4Address(_networkMgr.acquireGuestIpAddress(guestNetwork,null));
+        }
+ else {
+          gatewayNic.setIp4Address(guestNetwork.getGateway());
+        }
+        gatewayNic.setBroadcastUri(guestNetwork.getBroadcastUri());
+        gatewayNic.setBroadcastType(guestNetwork.getBroadcastDomainType());
+        gatewayNic.setIsolationUri(guestNetwork.getBroadcastUri());
+        gatewayNic.setMode(guestNetwork.getMode());
+        String gatewayCidr=guestNetwork.getCidr();
+        gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
       }
  else {
-        gatewayNic.setIp4Address(guestNetwork.getGateway());
+        gatewayNic.setDefaultNic(true);
       }
-      gatewayNic.setBroadcastUri(guestNetwork.getBroadcastUri());
-      gatewayNic.setBroadcastType(guestNetwork.getBroadcastDomainType());
-      gatewayNic.setIsolationUri(guestNetwork.getBroadcastUri());
-      gatewayNic.setMode(guestNetwork.getMode());
-      String gatewayCidr=guestNetwork.getCidr();
-      gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
       networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
       networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
-      HypervisorType hyType;
-      if (dest.getCluster().getHypervisorType() == HypervisorType.Ovm) {
-        hyType=getAClusterToStartDomainRouterForOvm(dest.getCluster().getPodId());
+      Long offering_id=_networkOfferingDao.findById(guestNetwork.getNetworkOfferingId()).getServiceOfferingId();
+      if (offering_id == null) {
+        offering_id=_offering.getId();
       }
+      VirtualRouterProviderType type=VirtualRouterProviderType.VirtualRouterElement;
+      String typeString="VirtualRouter";
+      if (isRedundant) {
+        type=VirtualRouterProviderType.RedundantVirtualRouterElement;
+        typeString="RedundantVirtualRouter";
+      }
+      Long physicalNetworkId=network.getPhysicalNetworkId();
+      if (physicalNetworkId == null) {
+        physicalNetworkId=_networkMgr.findPhysicalNetworkId(network.getDataCenterId(),null);
+      }
+      PhysicalNetworkServiceProvider provider=_physicalProviderDao.findByServiceProvider(physicalNetworkId,typeString);
+      if (provider == null) {
+        throw new CloudRuntimeException("Cannot find service provider " + typeString + " in physical network "+ physicalNetworkId);
+      }
+      VirtualRouterProvider vrProvider=_vrProviderDao.findByNspIdAndType(provider.getId(),type);
+      if (vrProvider == null) {
+        throw new CloudRuntimeException("Cannot find virtual router provider " + typeString + " as service provider "+ provider.getId());
+      }
+      ServiceOfferingVO routerOffering=_serviceOfferingDao.findById(offering_id);
+      List<HypervisorType> supportedHypervisors=_resourceMgr.getSupportedHypervisorTypes(dest.getDataCenter().getId());
+      int retry=0;
+      for (      HypervisorType hType : supportedHypervisors) {
+        try {
+          s_logger.debug("Allocating the domR with the hypervisor type " + hType);
+          VMTemplateVO template=_templateDao.findRoutingTemplate(hType);
+          if (template == null) {
+            s_logger.debug(hType + " won't support system vm, skip it");
+            continue;
+          }
+          router=new DomainRouterVO(id,routerOffering.getId(),vrProvider.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,routerOffering.getOfferHA(),false);
+          if (!publicNetwork) {
+            router.setRole(Role.DHCP_USERDATA);
+          }
+          router=_itMgr.allocate(router,template,routerOffering,networks,plan,null,owner);
+          break;
+        }
+ catch (        InsufficientCapacityException ex) {
+          if (retry < 2) {
+            s_logger.debug("Failed to allocate the domR with hypervisor type " + hType + ", retrying one more time");
+          }
  else {
-        hyType=dest.getCluster().getHypervisorType();
+            throw ex;
+          }
+        }
+ finally {
+          retry++;
+        }
       }
-      VMTemplateVO template=_templateDao.findRoutingTemplate(hyType);
-      if (routers.size() >= 5) {
-        s_logger.error("Too much redundant routers!");
-      }
-      router=new DomainRouterVO(id,_offering.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,_offering.getOfferHA(),false);
-      router=_itMgr.allocate(router,template,_offering,networks,plan,null,owner);
+      routers.add(router);
       UserStatisticsVO stats=_userStatsDao.findBy(owner.getId(),dcId,router.getNetworkId(),null,router.getId(),router.getType().toString());
       if (stats == null) {
         if (s_logger.isDebugEnabled()) {
@@ -80,7 +165,6 @@
         stats=new UserStatisticsVO(owner.getId(),dcId,null,router.getId(),router.getType().toString(),guestNetwork.getId());
         _userStatsDao.persist(stats);
       }
-      routers.add(router);
     }
   }
   finally {
