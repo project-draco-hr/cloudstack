@@ -1,0 +1,49 @@
+{
+  List<List<String>> tablesToCheck=new ArrayList<List<String>>();
+  List<String> vnet=new ArrayList<String>();
+  vnet.add(0,"op_dc_vnet_alloc");
+  vnet.add(1,"physical_network_id");
+  vnet.add(2,"there are allocated vnets for this physical network");
+  tablesToCheck.add(vnet);
+  List<String> networks=new ArrayList<String>();
+  networks.add(0,"networks");
+  networks.add(1,"physical_network_id");
+  networks.add(2,"there are networks associated to this physical network");
+  tablesToCheck.add(networks);
+  List<String> publicIP=new ArrayList<String>();
+  publicIP.add(0,"user_ip_address");
+  publicIP.add(1,"physical_network_id");
+  publicIP.add(2,"there are public IP addresses allocated for this physical network");
+  tablesToCheck.add(publicIP);
+  for (  List<String> table : tablesToCheck) {
+    String tableName=table.get(0);
+    String column=table.get(1);
+    String errorMsg=table.get(2);
+    String dbName="cloud";
+    String selectSql="SELECT * FROM `" + dbName + "`.`"+ tableName+ "` WHERE "+ column+ " = ?";
+    if (tableName.equals("networks")) {
+      selectSql+=" AND removed is NULL";
+    }
+    if (tableName.equals("op_dc_vnet_alloc")) {
+      selectSql+=" AND taken IS NOT NULL";
+    }
+    if (tableName.equals("user_ip_address")) {
+      selectSql+=" AND state!='Free'";
+    }
+    if (tableName.equals("op_dc_ip_address_alloc")) {
+      selectSql+=" AND taken IS NOT NULL";
+    }
+    Transaction txn=Transaction.currentTxn();
+    try {
+      PreparedStatement stmt=txn.prepareAutoCloseStatement(selectSql);
+      stmt.setLong(1,physicalNetworkId);
+      ResultSet rs=stmt.executeQuery();
+      if (rs != null && rs.next()) {
+        throw new CloudRuntimeException("The Physical Network is not deletable because " + errorMsg);
+      }
+    }
+ catch (    SQLException ex) {
+      throw new CloudRuntimeException("The Management Server failed to detect if physical network is deletable. Please contact Cloud Support.");
+    }
+  }
+}

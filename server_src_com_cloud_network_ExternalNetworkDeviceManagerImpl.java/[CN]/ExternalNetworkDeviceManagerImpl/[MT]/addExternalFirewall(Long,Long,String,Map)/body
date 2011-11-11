@@ -1,0 +1,132 @@
+{
+  PhysicalNetworkVO pNetwork=null;
+  DataCenterVO zone=null;
+  NetworkDevice ntwkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  String url=null;
+  String username=null;
+  String password=null;
+  if (deviceParamList != null) {
+    url=(String)deviceParamList.get(ApiConstants.URL);
+    username=(String)deviceParamList.get(ApiConstants.USERNAME);
+    password=(String)deviceParamList.get(ApiConstants.PASSWORD);
+  }
+  if (((zoneId == null) && (physicalNetworkId == null)) || (ntwkDevice == null) || (url == null)|| (username == null)|| (password == null)) {
+    throw new InvalidParameterValueException("Atleast one of the required parameters (url, username, password," + " zone id/physical network id) is not specified or a valid parameter.");
+  }
+  if (physicalNetworkId != null) {
+    pNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNetwork == null) {
+      throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+    }
+  }
+  if (zoneId != null) {
+    zone=_dcDao.findById(zoneId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("Could not find zone with ID: " + zoneId);
+    }
+    if (pNetwork == null) {
+      List<PhysicalNetworkVO> physicalNetworks=_physicalNetworkDao.listByZone(zoneId);
+      if ((physicalNetworks == null) || (physicalNetworks.size() > 1)) {
+        throw new InvalidParameterValueException("There are multiple physical networks configured in zone with ID: " + zoneId + ". Physical network ID must be passed to select a physical network in this zone.");
+      }
+      pNetwork=physicalNetworks.get(0);
+    }
+  }
+  PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(pNetwork.getId(),ntwkDevice.getNetworkServiceProvder());
+  if ((ntwkSvcProvider == null) || (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) || (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Disabled)) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is not added or in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  URI uri;
+  try {
+    uri=new URI(url);
+  }
+ catch (  Exception e) {
+    s_logger.debug(e);
+    throw new InvalidParameterValueException(e.getMessage());
+  }
+  String ipAddress=uri.getHost();
+  Map<String,String> params=new HashMap<String,String>();
+  UrlUtil.parseQueryParameters(uri.getQuery(),true,params);
+  String publicInterface=params.get("publicinterface");
+  String usageInterface=params.get("usageinterface");
+  String privateInterface=params.get("privateinterface");
+  String publicZone=params.get("publiczone");
+  String privateZone=params.get("privatezone");
+  String numRetries=params.get("numretries");
+  String timeout=params.get("timeout");
+  ServerResource resource;
+  String guid;
+  if (publicInterface == null) {
+    throw new InvalidParameterValueException("Please specify a public interface.");
+  }
+  if (usageInterface != null) {
+    if (!usageInterface.contains(".")) {
+      usageInterface+=".0";
+    }
+  }
+  if (privateInterface != null) {
+    if (privateInterface.contains(".")) {
+      throw new InvalidParameterValueException("The private interface name must not have a unit identifier.");
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("Please specify a private interface.");
+  }
+  if (publicZone == null) {
+    publicZone="untrust";
+  }
+  if (privateZone == null) {
+    privateZone="trust";
+  }
+  if (numRetries == null) {
+    numRetries="1";
+  }
+  if (timeout == null) {
+    timeout="300";
+  }
+  if (deviceName == null) {
+    deviceName=NetworkDevice.JuniperSRXFirewall.getName();
+  }
+  if (deviceName.equalsIgnoreCase(NetworkDevice.JuniperSRXFirewall.getName())) {
+    resource=new JuniperSrxResource();
+    guid=getExternalNetworkResourceGuid(zoneId,ExternalNetworkResourceName.JuniperSrx,ipAddress);
+  }
+ else {
+    throw new CloudRuntimeException("An unsupported networt device type is added as external firewall.");
+  }
+  Map hostDetails=new HashMap<String,String>();
+  hostDetails.put("zoneId",String.valueOf(zoneId));
+  hostDetails.put("ip",ipAddress);
+  hostDetails.put("username",username);
+  hostDetails.put("password",password);
+  hostDetails.put("publicInterface",publicInterface);
+  hostDetails.put("privateInterface",privateInterface);
+  hostDetails.put("publicZone",publicZone);
+  hostDetails.put("privateZone",privateZone);
+  hostDetails.put("numRetries",numRetries);
+  hostDetails.put("timeout",timeout);
+  hostDetails.put("guid",guid);
+  hostDetails.put("name",guid);
+  if (usageInterface != null) {
+    hostDetails.put("usageInterface",usageInterface);
+  }
+  try {
+    resource.configure(guid,hostDetails);
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+  Host externalFirewall=_resourceMgr.addHost(zoneId,resource,Host.Type.ExternalFirewall,hostDetails);
+  if (externalFirewall != null) {
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    _dcDao.update(zone.getId(),zone);
+    ExternalFirewallDeviceVO device=new ExternalFirewallDeviceVO(externalFirewall.getId(),pNetwork.getId(),ntwkSvcProvider.getProviderName());
+    _externalFirewallDeviceDao.persist(device);
+    txn.commit();
+    return externalFirewall;
+  }
+ else {
+    return null;
+  }
+}

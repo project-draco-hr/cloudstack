@@ -10,6 +10,7 @@
   Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
   Long networkId=cmd.getNetworkID();
   String networkVlanId=null;
+  Long physicalNetworkId=cmd.getPhysicalNetworkId();
   String accountName=cmd.getAccountName();
   Long projectId=cmd.getProjectId();
   Long domainId=cmd.getDomainId();
@@ -38,11 +39,45 @@
     }
  else {
       zoneId=network.getDataCenterId();
+      physicalNetworkId=network.getPhysicalNetworkId();
     }
+  }
+  PhysicalNetworkVO pNtwk=null;
+  if (physicalNetworkId != null) {
+    pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNtwk == null) {
+      throw new InvalidParameterValueException("Unable to find Physical Network with id=" + physicalNetworkId);
+    }
+  }
+  if (zoneId == null && pNtwk != null) {
+    zoneId=pNtwk.getDataCenterId();
   }
   DataCenterVO zone=_zoneDao.findById(zoneId);
   if (zone == null) {
     throw new InvalidParameterValueException("Unable to find zone by id " + zoneId);
+  }
+  if (physicalNetworkId == null) {
+    if (network != null && network.getPhysicalNetworkId() != null) {
+      physicalNetworkId=network.getPhysicalNetworkId();
+    }
+ else {
+      if (forVirtualNetwork) {
+        physicalNetworkId=_networkMgr.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Public).getId();
+      }
+ else {
+        if (zone.getNetworkType() == DataCenter.NetworkType.Basic) {
+          physicalNetworkId=_networkMgr.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Guest).getId();
+        }
+ else         if (zone.getNetworkType() == DataCenter.NetworkType.Advanced) {
+          if (zone.isSecurityGroupEnabled()) {
+            physicalNetworkId=_networkMgr.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Guest).getId();
+          }
+ else {
+            throw new InvalidParameterValueException("Physical Network Id is null, please provide the Network id for Direct vlan creation ");
+          }
+        }
+      }
+    }
   }
   Account caller=UserContext.current().getCaller();
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
@@ -62,7 +97,7 @@
  else {
     if (network == null) {
       if (zone.getNetworkType() == DataCenter.NetworkType.Basic) {
-        networkId=_networkMgr.getSystemNetworkByZoneAndTrafficType(zoneId,TrafficType.Guest).getId();
+        networkId=_networkMgr.getExclusiveGuestNetwork(zoneId).getId();
       }
  else {
         network=_networkMgr.getNetworkWithSecurityGroupEnabled(zoneId);
@@ -72,8 +107,8 @@
         networkId=network.getId();
       }
     }
- else     if (network.getGuestType() == null || network.getGuestType() == GuestIpType.Virtual) {
-      throw new InvalidParameterValueException("Can't create direct vlan for network id=" + networkId + " with GuestType: "+ network.getGuestType());
+ else     if (network.getGuestType() == null || network.getGuestType() == Network.GuestType.Isolated) {
+      throw new InvalidParameterValueException("Can't create direct vlan for network id=" + networkId + " with type: "+ network.getGuestType());
     }
   }
   if (endIP == null && startIP != null) {
@@ -89,7 +124,7 @@
   if (vlanId != null && networkVlanId != null && !networkVlanId.equalsIgnoreCase(vlanId)) {
     throw new InvalidParameterValueException("Vlan doesn't match vlan of the network");
   }
-  if (forVirtualNetwork || zone.getNetworkType() == DataCenter.NetworkType.Basic || network.isSecurityGroupEnabled()) {
+  if (forVirtualNetwork || zone.getNetworkType() == DataCenter.NetworkType.Basic || zone.isSecurityGroupEnabled()) {
     if (vlanGateway == null || vlanNetmask == null || zoneId == null) {
       throw new InvalidParameterValueException("Gateway, netmask and zoneId have to be passed in for virtual and direct untagged networks");
     }
@@ -130,11 +165,11 @@
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  Vlan vlan=createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,vlanGateway,vlanNetmask,forVirtualNetwork,vlanId,account,networkId);
+  Vlan vlan=createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,vlanGateway,vlanNetmask,forVirtualNetwork,vlanId,account,networkId,physicalNetworkId);
   if (associateIpRangeToAccount) {
     _networkMgr.associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId(),network);
     if (network == null) {
-      List<? extends Network> networks=_networkMgr.getVirtualNetworksOwnedByAccountInZone(zoneId,account);
+      List<? extends Network> networks=_networkMgr.getIsolatedNetworksOwnedByAccountInZone(zoneId,account);
       network=networks.get(0);
     }
     if (network == null) {

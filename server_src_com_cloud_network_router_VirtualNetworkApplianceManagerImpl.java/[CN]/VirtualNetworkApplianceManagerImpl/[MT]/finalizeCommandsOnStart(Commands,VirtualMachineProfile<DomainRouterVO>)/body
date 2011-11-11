@@ -21,12 +21,24 @@
     return false;
   }
   cmds.addCommand("checkSsh",new CheckSshCommand(profile.getInstanceName(),controlNic.getIp4Address(),3922,5,20));
+  final GetDomRVersionCmd command=new GetDomRVersionCmd();
+  command.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+  command.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+  cmds.addCommand("getDomRVersion",command);
   cmds.addCommand("networkUsage",new NetworkUsageCommand(controlNic.getIp4Address(),router.getHostName(),"create"));
-  boolean restartNetwork=true;
-  if (profile.getParameter(Param.RestartNetwork) != null && (Boolean)profile.getParameter(Param.RestartNetwork) == false) {
-    restartNetwork=false;
+  boolean reprogramNetwork=true;
+  if (profile.getParameter(Param.ReProgramNetwork) != null && (Boolean)profile.getParameter(Param.ReProgramNetwork) == false) {
+    reprogramNetwork=false;
   }
-  if (router.getRole() == VirtualRouter.Role.DHCP_FIREWALL_LB_PASSWD_USERDATA && restartNetwork) {
+  VirtualRouterProvider vrProvider=_vrProviderDao.findById(router.getElementId());
+  if (vrProvider == null) {
+    throw new CloudRuntimeException("Cannot find related virtual router provider of router: " + router.getHostName());
+  }
+  Provider provider=Network.Provider.getProvider(vrProvider.getType().toString());
+  if (provider == null) {
+    throw new CloudRuntimeException("Cannot find related provider of virtual router provider: " + vrProvider.getType().toString());
+  }
+  if (reprogramNetwork) {
     s_logger.debug("Resending ipAssoc, port forwarding, load balancing rules as a part of Virtual router start");
     long networkId=router.getNetworkId();
     long ownerId=router.getAccountId();
@@ -41,24 +53,36 @@
     }
     s_logger.debug("Found " + publicIps.size() + " ip(s) to apply as a part of domR "+ router+ " start.");
     if (!publicIps.isEmpty()) {
-      createAssociateIPCommands(router,publicIps,cmds,0);
+      if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.Firewall,provider)) {
+        createAssociateIPCommands(router,publicIps,cmds,0);
+      }
       List<RemoteAccessVpn> vpns=new ArrayList<RemoteAccessVpn>();
       List<PortForwardingRule> pfRules=new ArrayList<PortForwardingRule>();
       List<FirewallRule> staticNatFirewallRules=new ArrayList<FirewallRule>();
       List<StaticNat> staticNats=new ArrayList<StaticNat>();
       List<FirewallRule> firewallRules=new ArrayList<FirewallRule>();
       for (      PublicIpAddress ip : publicIps) {
-        pfRules.addAll(_pfRulesDao.listForApplication(ip.getId()));
-        staticNatFirewallRules.addAll(_rulesDao.listByIpAndPurpose(ip.getId(),Purpose.StaticNat));
-        firewallRules.addAll(_rulesDao.listByIpAndPurpose(ip.getId(),Purpose.Firewall));
-        RemoteAccessVpn vpn=_vpnDao.findById(ip.getId());
-        if (vpn != null) {
-          vpns.add(vpn);
+        if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.PortForwarding,provider)) {
+          pfRules.addAll(_pfRulesDao.listForApplication(ip.getId()));
         }
-        if (ip.isOneToOneNat()) {
-          String dstIp=_networkMgr.getIpInNetwork(ip.getAssociatedWithVmId(),networkId);
-          StaticNatImpl staticNat=new StaticNatImpl(ip.getAccountId(),ip.getDomainId(),networkId,ip.getId(),dstIp,false);
-          staticNats.add(staticNat);
+        if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.StaticNat,provider)) {
+          staticNatFirewallRules.addAll(_rulesDao.listByIpAndPurpose(ip.getId(),Purpose.StaticNat));
+        }
+        if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.Firewall,provider)) {
+          firewallRules.addAll(_rulesDao.listByIpAndPurpose(ip.getId(),Purpose.Firewall));
+        }
+        if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.Vpn,provider)) {
+          RemoteAccessVpn vpn=_vpnDao.findById(ip.getId());
+          if (vpn != null) {
+            vpns.add(vpn);
+          }
+        }
+        if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.StaticNat,provider)) {
+          if (ip.isOneToOneNat()) {
+            String dstIp=_networkMgr.getIpInNetwork(ip.getAssociatedWithVmId(),networkId);
+            StaticNatImpl staticNat=new StaticNatImpl(ip.getAccountId(),ip.getDomainId(),networkId,ip.getId(),dstIp,false);
+            staticNats.add(staticNat);
+          }
         }
       }
       s_logger.debug("Found " + staticNats.size() + " static nat(s) to apply as a part of domR "+ router+ " start.");
@@ -89,10 +113,12 @@
       }
       List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(networkId);
       List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
-      for (      LoadBalancerVO lb : lbs) {
-        List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
-        LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
-        lbRules.add(loadBalancing);
+      if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.Lb,provider)) {
+        for (        LoadBalancerVO lb : lbs) {
+          List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+          LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+          lbRules.add(loadBalancing);
+        }
       }
       s_logger.debug("Found " + lbRules.size() + " load balancing rule(s) to apply as a part of domR "+ router+ " start.");
       if (!lbRules.isEmpty()) {
@@ -100,13 +126,13 @@
       }
     }
   }
-  s_logger.debug("Reapplying dhcp entries as a part of domR " + router + " start...");
-  createDhcpEntriesCommands(router,cmds);
-  s_logger.debug("Reapplying vm data (userData and metaData) entries as a part of domR " + router + " start...");
-  createVmDataCommands(router,cmds);
-  final GetDomRVersionCmd command=new GetDomRVersionCmd();
-  command.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
-  command.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
-  cmds.addCommand("getDomRVersion",command);
+  if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.Dhcp,provider)) {
+    s_logger.debug("Reapplying dhcp entries as a part of domR " + router + " start...");
+    createDhcpEntriesCommands(router,cmds);
+  }
+  if (_networkMgr.isProviderSupportedInNetwork(router.getNetworkId(),Service.UserData,provider)) {
+    s_logger.debug("Reapplying vm data (userData and metaData) entries as a part of domR " + router + " start...");
+    createVmDataCommands(router,cmds);
+  }
   return true;
 }

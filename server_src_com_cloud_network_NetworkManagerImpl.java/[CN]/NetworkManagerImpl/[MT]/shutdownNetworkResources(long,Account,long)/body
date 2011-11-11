@@ -1,0 +1,110 @@
+{
+  boolean success=true;
+  List<PortForwardingRuleVO> pfRules=_portForwardingRulesDao.listByNetwork(networkId);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Releasing " + pfRules.size() + " port forwarding rules for network id="+ networkId+ " as a part of shutdownNetworkRules");
+  }
+  for (  PortForwardingRuleVO pfRule : pfRules) {
+    s_logger.trace("Marking pf rule " + pfRule + " with Revoke state");
+    pfRule.setState(FirewallRule.State.Revoke);
+  }
+  try {
+    if (!_firewallMgr.applyRules(pfRules,true,false)) {
+      s_logger.warn("Failed to cleanup pf rules as a part of shutdownNetworkRules");
+      success=false;
+    }
+  }
+ catch (  ResourceUnavailableException ex) {
+    s_logger.warn("Failed to cleanup pf rules as a part of shutdownNetworkRules due to ",ex);
+    success=false;
+  }
+  List<FirewallRuleVO> firewallStaticNatRules=_firewallDao.listByNetworkAndPurpose(networkId,Purpose.StaticNat);
+  List<StaticNatRule> staticNatRules=new ArrayList<StaticNatRule>();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Releasing " + firewallStaticNatRules.size() + " static nat rules for network id="+ networkId+ " as a part of shutdownNetworkRules");
+  }
+  for (  FirewallRuleVO firewallStaticNatRule : firewallStaticNatRules) {
+    s_logger.trace("Marking static nat rule " + firewallStaticNatRule + " with Revoke state");
+    IpAddress ip=_ipAddressDao.findById(firewallStaticNatRule.getSourceIpAddressId());
+    FirewallRuleVO ruleVO=_firewallDao.findById(firewallStaticNatRule.getId());
+    if (ip == null || !ip.isOneToOneNat() || ip.getAssociatedWithVmId() == null) {
+      throw new InvalidParameterValueException("Source ip address of the rule id=" + firewallStaticNatRule.getId() + " is not static nat enabled");
+    }
+    String dstIp=getIpInNetwork(ip.getAssociatedWithVmId(),firewallStaticNatRule.getNetworkId());
+    ruleVO.setState(FirewallRule.State.Revoke);
+    staticNatRules.add(new StaticNatRuleImpl(ruleVO,dstIp));
+  }
+  try {
+    if (!_firewallMgr.applyRules(staticNatRules,true,false)) {
+      s_logger.warn("Failed to cleanup static nat rules as a part of shutdownNetworkRules");
+      success=false;
+    }
+  }
+ catch (  ResourceUnavailableException ex) {
+    s_logger.warn("Failed to cleanup static nat rules as a part of shutdownNetworkRules due to ",ex);
+    success=false;
+  }
+  List<LoadBalancerVO> lbs=_lbDao.listByNetworkId(networkId);
+  List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+  for (  LoadBalancerVO lb : lbs) {
+    s_logger.trace("Marking lb rule " + lb + " with Revoke state");
+    lb.setState(FirewallRule.State.Revoke);
+    List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+    for (    LbDestination dst : dstList) {
+      s_logger.trace("Marking lb destination " + dst + " with Revoke state");
+      dst.setRevoked(true);
+    }
+    LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList);
+    lbRules.add(loadBalancing);
+  }
+  try {
+    if (!_firewallMgr.applyRules(lbRules,true,false)) {
+      s_logger.warn("Failed to cleanup lb rules as a part of shutdownNetworkRules");
+      success=false;
+    }
+  }
+ catch (  ResourceUnavailableException ex) {
+    s_logger.warn("Failed to cleanup lb rules as a part of shutdownNetworkRules due to ",ex);
+    success=false;
+  }
+  List<FirewallRuleVO> firewallRules=_firewallDao.listByNetworkAndPurpose(networkId,Purpose.Firewall);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Releasing " + firewallRules.size() + " firewall rules for network id="+ networkId+ " as a part of shutdownNetworkRules");
+  }
+  for (  FirewallRuleVO firewallRule : firewallRules) {
+    s_logger.trace("Marking firewall rule " + firewallRule + " with Revoke state");
+    firewallRule.setState(FirewallRule.State.Revoke);
+  }
+  try {
+    if (!_firewallMgr.applyRules(firewallRules,true,false)) {
+      s_logger.warn("Failed to cleanup firewall rules as a part of shutdownNetworkRules");
+      success=false;
+    }
+  }
+ catch (  ResourceUnavailableException ex) {
+    s_logger.warn("Failed to cleanup firewall rules as a part of shutdownNetworkRules due to ",ex);
+    success=false;
+  }
+  Network network=getNetwork(networkId);
+  List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(networkId,null);
+  List<PublicIp> publicIpsToRelease=new ArrayList<PublicIp>();
+  if (userIps != null && !userIps.isEmpty()) {
+    for (    IPAddressVO userIp : userIps) {
+      if (!userIp.isSourceNat()) {
+        userIp.setState(State.Releasing);
+      }
+      PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
+      publicIpsToRelease.add(publicIp);
+    }
+  }
+  try {
+    if (!applyIpAssociations(network,true,publicIpsToRelease)) {
+      s_logger.warn("Unable to apply ip address associations for " + network + " as a part of shutdownNetworkRules");
+      success=false;
+    }
+  }
+ catch (  ResourceUnavailableException e) {
+    throw new CloudRuntimeException("We should never get to here because we used true when applyIpAssociations",e);
+  }
+  return success;
+}

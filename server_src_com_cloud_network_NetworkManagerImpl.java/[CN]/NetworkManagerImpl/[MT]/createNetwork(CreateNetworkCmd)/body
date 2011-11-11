@@ -1,6 +1,5 @@
 {
   Long networkOfferingId=cmd.getNetworkOfferingId();
-  Long zoneId=cmd.getZoneId();
   String gateway=cmd.getGateway();
   String startIP=cmd.getStartIp();
   String endIP=cmd.getEndIp();
@@ -9,35 +8,47 @@
   String vlanId=cmd.getVlan();
   String name=cmd.getNetworkName();
   String displayText=cmd.getDisplayText();
-  Boolean isShared=cmd.getIsShared();
   Boolean isDefault=cmd.isDefault();
   Long userId=UserContext.current().getCallerUserId();
   Account caller=UserContext.current().getCaller();
-  List<String> tags=cmd.getTags();
   boolean isDomainSpecific=false;
-  if (tags != null && tags.size() > 1) {
-    throw new InvalidParameterException("Only one tag can be specified for a network at this time");
-  }
-  Transaction txn=Transaction.currentTxn();
+  Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  Long zoneId=cmd.getZoneId();
+  String aclTypeStr=cmd.getAclType();
   NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
   if (networkOffering == null || networkOffering.isSystemOnly()) {
     throw new InvalidParameterValueException("Unable to find network offeirng by id " + networkOfferingId);
   }
-  if (cmd.getDomainId() != null && cmd.getAccountName() == null) {
-    if (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != GuestIpType.Direct) {
-      throw new InvalidParameterValueException("Domain level networks are supported just for traffic type " + TrafficType.Guest + " and guest Ip type "+ GuestIpType.Direct);
+  if (networkOffering.getState() != NetworkOffering.State.Enabled) {
+    throw new InvalidParameterValueException("Can't use network offering id=" + networkOfferingId + " as its state is not "+ NetworkOffering.State.Enabled);
+  }
+  ACLType aclType=null;
+  if (aclTypeStr != null) {
+    if (aclTypeStr.equalsIgnoreCase(ACLType.Account.toString())) {
+      aclType=ACLType.Account;
     }
- else     if (isShared == null || !isShared) {
-      throw new InvalidParameterValueException("Network dedicated to domain should be shared");
+ else     if (aclTypeStr.equalsIgnoreCase(ACLType.Domain.toString())) {
+      aclType=ACLType.Domain;
     }
  else {
+      throw new InvalidParameterValueException("Incorrect aclType specified. Check the API documentation for supported types");
+    }
+  }
+  if (aclType == ACLType.Domain) {
+    if (!_accountMgr.isAdmin(caller.getType())) {
+      throw new PermissionDeniedException("Only admin can create networks with aclType=Domain");
+    }
+    if (cmd.getDomainId() != null) {
+      if (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != Network.GuestType.Shared) {
+        throw new InvalidParameterValueException("Domain level networks are supported just for traffic type " + TrafficType.Guest + " and guest type "+ Network.GuestType.Shared);
+      }
       DomainVO domain=_domainDao.findById(cmd.getDomainId());
       if (domain == null) {
         throw new InvalidParameterValueException("Unable to find domain by id " + cmd.getDomainId());
       }
       _accountMgr.checkAccess(caller,domain);
-      isDomainSpecific=true;
     }
+    isDomainSpecific=true;
   }
   Account owner=null;
   if (cmd.getAccountName() != null && cmd.getDomainId() != null) {
@@ -50,18 +61,19 @@
   if (endIP == null && startIP != null) {
     endIP=startIP;
   }
-  if (zoneId == null) {
-    throw new InvalidParameterValueException("Please specify a valid zone.");
+  PhysicalNetwork pNtwk=null;
+  if (physicalNetworkId != null) {
+    pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNtwk == null) {
+      throw new InvalidParameterValueException("Unable to find physical network by id " + physicalNetworkId);
+    }
+    if (pNtwk.getState() != PhysicalNetwork.State.Enabled) {
+      throw new InvalidParameterValueException("Physical network id " + physicalNetworkId + " is in incorrect state: "+ pNtwk.getState());
+    }
   }
-  DataCenterVO zone=_dcDao.findById(zoneId);
-  if (zone == null) {
-    throw new InvalidParameterValueException("Please specify a valid zone.");
-  }
+  DataCenter zone=_dcDao.findById(zoneId);
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
-    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
-  }
-  if (networkOffering.getAvailability() == Availability.Unavailable) {
-    throw new InvalidParameterValueException("Can't create network; network offering id=" + networkOfferingId + " is "+ networkOffering.getAvailability());
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zone.getId());
   }
   ArrayList<String> networkConfigs=new ArrayList<String>();
   networkConfigs.add(gateway);
@@ -85,8 +97,8 @@
   if (gateway != null && netmask != null) {
     cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
   }
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != GuestIpType.Virtual)) {
-    throw new InvalidParameterValueException("Regular user can create a network only from the network offering having traffic type " + TrafficType.Guest + " and Guest Ip type "+ GuestIpType.Virtual);
+  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat))) {
+    throw new InvalidParameterValueException("Regular user can create a network only from the network offering having traffic type " + TrafficType.Guest + " and network type "+ Network.GuestType.Isolated+ " with a service "+ Service.SourceNat.getName()+ " enabled");
   }
   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (cidr != null || vlanId != null)) {
     throw new InvalidParameterValueException("Regular user is not allowed to specify gateway/netmask/ipRange/vlanId");
@@ -98,17 +110,21 @@
       throw new InvalidParameterValueException("Cidr size can't be less than " + _cidrLimit);
     }
   }
+  Transaction txn=Transaction.currentTxn();
   txn.start();
   Long domainId=null;
   if (isDomainSpecific) {
-    domainId=cmd.getDomainId();
+    if (cmd.getDomainId() != null) {
+      domainId=cmd.getDomainId();
+    }
+ else {
+      domainId=_domainMgr.getDomain(Domain.ROOT_DOMAIN).getId();
+    }
   }
-  Network network=createNetwork(networkOfferingId,name,displayText,isShared,isDefault,zoneId,gateway,cidr,vlanId,networkDomain,owner,false,domainId,tags);
-  if (network.getGuestType() == GuestIpType.Direct) {
-    owner=null;
-  }
-  if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && network.getGuestType() == GuestIpType.Direct && defineNetworkConfig) {
-    _configMgr.createVlanAndPublicIpRange(userId,zoneId,null,startIP,endIP,gateway,netmask,false,vlanId,owner,network.getId());
+  Network network=createNetwork(networkOfferingId,name,displayText,isDefault,gateway,cidr,vlanId,networkDomain,owner,false,domainId,pNtwk,zoneId,aclType);
+  boolean createVlan=((network.getGuestType() == Network.GuestType.Shared) || (network.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat)));
+  if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && createVlan && defineNetworkConfig) {
+    _configMgr.createVlanAndPublicIpRange(userId,pNtwk.getDataCenterId(),null,startIP,endIP,gateway,netmask,false,vlanId,null,network.getId(),physicalNetworkId);
   }
   txn.commit();
   return network;

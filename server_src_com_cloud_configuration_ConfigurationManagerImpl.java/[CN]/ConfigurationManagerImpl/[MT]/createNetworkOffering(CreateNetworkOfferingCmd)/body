@@ -4,14 +4,12 @@
   String displayText=cmd.getDisplayText();
   String tags=cmd.getTags();
   String trafficTypeString=cmd.getTraffictype();
-  Boolean specifyVlan=cmd.getSpecifyVlan();
+  boolean specifyVlan=cmd.getSpecifyVlan();
   String availabilityStr=cmd.getAvailability();
-  String guestIpTypeString=cmd.getGuestIpType();
-  Boolean redundantRouter=cmd.getRedundantRouter();
   Integer networkRate=cmd.getNetworkRate();
   TrafficType trafficType=null;
-  GuestIpType guestIpType=null;
   Availability availability=null;
+  Network.GuestType guestType=null;
   for (  TrafficType tType : TrafficType.values()) {
     if (tType.name().equalsIgnoreCase(trafficTypeString)) {
       trafficType=tType;
@@ -21,14 +19,17 @@
   if (trafficType == null) {
     throw new InvalidParameterValueException("Invalid value for traffictype. Supported traffic types: Public, Management, Control, Guest, Vlan or Storage");
   }
-  for (  GuestIpType gType : GuestIpType.values()) {
-    if (gType.name().equalsIgnoreCase(guestIpTypeString)) {
-      guestIpType=gType;
+  if (trafficType != TrafficType.Guest) {
+    throw new InvalidParameterValueException("Only traffic type " + TrafficType.Guest + " is supported in the current release");
+  }
+  for (  Network.GuestType offType : Network.GuestType.values()) {
+    if (offType.name().equalsIgnoreCase(cmd.getGuestIpType())) {
+      guestType=offType;
       break;
     }
   }
-  if (guestIpType == null) {
-    throw new InvalidParameterValueException("Invalid guest IP type; can have Direct or Virtual value");
+  if (guestType == null) {
+    throw new InvalidParameterValueException("Invalid \"type\" parameter is given; can have Shared and Isolated values");
   }
   for (  Availability avlb : Availability.values()) {
     if (avlb.name().equalsIgnoreCase(availabilityStr)) {
@@ -36,8 +37,102 @@
     }
   }
   if (availability == null) {
-    throw new InvalidParameterValueException("Invalid value for Availability. Supported types: " + Availability.Required + ", "+ Availability.Optional+ ", "+ Availability.Unavailable);
+    throw new InvalidParameterValueException("Invalid value for Availability. Supported types: " + Availability.Required + ", "+ Availability.Optional);
   }
   Integer maxConnections=cmd.getMaxconnections();
-  return createNetworkOffering(userId,name,displayText,trafficType,tags,maxConnections,specifyVlan,availability,guestIpType,redundantRouter,networkRate);
+  Long serviceOfferingId=cmd.getServiceOfferingId();
+  if (serviceOfferingId != null) {
+    ServiceOfferingVO offering=_serviceOfferingDao.findById(serviceOfferingId);
+    if (offering == null) {
+      throw new InvalidParameterValueException("Cannot find specified service offering: " + serviceOfferingId);
+    }
+    if (!VirtualMachine.Type.DomainRouter.toString().equalsIgnoreCase(offering.getSystemVmType())) {
+      throw new InvalidParameterValueException("The specified service offering " + serviceOfferingId + " cannot be used by virtual router!");
+    }
+  }
+  Map<Network.Service,Set<Network.Provider>> serviceProviderMap=new HashMap<Network.Service,Set<Network.Provider>>();
+  Set<Network.Provider> defaultProviders=new HashSet<Network.Provider>();
+  defaultProviders.add(Network.Provider.defaultProvider);
+  if (cmd.getDhcpService()) {
+    serviceProviderMap.put(Network.Service.Dhcp,defaultProviders);
+  }
+  if (cmd.getDnsService()) {
+    serviceProviderMap.put(Network.Service.Dns,defaultProviders);
+  }
+  if (cmd.getFirewallService()) {
+    serviceProviderMap.put(Network.Service.Firewall,defaultProviders);
+  }
+  if (cmd.getGatewayService()) {
+    serviceProviderMap.put(Network.Service.Gateway,defaultProviders);
+  }
+  if (cmd.getLbService()) {
+    serviceProviderMap.put(Network.Service.Lb,defaultProviders);
+  }
+  if (cmd.getSourceNatService()) {
+    if (guestType == GuestType.Shared) {
+      throw new InvalidParameterValueException("Source nat service is is not supported for network offerings with guest ip type " + GuestType.Shared);
+    }
+    serviceProviderMap.put(Network.Service.SourceNat,defaultProviders);
+  }
+  if (cmd.getStaticNatService()) {
+    serviceProviderMap.put(Network.Service.StaticNat,defaultProviders);
+  }
+  if (cmd.getPortForwardingService()) {
+    serviceProviderMap.put(Network.Service.PortForwarding,defaultProviders);
+  }
+  if (cmd.getUserdataService()) {
+    serviceProviderMap.put(Network.Service.UserData,defaultProviders);
+  }
+  if (cmd.getVpnService()) {
+    serviceProviderMap.put(Network.Service.Vpn,defaultProviders);
+  }
+  if (cmd.getSecurityGroupService()) {
+    if (guestType != GuestType.Shared) {
+      throw new InvalidParameterValueException("Secrity group service is supported for network offerings with guest ip type " + GuestType.Shared);
+    }
+    Set<Network.Provider> sgProviders=new HashSet<Network.Provider>();
+    sgProviders.add(Provider.SecurityGroupProvider);
+    serviceProviderMap.put(Network.Service.SecurityGroup,sgProviders);
+  }
+  Map<String,List<String>> svcPrv=cmd.getServiceProviders();
+  if (svcPrv != null) {
+    for (    String serviceStr : svcPrv.keySet()) {
+      Network.Service service=Network.Service.getService(serviceStr);
+      if (serviceProviderMap.containsKey(service)) {
+        Set<Provider> providers=new HashSet<Provider>();
+        for (        String prvNameStr : svcPrv.get(serviceStr)) {
+          Network.Provider provider;
+          provider=Network.Provider.getProvider(prvNameStr);
+          if (provider == null) {
+            throw new InvalidParameterValueException("Invalid service provider: " + prvNameStr);
+          }
+          providers.add(provider);
+        }
+        serviceProviderMap.put(service,providers);
+      }
+ else {
+        throw new InvalidParameterValueException("Service " + serviceStr + " is not enabled for the network offering, can't add a provider to it");
+      }
+    }
+  }
+  Map<Capability,String> lbServiceCapabilityMap=cmd.getServiceCapabilities(Service.Lb);
+  if (!cmd.getLbService() && lbServiceCapabilityMap != null && !lbServiceCapabilityMap.isEmpty()) {
+    throw new InvalidParameterValueException("Capabilities for LB service can be specifed only when LB service is enabled for network offering.");
+  }
+  validateLoadBalancerServiceCapabilities(lbServiceCapabilityMap);
+  Map<Capability,String> sourceNatServiceCapabilityMap=cmd.getServiceCapabilities(Service.SourceNat);
+  if (!cmd.getSourceNatService() && sourceNatServiceCapabilityMap != null && !sourceNatServiceCapabilityMap.isEmpty()) {
+    throw new InvalidParameterValueException("Capabilities for source NAT service can be specifed only when source NAT service is enabled for network offering.");
+  }
+  validateSourceNatServiceCapablities(sourceNatServiceCapabilityMap);
+  Map<Capability,String> gwServiceCapabilityMap=cmd.getServiceCapabilities(Service.Gateway);
+  if (!cmd.getGatewayService() && gwServiceCapabilityMap != null && !gwServiceCapabilityMap.isEmpty()) {
+    throw new InvalidParameterValueException("Capabilities for Gateway service can be specifed only when Gateway service is enabled for network offering.");
+  }
+  validateGatewayServiceCapablities(gwServiceCapabilityMap);
+  Map<Service,Map<Capability,String>> serviceCapabilityMap=new HashMap<Service,Map<Capability,String>>();
+  serviceCapabilityMap.put(Service.Lb,lbServiceCapabilityMap);
+  serviceCapabilityMap.put(Service.SourceNat,sourceNatServiceCapabilityMap);
+  serviceCapabilityMap.put(Service.Gateway,gwServiceCapabilityMap);
+  return createNetworkOffering(userId,name,displayText,trafficType,tags,maxConnections,specifyVlan,availability,networkRate,serviceProviderMap,false,guestType,false,serviceOfferingId,serviceCapabilityMap);
 }
