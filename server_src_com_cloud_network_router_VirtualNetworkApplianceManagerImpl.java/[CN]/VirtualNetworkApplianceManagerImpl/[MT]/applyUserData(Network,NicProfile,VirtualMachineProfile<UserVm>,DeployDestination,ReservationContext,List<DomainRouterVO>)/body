@@ -1,0 +1,97 @@
+{
+  List<VirtualRouter> rets=new ArrayList<VirtualRouter>(routers.size());
+  _userVmDao.loadDetails((UserVmVO)profile.getVirtualMachine());
+  DataCenter dc=dest.getDataCenter();
+  String serviceOffering=_serviceOfferingDao.findByIdIncludingRemoved(profile.getServiceOfferingId()).getDisplayText();
+  String zoneName=_dcDao.findById(network.getDataCenterId()).getName();
+  boolean isZoneBasic=(dc.getNetworkType() == NetworkType.Basic);
+  List<VirtualRouter> connectedRouters=new ArrayList<VirtualRouter>();
+  List<VirtualRouter> disconnectedRouters=new ArrayList<VirtualRouter>();
+  for (  DomainRouterVO router : routers) {
+    boolean sendPasswordAndVmData=true;
+    if (router.getState() != State.Running) {
+      s_logger.warn("Unable to add virtual machine " + profile.getVirtualMachine() + " to the router "+ router+ " as the router is not in Running state");
+      continue;
+    }
+    if (router.isStopPending()) {
+      if (_hostDao.findById(router.getHostId()).getStatus() == Status.Up) {
+        throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",VirtualRouter.class,router.getId());
+      }
+      s_logger.warn("Unable to add virtual machine " + profile.getVirtualMachine() + " to the router "+ router+ " as the router is to be stopped");
+      continue;
+    }
+    Long podId=null;
+    if (isZoneBasic) {
+      podId=dest.getPod().getId();
+      if (router.getPodIdToDeployIn().longValue() != podId.longValue()) {
+        sendPasswordAndVmData=false;
+      }
+    }
+    Commands cmds=new Commands(OnError.Stop);
+    if (sendPasswordAndVmData) {
+      String password=(String)profile.getParameter(VirtualMachineProfile.Param.VmPassword);
+      String userData=profile.getVirtualMachine().getUserData();
+      String sshPublicKey=profile.getVirtualMachine().getDetail("SSH.PublicKey");
+      if (password != null && network.isDefault()) {
+        final String encodedPassword=PasswordGenerator.rot13(password);
+        SavePasswordCommand cmd=new SavePasswordCommand(encodedPassword,nic.getIp4Address(),profile.getVirtualMachine().getHostName());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,router.getGuestIpAddress());
+        cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+        cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dc.getNetworkType().toString());
+        cmds.addCommand("password",cmd);
+      }
+      cmds.addCommand("vmdata",generateVmDataCommand(router,nic.getIp4Address(),userData,serviceOffering,zoneName,nic.getIp4Address(),profile.getVirtualMachine().getHostName(),profile.getVirtualMachine().getInstanceName(),profile.getId(),sshPublicKey));
+    }
+    if (cmds.size() > 0) {
+      boolean podLevelException=false;
+      if (isZoneBasic && podId != null && profile.getVirtualMachine().getType() == VirtualMachine.Type.User && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Shared) {
+        podLevelException=true;
+      }
+      try {
+        _agentMgr.send(router.getHostId(),cmds);
+      }
+ catch (      AgentUnavailableException e) {
+        s_logger.warn("Unable to reach the agent " + router.getHostId(),e);
+        disconnectedRouters.add(router);
+        continue;
+      }
+catch (      OperationTimedoutException e) {
+        s_logger.warn("Connection timeout on host " + router.getHostId(),e);
+        disconnectedRouters.add(router);
+        continue;
+      }
+      connectedRouters.add(router);
+      Answer answer=cmds.getAnswer("password");
+      if (answer != null && !answer.getResult()) {
+        s_logger.error("Unable to set password for " + profile + " due to "+ answer.getDetails());
+        if (podLevelException) {
+          throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails(),Pod.class,podId);
+        }
+        throw new ResourceUnavailableException("Unable to set password due to " + answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
+      }
+      answer=cmds.getAnswer("vmdata");
+      if (answer != null && !answer.getResult()) {
+        s_logger.error("Unable to set VM data for " + profile + " due to "+ answer.getDetails());
+        if (podLevelException) {
+          throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails(),Pod.class,podId);
+        }
+        throw new ResourceUnavailableException("Unable to set VM data due to " + answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
+      }
+    }
+    rets.add(router);
+  }
+  String msg="Unable to apply userdata for new VM into network on disconnected router ";
+  if (!connectedRouters.isEmpty()) {
+    handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
+  }
+ else   if (!disconnectedRouters.isEmpty()) {
+    for (    VirtualRouter router : disconnectedRouters) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(msg + router.getInstanceName() + "("+ router.getId()+ ")");
+      }
+    }
+    throw new ResourceUnavailableException(msg,VirtualRouter.class,disconnectedRouters.get(0).getId());
+  }
+  return rets;
+}

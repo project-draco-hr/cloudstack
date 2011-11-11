@@ -1,0 +1,37 @@
+{
+  if (canHandle(network,Service.Dhcp)) {
+    if (vm.getType() != VirtualMachine.Type.User) {
+      return false;
+    }
+    @SuppressWarnings("unchecked") VirtualMachineProfile<UserVm> uservm=(VirtualMachineProfile<UserVm>)vm;
+    boolean publicNetwork=false;
+    if (_networkMgr.isProviderSupportedInNetwork(network.getId(),Service.SourceNat,getProvider())) {
+      publicNetwork=true;
+    }
+    boolean isPodBased=(dest.getDataCenter().getNetworkType() == NetworkType.Basic || _networkMgr.isSecurityGroupSupportedInNetwork(network)) && network.getTrafficType() == TrafficType.Guest;
+    List<DomainRouterVO> routers;
+    if (publicNetwork) {
+      routers=_routerDao.listByNetworkAndRole(network.getId(),Role.VIRTUAL_ROUTER);
+    }
+ else {
+      Long podId=dest.getPod().getId();
+      if (isPodBased) {
+        routers=_routerDao.listByNetworkAndPodAndRole(network.getId(),podId,Role.VIRTUAL_ROUTER);
+      }
+ else {
+        routers=_routerDao.listByNetworkAndRole(network.getId(),Role.VIRTUAL_ROUTER);
+      }
+    }
+    Long podId=dest.getPod().getId();
+    if (isPodBased && _routerMgr.getDnsBasicZoneUpdate().equalsIgnoreCase("all")) {
+      List<DomainRouterVO> allRunningRoutersOutsideThePod=_routerDao.findByNetworkOutsideThePod(network.getId(),podId,State.Running,Role.VIRTUAL_ROUTER);
+      routers.addAll(allRunningRoutersOutsideThePod);
+    }
+    if ((routers == null) || (routers.size() == 0)) {
+      throw new ResourceUnavailableException("Can't find at least one router!",this.getClass(),0);
+    }
+    List<VirtualRouter> rets=_routerMgr.applyDhcpEntry(network,nic,uservm,dest,context,routers);
+    return (rets != null) && (!rets.isEmpty());
+  }
+  return false;
+}
