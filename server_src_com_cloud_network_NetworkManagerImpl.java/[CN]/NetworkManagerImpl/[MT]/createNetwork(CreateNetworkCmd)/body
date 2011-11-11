@@ -11,10 +11,11 @@
   Boolean isDefault=cmd.isDefault();
   Long userId=UserContext.current().getCallerUserId();
   Account caller=UserContext.current().getCaller();
-  boolean isDomainSpecific=false;
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
   Long zoneId=cmd.getZoneId();
   String aclTypeStr=cmd.getAclType();
+  Long domainId=cmd.getDomainId();
+  boolean isDomainSpecific=false;
   NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
   if (networkOffering == null || networkOffering.isSystemOnly()) {
     throw new InvalidParameterValueException("Unable to find network offeirng by id " + networkOfferingId);
@@ -38,21 +39,24 @@
     if (!_accountMgr.isAdmin(caller.getType())) {
       throw new PermissionDeniedException("Only admin can create networks with aclType=Domain");
     }
-    if (cmd.getDomainId() != null) {
+    if (networkOffering.getGuestType() != GuestType.Shared) {
+      throw new InvalidParameterValueException("Only " + GuestType.Shared + " networks can have aclType="+ ACLType.Domain);
+    }
+    if (domainId != null) {
       if (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != Network.GuestType.Shared) {
         throw new InvalidParameterValueException("Domain level networks are supported just for traffic type " + TrafficType.Guest + " and guest type "+ Network.GuestType.Shared);
       }
-      DomainVO domain=_domainDao.findById(cmd.getDomainId());
+      DomainVO domain=_domainDao.findById(domainId);
       if (domain == null) {
-        throw new InvalidParameterValueException("Unable to find domain by id " + cmd.getDomainId());
+        throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
       }
       _accountMgr.checkAccess(caller,domain);
     }
     isDomainSpecific=true;
   }
   Account owner=null;
-  if (cmd.getAccountName() != null && cmd.getDomainId() != null) {
-    owner=_accountMgr.finalizeOwner(caller,cmd.getAccountName(),cmd.getDomainId(),cmd.getProjectId());
+  if (cmd.getAccountName() != null && domainId != null) {
+    owner=_accountMgr.finalizeOwner(caller,cmd.getAccountName(),domainId,cmd.getProjectId());
   }
  else {
     owner=caller;
@@ -112,16 +116,16 @@
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  Long domainId=null;
+  Long sharedDomainId=null;
   if (isDomainSpecific) {
-    if (cmd.getDomainId() != null) {
-      domainId=cmd.getDomainId();
+    if (domainId != null) {
+      sharedDomainId=domainId;
     }
  else {
-      domainId=_domainMgr.getDomain(Domain.ROOT_DOMAIN).getId();
+      sharedDomainId=_domainMgr.getDomain(Domain.ROOT_DOMAIN).getId();
     }
   }
-  Network network=createNetwork(networkOfferingId,name,displayText,isDefault,gateway,cidr,vlanId,networkDomain,owner,false,domainId,pNtwk,zoneId,aclType);
+  Network network=createNetwork(networkOfferingId,name,displayText,isDefault,gateway,cidr,vlanId,networkDomain,owner,false,sharedDomainId,pNtwk,zoneId,aclType);
   boolean createVlan=((network.getGuestType() == Network.GuestType.Shared) || (network.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat)));
   if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && createVlan && defineNetworkConfig) {
     _configMgr.createVlanAndPublicIpRange(userId,pNtwk.getDataCenterId(),null,startIP,endIP,gateway,netmask,false,vlanId,null,network.getId(),physicalNetworkId);
