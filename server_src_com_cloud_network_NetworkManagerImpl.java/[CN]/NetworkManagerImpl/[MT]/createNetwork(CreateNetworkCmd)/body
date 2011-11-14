@@ -23,9 +23,29 @@
   if (networkOffering.getState() != NetworkOffering.State.Enabled) {
     throw new InvalidParameterValueException("Can't use network offering id=" + networkOfferingId + " as its state is not "+ NetworkOffering.State.Enabled);
   }
+  PhysicalNetwork pNtwk=null;
+  if (physicalNetworkId != null) {
+    pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNtwk == null) {
+      throw new InvalidParameterValueException("Unable to find physical network by id " + physicalNetworkId);
+    }
+    if (pNtwk.getState() != PhysicalNetwork.State.Enabled) {
+      throw new InvalidParameterValueException("Physical network id " + physicalNetworkId + " is in incorrect state: "+ pNtwk.getState());
+    }
+  }
+  if (zoneId == null) {
+    zoneId=pNtwk.getDataCenterId();
+  }
+  DataCenter zone=_dcDao.findById(zoneId);
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zone.getId());
+  }
   ACLType aclType=null;
   if (aclTypeStr != null) {
     if (aclTypeStr.equalsIgnoreCase(ACLType.Account.toString())) {
+      if (zone.getNetworkType() == NetworkType.Basic) {
+        throw new InvalidParameterValueException("Only AclType=Domain can be specified for network creation in Basic zone");
+      }
       aclType=ACLType.Account;
     }
  else     if (aclTypeStr.equalsIgnoreCase(ACLType.Domain.toString())) {
@@ -34,6 +54,12 @@
  else {
       throw new InvalidParameterValueException("Incorrect aclType specified. Check the API documentation for supported types");
     }
+  }
+ else   if (zone.getNetworkType() == NetworkType.Advanced) {
+    aclType=ACLType.Account;
+  }
+ else {
+    aclType=ACLType.Domain;
   }
   if (aclType == ACLType.Domain) {
     if (!_accountMgr.isAdmin(caller.getType())) {
@@ -64,20 +90,6 @@
   UserContext.current().setAccountId(owner.getAccountId());
   if (endIP == null && startIP != null) {
     endIP=startIP;
-  }
-  PhysicalNetwork pNtwk=null;
-  if (physicalNetworkId != null) {
-    pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
-    if (pNtwk == null) {
-      throw new InvalidParameterValueException("Unable to find physical network by id " + physicalNetworkId);
-    }
-    if (pNtwk.getState() != PhysicalNetwork.State.Enabled) {
-      throw new InvalidParameterValueException("Physical network id " + physicalNetworkId + " is in incorrect state: "+ pNtwk.getState());
-    }
-  }
-  DataCenter zone=_dcDao.findById(zoneId);
-  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
-    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zone.getId());
   }
   ArrayList<String> networkConfigs=new ArrayList<String>();
   networkConfigs.add(gateway);
