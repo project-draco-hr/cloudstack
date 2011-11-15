@@ -1,0 +1,44 @@
+@staticmethod
+def fence(ip):
+
+    def getTimeStamp(hbFile):
+        for i in range(1, 3):
+            f = open(hbFile, 'r')
+            str = f.readline()
+            items = re.findall(HEARTBEAT_TIMESTAMP_PATTERN, str)
+            if (len(items) == 0):
+                logger.debug(OvmHost.fence, ('Get an incorrect heartbeat data %s, will retry %s times' % (str, (3 - i))))
+                f.close()
+                time.sleep(5)
+            else:
+                f.close()
+                timestamp = items[0]
+                return timestamp.lstrip('<timestamp>').rstrip('</timestamp>')
+
+    def check(hbFile):
+        for i in range(1, 6):
+            ts = getTimeStamp(hbFile)
+            time.sleep(60)
+            nts = getTimeStamp(hbFile)
+            if (ts != nts):
+                return True
+            else:
+                logger.debug(OvmHost.fence, ('%s is not updated, old value=%s, will retry %s times' % (hbFile, ts, (6 - i))))
+        return False
+    try:
+        mountpoints = OvmStoragePool()._getAllMountPoints()
+        hbFile = None
+        for m in mountpoints:
+            p = join(m, HEARTBEAT_DIR, ipToHeartBeatFileName(ip))
+            if exists(p):
+                hbFile = p
+                break
+        if (not hbFile):
+            raise Exception(('Can not find heartbeat file for %s in pools %s' % (ip, mountpoints)))
+        rs = toGson({'isLive': check(hbFile), })
+        logger.debug(OvmHost.fence, rs)
+        return rs
+    except Exception as e:
+        errmsg = fmt_err_msg(e)
+        logger.error(OvmHost.fence, errmsg)
+        raise XmlRpcFault(toErrCode(OvmHost, OvmHost.fence), errmsg)
