@@ -1,0 +1,62 @@
+{
+  String guid;
+  PhysicalNetworkVO pNetwork=null;
+  NetworkDevice ntwkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  long zoneId;
+  if ((ntwkDevice == null) || (url == null) || (username == null)|| (resource == null)|| (password == null)) {
+    throw new InvalidParameterValueException("Atleast one of the required parameters (url, username, password," + " server resource, zone id/physical network id) is not specified or a valid parameter.");
+  }
+  pNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (pNetwork == null) {
+    throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+  }
+  zoneId=pNetwork.getDataCenterId();
+  PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(pNetwork.getId(),ntwkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProvider == null) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+ else   if ((ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) || (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Disabled)) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is not added or in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  URI uri;
+  try {
+    uri=new URI(url);
+  }
+ catch (  Exception e) {
+    s_logger.debug(e);
+    throw new InvalidParameterValueException(e.getMessage());
+  }
+  String ipAddress=uri.getHost();
+  Map hostDetails=new HashMap<String,String>();
+  guid=getExternalNetworkResourceGuid(pNetwork.getId(),deviceName,ipAddress);
+  hostDetails.put("guid",guid);
+  hostDetails.put("zoneId",String.valueOf(pNetwork.getDataCenterId()));
+  hostDetails.put("ip",ipAddress);
+  hostDetails.put("physicalNetworkId",String.valueOf(pNetwork.getId()));
+  hostDetails.put("username",username);
+  hostDetails.put("password",password);
+  hostDetails.put("deviceName",deviceName);
+  Map<String,String> params=new HashMap<String,String>();
+  UrlUtil.parseQueryParameters(uri.getQuery(),false,params);
+  hostDetails.putAll(params);
+  try {
+    resource.configure(guid,hostDetails);
+    Host host=_resourceMgr.addHost(zoneId,resource,Host.Type.ExternalLoadBalancer,hostDetails);
+    if (host != null) {
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      ExternalLoadBalancerDeviceVO lbDeviceVO=new ExternalLoadBalancerDeviceVO(host.getId(),pNetwork.getId(),ntwkSvcProvider.getProviderName(),deviceName);
+      _externalLoadBalancerDeviceDao.persist(lbDeviceVO);
+      DetailVO hostDetail=new DetailVO(host.getId(),ApiConstants.LOAD_BALANCER_DEVICE_ID,String.valueOf(lbDeviceVO.getId()));
+      _hostDetailDao.persist(hostDetail);
+      txn.commit();
+      return lbDeviceVO;
+    }
+ else {
+      throw new CloudRuntimeException("Failed to add load balancer device due to internal error.");
+    }
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+}

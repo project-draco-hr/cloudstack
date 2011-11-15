@@ -1,0 +1,59 @@
+{
+  long physicalNetworkId=network.getPhysicalNetworkId();
+  List<ExternalLoadBalancerDeviceVO> lbDevices=null;
+  String provider=_ntwkSrvcProviderDao.getProviderForServiceInNetwork(network.getId(),Service.Lb);
+  assert(provider != null);
+  if (dedicatedLb) {
+    lbDevices=_externalLoadBalancerDeviceDao.listByProviderAndDeviceAllocationState(physicalNetworkId,provider,LBDeviceAllocationState.Free);
+    if (lbDevices != null && !lbDevices.isEmpty()) {
+      for (      ExternalLoadBalancerDeviceVO lbdevice : lbDevices) {
+        if (lbdevice.getState() == LBDeviceState.Enabled && lbdevice.getIsDedicatedDevice()) {
+          return lbdevice;
+        }
+      }
+      for (      ExternalLoadBalancerDeviceVO lbdevice : lbDevices) {
+        if (lbdevice.getState() == LBDeviceState.Enabled) {
+          return lbdevice;
+        }
+      }
+    }
+  }
+ else {
+    lbDevices=_externalLoadBalancerDeviceDao.listByProviderAndDeviceAllocationState(physicalNetworkId,provider,LBDeviceAllocationState.Shared);
+    if (lbDevices != null) {
+      ExternalLoadBalancerDeviceVO maxFreeCapacityLbdevice=null;
+      long maxFreeCapacity=0;
+      for (      ExternalLoadBalancerDeviceVO lbdevice : lbDevices) {
+        if (lbdevice.getState() != LBDeviceState.Enabled) {
+          continue;
+        }
+        if (lbdevice.getIsDedicatedDevice()) {
+          continue;
+        }
+        List<NetworkExternalLoadBalancerVO> mappedNetworks=_networkExternalLBDao.listByLoadBalancerDeviceId(lbdevice.getId());
+        long usedCapacity=((mappedNetworks == null) || (mappedNetworks.isEmpty())) ? 0 : mappedNetworks.size();
+        long fullCapacity=lbdevice.getCapacity();
+        long freeCapacity=fullCapacity - usedCapacity;
+        if (freeCapacity > 0) {
+          if (maxFreeCapacityLbdevice == null) {
+            maxFreeCapacityLbdevice=lbdevice;
+            maxFreeCapacity=freeCapacity;
+          }
+          if (freeCapacity > maxFreeCapacity) {
+            maxFreeCapacityLbdevice=lbdevice;
+            maxFreeCapacity=freeCapacity;
+          }
+        }
+      }
+    }
+    lbDevices=_externalLoadBalancerDeviceDao.listByProviderAndDeviceAllocationState(physicalNetworkId,provider,LBDeviceAllocationState.Free);
+    if (lbDevices != null && !lbDevices.isEmpty()) {
+      for (      ExternalLoadBalancerDeviceVO lbdevice : lbDevices) {
+        if (lbdevice.getState() == LBDeviceState.Enabled && !lbdevice.getIsDedicatedDevice()) {
+          return lbdevice;
+        }
+      }
+    }
+  }
+  throw new InsufficientNetworkCapacityException("Unable to find a load balancing provider with sufficient capcity " + " to implement the network",Network.class,network.getId());
+}
