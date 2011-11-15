@@ -13,7 +13,6 @@
   Long projectId=cmd.getProjectId();
   List<Long> permittedAccounts=new ArrayList<Long>();
   String path=null;
-  Long sharedNetworkDomainId=null;
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
   List<String> supportedServicesStr=cmd.getSupportedServices();
   if ((isSystem == null || caller.getType() == Account.ACCOUNT_TYPE_NORMAL) && id == null) {
@@ -39,7 +38,7 @@
   }
   if (!_accountMgr.isAdmin(caller.getType())) {
     permittedAccounts.add(caller.getId());
-    sharedNetworkDomainId=caller.getDomainId();
+    domainId=caller.getDomainId();
   }
   if (projectId != null) {
     permittedAccounts.clear();
@@ -56,14 +55,6 @@
     permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
   }
   path=_domainDao.findById(caller.getDomainId()).getPath();
-  if ((isSystem == null || !isSystem) && (aclType != null && aclType.equalsIgnoreCase(ACLType.Domain.toString()))) {
-    if (domainId == null) {
-      sharedNetworkDomainId=domainId;
-    }
- else {
-      sharedNetworkDomainId=caller.getDomainId();
-    }
-  }
   Filter searchFilter=new Filter(NetworkVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<NetworkVO> sb=_networksDao.createSearchBuilder();
   SearchBuilder<NetworkOfferingVO> networkOfferingSearch=_networkOfferingDao.createSearchBuilder();
@@ -75,24 +66,22 @@
   SearchBuilder<DataCenterVO> zoneSearch=_dcDao.createSearchBuilder();
   zoneSearch.and("networkType",zoneSearch.entity().getNetworkType(),SearchCriteria.Op.EQ);
   sb.join("zoneSearch",zoneSearch,sb.entity().getDataCenterId(),zoneSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  if (sharedNetworkDomainId != null) {
-    SearchBuilder<NetworkDomainVO> domainNetworkSearch=_networkDomainDao.createSearchBuilder();
-    sb.join("domainNetworkSearch",domainNetworkSearch,sb.entity().getId(),domainNetworkSearch.entity().getNetworkId(),JoinBuilder.JoinType.LEFTOUTER);
-  }
   sb.and("removed",sb.entity().getRemoved(),Op.NULL);
+  if (permittedAccounts.isEmpty()) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
   List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
   if (isSystem == null || !isSystem) {
-    if (sharedNetworkDomainId != null) {
-      networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,ACLType.Domain.toString()),searchFilter,sharedNetworkDomainId));
+    if (domainId != null) {
+      networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,aclType),searchFilter,domainId));
     }
  else     if (permittedAccounts.isEmpty()) {
-      SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-      domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-      sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-      networksToReturn.addAll(listDomainSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,aclType),searchFilter,path));
+      networksToReturn.addAll(listAccountSpecificNetworksByDomainPath(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,aclType),searchFilter,path));
     }
     if (!permittedAccounts.isEmpty()) {
-      networksToReturn.addAll(listAccountSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,ACLType.Account.toString()),searchFilter,path,permittedAccounts));
+      networksToReturn.addAll(listAccountSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,isDefault,trafficType,physicalNetworkId,aclType),searchFilter,permittedAccounts));
     }
   }
  else {
