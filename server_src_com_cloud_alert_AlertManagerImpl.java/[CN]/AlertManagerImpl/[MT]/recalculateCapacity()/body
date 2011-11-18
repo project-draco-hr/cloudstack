@@ -1,51 +1,60 @@
 {
-  if (s_logger.isTraceEnabled()) {
-    s_logger.trace("recalculating system capacity");
-  }
-  List<HostVO> hosts=_resourceMgr.listAllHostsInAllZonesByType(Host.Type.Routing);
-  for (  HostVO host : hosts) {
-    _capacityMgr.updateCapacityForHost(host);
-  }
-  List<StoragePoolVO> storagePools=_storagePoolDao.listAll();
-  for (  StoragePoolVO pool : storagePools) {
-    long disk=0l;
-    Pair<Long,Long> sizes=_volumeDao.getCountAndTotalByPool(pool.getId());
-    disk=sizes.second();
-    if (pool.isShared()) {
-      _storageMgr.createCapacityEntry(pool,Capacity.CAPACITY_TYPE_STORAGE_ALLOCATED,disk);
-    }
- else {
-      _storageMgr.createCapacityEntry(pool,Capacity.CAPACITY_TYPE_LOCAL_STORAGE,disk);
-    }
-  }
   try {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("recalculating system capacity");
+      s_logger.debug("Executing cpu/ram capacity update");
+    }
+    List<HostVO> hosts=_resourceMgr.listAllHostsInAllZonesByType(Host.Type.Routing);
+    for (    HostVO host : hosts) {
+      _capacityMgr.updateCapacityForHost(host);
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Done executing cpu/ram capacity update");
+      s_logger.debug("Executing storage capacity update");
+    }
+    List<StoragePoolVO> storagePools=_storagePoolDao.listAll();
+    for (    StoragePoolVO pool : storagePools) {
+      long disk=0l;
+      Pair<Long,Long> sizes=_volumeDao.getCountAndTotalByPool(pool.getId());
+      disk=sizes.second();
+      if (pool.isShared()) {
+        _storageMgr.createCapacityEntry(pool,Capacity.CAPACITY_TYPE_STORAGE_ALLOCATED,disk);
+      }
+ else {
+        _storageMgr.createCapacityEntry(pool,Capacity.CAPACITY_TYPE_LOCAL_STORAGE,disk);
+      }
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Done executing storage capacity update");
+      s_logger.debug("Executing capacity updates public ip and Vlans");
+    }
     List<DataCenterVO> datacenters=_dcDao.listAll();
     for (    DataCenterVO datacenter : datacenters) {
       long dcId=datacenter.getId();
       if (datacenter.getNetworkType() == NetworkType.Advanced) {
-        s_logger.trace("Executing public ip capacity update for Virtual Network");
         createOrUpdateIpCapacity(dcId,null,CapacityVO.CAPACITY_TYPE_VIRTUAL_NETWORK_PUBLIC_IP);
-        s_logger.trace("Done with public ip capacity update for Virtual Network");
       }
-      s_logger.trace("Executing public ip capacity update for Direct Attached Network");
       createOrUpdateIpCapacity(dcId,null,CapacityVO.CAPACITY_TYPE_DIRECT_ATTACHED_PUBLIC_IP);
-      s_logger.trace("Done with public ip capacity update for Direct Attached Network");
       if (datacenter.getNetworkType() == NetworkType.Advanced) {
-        s_logger.trace("Executing VLAN capacity update");
         createOrUpdateVlanCapacity(dcId);
-        s_logger.trace("Executing VLAN capacity update");
       }
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Done capacity updates for public ip and Vlans");
+      s_logger.debug("Executing capacity updates for private ip");
     }
     List<HostPodVO> pods=_podDao.listAll();
     for (    HostPodVO pod : pods) {
       long podId=pod.getId();
       long dcId=pod.getDataCenterId();
-      s_logger.trace("Executing private ip capacity update");
       createOrUpdateIpCapacity(dcId,podId,CapacityVO.CAPACITY_TYPE_PRIVATE_IP);
-      s_logger.trace("Done with private ip capacity update");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Done executing capacity updates for private ip");
+      s_logger.debug("Done recalculating system capacity");
     }
   }
- catch (  Exception ex) {
-    s_logger.error("Unable to start transaction for capacity update");
+ catch (  Throwable t) {
+    s_logger.error("Caught exception in recalculating capacity",t);
   }
 }
