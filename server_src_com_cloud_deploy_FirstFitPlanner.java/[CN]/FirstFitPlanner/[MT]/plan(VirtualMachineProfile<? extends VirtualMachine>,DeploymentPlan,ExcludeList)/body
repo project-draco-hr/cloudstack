@@ -1,5 +1,4 @@
 {
-  String _allocationAlgorithm=_configDao.getValue(Config.VmAllocationAlgorithm.key());
   VirtualMachine vm=vmProfile.getVirtualMachine();
   ServiceOffering offering=vmProfile.getServiceOffering();
   DataCenter dc=_dcDao.findById(vm.getDataCenterIdToDeployIn());
@@ -8,7 +7,7 @@
   String opFactor=_configDao.getValue(Config.CPUOverprovisioningFactor.key());
   float cpuOverprovisioningFactor=NumbersUtil.parseFloat(opFactor,1);
   if (s_logger.isDebugEnabled()) {
-    s_logger.debug("In FirstFitPlanner:: plan");
+    s_logger.debug("DeploymentPlanner allocation algorithm: " + _allocationAlgorithm);
     s_logger.debug("Trying to allocate a host and storage pools from dc:" + plan.getDataCenterId() + ", pod:"+ plan.getPodId()+ ",cluster:"+ plan.getClusterId()+ ", requested cpu: "+ cpu_requested+ ", requested ram: "+ ram_requested);
     s_logger.debug("Is ROOT volume READY (pool already allocated)?: " + (plan.getPoolId() != null ? "Yes" : "No"));
   }
@@ -98,7 +97,7 @@
     ClusterVO cluster=_clusterDao.findById(plan.getClusterId());
     if (cluster != null) {
       clusterList.add(clusterIdSpecified);
-      return checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
+      return checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc);
     }
  else {
       s_logger.debug("The specified cluster cannot be found, returning.");
@@ -111,34 +110,11 @@
     s_logger.debug("Searching resources only under specified Pod: " + podIdSpecified);
     HostPodVO pod=_podDao.findById(podIdSpecified);
     if (pod != null) {
-      clusterList=listClustersByCapacity(podIdSpecified,cpu_requested,ram_requested,avoid,false,cpuOverprovisioningFactor);
-      if (!clusterList.isEmpty()) {
-        if (avoid.getClustersToAvoid() != null) {
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Removing from the clusterId list these clusters from avoid set: " + avoid.getClustersToAvoid());
-          }
-          clusterList.removeAll(avoid.getClustersToAvoid());
-        }
-        List<Long> disabledClusters=listDisabledClusters(plan.getDataCenterId(),podIdSpecified);
-        if (!disabledClusters.isEmpty()) {
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Removing from the clusterId list these clusters that are disabled: " + disabledClusters);
-          }
-          clusterList.removeAll(disabledClusters);
-        }
-        DeployDestination dest=checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
-        if (dest == null) {
-          avoid.addPod(plan.getPodId());
-        }
-        return dest;
-      }
- else {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("No clusters found under this pod, having a host with enough capacity, returning.");
-        }
+      DeployDestination dest=scanClustersForDestinationInZoneOrPod(podIdSpecified,false,vmProfile,plan,avoid);
+      if (dest == null) {
         avoid.addPod(plan.getPodId());
-        return null;
       }
+      return dest;
     }
  else {
       s_logger.debug("The specified Pod cannot be found, returning.");
@@ -148,56 +124,12 @@
   }
  else {
     s_logger.debug("Searching all possible resources under this Zone: " + plan.getDataCenterId());
-    List<Long> prioritizedClusterIds=listClustersByCapacity(plan.getDataCenterId(),cpu_requested,ram_requested,avoid,true,cpuOverprovisioningFactor);
-    if (!prioritizedClusterIds.isEmpty()) {
-      if (avoid.getClustersToAvoid() != null) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Removing from the clusterId list these clusters from avoid set: " + avoid.getClustersToAvoid());
-        }
-        prioritizedClusterIds.removeAll(avoid.getClustersToAvoid());
-      }
-      List<Long> disabledClusters=listDisabledClusters(plan.getDataCenterId(),null);
-      if (!disabledClusters.isEmpty()) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Removing from the clusterId list these clusters that are disabled/clusters under disabled pods: " + disabledClusters);
-        }
-        prioritizedClusterIds.removeAll(disabledClusters);
-      }
+    boolean applyAllocationAtPods=Boolean.parseBoolean(_configDao.getValue(Config.ApplyAllocationAlgorithmToPods.key()));
+    if (applyAllocationAtPods) {
+      return scanPodsForDestination(vmProfile,plan,avoid);
     }
  else {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("No clusters found having a host with enough capacity, returning.");
-      }
-      return null;
-    }
-    if (!prioritizedClusterIds.isEmpty()) {
-      boolean applyUserConcentrationPodHeuristic=Boolean.parseBoolean(_configDao.getValue(Config.UseUserConcentratedPodAllocation.key()));
-      if (applyUserConcentrationPodHeuristic && vmProfile.getOwner() != null) {
-        long accountId=vmProfile.getOwner().getAccountId();
-        List<Long> podIds=listPodsByUserConcentration(plan.getDataCenterId(),accountId);
-        if (!podIds.isEmpty()) {
-          if (avoid.getPodsToAvoid() != null) {
-            if (s_logger.isDebugEnabled()) {
-              s_logger.debug("Removing from the pod list these pods from avoid set: " + avoid.getPodsToAvoid());
-            }
-            podIds.removeAll(avoid.getPodsToAvoid());
-          }
-          clusterList=reorderClustersByPods(prioritizedClusterIds,podIds);
-        }
- else {
-          clusterList=prioritizedClusterIds;
-        }
-      }
- else {
-        clusterList=prioritizedClusterIds;
-      }
-      return checkClustersforDestination(clusterList,vmProfile,plan,avoid,dc,_allocationAlgorithm);
-    }
- else {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("No clusters found after removing disabled clusters and clusters in avoid list, returning.");
-      }
-      return null;
+      return scanClustersForDestinationInZoneOrPod(plan.getDataCenterId(),true,vmProfile,plan,avoid);
     }
   }
 }

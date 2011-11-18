@@ -1,0 +1,52 @@
+{
+  ServiceOffering offering=vmProfile.getServiceOffering();
+  int requiredCpu=offering.getCpu() * offering.getSpeed();
+  long requiredRam=offering.getRamSize() * 1024L * 1024L;
+  String opFactor=_configDao.getValue(Config.CPUOverprovisioningFactor.key());
+  float cpuOverprovisioningFactor=NumbersUtil.parseFloat(opFactor,1);
+  List<Long> prioritizedPodIds=new ArrayList<Long>();
+  Pair<List<Long>,Map<Long,Double>> podCapacityInfo=listPodsByCapacity(plan.getDataCenterId(),requiredCpu,requiredRam,cpuOverprovisioningFactor);
+  List<Long> podsWithCapacity=podCapacityInfo.first();
+  if (!podsWithCapacity.isEmpty()) {
+    if (avoid.getPodsToAvoid() != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Removing from the podId list these pods from avoid set: " + avoid.getPodsToAvoid());
+      }
+      podsWithCapacity.removeAll(avoid.getPodsToAvoid());
+    }
+    List<Long> disabledPods=listDisabledPods(plan.getDataCenterId());
+    if (!disabledPods.isEmpty()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Removing from the podId list these pods that are disabled: " + disabledPods);
+      }
+      podsWithCapacity.removeAll(disabledPods);
+    }
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("No pods found having a host with enough capacity, returning.");
+    }
+    return null;
+  }
+  if (!podsWithCapacity.isEmpty()) {
+    prioritizedPodIds=reorderPods(podCapacityInfo,vmProfile,plan);
+    for (    Long podId : prioritizedPodIds) {
+      s_logger.debug("Checking resources under Pod: " + podId);
+      DeployDestination dest=scanClustersForDestinationInZoneOrPod(podId,false,vmProfile,plan,avoid);
+      if (dest != null) {
+        return dest;
+      }
+      avoid.addPod(podId);
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("No Pods found for destination, returning.");
+    }
+    return null;
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("No Pods found after removing disabled pods and pods in avoid list, returning.");
+    }
+    return null;
+  }
+}
