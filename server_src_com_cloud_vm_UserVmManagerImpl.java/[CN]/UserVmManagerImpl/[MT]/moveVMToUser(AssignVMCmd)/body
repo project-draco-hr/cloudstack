@@ -1,13 +1,8 @@
 {
-  Account oldAccount=UserContext.current().getCaller();
-  Account newAccount=_accountService.getAccount(cmd.getAccountId());
-  if (newAccount == null || newAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
-    throw new InvalidParameterValueException("Invalid accountid=" + cmd.getAccountId() + " in domain "+ oldAccount.getDomainId());
+  Account adminAccount=UserContext.current().getCaller();
+  if (adminAccount.getType() != Account.ACCOUNT_TYPE_ADMIN && adminAccount.getType() != Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    throw new InvalidParameterValueException("Only domain admins are allowed to assign VMs and not " + adminAccount.getType());
   }
-  if (oldAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
-    throw new InvalidParameterValueException("Vm id=" + cmd.getVmId() + " belongs to the project and can't be moved");
-  }
-  _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
   UserVmVO vm=_vmDao.findById(cmd.getVmId());
   if (vm == null) {
     throw new InvalidParameterValueException("There is no vm by that id " + cmd.getVmId());
@@ -18,12 +13,24 @@
     }
     throw new InvalidParameterValueException("VM is Running, unable to move the vm " + vm);
   }
+  Account oldAccount=_accountService.getActiveAccountById(vm.getAccountId());
+  if (oldAccount == null) {
+    throw new InvalidParameterValueException("Invalid account for VM " + vm.getAccountId() + " in domain "+ oldAccount.getDomainId());
+  }
+  if (oldAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    throw new InvalidParameterValueException("Vm id=" + cmd.getVmId() + " belongs to the project and can't be moved");
+  }
+  Account newAccount=_accountService.getActiveAccountByName(cmd.getAccountName(),cmd.getDomainId());
+  if (newAccount == null || newAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    throw new InvalidParameterValueException("Invalid accountid=" + newAccount.getAccountId() + " in domain "+ newAccount.getDomainId());
+  }
+  _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
   VirtualMachineTemplate template=_templateDao.findById(vm.getTemplateId());
   if (!template.isPublicTemplate()) {
     Account templateOwner=_accountMgr.getAccount(template.getAccountId());
     _accountMgr.checkAccess(newAccount,null,templateOwner);
   }
-  DomainVO domain=_domainDao.findById(oldAccount.getDomainId());
+  DomainVO domain=_domainDao.findById(adminAccount.getDomainId());
   _accountMgr.checkAccess(newAccount,domain);
   DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
   if (zone.getNetworkType() != NetworkType.Advanced) {
@@ -34,17 +41,17 @@
   Transaction txn=Transaction.currentTxn();
   txn.start();
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
-  _resourceLimitMgr.decrementResourceCount(vm.getAccountId(),ResourceType.user_vm);
+  _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.user_vm);
   vm.setAccountId(newAccount.getAccountId());
   _vmDao.persist(vm);
   List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   for (  VolumeVO volume : volumes) {
-    volume.setAccountId(cmd.getAccountId());
-    _resourceLimitMgr.decrementResourceCount(vm.getAccountId(),ResourceType.volume,new Long(volumes.size()));
+    _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume,new Long(volumes.size()));
+    volume.setAccountId(newAccount.getAccountId());
     _volsDao.persist(volume);
-    _resourceLimitMgr.incrementResourceCount(vm.getAccountId(),ResourceType.volume,new Long(volumes.size()));
+    _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume,new Long(volumes.size()));
   }
-  _resourceLimitMgr.incrementResourceCount(vm.getAccountId(),ResourceType.user_vm);
+  _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.user_vm);
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
   if (zone.getNetworkType() == NetworkType.Advanced) {
     _networkMgr.cleanupNics(vmOldProfile);
