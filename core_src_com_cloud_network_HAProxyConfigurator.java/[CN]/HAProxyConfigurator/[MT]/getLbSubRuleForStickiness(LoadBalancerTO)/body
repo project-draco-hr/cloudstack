@@ -1,0 +1,107 @@
+{
+  int i=0;
+  String timeEndChar="dhms";
+  if (lbTO.getStickinessPolicies() == null)   return null;
+  StringBuilder sb=new StringBuilder();
+  for (  StickinessPolicyTO stickinessPolicy : lbTO.getStickinessPolicies()) {
+    if (stickinessPolicy == null)     continue;
+    List<Pair<String,String>> paramsList=stickinessPolicy.getParams();
+    i++;
+    if (StickinessMethodType.LBCookieBased.getName().equalsIgnoreCase(stickinessPolicy.getMethodName())) {
+      String name=null;
+      String mode="insert ";
+      Boolean indirect=false;
+      Boolean nocache=false;
+      Boolean postonly=false;
+      StringBuilder domainSb=null;
+      for (      Pair<String,String> paramKV : paramsList) {
+        String key=paramKV.first();
+        String value=paramKV.second();
+        if ("name".equalsIgnoreCase(key))         name=value;
+        if ("mode".equalsIgnoreCase(key))         mode=value;
+        if ("domain".equalsIgnoreCase(key)) {
+          if (domainSb == null) {
+            domainSb=new StringBuilder();
+          }
+          domainSb=domainSb.append("domain ");
+          domainSb.append(value).append(" ");
+        }
+        if ("indirect".equalsIgnoreCase(key))         indirect=true;
+        if ("nocache".equalsIgnoreCase(key))         nocache=true;
+        if ("postonly".equalsIgnoreCase(key))         postonly=true;
+      }
+      if (name == null) {
+        StringBuilder tempSb=new StringBuilder();
+        String srcip=lbTO.getSrcIp();
+        if (srcip == null)         srcip="TESTCOOKIE";
+        tempSb.append("lbcooki_").append(srcip.hashCode()).append("_").append(lbTO.getSrcPort());
+        name=tempSb.toString();
+      }
+      sb.append("\t").append("cookie ").append(name).append(" ").append(mode).append(" ");
+      if (indirect)       sb.append("indirect ");
+      if (nocache)       sb.append("nocache ");
+      if (postonly)       sb.append("postonly ");
+      if (domainSb != null)       sb.append(domainSb).append(" ");
+    }
+ else     if (StickinessMethodType.SourceBased.getName().equalsIgnoreCase(stickinessPolicy.getMethodName())) {
+      String tablesize="200k";
+      String expire="30m";
+      for (      Pair<String,String> paramKV : paramsList) {
+        String key=paramKV.first();
+        String value=paramKV.second();
+        if ("tablesize".equalsIgnoreCase(key))         tablesize=value;
+        if ("expire".equalsIgnoreCase(key))         expire=value;
+      }
+      if ((expire != null) && !containsOnlyNumbers(expire,timeEndChar)) {
+        s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause: expire is not in timeformat:"+ expire);
+        return null;
+      }
+      if ((tablesize != null) && !containsOnlyNumbers(tablesize,"kmg")) {
+        s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause: tablesize is not in size format:"+ tablesize);
+        return null;
+      }
+      sb.append("\t").append("stick-table type ip size ").append(tablesize).append(" expire ").append(expire);
+      sb.append("\n\t").append("stick on src");
+    }
+ else     if (StickinessMethodType.AppCookieBased.getName().equalsIgnoreCase(stickinessPolicy.getMethodName())) {
+      String name=null;
+      String length=null;
+      String holdtime=null;
+      String mode=null;
+      Boolean requestlearn=false;
+      Boolean prefix=false;
+      for (      Pair<String,String> paramKV : paramsList) {
+        String key=paramKV.first();
+        String value=paramKV.second();
+        if ("name".equalsIgnoreCase(key))         name=value;
+        if ("length".equalsIgnoreCase(key))         length=value;
+        if ("holdtime".equalsIgnoreCase(key))         holdtime=value;
+        if ("mode".equalsIgnoreCase(key))         mode=value;
+        if ("request-learn".equalsIgnoreCase(key))         requestlearn=true;
+        if ("prefix".equalsIgnoreCase(key))         prefix=true;
+      }
+      if ((name == null) || (length == null) || (holdtime == null)) {
+        s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause: length,holdtime or name is null");
+        return null;
+      }
+      if (!containsOnlyNumbers(length,null)) {
+        s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause: length is not a number:"+ length);
+        return null;
+      }
+      if (!containsOnlyNumbers(holdtime,timeEndChar)) {
+        s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause: holdtime is not in timeformat:"+ holdtime);
+        return null;
+      }
+      sb.append("\t").append("appsession ").append(name).append(" len ").append(length).append(" timeout ").append(holdtime).append(" ");
+      if (prefix)       sb.append("prefix ");
+      if (requestlearn)       sb.append("request-learn").append(" ");
+      if (mode != null)       sb.append("mode ").append(mode).append(" ");
+    }
+ else {
+      s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause:invalid method ");
+      return null;
+    }
+  }
+  if (i == 0)   return null;
+  return sb.toString();
+}

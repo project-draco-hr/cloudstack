@@ -1,0 +1,67 @@
+{
+  UserContext caller=UserContext.current();
+  LoadBalancerVO loadBalancer=_lbDao.findById(cmd.getLbRuleId());
+  if (loadBalancer == null) {
+    throw new InvalidParameterValueException("Failed: LB rule id: " + cmd.getLbRuleId() + " not present ");
+  }
+  _accountMgr.checkAccess(caller.getCaller(),null,loadBalancer);
+  if (loadBalancer.getState() == FirewallRule.State.Revoke) {
+    throw new InvalidParameterValueException("Failed:  LB rule id:" + cmd.getLbRuleId() + " is in deleting state: ");
+  }
+  List<LbStickinessMethod> stickinessMethodList=getStickinessMethods(loadBalancer.getNetworkId());
+  boolean methodMatch=false;
+  if (stickinessMethodList == null) {
+    throw new InvalidParameterValueException("Failed:  No Stickiness method available for LB rule:" + cmd.getLbRuleId());
+  }
+  for (  LbStickinessMethod method : stickinessMethodList) {
+    if (method.getMethodName().equalsIgnoreCase(cmd.getStickinessMethodName())) {
+      methodMatch=true;
+      Map apiParamList=cmd.getparamList();
+      List<LbStickinessMethodParam> methodParamList=method.getParamList();
+      Map<String,String> tempParamList=new HashMap<String,String>();
+      if (apiParamList != null) {
+        Collection userGroupCollection=apiParamList.values();
+        Iterator iter=userGroupCollection.iterator();
+        while (iter.hasNext()) {
+          HashMap<String,String> paramKVpair=(HashMap)iter.next();
+          String paramName=paramKVpair.get("name");
+          String paramValue=paramKVpair.get("value");
+          tempParamList.put(paramName,paramValue);
+          Boolean found=false;
+          for (          LbStickinessMethodParam param : methodParamList) {
+            if (param.getParamName().equalsIgnoreCase(paramName)) {
+              if ((param.getIsflag() == false) && (paramValue == null)) {
+                throw new InvalidParameterValueException("Failed : Value expected for the Param :" + param.getParamName());
+              }
+              found=true;
+              break;
+            }
+          }
+          if (!found) {
+            throw new InvalidParameterValueException("Failed : Stickiness policy does not support param name :" + paramName);
+          }
+        }
+      }
+      for (      LbStickinessMethodParam param : methodParamList) {
+        if (param.getRequired()) {
+          if (tempParamList.get(param.getParamName()) == null) {
+            throw new InvalidParameterValueException("Failed : Missing Manadatory Param :" + param.getParamName());
+          }
+        }
+      }
+      break;
+    }
+  }
+  if (methodMatch == false) {
+    throw new InvalidParameterValueException("Failed to match Stickiness method name for LB rule:" + cmd.getLbRuleId());
+  }
+  List<LBStickinessPolicyVO> stickinessPolicies=_lb2stickinesspoliciesDao.listByLoadBalancerId(cmd.getLbRuleId(),false);
+  if (stickinessPolicies.size() > 0) {
+    throw new InvalidParameterValueException("Failed to create Stickiness policy: Already policy attached " + cmd.getLbRuleId());
+  }
+  LBStickinessPolicyVO policy=new LBStickinessPolicyVO(loadBalancer.getId(),cmd.getLBStickinessPolicyName(),cmd.getStickinessMethodName(),cmd.getparamList(),cmd.getDescription());
+  policy=_lb2stickinesspoliciesDao.persist(policy);
+  loadBalancer.setState(FirewallRule.State.Add);
+  _lbDao.persist(loadBalancer);
+  return policy;
+}
