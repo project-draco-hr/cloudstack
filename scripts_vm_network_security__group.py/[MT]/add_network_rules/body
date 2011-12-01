@@ -2,7 +2,6 @@ def add_network_rules(vm_name, vm_id, vm_ip, signature, seqno, vmMac, rules, vif
     try:
         vmName = vm_name
         domId = getvmId(vmName)
-        vmchain = vm_name
         changes = []
         changes = check_rule_log_for_vm(vmName, vm_id, vm_ip, domId, signature, seqno)
         if (not (1 in changes)):
@@ -15,18 +14,31 @@ def add_network_rules(vm_name, vm_id, vm_ip, signature, seqno, vmMac, rules, vif
         else:
             lines = rules.split(';')[:(-1)]
         logging.debug(((('    programming network rules for  IP: ' + vm_ip) + ' vmname=') + vm_name))
+        vmchain = vm_name
         execute(('iptables -F ' + vmchain))
+        egress_vmchain = egress_chain_name(vm_name)
+        execute(('iptables -F ' + egress_vmchain))
+        egressrule = 0
         for line in lines:
             tokens = line.split(':')
-            if (len(tokens) != 4):
+            if (len(tokens) != 5):
                 continue
-            protocol = tokens[0]
-            start = tokens[1]
-            end = tokens[2]
+            ruletype = tokens[0]
+            protocol = tokens[1]
+            start = tokens[2]
+            end = tokens[3]
             cidrs = tokens.pop()
             ips = cidrs.split(',')
             ips.pop()
             allow_any = False
+            action = 'RETURN'
+            if (ruletype == 'E'):
+                vmchain = egress_chain_name(vm_name)
+                direction = '-d'
+                egressrule = (egressrule + 1)
+            else:
+                vmchain = vm_name
+                direction = '-s'
             if ('0.0.0.0/0' in ips):
                 i = ips.index('0.0.0.0/0')
                 del ips[i]
@@ -35,24 +47,32 @@ def add_network_rules(vm_name, vm_id, vm_ip, signature, seqno, vmMac, rules, vif
             if ips:
                 if (protocol == 'all'):
                     for ip in ips:
-                        execute((((('iptables -I ' + vmchain) + ' -m state --state NEW -s ') + ip) + ' -j ACCEPT'))
+                        execute(((((((('iptables -I ' + vmchain) + ' -m state --state NEW ') + direction) + ' ') + ip) + ' -j ') + action))
                 elif (protocol != 'icmp'):
                     for ip in ips:
-                        execute((((((((((('iptables -I ' + vmchain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + range) + ' -m state --state NEW -s ') + ip) + ' -j ACCEPT'))
+                        execute(((((((((((((('iptables -I ' + vmchain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + range) + ' -m state --state NEW ') + direction) + ' ') + ip) + ' -j ') + action))
                 else:
                     range = ((start + '/') + end)
                     if (start == '-1'):
                         range = 'any'
                         for ip in ips:
-                            execute((((((('iptables -I ' + vmchain) + ' -p icmp --icmp-type ') + range) + ' -s ') + ip) + ' -j ACCEPT'))
+                            execute(((((((((('iptables -I ' + vmchain) + ' -p icmp --icmp-type ') + range) + ' ') + direction) + '  ') + ip) + ' -j ') + action))
             if (allow_any and (protocol != 'all')):
                 if (protocol != 'icmp'):
-                    execute((((((((('iptables -I ' + vmchain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + range) + ' -m state --state NEW -j ACCEPT'))
+                    execute(((((((((('iptables -I ' + vmchain) + ' -p ') + protocol) + ' -m ') + protocol) + ' --dport ') + range) + ' -m state --state NEW -j ') + action))
                 else:
                     range = ((start + '/') + end)
                     if (start == '-1'):
                         range = 'any'
-                        execute((((('iptables -I ' + vmchain) + ' -p icmp --icmp-type ') + range) + ' -j ACCEPT'))
+                        execute(((((('iptables -I ' + vmchain) + ' -p icmp --icmp-type ') + range) + ' -j ') + action))
+        egress_vmchain = egress_chain_name(vm_name)
+        if (egressrule == 0):
+            iptables = (('iptables -A ' + egress_vmchain) + ' -j RETURN')
+            execute(iptables)
+        else:
+            iptables = (('iptables -A ' + egress_vmchain) + ' -j DROP')
+            execute(iptables)
+        vmchain = vm_name
         iptables = (('iptables -A ' + vmchain) + ' -j DROP')
         execute(iptables)
         if (write_rule_log_for_vm(vmName, vm_id, vm_ip, domId, signature, seqno) == False):
