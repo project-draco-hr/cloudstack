@@ -1,0 +1,73 @@
+{
+  Account caller=UserContext.current().getCaller();
+  long userId=UserContext.current().getCallerUserId();
+  _accountMgr.checkAccess(caller,null,ipOwner);
+  long ownerId=ipOwner.getId();
+  Network network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Network id is invalid: " + networkId);
+  }
+  DataCenter zone=_configMgr.getZone(network.getDataCenterId());
+  if (zone.getNetworkType() != NetworkType.Basic && network.getAccountId() != ipOwner.getId()) {
+    throw new InvalidParameterValueException("The owner of the network is not the same as owner of the IP");
+  }
+  VlanType vlanType=VlanType.VirtualNetwork;
+  boolean assign=false;
+  if (zone.getNetworkType() == NetworkType.Basic) {
+    if (network.getTrafficType() == TrafficType.Guest) {
+      vlanType=VlanType.DirectAttached;
+      assign=true;
+    }
+  }
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
+    throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zone.getId());
+  }
+  PublicIp ip=null;
+  Transaction txn=Transaction.currentTxn();
+  Account accountToLock=null;
+  try {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Associate IP address called for user " + userId + " account "+ ownerId);
+    }
+    accountToLock=_accountDao.acquireInLockTable(ownerId);
+    if (accountToLock == null) {
+      s_logger.warn("Unable to lock account: " + ownerId);
+      throw new ConcurrentOperationException("Unable to acquire account lock");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Associate IP address lock acquired");
+    }
+    _resourceLimitMgr.checkResourceLimit(accountToLock,ResourceType.public_ip);
+    boolean isSourceNat=false;
+    txn.start();
+    boolean sharedSourceNat=false;
+    Map<Network.Capability,String> sourceNatCapabilities=getNetworkServiceCapabilities(network.getId(),Service.SourceNat);
+    if (sourceNatCapabilities != null) {
+      String supportedSourceNatTypes=sourceNatCapabilities.get(Capability.SupportedSourceNatTypes).toLowerCase();
+      if (supportedSourceNatTypes.contains("zone")) {
+        sharedSourceNat=true;
+      }
+    }
+    if (!sharedSourceNat) {
+      List<IPAddressVO> addrs=listPublicIpAddressesInVirtualNetwork(ownerId,zone.getId(),true,networkId);
+      if (addrs.isEmpty() && network.getGuestType() == Network.GuestType.Isolated) {
+        isSourceNat=true;
+      }
+    }
+    ip=fetchNewPublicIp(zone.getId(),null,null,ipOwner,vlanType,network.getId(),isSourceNat,assign,null);
+    if (ip == null) {
+      throw new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zone.getId());
+    }
+    UserContext.current().setEventDetails("Ip Id: " + ip.getId());
+    Ip ipAddress=ip.getAddress();
+    s_logger.debug("Got " + ipAddress + " to assign for account "+ ipOwner.getId()+ " in zone "+ network.getDataCenterId());
+    txn.commit();
+  }
+  finally {
+    if (accountToLock != null) {
+      _accountDao.releaseFromLockTable(ownerId);
+      s_logger.debug("Associate IP address lock released");
+    }
+  }
+  return ip;
+}
