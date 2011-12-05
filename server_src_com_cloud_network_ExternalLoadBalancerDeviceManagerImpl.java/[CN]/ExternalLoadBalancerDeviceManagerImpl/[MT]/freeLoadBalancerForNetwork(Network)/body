@@ -1,0 +1,53 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  GlobalLock deviceMapLock=GlobalLock.getInternLock("LoadBalancerAllocLock");
+  try {
+    if (deviceMapLock.lock(120)) {
+      txn.start();
+      NetworkExternalLoadBalancerVO networkLBDevice=_networkExternalLBDao.findByNetworkId(guestConfig.getId());
+      long lbDeviceId=networkLBDevice.getExternalLBDeviceId();
+      _networkExternalLBDao.remove(networkLBDevice.getId());
+      List<NetworkExternalLoadBalancerVO> ntwksMapped=_networkExternalLBDao.listByLoadBalancerDeviceId(networkLBDevice.getExternalLBDeviceId());
+      ExternalLoadBalancerDeviceVO lbDevice=_externalLoadBalancerDeviceDao.findById(lbDeviceId);
+      boolean lbInUse=!(ntwksMapped == null || ntwksMapped.isEmpty());
+      boolean lbCloudManaged=lbDevice.getIsManagedDevice();
+      if (!lbInUse && !lbCloudManaged) {
+        lbDevice.setAllocationState(LBDeviceAllocationState.Free);
+        _externalLoadBalancerDeviceDao.update(lbDevice.getId(),lbDevice);
+      }
+      txn.commit();
+      if (!lbInUse && lbCloudManaged) {
+        Host lbHost=_hostDao.findById(lbDevice.getHostId());
+        String lbIP=lbHost.getPrivateIpAddress();
+        DestroyLoadBalancerApplianceCommand lbDeleteCmd=new DestroyLoadBalancerApplianceCommand(lbIP);
+        DestroyLoadBalancerApplianceAnswer answer=null;
+        try {
+          answer=(DestroyLoadBalancerApplianceAnswer)_agentMgr.easySend(lbDevice.getParentHostId(),lbDeleteCmd);
+          if (answer == null || !answer.getResult()) {
+            s_logger.warn("Failed to destoy load balancer appliance used by the network" + guestConfig.getId() + " due to "+ answer.getDetails());
+          }
+        }
+ catch (        Exception e) {
+          s_logger.warn("Failed to destroy load balancer appliance used by the network" + guestConfig.getId() + " due to "+ e.getMessage());
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Successfully destroyed load balancer appliance used for the network" + guestConfig.getId());
+        }
+      }
+      deviceMapLock.unlock();
+      return true;
+    }
+ else {
+      s_logger.error("Failed to release load balancer device for the network" + guestConfig.getId() + "as failed to acquire lock ");
+      return false;
+    }
+  }
+ catch (  Exception exception) {
+    txn.rollback();
+    s_logger.error("Failed to release load balancer device for the network" + guestConfig.getId() + " due to "+ exception.getMessage());
+  }
+ finally {
+    deviceMapLock.releaseRef();
+  }
+  return false;
+}

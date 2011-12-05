@@ -1,0 +1,91 @@
+{
+  boolean retry=true;
+  boolean tryLbProvisioning=false;
+  ExternalLoadBalancerDeviceVO lbDevice=null;
+  long physicalNetworkId=guestConfig.getPhysicalNetworkId();
+  NetworkOfferingVO offering=_networkOfferingDao.findById(guestConfig.getNetworkOfferingId());
+  String provider=_ntwkSrvcProviderDao.getProviderForServiceInNetwork(guestConfig.getId(),Service.Lb);
+  while (retry) {
+    GlobalLock deviceMapLock=GlobalLock.getInternLock("LoadBalancerAllocLock");
+    Transaction txn=Transaction.currentTxn();
+    try {
+      if (deviceMapLock.lock(120)) {
+        try {
+          boolean dedicatedLB=offering.getDedicatedLB();
+          long lbDeviceId;
+          txn.start();
+          try {
+            lbDevice=findSuitableLoadBalancerForNetwork(guestConfig,dedicatedLB);
+            lbDeviceId=lbDevice.getId();
+            NetworkExternalLoadBalancerVO networkLB=new NetworkExternalLoadBalancerVO(guestConfig.getId(),lbDeviceId);
+            _networkExternalLBDao.persist(networkLB);
+            lbDevice.setAllocationState(dedicatedLB ? LBDeviceAllocationState.Dedicated : LBDeviceAllocationState.Shared);
+            _externalLoadBalancerDeviceDao.update(lbDeviceId,lbDevice);
+            txn.commit();
+            tryLbProvisioning=false;
+            retry=false;
+          }
+ catch (          InsufficientCapacityException exception) {
+            if (tryLbProvisioning) {
+              retry=false;
+              s_logger.warn("There are no load balancer device with the capacity for implementing this network");
+              throw exception;
+            }
+ else {
+              tryLbProvisioning=true;
+            }
+          }
+        }
+  finally {
+          deviceMapLock.unlock();
+          if (lbDevice == null) {
+            txn.rollback();
+          }
+        }
+      }
+    }
+  finally {
+      deviceMapLock.releaseRef();
+    }
+    if (tryLbProvisioning) {
+      List<ExternalLoadBalancerDeviceVO> providerLbDevices=_externalLoadBalancerDeviceDao.listByProviderAndDeviceAllocationState(physicalNetworkId,provider,LBDeviceAllocationState.Provider);
+      if ((providerLbDevices != null) && (!providerLbDevices.isEmpty())) {
+        for (        ExternalLoadBalancerDeviceVO lbProviderDevice : providerLbDevices) {
+          if (lbProviderDevice.getState() == LBDeviceState.Enabled) {
+            String lbIP=null;
+            String netmask=null;
+            String gateway=null;
+            String username=null;
+            String password=null;
+            String publicIf=null;
+            String privateIf=null;
+            CreateLoadBalancerApplianceCommand lbProvisionCmd=new CreateLoadBalancerApplianceCommand(lbIP,netmask,gateway,username,password);
+            CreateLoadBalancerApplianceAnswer answer=null;
+            try {
+              answer=(CreateLoadBalancerApplianceAnswer)_agentMgr.easySend(lbProviderDevice.getHostId(),lbProvisionCmd);
+              if (answer == null || !answer.getResult()) {
+                s_logger.error("Could not provision load balancer instance on the load balancer device " + lbProviderDevice.getId());
+                continue;
+              }
+            }
+ catch (            Exception agentException) {
+              s_logger.error("Could not provision load balancer instance on the load balancer device " + lbProviderDevice.getId() + " due to "+ agentException.getMessage());
+              continue;
+            }
+            String dedicatedLb=offering.getDedicatedLB() ? "true" : "false";
+            String url="https://" + lbIP + "?publicinterface="+ publicIf+ "&privateinterface="+ privateIf+ "&lbdevicededicated="+ dedicatedLb;
+            ;
+            ExternalLoadBalancerDeviceVO lbAppliance=addExternalLoadBalancer(physicalNetworkId,url,"nsroot","nsroot",answer.getDeviceName(),answer.getServerResource());
+            if (lbAppliance != null) {
+              ExternalLoadBalancerDeviceVO managedLb=_externalLoadBalancerDeviceDao.findById(lbAppliance.getId());
+              managedLb.setIsManagedDevice(true);
+              managedLb.setParentHostId(lbProviderDevice.getHostId());
+              _externalLoadBalancerDeviceDao.update(lbAppliance.getId(),managedLb);
+            }
+          }
+        }
+      }
+    }
+  }
+  return lbDevice;
+}
