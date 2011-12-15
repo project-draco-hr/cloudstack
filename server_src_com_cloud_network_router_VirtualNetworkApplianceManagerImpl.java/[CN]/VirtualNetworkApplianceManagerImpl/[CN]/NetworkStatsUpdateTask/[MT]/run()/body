@@ -1,13 +1,42 @@
 {
+  GlobalLock scanLock=GlobalLock.getInternLock("network.stats");
   try {
-    if (_statsDao.updateAggStats()) {
-      s_logger.debug("Succussfully updated aggregate network stats");
-    }
- else {
-      s_logger.debug("Failed to update aggregate network stats");
+    if (scanLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+      ManagementServerHostVO msHost=_msHostDao.findOneInUpState(new Filter(ManagementServerHostVO.class,"id",true,0L,1L));
+      if (msHost == null || (msHost.getMsid() != mgmtSrvrId)) {
+        s_logger.debug("Skipping aggregate network stats update");
+        scanLock.unlock();
+        return;
+      }
+      Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+      try {
+        txn.start();
+        List<UserStatisticsVO> updatedStats=_statsDao.listUpdatedStats();
+        Date updatedTime=new Date();
+        for (        UserStatisticsVO stat : updatedStats) {
+          stat.setAggBytesReceived(stat.getCurrentBytesReceived() + stat.getNetBytesReceived());
+          stat.setAggBytesSent(stat.getCurrentBytesSent() + stat.getNetBytesSent());
+          _userStatsDao.update(stat.getId(),stat);
+          UserStatsLogVO statsLog=new UserStatsLogVO(stat.getId(),stat.getNetBytesReceived(),stat.getNetBytesSent(),stat.getCurrentBytesReceived(),stat.getCurrentBytesSent(),stat.getAggBytesReceived(),stat.getAggBytesSent(),updatedTime);
+          _userStatsLogDao.persist(statsLog);
+        }
+        s_logger.debug("Successfully updated aggregate network stats");
+        txn.commit();
+      }
+ catch (      Exception e) {
+        txn.rollback();
+        s_logger.debug("Failed to update aggregate network stats",e);
+      }
+ finally {
+        scanLock.unlock();
+        txn.close();
+      }
     }
   }
  catch (  Exception e) {
-    s_logger.debug("Failed to update aggregate network stats",e);
+    s_logger.debug("Exception while trying to acquire network stats lock",e);
+  }
+ finally {
+    scanLock.releaseRef();
   }
 }
