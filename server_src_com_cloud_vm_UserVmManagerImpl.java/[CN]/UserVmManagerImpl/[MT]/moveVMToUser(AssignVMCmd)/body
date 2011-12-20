@@ -15,7 +15,7 @@
   }
   Account oldAccount=_accountService.getActiveAccountById(vm.getAccountId());
   if (oldAccount == null) {
-    throw new InvalidParameterValueException("Invalid account for VM " + vm.getAccountId() + " in domain "+ oldAccount.getDomainId());
+    throw new InvalidParameterValueException("Invalid account for VM " + vm.getAccountId() + " in domain.");
   }
   if (oldAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
     throw new InvalidParameterValueException("Vm id=" + cmd.getVmId() + " belongs to the project and can't be moved");
@@ -27,6 +27,31 @@
   if (newAccount.getState() == Account.State.disabled) {
     throw new InvalidParameterValueException("The new account owner " + cmd.getAccountName() + " is disabled.");
   }
+  IPAddressVO ip=_ipAddressDao.findByAssociatedVmId(cmd.getVmId());
+  if (ip != null) {
+    List<FirewallRuleVO> firewall_rules=_rulesDao.listByIpAndPurposeAndNotRevoked(ip.getId(),FirewallRule.Purpose.Firewall);
+    if (firewall_rules.size() > 0) {
+      throw new InvalidParameterValueException("Remove the Firewall rules for this VM before assigning to another user.");
+    }
+    List<FirewallRuleVO> lb_rules=_rulesDao.listByIpAndPurposeAndNotRevoked(ip.getId(),FirewallRule.Purpose.LoadBalancing);
+    if (lb_rules.size() > 0) {
+      throw new InvalidParameterValueException("Remove the LoadBalancing rules for this VM before assigning to another user.");
+    }
+    List<FirewallRuleVO> nat_rules=_rulesDao.listByIpAndPurposeAndNotRevoked(ip.getId(),FirewallRule.Purpose.StaticNat);
+    if (nat_rules.size() > 0) {
+      throw new InvalidParameterValueException("Remove the StaticNat rules for this VM before assigning to another user.");
+    }
+    List<FirewallRuleVO> vpn_rules=_rulesDao.listByIpAndPurposeAndNotRevoked(ip.getId(),FirewallRule.Purpose.Vpn);
+    if (vpn_rules.size() > 0) {
+      throw new InvalidParameterValueException("Remove the Vpn rules for this VM before assigning to another user.");
+    }
+    List<SecurityGroupVMMapVO> securityGroupsToVmMap=_securityGroupVMMapDao.listByInstanceId(cmd.getVmId());
+    if (securityGroupsToVmMap.size() > 0) {
+      throw new InvalidParameterValueException("Remove the VM from security groups before assigning to another user.");
+    }
+  }
+  DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
+  removeInstanceFromInstanceGroup(cmd.getVmId());
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
   VirtualMachineTemplate template=_templateDao.findById(vm.getTemplateId());
   if (!template.isPublicTemplate()) {
@@ -35,7 +60,6 @@
   }
   DomainVO domain=_domainDao.findById(cmd.getDomainId());
   _accountMgr.checkAccess(newAccount,domain);
-  DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
   VMInstanceVO vmoi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
   VirtualMachineProfileImpl<VMInstanceVO> vmOldProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmoi);
   Transaction txn=Transaction.currentTxn();
@@ -43,54 +67,96 @@
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
   _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.user_vm);
   vm.setAccountId(newAccount.getAccountId());
+  vm.setDomainId(cmd.getDomainId());
   _vmDao.persist(vm);
   List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   for (  VolumeVO volume : volumes) {
+    _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName()));
     _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume,Long.valueOf(volumes.size()));
     volume.setAccountId(newAccount.getAccountId());
     _volsDao.persist(volume);
     _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume,Long.valueOf(volumes.size()));
+    _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName()));
   }
   _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.user_vm);
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
   txn.commit();
-  if (zone.getNetworkType() == NetworkType.Advanced) {
-    _networkMgr.cleanupNics(vmOldProfile);
-    _networkMgr.expungeNics(vmOldProfile);
-    List<NetworkVO> networkList=new ArrayList<NetworkVO>();
-    NetworkVO defaultNetwork=null;
-    List<NetworkVO> oldNetworks=new ArrayList<NetworkVO>();
-    List<NetworkVO> zoneNetworks=_networkDao.listByZone(zone.getId());
-    for (    NetworkVO network : zoneNetworks) {
-      NetworkOfferingVO no=_networkOfferingDao.findById(network.getNetworkOfferingId());
-      if (!no.isSystemOnly()) {
-        if (network.getGuestType() == Network.GuestType.Shared || !_networkDao.listBy(oldAccount.getId(),network.getId()).isEmpty()) {
-          oldNetworks.add(network);
+  List<Long> networkIdList=cmd.getNetworkIds();
+  if (zone.getNetworkType() == NetworkType.Basic) {
+  }
+ else {
+    if (zone.isSecurityGroupEnabled()) {
+      throw new InvalidParameterValueException("not yet tested for SecurityGroupEnabled advanced networks.");
+    }
+ else {
+      _networkMgr.cleanupNics(vmOldProfile);
+      _networkMgr.expungeNics(vmOldProfile);
+      List<NetworkVO> networkList=new ArrayList<NetworkVO>();
+      NetworkVO defaultNetwork=null;
+      List<NetworkVO> applicableNetworks=new ArrayList<NetworkVO>();
+      List<NetworkVO> zoneNetworks=_networkDao.listByZone(zone.getId());
+      for (      NetworkVO network : zoneNetworks) {
+        NetworkOfferingVO no=_networkOfferingDao.findById(network.getNetworkOfferingId());
+        if (!no.isSystemOnly()) {
+          if (network.getGuestType() == Network.GuestType.Shared || !_networkDao.listBy(oldAccount.getId(),network.getId()).isEmpty()) {
+            applicableNetworks.add(network);
+          }
         }
       }
-    }
-    for (    NetworkVO oldNet : oldNetworks) {
-      long networkOffering=oldNet.getNetworkOfferingId();
-      PhysicalNetwork physicalNetwork=_networkMgr.translateZoneIdToPhysicalNetwork(zone.getId());
-      List<NetworkVO> virtualNetworks=_networkMgr.listNetworksForAccount(newAccount.getId(),zone.getId(),Network.GuestType.Isolated);
-      if (virtualNetworks.isEmpty()) {
-        Network newNetwork=_networkMgr.createGuestNetwork(networkOffering,newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,false,null,physicalNetwork,zone.getId(),ACLType.Account,null);
-        defaultNetwork=_networkDao.findById(newNetwork.getId());
-      }
- else       if (virtualNetworks.size() > 1) {
-        throw new InvalidParameterValueException("More than 1 default Virtaul networks are found for account " + newAccount + "; please specify networkIds");
-      }
+      if (networkIdList != null && !networkIdList.isEmpty()) {
+        for (        Long networkId : networkIdList) {
+          NetworkVO network=_networkDao.findById(networkId);
+          if (network == null) {
+            throw new InvalidParameterValueException("Unable to find network by id " + networkIdList.get(0).longValue());
+          }
+          if (network.getGuestType() != Network.GuestType.Shared) {
+            List<NetworkVO> networkMap=_networkDao.listBy(newAccount.getId(),network.getId());
+            if (networkMap == null || networkMap.isEmpty()) {
+              throw new PermissionDeniedException("Unable to create a vm using network with id " + network.getId() + ", permission denied");
+            }
+          }
  else {
-        defaultNetwork=virtualNetworks.get(0);
+            if (!_networkMgr.isNetworkAvailableInDomain(networkId,newAccount.getDomainId())) {
+              throw new PermissionDeniedException("Shared network id=" + networkId + " is not available in domain id="+ newAccount.getDomainId());
+            }
+          }
+          NetworkOffering networkOffering=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+          if (networkOffering.isSystemOnly()) {
+            throw new InvalidParameterValueException("Network id=" + networkId + " is system only and can't be used for vm deployment");
+          }
+          applicableNetworks.add(network);
+        }
       }
-      networkList.add(defaultNetwork);
-      List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>();
-      for (      NetworkVO network : networkList) {
-        networks.add(new Pair<NetworkVO,NicProfile>(network,null));
+      for (      NetworkVO appNet : applicableNetworks) {
+        long networkOffering=appNet.getNetworkOfferingId();
+        PhysicalNetwork physicalNetwork=_networkMgr.translateZoneIdToPhysicalNetwork(zone.getId());
+        List<NetworkVO> virtualNetworks=_networkMgr.listNetworksForAccount(newAccount.getId(),zone.getId(),Network.GuestType.Isolated);
+        if (virtualNetworks.isEmpty()) {
+          s_logger.debug("Creating network for account " + newAccount + " as a part of assignVM process");
+          Network newNetwork=_networkMgr.createGuestNetwork(networkOffering,newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,false,null,physicalNetwork,zone.getId(),ACLType.Account,null);
+          defaultNetwork=_networkDao.findById(newNetwork.getId());
+        }
+ else         if (virtualNetworks.size() > 1) {
+          throw new InvalidParameterValueException("More than 1 default Virtaul networks are found for account " + newAccount + "; please specify networkIds");
+        }
+ else {
+          defaultNetwork=virtualNetworks.get(0);
+        }
+        networkList.add(defaultNetwork);
+        List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>();
+        int toggle=0;
+        for (        NetworkVO network : networkList) {
+          NicProfile defaultNic=new NicProfile();
+          if (toggle == 0) {
+            defaultNic.setDefaultNic(true);
+            toggle++;
+          }
+          networks.add(new Pair<NetworkVO,NicProfile>(network,defaultNic));
+        }
+        VMInstanceVO vmi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
+        VirtualMachineProfileImpl<VMInstanceVO> vmProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmi);
+        _networkMgr.allocate(vmProfile,networks);
       }
-      VMInstanceVO vmi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
-      VirtualMachineProfileImpl<VMInstanceVO> vmProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmi);
-      _networkMgr.allocate(vmProfile,networks);
     }
   }
   return vm;

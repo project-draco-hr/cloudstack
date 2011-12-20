@@ -47,7 +47,7 @@
     }
     NicProfile defaultNic=new NicProfile();
     if (publicNetwork) {
-      PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountService.getSystemUser().getId());
+      PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountMgr.getSystemUser().getId());
       defaultNic.setDefaultNic(true);
       defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
       defaultNic.setGateway(sourceNatIp.getGateway());
@@ -120,6 +120,9 @@
       }
       ServiceOfferingVO routerOffering=_serviceOfferingDao.findById(offering_id);
       List<HypervisorType> supportedHypervisors=_resourceMgr.getSupportedHypervisorTypes(dest.getDataCenter().getId());
+      if (supportedHypervisors.isEmpty()) {
+        throw new InsufficientServerCapacityException("Unable to create virtual router, there are no clusters in the zone ",DataCenter.class,dest.getDataCenter().getId());
+      }
       int retry=0;
       for (      HypervisorType hType : supportedHypervisors) {
         try {
@@ -129,7 +132,11 @@
             s_logger.debug(hType + " won't support system vm, skip it");
             continue;
           }
-          router=new DomainRouterVO(id,routerOffering.getId(),vrProvider.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,routerOffering.getOfferHA(),false);
+          boolean offerHA=routerOffering.getOfferHA();
+          if (isRedundant) {
+            offerHA=false;
+          }
+          router=new DomainRouterVO(id,routerOffering.getId(),vrProvider.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),guestNetwork.getId(),isRedundant,0,false,RedundantState.UNKNOWN,offerHA,false);
           router.setRole(Role.VIRTUAL_ROUTER);
           router=_itMgr.allocate(router,template,routerOffering,networks,plan,null,owner);
           break;

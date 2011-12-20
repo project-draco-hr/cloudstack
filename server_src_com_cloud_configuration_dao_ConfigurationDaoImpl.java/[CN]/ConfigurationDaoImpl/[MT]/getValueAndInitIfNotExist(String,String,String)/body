@@ -1,0 +1,44 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  PreparedStatement stmt=null;
+  PreparedStatement stmtInsert=null;
+  String returnValue=initValue;
+  try {
+    txn.start();
+    stmt=txn.prepareAutoCloseStatement("SELECT value FROM configuration WHERE name=?");
+    stmt.setString(1,name);
+    ResultSet rs=stmt.executeQuery();
+    if (rs != null && rs.next()) {
+      returnValue=rs.getString(1);
+      if (returnValue != null) {
+        txn.commit();
+        if ("Hidden".equals(category)) {
+          return DBEncryptionUtil.decrypt(returnValue);
+        }
+ else {
+          return returnValue;
+        }
+      }
+ else {
+        returnValue=initValue;
+      }
+    }
+    stmt.close();
+    if ("Hidden".equals(category)) {
+      initValue=DBEncryptionUtil.encrypt(initValue);
+    }
+    stmtInsert=txn.prepareAutoCloseStatement("INSERT INTO configuration(instance, name, value, description) VALUES('DEFAULT', ?, ?, '') ON DUPLICATE KEY UPDATE value=?");
+    stmtInsert.setString(1,name);
+    stmtInsert.setString(2,initValue);
+    stmtInsert.setString(3,initValue);
+    if (stmtInsert.executeUpdate() < 1) {
+      throw new CloudRuntimeException("Unable to init configuration variable: " + name);
+    }
+    txn.commit();
+    return returnValue;
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to update Configuration Value",e);
+    throw new CloudRuntimeException("Unable to init configuration variable: " + name);
+  }
+}
