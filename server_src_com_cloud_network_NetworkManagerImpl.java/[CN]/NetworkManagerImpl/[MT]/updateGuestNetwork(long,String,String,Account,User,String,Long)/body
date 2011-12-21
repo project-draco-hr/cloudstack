@@ -4,6 +4,9 @@
   if (network == null) {
     throw new InvalidParameterValueException("Network id=" + networkId + "doesn't exist in the system");
   }
+  if (network.getState() == Network.State.Destroy) {
+    throw new InvalidParameterValueException("Don't allow to update network in state " + Network.State.Destroy);
+  }
   NetworkOffering offering=_networkOfferingDao.findByIdIncludingRemoved(network.getNetworkOfferingId());
   if (offering.isSystemOnly()) {
     throw new InvalidParameterValueException("Can't update system networks");
@@ -57,12 +60,23 @@
     restartNetwork=true;
   }
   ReservationContext context=new ReservationContextImpl(null,null,callerUser,callerAccount);
+  boolean validStateToShutdown=(network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup || network.getState() == Network.State.Allocated);
   if (restartNetwork) {
-    s_logger.debug("Shutting down elements and resources for network id=" + networkId + " as a part of network update");
-    if (!shutdownNetworkElementsAndResources(context,true,network)) {
-      s_logger.warn("Failed to shutdown the network elements and resources as a part of network restart: " + network.getState());
-      throw new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of network restart: " + network.getState());
+    if (validStateToShutdown) {
+      s_logger.debug("Shutting down elements and resources for network id=" + networkId + " as a part of network update");
+      if (!shutdownNetworkElementsAndResources(context,true,network)) {
+        s_logger.warn("Failed to shutdown the network elements and resources as a part of network restart: " + network);
+        throw new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of network update: " + network);
+      }
     }
+ else {
+      throw new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of network update: " + network + "; network is in wrong state: "+ network.getState());
+    }
+  }
+  network=_networksDao.findById(networkId);
+  boolean validStateToImplement=(network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup || network.getState() == Network.State.Allocated);
+  if (restartNetwork && !validStateToImplement) {
+    throw new CloudRuntimeException("Failed to implement the network elements and resources as a part of network update: " + network + "; network is in wrong state: "+ network.getState());
   }
   if (networkOfferingId != null) {
     network.setNetworkOfferingId(networkOfferingId);
@@ -71,16 +85,17 @@
  else {
     _networksDao.update(networkId,network);
   }
-  network=_networksDao.findById(networkId);
   if (restartNetwork) {
-    DeployDestination dest=new DeployDestination(_dcDao.findById(network.getDataCenterId()),null,null,null);
-    s_logger.debug("Implementing the network " + network + " elements and resources as a part of network update");
-    try {
-      implementNetworkElementsAndResources(dest,context,network,_networkOfferingDao.findById(network.getNetworkOfferingId()));
-    }
- catch (    Exception ex) {
-      s_logger.warn("Failed to implement network " + network + " elements and resources as a part of network update due to ",ex);
-      throw new CloudRuntimeException("Failed to implement network " + network + " elements and resources as a part of network update");
+    if (network.getState() != Network.State.Allocated) {
+      DeployDestination dest=new DeployDestination(_dcDao.findById(network.getDataCenterId()),null,null,null);
+      s_logger.debug("Implementing the network " + network + " elements and resources as a part of network update");
+      try {
+        implementNetworkElementsAndResources(dest,context,network,_networkOfferingDao.findById(network.getNetworkOfferingId()));
+      }
+ catch (      Exception ex) {
+        s_logger.warn("Failed to implement network " + network + " elements and resources as a part of network update due to ",ex);
+        throw new CloudRuntimeException("Failed to implement network " + network + " elements and resources as a part of network update");
+      }
     }
   }
   return getNetwork(network.getId());
