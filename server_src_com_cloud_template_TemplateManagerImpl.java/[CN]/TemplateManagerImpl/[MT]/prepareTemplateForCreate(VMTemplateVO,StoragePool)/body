@@ -54,12 +54,8 @@
   }
   List<StoragePoolHostVO> vos=_poolHostDao.listByHostStatus(poolId,com.cloud.host.Status.Up);
   if (vos == null || vos.isEmpty()) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Cannot download " + templateId + " to poolId "+ poolId+ " since there is no host in the Up state connected to this pool");
-    }
+    throw new CloudRuntimeException("Cannot download " + templateId + " to poolId "+ poolId+ " since there is no host in the Up state connected to this pool");
   }
-  Collections.shuffle(vos);
-  StoragePoolHostVO vo=vos.get(0);
   templateStoragePoolRef=_tmpltPoolDao.acquireInLockTable(templateStoragePoolRefId,_storagePoolMaxWaitSeconds);
   if (templateStoragePoolRef == null) {
     throw new CloudRuntimeException("Unable to acquire lock on VMTemplateStoragePool: " + templateStoragePoolRefId);
@@ -74,26 +70,30 @@
     assert(secondaryStorageHost != null);
     dcmd.setSecondaryStorageUrl(secondaryStorageHost.getStorageUrl());
     dcmd.setPrimaryStorageUrl("nfs://" + pool.getHostAddress() + pool.getPath());
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Downloading " + templateId + " via "+ vo.getHostId());
-    }
-    dcmd.setLocalPath(vo.getLocalPath());
-    PrimaryStorageDownloadAnswer answer=(PrimaryStorageDownloadAnswer)_agentMgr.easySend(_hvGuruMgr.getGuruProcessedCommandTargetHost(vo.getHostId(),dcmd),dcmd);
-    if (answer != null && answer.getResult()) {
-      templateStoragePoolRef.setDownloadPercent(100);
-      templateStoragePoolRef.setDownloadState(Status.DOWNLOADED);
-      templateStoragePoolRef.setLocalDownloadPath(answer.getInstallPath());
-      templateStoragePoolRef.setInstallPath(answer.getInstallPath());
-      templateStoragePoolRef.setTemplateSize(answer.getTemplateSize());
-      _tmpltPoolDao.update(templateStoragePoolRef.getId(),templateStoragePoolRef);
+    for (int retry=0; retry < 2; retry++) {
+      Collections.shuffle(vos);
+      StoragePoolHostVO vo=vos.get(0);
       if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Template " + templateId + " is downloaded via "+ vo.getHostId());
+        s_logger.debug("Downloading " + templateId + " via "+ vo.getHostId());
       }
-      return templateStoragePoolRef;
-    }
+      dcmd.setLocalPath(vo.getLocalPath());
+      PrimaryStorageDownloadAnswer answer=(PrimaryStorageDownloadAnswer)_agentMgr.easySend(_hvGuruMgr.getGuruProcessedCommandTargetHost(vo.getHostId(),dcmd),dcmd);
+      if (answer != null && answer.getResult()) {
+        templateStoragePoolRef.setDownloadPercent(100);
+        templateStoragePoolRef.setDownloadState(Status.DOWNLOADED);
+        templateStoragePoolRef.setLocalDownloadPath(answer.getInstallPath());
+        templateStoragePoolRef.setInstallPath(answer.getInstallPath());
+        templateStoragePoolRef.setTemplateSize(answer.getTemplateSize());
+        _tmpltPoolDao.update(templateStoragePoolRef.getId(),templateStoragePoolRef);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Template " + templateId + " is downloaded via "+ vo.getHostId());
+        }
+        return templateStoragePoolRef;
+      }
  else {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Template " + templateId + " download to pool "+ vo.getPoolId()+ " failed due to "+ (answer != null ? answer.getDetails() : "return null"));
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Template " + templateId + " download to pool "+ vo.getPoolId()+ " failed due to "+ (answer != null ? answer.getDetails() : "return null"));
+        }
       }
     }
   }
