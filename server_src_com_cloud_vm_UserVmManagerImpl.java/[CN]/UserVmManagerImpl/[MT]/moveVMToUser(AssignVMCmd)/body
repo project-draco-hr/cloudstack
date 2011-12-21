@@ -27,6 +27,9 @@
   if (newAccount.getState() == Account.State.disabled) {
     throw new InvalidParameterValueException("The new account owner " + cmd.getAccountName() + " is disabled.");
   }
+  if (oldAccount.getDomainId() != newAccount.getDomainId()) {
+    throw new InvalidParameterValueException("The account should be under smae domain for moving VM between two accounts. Old owner domain =" + oldAccount.getDomainId() + " New owner domain="+ newAccount.getDomainId());
+  }
   IPAddressVO ip=_ipAddressDao.findByAssociatedVmId(cmd.getVmId());
   if (ip != null) {
     List<FirewallRuleVO> firewall_rules=_rulesDao.listByIpAndPurposeAndNotRevoked(ip.getId(),FirewallRule.Purpose.Firewall);
@@ -82,7 +85,54 @@
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
   txn.commit();
   List<Long> networkIdList=cmd.getNetworkIds();
+  List<Long> securityGroupIdList=cmd.getSecurityGroupIdList();
   if (zone.getNetworkType() == NetworkType.Basic) {
+    _securityGroupMgr.removeInstanceFromGroups(cmd.getVmId());
+    List<NetworkVO> networkList=new ArrayList<NetworkVO>();
+    Network defaultNetwork=_networkMgr.getExclusiveGuestNetwork(zone.getId());
+    if (defaultNetwork == null) {
+      throw new InvalidParameterValueException("Unable to find a default network to start a vm");
+    }
+ else {
+      networkList.add(_networkDao.findById(defaultNetwork.getId()));
+    }
+    boolean isVmWare=(template.getHypervisorType() == HypervisorType.VMware);
+    if (securityGroupIdList != null && isVmWare) {
+      throw new InvalidParameterValueException("Security group feature is not supported for vmWare hypervisor");
+    }
+ else     if (!isVmWare && _networkMgr.isSecurityGroupSupportedInNetwork(defaultNetwork) && _networkMgr.canAddDefaultSecurityGroup()) {
+      if (securityGroupIdList == null) {
+        securityGroupIdList=new ArrayList<Long>();
+      }
+      SecurityGroup defaultGroup=_securityGroupMgr.getDefaultSecurityGroup(newAccount.getId());
+      if (defaultGroup != null) {
+        boolean defaultGroupPresent=false;
+        for (        Long securityGroupId : securityGroupIdList) {
+          if (securityGroupId.longValue() == defaultGroup.getId()) {
+            defaultGroupPresent=true;
+            break;
+          }
+        }
+        if (!defaultGroupPresent) {
+          securityGroupIdList.add(defaultGroup.getId());
+        }
+      }
+ else {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Couldn't find default security group for the account " + newAccount + " so creating a new one");
+        }
+        defaultGroup=_securityGroupMgr.createSecurityGroup(SecurityGroupManager.DEFAULT_GROUP_NAME,SecurityGroupManager.DEFAULT_GROUP_DESCRIPTION,newAccount.getDomainId(),newAccount.getId(),newAccount.getAccountName());
+        securityGroupIdList.add(defaultGroup.getId());
+      }
+    }
+    List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>();
+    NicProfile profile=new NicProfile();
+    profile.setDefaultNic(true);
+    networks.add(new Pair<NetworkVO,NicProfile>(networkList.get(0),profile));
+    VMInstanceVO vmi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
+    VirtualMachineProfileImpl<VMInstanceVO> vmProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmi);
+    _networkMgr.allocate(vmProfile,networks);
+    _securityGroupMgr.addInstanceToGroups(vm.getId(),securityGroupIdList);
   }
  else {
     if (zone.isSecurityGroupEnabled()) {
