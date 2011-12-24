@@ -1,0 +1,99 @@
+{
+  boolean success=true;
+  List<PublicIp> firewallPublicIps=new ArrayList<PublicIp>();
+  List<PublicIp> loadbalncerPublicIps=new ArrayList<PublicIp>();
+  if (publicIps != null && !publicIps.isEmpty()) {
+    for (    PublicIp ip : publicIps) {
+      if (ip.isSourceNat()) {
+        firewallPublicIps.add(0,ip);
+      }
+ else       if (ip.isOneToOneNat()) {
+        firewallPublicIps.add(ip);
+      }
+ else {
+        if (ip.getState() == State.Allocating) {
+          continue;
+        }
+        Purpose purpose=getPublicIpPurpose(ip,false);
+        if (purpose == null) {
+          purpose=getPublicIpPurpose(ip,true);
+          if (purpose == null) {
+            continue;
+          }
+ else {
+            if (rulesRevoked) {
+              ip.setState(State.Releasing);
+            }
+ else {
+              if (ip.getState() == State.Releasing) {
+                ip.setState(State.Allocated);
+              }
+            }
+          }
+        }
+switch (purpose) {
+case LoadBalancing:
+          loadbalncerPublicIps.add(ip);
+        break;
+case PortForwarding:
+case StaticNat:
+case Firewall:
+      firewallPublicIps.add(ip);
+    break;
+default :
+}
+}
+}
+}
+String lbProvider=_ntwkSrvcDao.getProviderForServiceInNetwork(network.getId(),Service.Lb);
+String fwProvider=_ntwkSrvcDao.getProviderForServiceInNetwork(network.getId(),Service.Firewall);
+for (NetworkElement element : _networkElements) {
+try {
+if (element instanceof FirewallServiceProvider && element instanceof LoadBalancingServiceProvider) {
+List<PublicIp> allIps=new ArrayList<PublicIp>();
+if (lbProvider.equalsIgnoreCase(element.getProvider().getName()) && fwProvider.equalsIgnoreCase(element.getProvider().getName())) {
+  allIps.addAll(firewallPublicIps);
+  allIps.addAll(loadbalncerPublicIps);
+}
+ else if (fwProvider.equalsIgnoreCase(element.getProvider().getName())) {
+  allIps.addAll(firewallPublicIps);
+}
+ else if (lbProvider.equalsIgnoreCase(element.getProvider().getName())) {
+  allIps.addAll(loadbalncerPublicIps);
+}
+ else {
+  continue;
+}
+FirewallServiceProvider fwElement=(FirewallServiceProvider)element;
+fwElement.applyIps(network,allIps);
+}
+ else if (element instanceof FirewallServiceProvider) {
+FirewallServiceProvider fwElement=(FirewallServiceProvider)element;
+if (fwProvider.equalsIgnoreCase(element.getProvider().getName())) {
+  fwElement.applyIps(network,firewallPublicIps);
+}
+}
+ else if (element instanceof LoadBalancingServiceProvider) {
+LoadBalancingServiceProvider lbElement=(LoadBalancingServiceProvider)element;
+if (lbProvider.equalsIgnoreCase(element.getProvider().getName())) {
+  if (loadbalncerPublicIps != null && !loadbalncerPublicIps.isEmpty()) {
+    lbElement.applyLoadBalancerIp(network,publicIps);
+  }
+}
+}
+ else {
+continue;
+}
+}
+ catch (ResourceUnavailableException e) {
+success=false;
+if (!continueOnError) {
+throw e;
+}
+ else {
+s_logger.debug("Resource is not available: " + element.getName(),e);
+}
+}
+}
+return success;
+}
