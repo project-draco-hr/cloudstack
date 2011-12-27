@@ -1,0 +1,51 @@
+{
+  Map<Long,AgentVmInfo> infos=convertToInfos(newStates);
+  Set<VMInstanceVO> set_vms=Collections.synchronizedSet(new HashSet<VMInstanceVO>());
+  set_vms.addAll(_vmDao.listByClusterId(clusterId));
+  set_vms.addAll(_vmDao.listStartingByClusterId(clusterId));
+  for (  VMInstanceVO vm : set_vms) {
+    if (vm.isRemoved() || vm.getState() == State.Destroyed || vm.getState() == State.Expunging)     continue;
+    AgentVmInfo info=infos.remove(vm.getId());
+    if (init) {
+      VMInstanceVO castedVm=null;
+      if (info == null) {
+        info=new AgentVmInfo(vm.getInstanceName(),getVmGuru(vm),vm,State.Stopped);
+        castedVm=info.guru.findById(vm.getId());
+      }
+ else {
+        castedVm=info.vm;
+      }
+      try {
+        Host host=_resourceMgr.findHostByGuid(info.getHostUuid());
+        long hostId=host == null ? (vm.getHostId() == null ? vm.getLastHostId() : vm.getHostId()) : host.getId();
+        HypervisorGuru hvGuru=_hvGuruMgr.getGuru(castedVm.getHypervisorType());
+        Command command=compareState(hostId,castedVm,info,true,hvGuru.trackVmHostChange());
+        if (command != null) {
+          Answer answer=_agentMgr.send(hostId,command);
+          if (!answer.getResult()) {
+            s_logger.warn("Failed to update state of the VM due to " + answer.getDetails());
+          }
+        }
+      }
+ catch (      Exception e) {
+        s_logger.warn("Unable to update state of the VM due to exception " + e.getMessage());
+        e.printStackTrace();
+      }
+    }
+  }
+  for (  final AgentVmInfo left : infos.values()) {
+    try {
+      Host host=_resourceMgr.findHostByGuid(left.getHostUuid());
+      if (host != null) {
+        s_logger.warn("Stopping a VM which we do not have any record of " + left.name);
+        Answer answer=_agentMgr.send(host.getId(),cleanup(left.name));
+        if (!answer.getResult()) {
+          s_logger.warn("Unable to stop a VM due to " + answer.getDetails());
+        }
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn("Unable to stop a VM due to " + e.getMessage());
+    }
+  }
+}
