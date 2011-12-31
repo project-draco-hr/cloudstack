@@ -1,0 +1,42 @@
+{
+  Long zoneId=cmd.getZoneId();
+  Long podId=cmd.getPodId();
+  String startIp=cmd.getStartIp();
+  String endIp=cmd.getEndIp();
+  Integer vlan=cmd.getVlan();
+  String netmask=cmd.getNetmask();
+  if (endIp == null) {
+    endIp=startIp;
+  }
+  List<NetworkVO> nws=_networkDao.listByZoneAndTrafficType(zoneId,TrafficType.Storage);
+  if (nws.size() == 0) {
+    throw new CloudRuntimeException("Cannot find storage network in zone " + zoneId);
+  }
+  if (nws.size() > 1) {
+    throw new CloudRuntimeException("Find more than one storage network in zone " + zoneId + ","+ nws.size()+ " found");
+  }
+  NetworkVO nw=nws.get(0);
+  checkOverlapPrivateIpRange(podId,startIp,endIp);
+  checkOverlapStorageIpRange(podId,startIp,endIp);
+  Transaction txn=Transaction.currentTxn();
+  StorageNetworkIpRangeVO range=null;
+  txn.start();
+  range=new StorageNetworkIpRangeVO(zoneId,podId,nw.getId(),startIp,endIp,vlan);
+  _sNwIpRangeDao.persist(range);
+  try {
+    createStorageIpEntires(txn,range.getId(),startIp,endIp,netmask,zoneId);
+  }
+ catch (  SQLException e) {
+    txn.rollback();
+    StringBuilder err=new StringBuilder();
+    err.append("Create storage network range failed.");
+    err.append("startIp=" + startIp);
+    err.append("endIp=" + endIp);
+    err.append("netmask=" + netmask);
+    err.append("zoneId=" + zoneId);
+    s_logger.debug(err.toString(),e);
+    throw e;
+  }
+  txn.commit();
+  return range;
+}
