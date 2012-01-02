@@ -24,6 +24,7 @@
   if ((networkOfferingId != null || domainSuffix != null) && network.getGuestType() != GuestType.Isolated) {
     throw new InvalidParameterValueException("NetworkOffering and domain suffix upgrade can be perfomed for Isolated networks only");
   }
+  boolean networkOfferingChanged=false;
   long oldNetworkOfferingId=network.getNetworkOfferingId();
   if (networkOfferingId != null) {
     NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
@@ -41,6 +42,7 @@
         throw new InvalidParameterValueException("Can't upgrade from network offering " + oldNetworkOfferingId + " to "+ networkOfferingId+ "; check logs for more information");
       }
       restartNetwork=true;
+      networkOfferingChanged=true;
     }
   }
   if (domainSuffix != null) {
@@ -79,8 +81,31 @@
     throw new CloudRuntimeException("Failed to implement the network elements and resources as a part of network update: " + network + "; network is in wrong state: "+ network.getState());
   }
   if (networkOfferingId != null) {
-    network.setNetworkOfferingId(networkOfferingId);
-    _networksDao.update(networkId,network,finalizeServicesAndProvidersForNetwork(_configMgr.getNetworkOffering(networkOfferingId),network.getPhysicalNetworkId()));
+    if (networkOfferingChanged) {
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      network.setNetworkOfferingId(networkOfferingId);
+      _networksDao.update(networkId,network,finalizeServicesAndProvidersForNetwork(_configMgr.getNetworkOffering(networkOfferingId),network.getPhysicalNetworkId()));
+      List<NicVO> nics=_nicDao.listByNetworkId(networkId);
+      for (      NicVO nic : nics) {
+        long vmId=nic.getInstanceId();
+        VMInstanceVO vm=_vmDao.findById(vmId);
+        if (vm == null) {
+          s_logger.error("Vm for nic " + nic.getId() + " not found with Vm Id:"+ vmId);
+          continue;
+        }
+        long isDefault=(nic.isDefaultNic()) ? 1 : 0;
+        UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_NETWORK_OFFERING_REMOVE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),null,oldNetworkOfferingId,null,0L);
+        _usageEventDao.persist(usageEvent);
+        usageEvent=new UsageEventVO(EventTypes.EVENT_NETWORK_OFFERING_ASSIGN,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),networkOfferingId,null,isDefault);
+        _usageEventDao.persist(usageEvent);
+      }
+      txn.commit();
+    }
+ else {
+      network.setNetworkOfferingId(networkOfferingId);
+      _networksDao.update(networkId,network,finalizeServicesAndProvidersForNetwork(_configMgr.getNetworkOffering(networkOfferingId),network.getPhysicalNetworkId()));
+    }
   }
  else {
     _networksDao.update(networkId,network);
