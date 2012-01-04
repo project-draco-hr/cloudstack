@@ -3,39 +3,58 @@
     @Override public void run(){
       Transaction txn=Transaction.open("ClusterHeartBeat");
       try {
-        txn.transitToUserManagedConnection(getHeartbeatConnection());
-        if (s_logger.isTraceEnabled()) {
-          s_logger.trace("Cluster manager heartbeat update, id:" + _mshostId);
-        }
-        _mshostDao.update(_mshostId,getCurrentRunId(),DateUtil.currentGMTTime());
-        if (s_logger.isTraceEnabled()) {
-          s_logger.trace("Cluster manager peer-scan, id:" + _mshostId);
-        }
-        if (!_peerScanInited) {
-          _peerScanInited=true;
-          initPeerScan();
-        }
-        peerScan();
-        if (_agentLBEnabled && !_agentLbHappened) {
-          SearchCriteriaService<HostVO,HostVO> sc=SearchCriteria2.create(HostVO.class);
-          sc.addAnd(sc.getEntity().getManagementServerId(),Op.NNULL);
-          sc.addAnd(sc.getEntity().getType(),Op.EQ,Host.Type.Routing);
-          List<HostVO> allManagedRoutingAgents=sc.list();
-          sc=SearchCriteria2.create(HostVO.class);
-          sc.addAnd(sc.getEntity().getType(),Op.EQ,Host.Type.Routing);
-          List<HostVO> allAgents=sc.list();
-          double allHostsCount=allAgents.size();
-          double managedHostsCount=allManagedRoutingAgents.size();
-          if (allHostsCount > 0.0) {
-            double load=managedHostsCount / allHostsCount;
-            if (load >= _connectedAgentsThreshold) {
-              s_logger.debug("Scheduling agent rebalancing task as the average agent load " + load + " is more than the threshold "+ _connectedAgentsThreshold);
-              _rebalanceService.scheduleRebalanceAgents();
-              _agentLbHappened=true;
-            }
+        Profiler profiler=new Profiler();
+        Profiler profilerHeartbeatUpdate=new Profiler();
+        Profiler profilerPeerScan=new Profiler();
+        Profiler profilerAgentLB=new Profiler();
+        try {
+          profiler.start();
+          profilerHeartbeatUpdate.start();
+          txn.transitToUserManagedConnection(getHeartbeatConnection());
+          if (s_logger.isTraceEnabled()) {
+            s_logger.trace("Cluster manager heartbeat update, id:" + _mshostId);
+          }
+          _mshostDao.update(_mshostId,getCurrentRunId(),DateUtil.currentGMTTime());
+          profilerHeartbeatUpdate.stop();
+          profilerPeerScan.start();
+          if (s_logger.isTraceEnabled()) {
+            s_logger.trace("Cluster manager peer-scan, id:" + _mshostId);
+          }
+          if (!_peerScanInited) {
+            _peerScanInited=true;
+            initPeerScan();
+          }
+          peerScan();
+          profilerPeerScan.stop();
+          profilerAgentLB.start();
+          if (_agentLBEnabled && !_agentLbHappened) {
+            SearchCriteriaService<HostVO,HostVO> sc=SearchCriteria2.create(HostVO.class);
+            sc.addAnd(sc.getEntity().getManagementServerId(),Op.NNULL);
+            sc.addAnd(sc.getEntity().getType(),Op.EQ,Host.Type.Routing);
+            List<HostVO> allManagedRoutingAgents=sc.list();
+            sc=SearchCriteria2.create(HostVO.class);
+            sc.addAnd(sc.getEntity().getType(),Op.EQ,Host.Type.Routing);
+            List<HostVO> allAgents=sc.list();
+            double allHostsCount=allAgents.size();
+            double managedHostsCount=allManagedRoutingAgents.size();
+            if (allHostsCount > 0.0) {
+              double load=managedHostsCount / allHostsCount;
+              if (load >= _connectedAgentsThreshold) {
+                s_logger.debug("Scheduling agent rebalancing task as the average agent load " + load + " is more than the threshold "+ _connectedAgentsThreshold);
+                _rebalanceService.scheduleRebalanceAgents();
+                _agentLbHappened=true;
+              }
  else {
-              s_logger.trace("Not scheduling agent rebalancing task as the averages load " + load + " is less than the threshold "+ _connectedAgentsThreshold);
+                s_logger.trace("Not scheduling agent rebalancing task as the averages load " + load + " is less than the threshold "+ _connectedAgentsThreshold);
+              }
             }
+          }
+          profilerAgentLB.stop();
+        }
+  finally {
+          profiler.stop();
+          if (profiler.getDuration() >= _heartbeatInterval) {
+            s_logger.warn("Management server heartbeat takes too long to finish. profiler: " + profiler.toString() + ", profilerHeartbeatUpdate: "+ profilerHeartbeatUpdate.toString()+ ", profilerPeerScan: "+ profilerPeerScan.toString()+ ", profilerAgentLB: "+ profilerAgentLB.toString());
           }
         }
       }
