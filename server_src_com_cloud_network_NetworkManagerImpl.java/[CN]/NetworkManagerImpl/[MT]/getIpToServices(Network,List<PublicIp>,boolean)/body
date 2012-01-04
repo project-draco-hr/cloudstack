@@ -1,0 +1,59 @@
+{
+  Map<PublicIp,Set<Service>> ipToServices=new HashMap<PublicIp,Set<Service>>();
+  if (publicIps != null && !publicIps.isEmpty()) {
+    boolean gotSNAT=false;
+    for (    PublicIp ip : publicIps) {
+      Set<Service> services=ipToServices.get(ip);
+      if (services == null) {
+        services=new HashSet<Service>();
+      }
+      if (ip.isSourceNat()) {
+        if (!gotSNAT) {
+          services.add(Service.SourceNat);
+          gotSNAT=true;
+        }
+ else {
+          throw new CloudRuntimeException("Multiply generic source NAT IPs in network " + network.getId() + "!");
+        }
+      }
+      ipToServices.put(ip,services);
+      if (ip.getState() == State.Allocating) {
+        continue;
+      }
+      Set<Purpose> purposes=getPublicIpPurposeInRules(ip,false);
+      if (purposes == null || purposes.isEmpty()) {
+        purposes=getPublicIpPurposeInRules(ip,true);
+        if (purposes == null || purposes.isEmpty()) {
+          continue;
+        }
+ else {
+          if (rulesRevoked) {
+            ip.setState(State.Releasing);
+          }
+ else {
+            if (ip.getState() == State.Releasing) {
+              ip.setState(State.Allocated);
+            }
+          }
+        }
+      }
+      if (purposes.contains(Purpose.StaticNat)) {
+        services.add(Service.StaticNat);
+      }
+      if (purposes.contains(Purpose.LoadBalancing)) {
+        services.add(Service.Lb);
+      }
+      if (purposes.contains(Purpose.PortForwarding)) {
+        services.add(Service.PortForwarding);
+      }
+      if (purposes.contains(Purpose.Vpn)) {
+        services.add(Service.Vpn);
+      }
+      if (services.isEmpty()) {
+        continue;
+      }
+      ipToServices.put(ip,services);
+    }
+  }
+  return ipToServices;
+}

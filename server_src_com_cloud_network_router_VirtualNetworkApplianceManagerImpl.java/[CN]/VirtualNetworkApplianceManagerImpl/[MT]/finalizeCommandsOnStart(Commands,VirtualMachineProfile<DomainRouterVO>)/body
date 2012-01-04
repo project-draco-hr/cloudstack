@@ -44,13 +44,17 @@
     long ownerId=router.getAccountId();
     long zoneId=router.getDataCenterIdToDeployIn();
     final List<IPAddressVO> userIps=_networkMgr.listPublicIpAddressesInVirtualNetwork(ownerId,zoneId,null,null);
-    List<PublicIpAddress> publicIps=new ArrayList<PublicIpAddress>();
+    List<PublicIp> allPublicIps=new ArrayList<PublicIp>();
     if (userIps != null && !userIps.isEmpty()) {
       for (      IPAddressVO userIp : userIps) {
         PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
-        publicIps.add(publicIp);
+        allPublicIps.add(publicIp);
       }
     }
+    Network network=_networkDao.findById(networkId);
+    Map<PublicIp,Set<Service>> ipToServices=_networkMgr.getIpToServices(network,allPublicIps,false);
+    Map<Provider,ArrayList<PublicIp>> providerToIpList=_networkMgr.getProviderToIpList(network,ipToServices);
+    ArrayList<PublicIp> publicIps=providerToIpList.get(Provider.VirtualRouter);
     s_logger.debug("Found " + publicIps.size() + " ip(s) to apply as a part of domR "+ router+ " start.");
     if (!publicIps.isEmpty()) {
       List<RemoteAccessVpn> vpns=new ArrayList<RemoteAccessVpn>();
@@ -58,7 +62,10 @@
       List<FirewallRule> staticNatFirewallRules=new ArrayList<FirewallRule>();
       List<StaticNat> staticNats=new ArrayList<StaticNat>();
       List<FirewallRule> firewallRules=new ArrayList<FirewallRule>();
-      for (      PublicIpAddress ip : publicIps) {
+      if (_networkMgr.isProviderSupportServiceInNetwork(router.getNetworkId(),Service.Firewall,provider)) {
+        createAssociateIPCommands(router,publicIps,cmds,0);
+      }
+      for (      PublicIp ip : publicIps) {
         if (_networkMgr.isProviderSupportServiceInNetwork(router.getNetworkId(),Service.PortForwarding,provider)) {
           pfRules.addAll(_pfRulesDao.listForApplication(ip.getId()));
         }
