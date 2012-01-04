@@ -19,6 +19,9 @@
   List<String> supportedServicesStr=cmd.getSupportedServices();
   if (zoneId != null) {
     zone=getZone(zoneId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("Unable to find the zone by id=" + zoneId);
+    }
   }
   Object keyword=cmd.getKeyword();
   if (keyword != null) {
@@ -81,12 +84,13 @@
   List<NetworkOfferingVO> offerings=_networkOfferingDao.search(sc,searchFilter);
   Boolean sourceNatSupported=cmd.getSourceNatSupported();
   boolean listBySupportedServices=(supportedServicesStr != null && !supportedServicesStr.isEmpty() && !offerings.isEmpty());
-  boolean parseOfferings=(listBySupportedServices || sourceNatSupported != null);
+  boolean checkIfProvidersAreEnabled=(zoneId != null);
+  boolean parseOfferings=(listBySupportedServices || sourceNatSupported != null || checkIfProvidersAreEnabled);
   if (parseOfferings) {
     List<NetworkOfferingVO> supportedOfferings=new ArrayList<NetworkOfferingVO>();
-    Service[] suppportedServices=null;
+    Service[] supportedServices=null;
     if (listBySupportedServices) {
-      suppportedServices=new Service[supportedServicesStr.size()];
+      supportedServices=new Service[supportedServicesStr.size()];
       int i=0;
       for (      String supportedServiceStr : supportedServicesStr) {
         Service service=Service.getService(supportedServiceStr);
@@ -94,15 +98,25 @@
           throw new InvalidParameterValueException("Invalid service specified " + supportedServiceStr);
         }
  else {
-          suppportedServices[i]=service;
+          supportedServices[i]=service;
         }
         i++;
       }
     }
     for (    NetworkOfferingVO offering : offerings) {
       boolean addOffering=true;
+      List<Service> checkForProviders=new ArrayList<Service>();
       if (listBySupportedServices) {
-        addOffering=addOffering && _networkMgr.areServicesSupportedByNetworkOffering(offering.getId(),suppportedServices);
+        addOffering=addOffering && _networkMgr.areServicesSupportedByNetworkOffering(offering.getId(),supportedServices);
+      }
+      if (checkIfProvidersAreEnabled) {
+        if (supportedServices != null && supportedServices.length > 0) {
+          checkForProviders=Arrays.asList(supportedServices);
+        }
+ else {
+          checkForProviders=_networkMgr.listNetworkOfferingServices(offering.getId());
+        }
+        addOffering=addOffering && _networkMgr.areServicesEnabledInZone(zoneId,offering.getId(),offering.getTags(),checkForProviders);
       }
       if (sourceNatSupported != null) {
         addOffering=addOffering && (_networkMgr.areServicesSupportedByNetworkOffering(offering.getId(),Network.Service.SourceNat) == sourceNatSupported);
