@@ -52,13 +52,21 @@
       if ((providerLbDevices != null) && (!providerLbDevices.isEmpty())) {
         for (        ExternalLoadBalancerDeviceVO lbProviderDevice : providerLbDevices) {
           if (lbProviderDevice.getState() == LBDeviceState.Enabled) {
-            String lbIP=null;
-            String netmask=null;
-            String gateway=null;
-            String username=null;
-            String password=null;
-            String publicIf=null;
-            String privateIf=null;
+            DataCenterIpAddressVO dcPrivateIp=_dcDao.allocatePrivateIpAddress(guestConfig.getDataCenterId(),lbProviderDevice.getUuid());
+            if (dcPrivateIp == null) {
+              throw new InsufficientNetworkCapacityException("failed to acquire a priavate IP in the zone " + guestConfig.getDataCenterId() + " needed for management IP of the load balancer appliance",DataCenter.class,guestConfig.getDataCenterId());
+            }
+            Pod pod=_podDao.findById(dcPrivateIp.getPodId());
+            String lbIP=dcPrivateIp.getIpAddress();
+            String netmask=NetUtils.getCidrNetmask(pod.getCidrSize());
+            String gateway=pod.getGateway();
+            String username="admin";
+            String password="admin";
+            DetailVO lbHostDetails=null;
+            lbHostDetails=_hostDetailDao.findDetail(lbProviderDevice.getHostId(),ApiConstants.PUBLIC_INTERFACE);
+            String publicIf=lbHostDetails.getValue();
+            lbHostDetails=_hostDetailDao.findDetail(lbProviderDevice.getHostId(),ApiConstants.PRIVATE_INTERFACE);
+            String privateIf=lbHostDetails.getValue();
             CreateLoadBalancerApplianceCommand lbProvisionCmd=new CreateLoadBalancerApplianceCommand(lbIP,netmask,gateway,username,password);
             CreateLoadBalancerApplianceAnswer answer=null;
             try {
@@ -75,7 +83,7 @@
             String dedicatedLb=offering.getDedicatedLB() ? "true" : "false";
             String url="https://" + lbIP + "?publicinterface="+ publicIf+ "&privateinterface="+ privateIf+ "&lbdevicededicated="+ dedicatedLb;
             ;
-            ExternalLoadBalancerDeviceVO lbAppliance=addExternalLoadBalancer(physicalNetworkId,url,"nsroot","nsroot",answer.getDeviceName(),answer.getServerResource());
+            ExternalLoadBalancerDeviceVO lbAppliance=addExternalLoadBalancer(physicalNetworkId,url,username,password,answer.getDeviceName(),answer.getServerResource());
             if (lbAppliance != null) {
               ExternalLoadBalancerDeviceVO managedLb=_externalLoadBalancerDeviceDao.findById(lbAppliance.getId());
               managedLb.setIsManagedDevice(true);
