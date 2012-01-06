@@ -13,25 +13,40 @@
   result.add(sb.toString());
   int i=0;
   Boolean destsAvailable=false;
+  String stickinessSubRule=getLbSubRuleForStickiness(lbTO);
+  List<String> dstSubRule=new ArrayList<String>();
+  List<String> dstWithCookieSubRule=new ArrayList<String>();
   for (  DestinationTO dest : lbTO.getDestinations()) {
     if (dest.isRevoked()) {
       continue;
     }
     sb=new StringBuilder();
     sb.append("\t").append("server ").append(poolName).append("_").append(Integer.toString(i++)).append(" ").append(dest.getDestIp()).append(":").append(dest.getDestPort()).append(" check");
-    result.add(sb.toString());
+    dstSubRule.add(sb.toString());
+    if (stickinessSubRule != null) {
+      sb.append(" cookie ").append(dest.getDestIp().replace(".","_")).append('-').append(dest.getDestPort()).toString();
+      dstWithCookieSubRule.add(sb.toString());
+    }
     destsAvailable=true;
   }
-  String stickinessSubRule=getLbSubRuleForStickiness(lbTO);
   Boolean httpbasedStickiness=false;
   if ((stickinessSubRule != null) && (destsAvailable == true)) {
-    result.add(stickinessSubRule);
     for (    StickinessPolicyTO stickinessPolicy : lbTO.getStickinessPolicies()) {
       if (stickinessPolicy == null)       continue;
       if (StickinessMethodType.LBCookieBased.getName().equalsIgnoreCase(stickinessPolicy.getMethodName()) || StickinessMethodType.AppCookieBased.getName().equalsIgnoreCase(stickinessPolicy.getMethodName())) {
         httpbasedStickiness=true;
       }
     }
+    if (httpbasedStickiness) {
+      result.addAll(dstWithCookieSubRule);
+    }
+ else {
+      result.addAll(dstSubRule);
+    }
+    result.add(stickinessSubRule);
+  }
+ else {
+    result.addAll(dstSubRule);
   }
   if ((stickinessSubRule != null) && !destsAvailable) {
     s_logger.warn("Haproxy stickiness policy for lb rule: " + lbTO.getSrcIp() + ":"+ lbTO.getSrcPort()+ ": Not Applied, cause:  backends are unavailable");
