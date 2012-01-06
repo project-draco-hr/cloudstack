@@ -3,17 +3,12 @@
   Long domainId=cmd.getDomainId();
   Long accountId=cmd.getId();
   String accountName=cmd.getSearchName();
-  Boolean isRecursive=cmd.isRecursive();
-  if (isRecursive == null) {
-    isRecursive=false;
-  }
-  if (accountId != null && accountId.longValue() == 1L) {
-    List<AccountVO> emptyList=new ArrayList<AccountVO>();
-    return emptyList;
-  }
+  boolean isRecursive=cmd.isRecursive();
+  boolean listAll=cmd.listAll();
+  Boolean listForDomain=false;
   if (accountId != null) {
     Account account=_accountDao.findById(accountId);
-    if (account == null) {
+    if (account == null || account.getId() == Account.ACCOUNT_ID_SYSTEM) {
       throw new InvalidParameterValueException("Unable to find account by id " + accountId);
     }
     checkAccess(caller,null,account);
@@ -26,20 +21,25 @@
     checkAccess(caller,domain);
     if (accountName != null) {
       Account account=_accountDao.findActiveAccount(accountName,domainId);
-      if (account == null) {
+      if (account == null || account.getId() == Account.ACCOUNT_ID_SYSTEM) {
         throw new InvalidParameterValueException("Unable to find account by name " + accountName + " in domain "+ domainId);
       }
       checkAccess(caller,null,account);
     }
   }
-  if (isAdmin(caller.getType())) {
-    if (domainId == null) {
-      domainId=caller.getDomainId();
-      isRecursive=true;
+  if (accountId == null) {
+    if (isAdmin(caller.getType()) && listAll && domainId == null) {
+      listForDomain=true;
+      if (domainId == null) {
+        domainId=caller.getDomainId();
+      }
     }
-  }
+ else     if (domainId != null) {
+      listForDomain=true;
+    }
  else {
-    accountId=caller.getId();
+      accountId=caller.getAccountId();
+    }
   }
   Filter searchFilter=new Filter(AccountVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
   Object type=cmd.getAccountType();
@@ -48,47 +48,25 @@
   Object keyword=cmd.getKeyword();
   SearchBuilder<AccountVO> sb=_accountDao.createSearchBuilder();
   sb.and("accountName",sb.entity().getAccountName(),SearchCriteria.Op.EQ);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
-  sb.and("nid",sb.entity().getId(),SearchCriteria.Op.NEQ);
   sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
   sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
   sb.and("needsCleanup",sb.entity().getNeedsCleanup(),SearchCriteria.Op.EQ);
   sb.and("typeNEQ",sb.entity().getType(),SearchCriteria.Op.NEQ);
-  if ((domainId != null) && isRecursive) {
+  sb.and("idNEQ",sb.entity().getId(),SearchCriteria.Op.NEQ);
+  if (listForDomain && isRecursive) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
- else   if ((domainId != null) && !isRecursive) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.EQ);
-    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
   SearchCriteria<AccountVO> sc=sb.create();
+  sc.setParameters("idNEQ",Account.ACCOUNT_ID_SYSTEM);
   if (keyword != null) {
     SearchCriteria<AccountVO> ssc=_accountDao.createSearchCriteria();
     ssc.addOr("accountName",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("state",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     sc.addAnd("accountName",SearchCriteria.Op.SC,ssc);
-  }
-  if (accountName != null) {
-    sc.setParameters("accountName",accountName);
-  }
-  if (accountId != null) {
-    sc.setParameters("id",accountId);
-  }
-  if (domainId != null) {
-    DomainVO domain=_domainDao.findById(domainId);
-    if (isRecursive) {
-      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
-    }
- else {
-      sc.setJoinParameters("domainSearch","path",domain.getPath());
-    }
-    sc.setParameters("nid",1L);
-  }
- else {
-    sc.setParameters("nid",1L);
   }
   if (type != null) {
     sc.setParameters("type",type);
@@ -99,6 +77,21 @@
   if (isCleanupRequired != null) {
     sc.setParameters("needsCleanup",isCleanupRequired);
   }
+  if (accountName != null) {
+    sc.setParameters("accountName",accountName);
+  }
   sc.setParameters("typeNEQ",5);
+  if (accountId != null) {
+    sc.setParameters("id",accountId);
+  }
+  if (listForDomain) {
+    DomainVO domain=_domainDao.findById(domainId);
+    if (isRecursive) {
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+ else {
+      sc.setParameters("domainId",domainId);
+    }
+  }
   return _accountDao.search(sc,searchFilter);
 }

@@ -1,96 +1,59 @@
 {
   Account caller=UserContext.current().getCaller();
-  List<Long> permittedAccounts=new ArrayList<Long>();
-  boolean isAdmin=false;
-  String accountName=cmd.getAccountName();
   Long domainId=cmd.getDomainId();
-  Long projectId=cmd.getProjectId();
-  if (_accountMgr.isAdmin(caller.getType())) {
-    isAdmin=true;
-    if (domainId != null) {
-      Domain domain=_domainDao.findById(domainId);
-      if (domain == null) {
-        throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
-      }
-      _accountMgr.checkAccess(caller,_domainDao.findById(domainId));
-      if (accountName != null) {
-        Account userAccount=_accountDao.findNonProjectAccountIncludingRemoved(accountName,domainId);
-        if (userAccount == null) {
-          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
-        }
-        permittedAccounts.add(userAccount.getId());
-      }
-    }
- else {
-      domainId=caller.getDomainId();
-      if (accountName != null) {
-        Account userAccount=_accountDao.findNonProjectAccountIncludingRemoved(accountName,domainId);
-        if (userAccount == null) {
-          throw new InvalidParameterValueException("Can't find account " + accountName + " in domain id="+ domainId);
-        }
-        permittedAccounts.add(userAccount.getId());
-      }
-    }
-  }
- else {
-    permittedAccounts.add(caller.getId());
-  }
-  boolean skipProjectEvents=true;
-  if (projectId != null) {
-    if (projectId == -1) {
-      permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
-    }
- else {
-      permittedAccounts.clear();
-      Project project=_projectMgr.getProject(projectId);
-      if (project == null) {
-        throw new InvalidParameterValueException("Unable to find project by id " + projectId);
-      }
-      if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
-        throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
-      }
-      permittedAccounts.add(project.getProjectAccountId());
-    }
-    skipProjectEvents=false;
-  }
-  Filter searchFilter=new Filter(EventVO.class,"createDate",false,cmd.getStartIndex(),cmd.getPageSizeVal());
-  Object id=cmd.getId();
-  Object type=cmd.getType();
-  Object level=cmd.getLevel();
+  boolean isRecursive=cmd.isRecursive();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Long id=cmd.getId();
+  String type=cmd.getType();
+  String level=cmd.getLevel();
   Date startDate=cmd.getStartDate();
   Date endDate=cmd.getEndDate();
-  Object keyword=cmd.getKeyword();
+  String keyword=cmd.getKeyword();
   Integer entryTime=cmd.getEntryTime();
   Integer duration=cmd.getDuration();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=_accountMgr.buildACLSearchParameters(caller,domainId,isRecursive,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,cmd.listAll(),id);
+  Filter searchFilter=new Filter(EventVO.class,"createDate",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<EventVO> sb=_eventDao.createSearchBuilder();
-  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
-  sb.and("levelL",sb.entity().getLevel(),SearchCriteria.Op.LIKE);
-  sb.and("levelEQ",sb.entity().getLevel(),SearchCriteria.Op.EQ);
-  sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.IN);
-  sb.and("accountName",sb.entity().getAccountName(),SearchCriteria.Op.LIKE);
-  sb.and("domainIdEQ",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
-  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
-  sb.and("createDateB",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
-  sb.and("createDateG",sb.entity().getCreateDate(),SearchCriteria.Op.GTEQ);
-  sb.and("createDateL",sb.entity().getCreateDate(),SearchCriteria.Op.LTEQ);
-  sb.and("accountType",sb.entity().getAccountType(),SearchCriteria.Op.NEQ);
-  sb.and("state",sb.entity().getState(),SearchCriteria.Op.NEQ);
-  sb.and("startId",sb.entity().getStartId(),SearchCriteria.Op.EQ);
-  sb.and("createDate",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
-  if (isAdmin && permittedAccounts.isEmpty() && domainId != null) {
+  sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  if (((permittedAccounts.isEmpty()) && (domainId != null) && isRecursive)) {
     SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
+  if (listProjectResourcesCriteria != null) {
+    if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.ListProjectResourcesOnly) {
+      sb.and("accountType",sb.entity().getAccountType(),SearchCriteria.Op.EQ);
+    }
+ else     if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.SkipProjectResources) {
+      sb.and("accountType",sb.entity().getAccountType(),SearchCriteria.Op.NEQ);
+    }
+  }
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("levelL",sb.entity().getLevel(),SearchCriteria.Op.LIKE);
+  sb.and("levelEQ",sb.entity().getLevel(),SearchCriteria.Op.EQ);
+  sb.and("type",sb.entity().getType(),SearchCriteria.Op.EQ);
+  sb.and("createDateB",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
+  sb.and("createDateG",sb.entity().getCreateDate(),SearchCriteria.Op.GTEQ);
+  sb.and("createDateL",sb.entity().getCreateDate(),SearchCriteria.Op.LTEQ);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.NEQ);
+  sb.and("startId",sb.entity().getStartId(),SearchCriteria.Op.EQ);
+  sb.and("createDate",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
   SearchCriteria<EventVO> sc=sb.create();
+  if (listProjectResourcesCriteria != null) {
+    sc.setParameters("accountType",Account.ACCOUNT_TYPE_PROJECT);
+  }
   if (!permittedAccounts.isEmpty()) {
-    sc.setParameters("accountId",permittedAccounts.toArray());
+    sc.setParameters("accountIdIN",permittedAccounts.toArray());
   }
  else   if (domainId != null) {
-    sc.setJoinParameters("domainSearch","path",_domainDao.findById(domainId).getPath() + "%");
-  }
-  if (skipProjectEvents) {
-    sc.setParameters("accountType",Account.ACCOUNT_TYPE_PROJECT);
+    DomainVO domain=_domainDao.findById(domainId);
+    if (isRecursive) {
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+ else {
+      sc.setParameters("domainId",domainId);
+    }
   }
   if (id != null) {
     sc.setParameters("id",id);

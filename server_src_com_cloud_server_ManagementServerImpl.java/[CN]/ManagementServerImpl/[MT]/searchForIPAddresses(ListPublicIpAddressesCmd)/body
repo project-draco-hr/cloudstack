@@ -1,89 +1,31 @@
 {
-  Account caller=UserContext.current().getCaller();
-  Long domainId=cmd.getDomainId();
-  String accountName=cmd.getAccountName();
   Object keyword=cmd.getKeyword();
-  Long projectId=cmd.getProjectId();
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
   Long associatedNetworkId=cmd.getAssociatedNetworkId();
+  Long zone=cmd.getZoneId();
+  String address=cmd.getIpAddress();
+  Long vlan=cmd.getVlanId();
+  Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
+  Boolean forLoadBalancing=cmd.isForLoadBalancing();
+  Long ipId=cmd.getId();
+  Account caller=UserContext.current().getCaller();
+  Long domainId=cmd.getDomainId();
+  boolean isRecursive=cmd.isRecursive();
   List<Long> permittedAccounts=new ArrayList<Long>();
-  if (isAdmin(caller.getType())) {
-    if (domainId != null) {
-      Domain domain=_domainDao.findById(domainId);
-      if (domain == null) {
-        throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
-      }
-      _accountMgr.checkAccess(caller,domain);
-      if (accountName != null) {
-        Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
-        if (userAccount != null) {
-          permittedAccounts.add(userAccount.getId());
-        }
- else {
-          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
-        }
-      }
-    }
- else     if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
-      domainId=caller.getDomainId();
-    }
-  }
- else {
-    permittedAccounts.add(caller.getId());
-  }
-  boolean skipProjectIps=true;
-  if (projectId != null) {
-    if (projectId == -1) {
-      permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
-    }
- else {
-      permittedAccounts.clear();
-      Project project=_projectMgr.getProject(projectId);
-      if (project == null) {
-        throw new InvalidParameterValueException("Unable to find project by id " + projectId);
-      }
-      if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
-        throw new InvalidParameterValueException("Account " + caller + " can't access project id="+ projectId);
-      }
-      permittedAccounts.add(project.getProjectAccountId());
-    }
-    skipProjectIps=false;
-  }
-  if (permittedAccounts.isEmpty() && keyword != null) {
-    Account userAccount=_accountDao.findActiveAccount((String)keyword,domainId);
-    if (userAccount != null) {
-      permittedAccounts.add(userAccount.getId());
-    }
-  }
   Boolean isAllocated=cmd.isAllocatedOnly();
   if (isAllocated == null) {
     isAllocated=Boolean.TRUE;
   }
+  ListProjectResourcesCriteria listProjectResourcesCriteria=_accountMgr.buildACLSearchParameters(caller,domainId,isRecursive,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,cmd.listAll(),ipId);
   Filter searchFilter=new Filter(IPAddressVO.class,"address",false,cmd.getStartIndex(),cmd.getPageSizeVal());
-  Object zone=cmd.getZoneId();
-  Object address=cmd.getIpAddress();
-  Object vlan=cmd.getVlanId();
-  Object forVirtualNetwork=cmd.isForVirtualNetwork();
-  Object forLoadBalancing=cmd.isForLoadBalancing();
-  Object ipId=cmd.getId();
   SearchBuilder<IPAddressVO> sb=_publicIpAddressDao.createSearchBuilder();
-  sb.and("accountIdIN",sb.entity().getAllocatedToAccountId(),SearchCriteria.Op.IN);
+  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
   sb.and("address",sb.entity().getAddress(),SearchCriteria.Op.EQ);
   sb.and("vlanDbId",sb.entity().getVlanId(),SearchCriteria.Op.EQ);
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
   sb.and("physicalNetworkId",sb.entity().getPhysicalNetworkId(),SearchCriteria.Op.EQ);
   sb.and("associatedNetworkIdEq",sb.entity().getAssociatedWithNetworkId(),SearchCriteria.Op.EQ);
-  if ((permittedAccounts.isEmpty()) && (domainId != null)) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("domainSearch",domainSearch,sb.entity().getAllocatedInDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
-  if (skipProjectIps) {
-    SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
-    accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
-    sb.join("accountSearch",accountSearch,sb.entity().getAllocatedToAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
   if (forLoadBalancing != null && (Boolean)forLoadBalancing) {
     SearchBuilder<LoadBalancerVO> lbSearch=_loadbalancerDao.createSearchBuilder();
     sb.join("lbSearch",lbSearch,sb.entity().getId(),lbSearch.entity().getSourceIpAddressId(),JoinType.INNER);
@@ -111,16 +53,7 @@
     sb.and("associatedNetworkId",sb.entity().getAssociatedWithNetworkId(),SearchCriteria.Op.NNULL);
   }
   SearchCriteria<IPAddressVO> sc=sb.create();
-  if (skipProjectIps) {
-    sc.setJoinParameters("accountSearch","type",Account.ACCOUNT_TYPE_PROJECT);
-  }
-  if (!permittedAccounts.isEmpty()) {
-    sc.setParameters("accountIdIN",permittedAccounts.toArray());
-  }
- else   if (domainId != null) {
-    DomainVO domain=_domainDao.findById(domainId);
-    sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
-  }
+  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   sc.setJoinParameters("vlanSearch","vlanType",vlanType);
   if (zone != null) {
     sc.setParameters("dataCenterId",zone);

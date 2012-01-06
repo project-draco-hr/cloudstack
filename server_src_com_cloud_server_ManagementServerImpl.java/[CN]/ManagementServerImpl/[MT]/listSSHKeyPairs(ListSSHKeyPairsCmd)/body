@@ -1,43 +1,21 @@
 {
-  Account caller=UserContext.current().getCaller();
   String name=cmd.getName();
   String fingerPrint=cmd.getFingerprint();
+  Account caller=UserContext.current().getCaller();
+  Long domainId=cmd.getDomainId();
+  boolean isRecursive=cmd.isRecursive();
   List<Long> permittedAccounts=new ArrayList<Long>();
-  Long domainId=null;
-  String path=null;
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
-    permittedAccounts.add(caller.getId());
-    domainId=caller.getDomainId();
-  }
- else   if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
-    DomainVO domain=_domainDao.findById(caller.getDomainId());
-    path=domain.getPath();
-  }
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
-    permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
-  }
+  ListProjectResourcesCriteria listProjectResourcesCriteria=_accountMgr.buildACLSearchParameters(caller,domainId,isRecursive,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,cmd.listAll(),null);
   SearchBuilder<SSHKeyPairVO> sb=_sshKeyPairDao.createSearchBuilder();
+  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   Filter searchFilter=new Filter(SSHKeyPairVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
-  if (path != null) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
   SearchCriteria<SSHKeyPairVO> sc=sb.create();
+  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   if (name != null) {
     sc.addAnd("name",SearchCriteria.Op.EQ,name);
   }
-  if (!permittedAccounts.isEmpty()) {
-    sc.addAnd("accountId",SearchCriteria.Op.IN,permittedAccounts.toArray());
-  }
-  if (domainId != null) {
-    sc.addAnd("domainId",SearchCriteria.Op.EQ,domainId);
-  }
   if (fingerPrint != null) {
     sc.addAnd("fingerprint",SearchCriteria.Op.EQ,fingerPrint);
-  }
-  if (path != null) {
-    sc.setJoinParameters("domainSearch","path",path + "%");
   }
   return _sshKeyPairDao.search(sc,searchFilter);
 }

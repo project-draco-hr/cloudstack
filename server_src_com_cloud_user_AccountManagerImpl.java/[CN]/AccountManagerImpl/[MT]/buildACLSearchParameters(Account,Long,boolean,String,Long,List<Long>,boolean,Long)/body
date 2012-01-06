@@ -1,0 +1,74 @@
+{
+  ListProjectResourcesCriteria listProjectResourcesCriteria=null;
+  if (domainId != null) {
+    Domain domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
+    }
+    checkAccess(caller,domain);
+  }
+  if (accountName != null) {
+    if (projectId != null) {
+      throw new InvalidParameterValueException("Account and projectId can't be specified together");
+    }
+    Account userAccount=null;
+    if (domainId != null) {
+      userAccount=_accountDao.findActiveAccount(accountName,domainId);
+    }
+ else {
+      userAccount=_accountDao.findActiveAccount(accountName,caller.getDomainId());
+    }
+    if (userAccount != null) {
+      permittedAccounts.add(userAccount.getId());
+    }
+ else {
+      throw new InvalidParameterValueException("could not find account " + accountName + " in domain "+ domainId);
+    }
+  }
+  if (projectId != null) {
+    if (projectId == -1) {
+      if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+        permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
+      }
+ else {
+        listProjectResourcesCriteria=Project.ListProjectResourcesCriteria.ListProjectResourcesOnly;
+      }
+    }
+ else {
+      Project project=_projectMgr.getProject(projectId);
+      if (project == null) {
+        throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+      }
+      if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+        throw new PermissionDeniedException("Account " + caller + " can't access project id="+ projectId);
+      }
+      permittedAccounts.add(project.getProjectAccountId());
+    }
+  }
+ else {
+    if (id == null) {
+      listProjectResourcesCriteria=Project.ListProjectResourcesCriteria.SkipProjectResources;
+    }
+    if (permittedAccounts.isEmpty() && domainId == null) {
+      if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+        permittedAccounts.add(caller.getId());
+      }
+ else       if (!listAll) {
+        if (id == null) {
+          permittedAccounts.add(caller.getId());
+        }
+ else         if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+          domainId=caller.getDomainId();
+          isRecursive=true;
+        }
+      }
+ else       if (domainId == null) {
+        if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+          domainId=caller.getDomainId();
+          isRecursive=true;
+        }
+      }
+    }
+  }
+  return listProjectResourcesCriteria;
+}

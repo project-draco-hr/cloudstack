@@ -1,61 +1,57 @@
 {
+  Account caller=UserContext.current().getCaller();
+  Long domainId=cmd.getDomainId();
+  boolean isRecursive=cmd.isRecursive();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=_accountMgr.buildACLSearchParameters(caller,domainId,isRecursive,cmd.getAccountName(),null,permittedAccounts,cmd.listAll(),null);
   Filter searchFilter=new Filter(AsyncJobVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<AsyncJobVO> sb=_jobDao.createSearchBuilder();
-  Object accountId=null;
-  Long domainId=cmd.getDomainId();
-  Account caller=UserContext.current().getCaller();
-  if (isAdmin(caller.getType())) {
-    String accountName=cmd.getAccountName();
-    if ((accountName != null) && (domainId != null)) {
-      Account userAccount=_accountDao.findActiveAccount(accountName,domainId);
-      if (userAccount != null) {
-        accountId=userAccount.getId();
-      }
- else {
-        throw new InvalidParameterValueException("Failed to list async jobs for account " + accountName + " in domain "+ domainId+ "; account not found.");
-      }
-    }
- else     if (domainId != null) {
-      if (!_domainDao.isChildDomain(caller.getDomainId(),domainId)) {
-        throw new PermissionDeniedException("Failed to list async jobs for domain " + domainId + "; permission denied.");
-      }
-    }
-    if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN && domainId == null) {
-      domainId=caller.getDomainId();
-    }
+  sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  SearchBuilder<AccountVO> accountSearch=null;
+  boolean accountJoinIsDone=false;
+  if (permittedAccounts.isEmpty() && domainId != null) {
+    accountSearch=_accountDao.createSearchBuilder();
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("domainId",domainSearch.entity().getId(),SearchCriteria.Op.EQ);
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+    accountJoinIsDone=true;
+    accountSearch.join("domainSearch",domainSearch,accountSearch.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
- else {
-    accountId=caller.getId();
-  }
-  if (domainId != null) {
-    sb.and("accountsIn",sb.entity().getAccountId(),SearchCriteria.Op.IN);
+  if (listProjectResourcesCriteria != null) {
+    if (accountSearch == null) {
+      accountSearch=_accountDao.createSearchBuilder();
+    }
+    if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.ListProjectResourcesOnly) {
+      accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.EQ);
+    }
+ else     if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.SkipProjectResources) {
+      accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
+    }
+    if (!accountJoinIsDone) {
+      sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+    }
   }
   Object keyword=cmd.getKeyword();
   Object startDate=cmd.getStartDate();
   SearchCriteria<AsyncJobVO> sc=sb.create();
+  if (listProjectResourcesCriteria != null) {
+    sc.setJoinParameters("accountSearch","type",Account.ACCOUNT_TYPE_PROJECT);
+  }
+  if (!permittedAccounts.isEmpty()) {
+    sc.setParameters("accountIdIN",permittedAccounts.toArray());
+  }
+ else   if (domainId != null) {
+    DomainVO domain=_domainDao.findById(domainId);
+    if (isRecursive) {
+      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+    }
+ else {
+      sc.setJoinParameters("domainSearch","domainId",domainId);
+    }
+  }
   if (keyword != null) {
     sc.addAnd("cmd",SearchCriteria.Op.LIKE,"%" + keyword + "%");
-  }
-  if (accountId != null) {
-    sc.addAnd("accountId",SearchCriteria.Op.EQ,accountId);
-  }
-  if (domainId != null) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
-    accountSearch.join("domainSearch",domainSearch,accountSearch.entity().getDomainId(),domainSearch.entity().getId(),JoinType.INNER);
-    SearchCriteria<AccountVO> accountSc=accountSearch.create();
-    DomainVO domain=_domainDao.findById(domainId);
-    accountSc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
-    List<AccountVO> allowedAccounts=_accountDao.search(accountSc,null);
-    if (!allowedAccounts.isEmpty()) {
-      Long[] accountIds=new Long[allowedAccounts.size()];
-      for (int i=0; i < allowedAccounts.size(); i++) {
-        AccountVO allowedAccount=allowedAccounts.get(i);
-        accountIds[i]=allowedAccount.getId();
-      }
-      sc.setParameters("accountsIn",(Object[])accountIds);
-    }
   }
   if (startDate != null) {
     sc.addAnd("created",SearchCriteria.Op.GTEQ,startDate);
