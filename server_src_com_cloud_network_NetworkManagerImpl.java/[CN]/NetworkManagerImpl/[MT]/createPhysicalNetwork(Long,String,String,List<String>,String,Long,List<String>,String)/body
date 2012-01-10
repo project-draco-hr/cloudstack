@@ -6,7 +6,8 @@
   if (zone == null) {
     throw new InvalidParameterValueException("Please specify a valid zone.");
   }
-  if (zone.getNetworkType() == NetworkType.Basic) {
+  NetworkType zoneType=zone.getNetworkType();
+  if (zoneType == NetworkType.Basic) {
     if (!_physicalNetworkDao.listByZone(zoneId).isEmpty()) {
       throw new CloudRuntimeException("Cannot add the physical network to basic zone id: " + zoneId + ", there is a physical network already existing in this basic Zone");
     }
@@ -20,8 +21,8 @@
   int vnetStart=0;
   int vnetEnd=0;
   if (vnetRange != null) {
-    if (zone.getNetworkType() == NetworkType.Basic || (zone.getNetworkType() == NetworkType.Advanced && zone.isSecurityGroupEnabled())) {
-      throw new InvalidParameterValueException("Can't add vnet range to the physical network in the zone that supports " + zone.getNetworkType() + " network, Security Group enabled: "+ zone.isSecurityGroupEnabled());
+    if (zoneType == NetworkType.Basic || (zoneType == NetworkType.Advanced && zone.isSecurityGroupEnabled())) {
+      throw new InvalidParameterValueException("Can't add vnet range to the physical network in the zone that supports " + zoneType + " network, Security Group enabled: "+ zone.isSecurityGroupEnabled());
     }
     String[] tokens=vnetRange.split("-");
     try {
@@ -49,9 +50,15 @@
  catch (    IllegalArgumentException ex) {
       throw new InvalidParameterValueException("Unable to resolve broadcastDomainRange '" + broadcastDomainRangeStr + "' to a supported value {Pod or Zone}");
     }
+    if (zoneType == NetworkType.Basic && broadcastDomainRange != null && broadcastDomainRange != BroadcastDomainRange.POD) {
+      throw new InvalidParameterValueException("Basic zone can have broadcast domain type of value " + BroadcastDomainRange.POD + " only");
+    }
+ else     if (zoneType == NetworkType.Advanced && broadcastDomainRange != null && broadcastDomainRange != BroadcastDomainRange.ZONE) {
+      throw new InvalidParameterValueException("Advance zone can have broadcast domain type of value " + BroadcastDomainRange.ZONE + " only");
+    }
   }
   if (broadcastDomainRange == null) {
-    if (zone.getNetworkType() == NetworkType.Basic) {
+    if (zoneType == NetworkType.Basic) {
       broadcastDomainRange=PhysicalNetwork.BroadcastDomainRange.POD;
     }
  else {
@@ -68,6 +75,8 @@
     if (vnetRange != null) {
       _dcDao.addVnet(zone.getId(),pNetwork.getId(),vnetStart,vnetEnd);
     }
+    addDefaultVirtualRouterToPhysicalNetwork(pNetwork.getId());
+    addDefaultSecurityGroupProviderToPhysicalNetwork(pNetwork.getId());
     txn.commit();
     return pNetwork;
   }
