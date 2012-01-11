@@ -1,6 +1,13 @@
 {
   Date cutTime=DateUtil.currentGMTTime();
+  Profiler profiler=new Profiler();
+  profiler.start();
+  Profiler profilerQueryActiveList=new Profiler();
+  profilerQueryActiveList.start();
   List<ManagementServerHostVO> currentList=_mshostDao.getActiveList(new Date(cutTime.getTime() - _heartbeatThreshold));
+  profilerQueryActiveList.stop();
+  Profiler profilerSyncClusterInfo=new Profiler();
+  profilerSyncClusterInfo.start();
   List<ManagementServerHostVO> removedNodeList=new ArrayList<ManagementServerHostVO>();
   List<ManagementServerHostVO> invalidatedNodeList=new ArrayList<ManagementServerHostVO>();
   if (_mshostId != null) {
@@ -39,6 +46,9 @@
       }
     }
   }
+  profilerSyncClusterInfo.stop();
+  Profiler profilerInvalidatedNodeList=new Profiler();
+  profilerInvalidatedNodeList.start();
   if (invalidatedNodeList.size() > 0) {
     for (    ManagementServerHostVO mshost : invalidatedNodeList) {
       _activePeers.remove(mshost.getId());
@@ -51,6 +61,9 @@
     }
     this.queueNotification(new ClusterManagerMessage(ClusterManagerMessage.MessageType.nodeRemoved,invalidatedNodeList));
   }
+  profilerInvalidatedNodeList.stop();
+  Profiler profilerRemovedList=new Profiler();
+  profilerRemovedList.start();
   Iterator<ManagementServerHostVO> it=removedNodeList.iterator();
   while (it.hasNext()) {
     ManagementServerHostVO mshost=it.next();
@@ -72,6 +85,7 @@
   if (removedNodeList.size() > 0) {
     this.queueNotification(new ClusterManagerMessage(ClusterManagerMessage.MessageType.nodeRemoved,removedNodeList));
   }
+  profilerRemovedList.stop();
   List<ManagementServerHostVO> newNodeList=new ArrayList<ManagementServerHostVO>();
   for (  ManagementServerHostVO mshost : currentList) {
     if (!_activePeers.containsKey(mshost.getId())) {
@@ -90,5 +104,9 @@
   }
   if (newNodeList.size() > 0) {
     this.queueNotification(new ClusterManagerMessage(ClusterManagerMessage.MessageType.nodeAdded,newNodeList));
+  }
+  profiler.stop();
+  if (profiler.getDuration() >= this._heartbeatInterval) {
+    if (s_logger.isDebugEnabled())     s_logger.debug("Peer scan takes too long to finish. profiler: " + profiler.toString() + ", profilerQueryActiveList: "+ profilerQueryActiveList.toString()+ ", profilerSyncClusterInfo: "+ profilerSyncClusterInfo.toString()+ ", profilerInvalidatedNodeList: "+ profilerInvalidatedNodeList.toString()+ ", profilerRemovedList: "+ profilerRemovedList.toString());
   }
 }
