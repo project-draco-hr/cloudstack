@@ -1,5 +1,5 @@
 {
-  UserContext caller=UserContext.current();
+  Account lbOwner=_accountMgr.getAccount(lb.getEntityOwnerId());
   int defPortStart=lb.getDefaultPortStart();
   int defPortEnd=lb.getDefaultPortEnd();
   if (!NetUtils.isValidPort(defPortEnd)) {
@@ -12,16 +12,45 @@
     throw new InvalidParameterValueException("Invalid algorithm: " + lb.getAlgorithm());
   }
   Long ipAddrId=lb.getSourceIpAddressId();
-  IPAddressVO ipAddress=_ipAddressDao.findById(ipAddrId);
-  if (ipAddress == null) {
-    throw new InvalidParameterValueException("Unable to create load balance rule; ip id=" + ipAddrId + " doesn't exist in the system");
+  IPAddressVO ipAddressVo=null;
+  if (ipAddrId != null) {
+    ipAddressVo=_ipAddressDao.findById(ipAddrId);
+    if (ipAddressVo == null) {
+      throw new InvalidParameterValueException("Unable to create load balance rule; ip id=" + ipAddrId + " doesn't exist in the system");
+    }
+ else     if (ipAddressVo.isOneToOneNat()) {
+      throw new NetworkRuleConflictException("Can't do load balance on ip address: " + ipAddressVo.getAddress());
+    }
+    _networkMgr.checkIpForService(ipAddressVo,Service.Lb);
   }
- else   if (ipAddress.isOneToOneNat()) {
-    throw new NetworkRuleConflictException("Can't do load balance on ip address: " + ipAddress.getAddress());
-  }
-  _networkMgr.checkIpForService(ipAddress,Service.Lb);
-  LoadBalancer result=_elbMgr.handleCreateLoadBalancerRule(lb,caller.getCaller());
+  LoadBalancer result=_elbMgr.handleCreateLoadBalancerRule(lb,lbOwner,lb.getNetworkId());
   if (result == null) {
+    Network guestNetwork=_networkMgr.getNetwork(lb.getNetworkId());
+    NetworkOffering off=_configMgr.getNetworkOffering(guestNetwork.getNetworkOfferingId());
+    if (off.getElasticLb()) {
+      if (ipAddressVo != null) {
+        throw new InvalidParameterValueException("Can't specify ipAddressId when create LB in the network with LB capability " + Capability.ElasticLb.getName());
+      }
+      IpAddress ip=null;
+      try {
+        s_logger.debug("Allocating elastic IP address for load balancer rule...");
+        ip=_networkMgr.allocateIP(lb.getNetworkId(),lbOwner);
+        ip=_networkMgr.associateIP(ip.getId());
+      }
+ catch (      ResourceAllocationException ex) {
+        throw new CloudRuntimeException("Failed to allocate elastic lb ip due to ",ex);
+      }
+catch (      ConcurrentOperationException ex) {
+        throw new CloudRuntimeException("Failed to allocate elastic lb ip due to ",ex);
+      }
+catch (      ResourceUnavailableException ex) {
+        throw new CloudRuntimeException("Failed to allocate elastic lb ip due to ",ex);
+      }
+      if (ip == null) {
+        throw new CloudRuntimeException("Failed to allocate elastic lb ip");
+      }
+      lb.setSourceIpAddressId(ip.getId());
+    }
     result=createLoadBalancer(lb,openFirewall);
   }
   if (result == null) {
