@@ -1,0 +1,36 @@
+{
+  boolean success=true;
+  Account vmOwner=_accountMgr.getAccount(vm.getAccountId());
+  List<? extends Nic> nics=_nicDao.listByVmId(vm.getId());
+  for (  Nic nic : nics) {
+    Network guestNetwork=_networkMgr.getNetwork(nic.getNetworkId());
+    NetworkOffering offering=_configMgr.getNetworkOffering(guestNetwork.getNetworkOfferingId());
+    if (offering.getElasticIp()) {
+      try {
+        s_logger.debug("Allocating elastic ip and enabling static nat for it for the vm " + vm + " in guest network "+ guestNetwork);
+        IpAddress ip=_networkMgr.assignElasticIp(guestNetwork.getId(),vmOwner,false,true);
+        if (ip == null) {
+          s_logger.warn("Failed to allocate elastic ip as a part of vm deployment for vm " + vm);
+          return false;
+        }
+        s_logger.debug("Allocated elastic ip " + ip + ", now enabling static nat on it for vm "+ vm);
+        success=success && _rulesMgr.enableStaticNat(ip.getId(),vm.getId());
+        if (!success) {
+          s_logger.warn("Failed to enable static nat on elastic ip " + ip + " for the vm "+ vm);
+        }
+ else {
+          s_logger.warn("Succesfully enabled static nat on elastic ip " + ip + " for the vm "+ vm);
+        }
+      }
+ catch (      Exception ex) {
+        s_logger.warn("Failed to finalize vm deployment for vm " + vm + " on the network "+ guestNetwork+ " due to exception ",ex);
+      }
+ finally {
+        if (!success && stopOnError) {
+          return false;
+        }
+      }
+    }
+  }
+  return success;
+}
