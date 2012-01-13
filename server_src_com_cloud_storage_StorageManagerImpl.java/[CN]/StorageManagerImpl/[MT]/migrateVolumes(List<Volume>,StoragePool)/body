@@ -2,7 +2,9 @@
   Transaction txn=Transaction.currentTxn();
   txn.start();
   boolean transitResult=false;
+  long checkPointTaskId=-1;
   try {
+    List<Long> volIds=new ArrayList<Long>();
     for (    Volume volume : volumes) {
       if (!_snapshotMgr.canOperateOnVolume((VolumeVO)volume)) {
         throw new CloudRuntimeException("There are snapshots creating on this volume, can not move this volume");
@@ -16,7 +18,9 @@
         s_logger.debug("Failed to set state into migrate: " + e.toString());
         throw new CloudRuntimeException("Failed to set state into migrate: " + e.toString());
       }
+      volIds.add(volume.getId());
     }
+    checkPointTaskId=_checkPointMgr.pushCheckPoint(new StorageMigrationCleanupMaid(StorageMigrationCleanupMaid.StorageMigrationState.MIGRATING,volIds));
     transitResult=true;
   }
   finally {
@@ -69,6 +73,7 @@
           s_logger.debug("Failed to change volume state: " + e.toString());
         }
       }
+      _checkPointMgr.popCheckPoint(checkPointTaskId);
     }
  else {
       txn=Transaction.currentTxn();
@@ -94,6 +99,11 @@
           }
         }
         transitResult=true;
+        try {
+          _checkPointMgr.popCheckPoint(checkPointTaskId);
+        }
+ catch (        Exception e) {
+        }
       }
   finally {
         if (!transitResult) {
