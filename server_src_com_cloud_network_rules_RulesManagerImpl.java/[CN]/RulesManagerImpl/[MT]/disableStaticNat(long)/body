@@ -1,39 +1,19 @@
 {
-  boolean success=true;
-  UserContext ctx=UserContext.current();
-  Account caller=ctx.getCaller();
+  Account caller=UserContext.current().getCaller();
   IPAddressVO ipAddress=_ipAddressDao.findById(ipId);
   checkIpAndUserVm(ipAddress,null,caller);
-  if (!ipAddress.isOneToOneNat()) {
-    throw new InvalidParameterValueException("One to one nat is not enabled for the ip id=" + ipId);
-  }
-  try {
-    s_logger.debug("Revoking all " + Purpose.Firewall + "rules as a part of disabling static nat for public IP id="+ ipId);
-    if (!_firewallMgr.revokeFirewallRulesForIp(ipId,ctx.getCallerUserId(),caller)) {
-      s_logger.warn("Unable to revoke all the firewall rules for ip id=" + ipId + " as a part of disable statis nat");
-      success=false;
+  Long vmId=ipAddress.getAssociatedWithVmId();
+  boolean success=disableStaticNat(ipId,AllocatedBy.ipassoc);
+  if (success && vmId != null) {
+    s_logger.debug("Allocating ip and enabling static nat for vm id=" + vmId + " as a part of disassociateIp command");
+    UserVm vm=_vmDao.findById(vmId);
+    success=enableElasticIpAndStaticNatForVm(vm,true);
+    if (!success) {
+      s_logger.warn("Failed to allocate ip and enable static nat for vm id=" + vmId + " as a part of disassociateIp command");
     }
-  }
- catch (  ResourceUnavailableException e) {
-    s_logger.warn("Unable to revoke all firewall rules for ip id=" + ipId + " as a part of ip release",e);
-    success=false;
-  }
-  if (!revokeAllPFAndStaticNatRulesForIp(ipId,UserContext.current().getCallerUserId(),caller)) {
-    s_logger.warn("Unable to revoke all static nat rules for ip " + ipAddress);
-    success=false;
-  }
-  if (success) {
-    ipAddress.setOneToOneNat(false);
-    ipAddress.setAssociatedWithVmId(null);
-    _ipAddressDao.update(ipAddress.getId(),ipAddress);
-    if (!_networkMgr.handleElasticIpRelease(ipAddress)) {
-      s_logger.warn("Failed to release elastic ip address " + ipAddress);
-      return false;
-    }
-    return true;
-  }
  else {
-    s_logger.warn("Failed to disable one to one nat for the ip address id" + ipId);
-    return false;
+      s_logger.debug("Successfully allocated ip and enabled static nat for vm id=" + vmId + " as a part of disassociateIp command");
+    }
   }
+  return success;
 }
