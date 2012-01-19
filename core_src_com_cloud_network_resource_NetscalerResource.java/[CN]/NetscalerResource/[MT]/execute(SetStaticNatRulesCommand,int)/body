@@ -1,0 +1,64 @@
+{
+  if (_isSdx) {
+    return Answer.createUnsupportedCommandAnswer(cmd);
+  }
+  String[] results=new String[cmd.getRules().length];
+  int i=0;
+  boolean endResult=true;
+  try {
+    for (    StaticNatRuleTO rule : cmd.getRules()) {
+      String srcIp=rule.getSrcIp();
+      String dstIP=rule.getDstIp();
+      String iNatRuleName=generateInatRuleName(srcIp,dstIP);
+      inat iNatRule=null;
+      if (!rule.revoked()) {
+        try {
+          iNatRule=inat.get(_netscalerService,iNatRuleName);
+        }
+ catch (        nitro_exception e) {
+          if (e.getErrorCode() != NitroError.NS_RESOURCE_NOT_EXISTS) {
+            throw e;
+          }
+        }
+        if (iNatRule == null) {
+          iNatRule=new inat();
+          iNatRule.set_name(iNatRuleName);
+          iNatRule.set_publicip(srcIp);
+          iNatRule.set_privateip(dstIP);
+          iNatRule.set_usnip("ON");
+          iNatRule.set_usip("OFF");
+          try {
+            apiCallResult=inat.add(_netscalerService,iNatRule);
+          }
+ catch (          nitro_exception e) {
+            if (e.getErrorCode() != NitroError.NS_RESOURCE_EXISTS) {
+              throw e;
+            }
+          }
+          s_logger.debug("Created Inat rule on the Netscaler device " + _ip + " to enable static NAT from "+ srcIp+ " to "+ dstIP);
+        }
+      }
+ else {
+        try {
+          inat.delete(_netscalerService,iNatRuleName);
+        }
+ catch (        nitro_exception e) {
+          if (e.getErrorCode() != NitroError.NS_RESOURCE_NOT_EXISTS) {
+            throw e;
+          }
+        }
+        s_logger.debug("Deleted Inat rule on the Netscaler device " + _ip + " to remove static NAT from "+ srcIp+ " to "+ dstIP);
+      }
+      results[i++]="Static nat rule from " + srcIp + " to "+ dstIP+ " successfully "+ (rule.revoked() ? " revoked." : " created.");
+    }
+  }
+ catch (  Exception e) {
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+    results[i++]="Configuring static nat rule failed due to " + e.getMessage();
+    endResult=false;
+    return new SetStaticNatRulesAnswer(cmd,results,endResult);
+  }
+  return new SetStaticNatRulesAnswer(cmd,results,endResult);
+}
