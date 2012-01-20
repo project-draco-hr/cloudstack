@@ -51,8 +51,8 @@
       }
     }
  else     if (networkOffering.getGuestType() == GuestType.Shared) {
-      if (aclType != ACLType.Domain) {
-        throw new InvalidParameterValueException("AclType should be " + ACLType.Domain + " for network of type "+ Network.GuestType.Shared);
+      if (!(aclType == ACLType.Domain || aclType == ACLType.Account)) {
+        throw new InvalidParameterValueException("AclType should be " + ACLType.Domain + " or "+ ACLType.Account+ " for network of type "+ Network.GuestType.Shared);
       }
     }
   }
@@ -63,6 +63,9 @@
  else     if (networkOffering.getGuestType() == GuestType.Shared) {
       aclType=ACLType.Domain;
     }
+  }
+  if (networkOffering.getGuestType() == GuestType.Shared && !_accountMgr.isAdmin(caller.getType())) {
+    throw new InvalidParameterValueException("Only Admins can create network with guest type " + GuestType.Shared);
   }
   if (aclType == ACLType.Domain) {
     if (!_accountMgr.isAdmin(caller.getType())) {
@@ -139,6 +142,10 @@
   if (cidr != null) {
     checkVirtualNetworkCidrOverlap(zoneId,cidr);
   }
+  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((networkOffering.getGuestType() == Network.GuestType.Shared) || (networkOffering.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat))));
+  if (createVlan && !networkOffering.getSpecifyIpRanges()) {
+    throw new InvalidParameterValueException("Network offering " + networkOffering + " doesn't support adding multiple ip ranges");
+  }
   Transaction txn=Transaction.currentTxn();
   txn.start();
   Long sharedDomainId=null;
@@ -155,7 +162,6 @@
     owner=_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
   }
   Network network=createGuestNetwork(networkOfferingId,name,displayText,gateway,cidr,vlanId,networkDomain,owner,false,sharedDomainId,pNtwk,zoneId,aclType,subdomainAccess);
-  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((network.getGuestType() == Network.GuestType.Shared) || (network.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat))));
   if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && createVlan) {
     _configMgr.createVlanAndPublicIpRange(userId,pNtwk.getDataCenterId(),null,startIP,endIP,gateway,netmask,false,vlanId,null,network.getId(),physicalNetworkId);
   }
