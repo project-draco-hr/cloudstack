@@ -13,10 +13,12 @@
   }
   if (updateRulesInDB) {
     for (    LoadBalancerVO lb : lbs) {
-      txn.start();
+      boolean checkForReleaseElasticIp=false;
       if (lb.getState() == FirewallRule.State.Revoke) {
+        txn.start();
         _lbDao.remove(lb.getId());
         s_logger.debug("LB " + lb.getId() + " is successfully removed");
+        checkForReleaseElasticIp=true;
       }
  else       if (lb.getState() == FirewallRule.State.Add) {
         lb.setState(FirewallRule.State.Active);
@@ -43,6 +45,24 @@
         s_logger.debug("Load balancer rule id " + lb.getId() + " is removed stickiness policies");
       }
       txn.commit();
+      if (checkForReleaseElasticIp) {
+        boolean success=true;
+        long count=_firewallDao.countRulesByIpId(lb.getSourceIpAddressId());
+        if (count == 0) {
+          try {
+            success=handleElasticLBIpRelease(lb);
+          }
+ catch (          Exception ex) {
+            s_logger.warn("Failed to release elastic ip as a part of lb rule " + lb + " deletion due to exception ",ex);
+            success=false;
+          }
+ finally {
+            if (!success) {
+              s_logger.warn("Failed to release elastic ip as a part of lb rule " + lb + " deletion");
+            }
+          }
+        }
+      }
     }
   }
   return true;
