@@ -3,40 +3,44 @@
     throw new InvalidParameterValueException("You should provide one of cluster id or a host id.");
   }
  else   if (cmd.getClusterId() == null) {
-    HostVO h=_hostDao.findById(cmd.getHostId());
-    if (h.getHypervisorType() == HypervisorType.XenServer) {
+    HostVO host=_hostDao.findById(cmd.getHostId());
+    if (host != null && host.getHypervisorType() == HypervisorType.XenServer) {
       throw new InvalidParameterValueException("You should provide cluster id for Xenserver cluster.");
     }
-    DetailVO nv=_detailsDao.findDetail(h.getId(),ApiConstants.USERNAME);
-    if (nv.getValue().equals(cmd.getUsername())) {
-      DetailVO nvp=new DetailVO(h.getId(),ApiConstants.PASSWORD,cmd.getPassword());
-      nvp.setValue(DBEncryptionUtil.encrypt(cmd.getPassword()));
-      _detailsDao.persist(nvp);
-    }
  else {
-      throw new InvalidParameterValueException("The username is not under use by management server.");
+      throw new InvalidParameterValueException("This operation is not supported for this hypervisor type");
     }
   }
  else {
+    ClusterVO cluster=ApiDBUtils.findClusterById(cmd.getClusterId());
+    if (cluster == null || cluster.getHypervisorType() != HypervisorType.XenServer) {
+      throw new InvalidParameterValueException("This operation is not supported for this hypervisor type");
+    }
     List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(cmd.getClusterId());
     Transaction txn=Transaction.currentTxn();
-    txn.start();
-    for (    HostVO h : hosts) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Changing password for host name = " + h.getName());
-      }
-      DetailVO nv=_detailsDao.findDetail(h.getId(),ApiConstants.USERNAME);
-      if (nv.getValue().equals(cmd.getUsername())) {
-        DetailVO nvp=_detailsDao.findDetail(h.getId(),ApiConstants.PASSWORD);
-        nvp.setValue(DBEncryptionUtil.encrypt(cmd.getPassword()));
-        _detailsDao.persist(nvp);
-      }
+    try {
+      txn.start();
+      for (      HostVO h : hosts) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Changing password for host name = " + h.getName());
+        }
+        DetailVO nv=_detailsDao.findDetail(h.getId(),ApiConstants.USERNAME);
+        if (nv.getValue().equals(cmd.getUsername())) {
+          DetailVO nvp=_detailsDao.findDetail(h.getId(),ApiConstants.PASSWORD);
+          nvp.setValue(DBEncryptionUtil.encrypt(cmd.getPassword()));
+          _detailsDao.persist(nvp);
+        }
  else {
-        txn.rollback();
-        throw new InvalidParameterValueException("The username is not same for all hosts, please modify passwords for individual hosts.");
+          txn.rollback();
+          throw new InvalidParameterValueException("The username is not same for all hosts, please modify passwords for individual hosts.");
+        }
       }
+      txn.commit();
     }
-    txn.commit();
+ catch (    Exception e) {
+      txn.rollback();
+      throw new CloudRuntimeException("Failed to update password " + e.getMessage());
+    }
   }
   return true;
 }
