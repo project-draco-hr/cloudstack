@@ -9,6 +9,38 @@
     VmwareManager mgr=hyperHost.getContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
     if (hyperHost.isHyperHostConnected()) {
       mgr.gcLeftOverVMs(context);
+      if (_recycleHungWorker) {
+        s_logger.info("Scan hung worker VM to recycle");
+        ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","config.template","runtime.powerState","runtime.bootTime"});
+        if (ocs != null) {
+          for (          ObjectContent oc : ocs) {
+            DynamicProperty[] props=oc.getPropSet();
+            if (props != null) {
+              String name=null;
+              boolean template=false;
+              VirtualMachinePowerState powerState=VirtualMachinePowerState.poweredOff;
+              GregorianCalendar bootTime=null;
+              for (              DynamicProperty prop : props) {
+                if (prop.getName().equals("name"))                 name=prop.getVal().toString();
+ else                 if (prop.getName().equals("config.template"))                 template=(Boolean)prop.getVal();
+ else                 if (prop.getName().equals("runtime.powerState"))                 powerState=(VirtualMachinePowerState)prop.getVal();
+ else                 if (prop.getName().equals("runtime.bootTime"))                 bootTime=(GregorianCalendar)prop.getVal();
+              }
+              if (!template && name.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
+                boolean recycle=false;
+                if (powerState == VirtualMachinePowerState.poweredOff)                 recycle=true;
+ else                 if (bootTime != null && (new Date().getTime() - bootTime.getTimeInMillis() > 10 * 3600 * 1000))                 recycle=true;
+                if (recycle) {
+                  s_logger.info("Recycle pending worker VM: " + name);
+                  VirtualMachineMO vmMo=new VirtualMachineMO(hyperHost.getContext(),oc.getObj());
+                  vmMo.powerOff();
+                  vmMo.destroy();
+                }
+              }
+            }
+          }
+        }
+      }
     }
  else {
       s_logger.error("Host is no longer connected.");
