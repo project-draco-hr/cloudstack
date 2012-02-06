@@ -3,6 +3,7 @@
   Transaction txn=Transaction.currentTxn();
   boolean generateUsageEvent=false;
   boolean success=true;
+  FirewallRule.State backupState=lb.getState();
   txn.start();
   if (lb.getState() == FirewallRule.State.Staged) {
     if (s_logger.isDebugEnabled()) {
@@ -15,6 +16,7 @@
     _lbDao.persist(lb);
     generateUsageEvent=true;
   }
+  List<LoadBalancerVMMapVO> backupMaps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
   List<LoadBalancerVMMapVO> maps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
   if (maps != null) {
     for (    LoadBalancerVMMapVO map : maps) {
@@ -42,7 +44,20 @@
       }
     }
  catch (    ResourceUnavailableException e) {
-      s_logger.warn("Unable to apply the load balancer config because resource is unavaliable.",e);
+      if (rollBack && isRollBackAllowedForProvider(lb)) {
+        if (backupMaps != null) {
+          for (          LoadBalancerVMMapVO map : backupMaps) {
+            _lb2VmMapDao.persist(map);
+            s_logger.debug("LB Rollback rule id: " + loadBalancerId + ", vmId "+ map.getInstanceId());
+          }
+        }
+        lb.setState(backupState);
+        _lbDao.persist(lb);
+        s_logger.debug("LB Rollback rule id: " + loadBalancerId + " while deleting LB rule.");
+      }
+ else {
+        s_logger.warn("Unable to apply the load balancer config because resource is unavaliable.",e);
+      }
       return false;
     }
   }
