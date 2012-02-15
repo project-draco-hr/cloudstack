@@ -38,6 +38,11 @@
       if (networkOfferingIsConfiguredForExternalNetworking(networkOfferingId) != networkOfferingIsConfiguredForExternalNetworking(oldNetworkOfferingId) && !changeCidr) {
         throw new InvalidParameterValueException("Can't guarantee guest network CIDR is unchanged after updating network!");
       }
+      if (changeCidr) {
+        if (!checkForNonStoppedVmInNetwork(network.getId())) {
+          throw new InvalidParameterValueException("All user vm of network: " + network + " should be stopped before changing CIDR!");
+        }
+      }
       if (!canUpgrade(network,oldNetworkOfferingId,networkOfferingId)) {
         throw new InvalidParameterValueException("Can't upgrade from network offering " + oldNetworkOfferingId + " to "+ networkOfferingId+ "; check logs for more information");
       }
@@ -69,10 +74,19 @@
   boolean validStateToShutdown=(network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup || network.getState() == Network.State.Allocated);
   if (restartNetwork) {
     if (validStateToShutdown) {
-      s_logger.debug("Shutting down elements and resources for network id=" + networkId + " as a part of network update");
-      if (!shutdownNetworkElementsAndResources(context,true,network)) {
-        s_logger.warn("Failed to shutdown the network elements and resources as a part of network restart: " + network);
-        throw new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of network update: " + network);
+      if (!changeCidr) {
+        s_logger.debug("Shutting down elements and resources for network id=" + networkId + " as a part of network update");
+        if (!shutdownNetworkElementsAndResources(context,true,network)) {
+          s_logger.warn("Failed to shutdown the network elements and resources as a part of network restart: " + network);
+          throw new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of network update: " + network);
+        }
+      }
+ else {
+        s_logger.debug("Shutting down network id=" + networkId + " as a part of network update");
+        if (!shutdownNetwork(network.getId(),context,true)) {
+          s_logger.warn("Failed to shutdown the network as a part of network update: " + network);
+          throw new CloudRuntimeException("Failed to shutdown the network as a part of network update: " + network);
+        }
       }
     }
  else {
@@ -119,7 +133,12 @@
       DeployDestination dest=new DeployDestination(_dcDao.findById(network.getDataCenterId()),null,null,null);
       s_logger.debug("Implementing the network " + network + " elements and resources as a part of network update");
       try {
-        implementNetworkElementsAndResources(dest,context,network,_networkOfferingDao.findById(network.getNetworkOfferingId()));
+        if (!changeCidr) {
+          implementNetworkElementsAndResources(dest,context,network,_networkOfferingDao.findById(network.getNetworkOfferingId()));
+        }
+ else {
+          implementNetwork(network.getId(),dest,context);
+        }
       }
  catch (      Exception ex) {
         s_logger.warn("Failed to implement network " + network + " elements and resources as a part of network update due to ",ex);
