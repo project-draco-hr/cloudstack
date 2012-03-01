@@ -7,6 +7,14 @@
   boolean isZoneBasic=(dc.getNetworkType() == NetworkType.Basic);
   List<VirtualRouter> connectedRouters=new ArrayList<VirtualRouter>();
   List<VirtualRouter> disconnectedRouters=new ArrayList<VirtualRouter>();
+  Long podId=null;
+  if (isZoneBasic) {
+    podId=dest.getPod().getId();
+  }
+  boolean podLevelException=false;
+  if (isZoneBasic && podId != null && profile.getVirtualMachine().getType() == VirtualMachine.Type.User && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Shared) {
+    podLevelException=true;
+  }
   for (  DomainRouterVO router : routers) {
     boolean sendDnsDhcpData=true;
     if (router.getState() != State.Running) {
@@ -15,14 +23,12 @@
     }
     if (router.isStopPending()) {
       if (_hostDao.findById(router.getHostId()).getStatus() == Status.Up) {
-        throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",VirtualRouter.class,router.getId());
+        throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",DataCenter.class,router.getDataCenterIdToDeployIn());
       }
       s_logger.warn("Unable to add virtual machine " + profile.getVirtualMachine() + " to the router "+ router+ " as the router is to be stopped");
       continue;
     }
-    Long podId=null;
     if (isZoneBasic) {
-      podId=dest.getPod().getId();
       if (router.getPodIdToDeployIn().longValue() != podId.longValue()) {
         if (_dnsBasicZoneUpdates.equalsIgnoreCase("pod")) {
           sendDnsDhcpData=false;
@@ -49,10 +55,6 @@
       cmds.addCommand("dhcp",dhcpCommand);
     }
     if (cmds.size() > 0) {
-      boolean podLevelException=false;
-      if (isZoneBasic && podId != null && profile.getVirtualMachine().getType() == VirtualMachine.Type.User && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Shared) {
-        podLevelException=true;
-      }
       try {
         _agentMgr.send(router.getHostId(),cmds);
       }
@@ -73,14 +75,16 @@ catch (      OperationTimedoutException e) {
         if (podLevelException) {
           throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),Pod.class,podId);
         }
-        throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),DataCenter.class,router.getDataCenterIdToDeployIn());
+        throw new ResourceUnavailableException("Unable to set dhcp entry for " + profile + " due to "+ answer.getDetails(),DataCenter.class,dc.getId());
       }
     }
     rets.add(router);
   }
   String msg="Unable to apply dhcp entry for new VM into network on disconnected router ";
   if (!connectedRouters.isEmpty()) {
-    handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
+    if (!isZoneBasic) {
+      handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
+    }
   }
  else   if (!disconnectedRouters.isEmpty()) {
     for (    VirtualRouter router : disconnectedRouters) {
@@ -88,7 +92,10 @@ catch (      OperationTimedoutException e) {
         s_logger.debug(msg + router.getInstanceName() + "("+ router.getId()+ ")");
       }
     }
-    throw new ResourceUnavailableException(msg,VirtualRouter.class,disconnectedRouters.get(0).getId());
+    if (podLevelException) {
+      throw new ResourceUnavailableException(msg,Pod.class,podId);
+    }
+    throw new ResourceUnavailableException(msg,DataCenter.class,dc.getId());
   }
   return rets;
 }
