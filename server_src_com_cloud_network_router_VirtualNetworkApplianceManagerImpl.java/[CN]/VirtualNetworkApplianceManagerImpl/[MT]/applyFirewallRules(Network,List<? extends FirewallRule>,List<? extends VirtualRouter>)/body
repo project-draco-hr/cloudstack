@@ -1,76 +1,31 @@
 {
-  if (routers == null || routers.isEmpty()) {
-    s_logger.warn("Unable to apply firewall rules, virtual router doesn't exist in the network " + network.getId());
-    throw new ResourceUnavailableException("Unable to apply firewall rules",DataCenter.class,network.getDataCenterId());
-  }
-  List<VirtualRouter> connectedRouters=new ArrayList<VirtualRouter>();
-  List<VirtualRouter> disconnectedRouters=new ArrayList<VirtualRouter>();
-  String msg="Unable to apply firewall rules on disconnected router ";
-  boolean result=true;
-  for (  VirtualRouter router : routers) {
-    if (router.getState() == State.Running) {
-      if (router.isStopPending()) {
-        if (_hostDao.findById(router.getHostId()).getStatus() == Status.Up) {
-          throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",DataCenter.class,router.getDataCenterIdToDeployIn());
+  return applyRules(network,rules,routers,"firewall rules",new RuleApplier(){
+    @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
+      if (rules.get(0).getPurpose() == Purpose.LoadBalancing) {
+        List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(network.getId());
+        List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+        for (        LoadBalancerVO lb : lbs) {
+          List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+          List<LbStickinessPolicy> policyList=_lbMgr.getStickinessPolicies(lb.getId());
+          LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList,policyList);
+          lbRules.add(loadBalancing);
         }
-        s_logger.debug("Router " + router.getInstanceName() + " is stop pending, so not sending apply firewall rules commands to the backend");
-        continue;
+        return applyLBRules(router,lbRules);
       }
-      if (rules != null && !rules.isEmpty()) {
-        try {
-          if (rules.get(0).getPurpose() == Purpose.LoadBalancing) {
-            List<LoadBalancerVO> lbs=_loadBalancerDao.listByNetworkId(network.getId());
-            List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
-            for (            LoadBalancerVO lb : lbs) {
-              List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
-              List<LbStickinessPolicy> policyList=_lbMgr.getStickinessPolicies(lb.getId());
-              LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList,policyList);
-              lbRules.add(loadBalancing);
-            }
-            result=result && applyLBRules(router,lbRules);
-          }
- else           if (rules.get(0).getPurpose() == Purpose.PortForwarding) {
-            result=result && applyPortForwardingRules(router,(List<PortForwardingRule>)rules);
-          }
- else           if (rules.get(0).getPurpose() == Purpose.StaticNat) {
-            result=result && applyStaticNatRules(router,(List<StaticNatRule>)rules);
-          }
- else           if (rules.get(0).getPurpose() == Purpose.Firewall) {
-            result=result && applyFirewallRules(router,(List<FirewallRule>)rules);
-          }
+ else       if (rules.get(0).getPurpose() == Purpose.PortForwarding) {
+        return applyPortForwardingRules(router,(List<PortForwardingRule>)rules);
+      }
+ else       if (rules.get(0).getPurpose() == Purpose.StaticNat) {
+        return applyStaticNatRules(router,(List<StaticNatRule>)rules);
+      }
+ else       if (rules.get(0).getPurpose() == Purpose.Firewall) {
+        return applyFirewallRules(router,(List<FirewallRule>)rules);
+      }
  else {
-            s_logger.warn("Unable to apply rules of purpose: " + rules.get(0).getPurpose());
-            result=false;
-          }
-          connectedRouters.add(router);
-        }
- catch (        AgentUnavailableException e) {
-          s_logger.warn(msg + router.getInstanceName(),e);
-          disconnectedRouters.add(router);
-        }
-      }
-      if (!result) {
-        throw new ResourceUnavailableException("Unable to apply firewall rules on router ",DataCenter.class,router.getDataCenterIdToDeployIn());
+        s_logger.warn("Unable to apply rules of purpose: " + rules.get(0).getPurpose());
+        return false;
       }
     }
- else     if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
-      s_logger.debug("Router " + router.getInstanceName() + " is in "+ router.getState()+ ", so not sending apply firewall rules commands to the backend");
-    }
- else {
-      s_logger.warn("Unable to apply firewall rules, virtual router is not in the right state " + router.getState());
-      throw new ResourceUnavailableException("Unable to apply firewall rules, virtual router is not in the right state",DataCenter.class,router.getDataCenterIdToDeployIn());
-    }
   }
-  if (!connectedRouters.isEmpty()) {
-    handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
-  }
- else   if (!disconnectedRouters.isEmpty()) {
-    for (    VirtualRouter router : disconnectedRouters) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(msg + router.getInstanceName() + "("+ router.getId()+ ")");
-      }
-    }
-    throw new ResourceUnavailableException(msg,DataCenter.class,disconnectedRouters.get(0).getDataCenterIdToDeployIn());
-  }
-  return true;
+);
 }

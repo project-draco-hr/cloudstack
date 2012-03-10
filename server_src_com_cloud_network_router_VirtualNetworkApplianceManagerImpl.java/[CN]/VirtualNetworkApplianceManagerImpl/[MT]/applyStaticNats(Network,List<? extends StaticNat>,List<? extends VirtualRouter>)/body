@@ -1,52 +1,8 @@
 {
-  if (routers == null || routers.isEmpty()) {
-    s_logger.warn("Unable to create static nat, virtual router doesn't exist in the network " + network.getId());
-    throw new ResourceUnavailableException("Unable to create static nat",DataCenter.class,network.getDataCenterId());
-  }
-  List<VirtualRouter> connectedRouters=new ArrayList<VirtualRouter>();
-  List<VirtualRouter> disconnectedRouters=new ArrayList<VirtualRouter>();
-  boolean result=true;
-  String msg="Unable to apply static nat on disconnected router ";
-  for (  VirtualRouter router : routers) {
-    if (router.getState() == State.Running) {
-      s_logger.debug("Applying " + rules.size() + " static nat in network "+ network);
-      if (router.isStopPending()) {
-        if (_hostDao.findById(router.getHostId()).getStatus() == Status.Up) {
-          throw new ResourceUnavailableException("Unable to process due to the stop pending router " + router.getInstanceName() + " haven't been stopped after it's host coming back!",DataCenter.class,router.getDataCenterIdToDeployIn());
-        }
-        s_logger.debug("Router " + router.getInstanceName() + " is stop pending, so not sending apply firewall rules commands to the backend");
-        continue;
-      }
-      try {
-        result=applyStaticNat(router,rules);
-        connectedRouters.add(router);
-      }
- catch (      AgentUnavailableException e) {
-        s_logger.warn(msg + router.getInstanceName(),e);
-        disconnectedRouters.add(router);
-      }
-      if (!result) {
-        throw new ResourceUnavailableException("Unable to apply static nat on router ",DataCenter.class,router.getDataCenterIdToDeployIn());
-      }
-    }
- else     if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
-      s_logger.debug("Router " + router.getInstanceName() + " is in "+ router.getState()+ ", so not sending apply static nat commands to the backend");
-    }
- else {
-      s_logger.warn("Unable to apply static nat, virtual router is not in the right state " + router.getState());
-      throw new ResourceUnavailableException("Unable to apply static nat, virtual router is not in the right state",DataCenter.class,router.getDataCenterIdToDeployIn());
+  return applyRules(network,rules,routers,"static nat rules",new RuleApplier(){
+    @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
+      return applyStaticNat(router,rules);
     }
   }
-  if (!connectedRouters.isEmpty()) {
-    handleSingleWorkingRedundantRouter(connectedRouters,disconnectedRouters,msg);
-  }
- else   if (!disconnectedRouters.isEmpty()) {
-    for (    VirtualRouter router : disconnectedRouters) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug(msg + router.getInstanceName() + "("+ router.getId()+ ")");
-      }
-    }
-    throw new ResourceUnavailableException(msg,DataCenter.class,disconnectedRouters.get(0).getDataCenterIdToDeployIn());
-  }
-  return true;
+);
 }
