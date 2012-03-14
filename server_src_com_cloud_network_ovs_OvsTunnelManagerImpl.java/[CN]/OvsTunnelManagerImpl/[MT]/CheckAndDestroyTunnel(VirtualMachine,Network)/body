@@ -1,0 +1,40 @@
+{
+  s_logger.debug("### DESTROYING YOUR TUNNELS!");
+  if (!_isEnabled) {
+    return;
+  }
+  List<UserVmVO> userVms=_userVmDao.listByAccountIdAndHostId(vm.getAccountId(),vm.getHostId());
+  s_logger.debug("### User Vms:" + userVms.size());
+  if (vm.getType() == VirtualMachine.Type.User) {
+    if (userVms.size() > 1) {
+      return;
+    }
+    List<DomainRouterVO> routers=_routerDao.findByNetwork(nw.getId());
+    for (    DomainRouterVO router : routers) {
+      if (router.getHostId() == vm.getHostId()) {
+        s_logger.debug("### Not destroying because on same host as router");
+        return;
+      }
+    }
+  }
+ else   if (vm.getType() == VirtualMachine.Type.DomainRouter && userVms.size() != 0) {
+    return;
+  }
+  s_logger.debug("### I WILL DESTROYYY");
+  try {
+    Command cmd=new OvsDestroyBridgeCommand(nw.getId());
+    s_logger.debug("### Destroying bridge for network " + nw.getId() + " on host:"+ vm.getHostId());
+    Answer ans=_agentMgr.send(vm.getHostId(),cmd);
+    handleDestroyBridgeAnswer(ans,vm.getHostId(),nw.getId());
+    List<OvsTunnelNetworkVO> peers=_tunnelNetworkDao.listByToNetwork(vm.getHostId(),nw.getId());
+    for (    OvsTunnelNetworkVO p : peers) {
+      cmd=new OvsDestroyTunnelCommand(p.getNetworkId(),p.getPortName());
+      s_logger.debug("### Destroying tunnel to " + vm.getHostId() + " from "+ p.getFrom());
+      ans=_agentMgr.send(p.getFrom(),cmd);
+      handleDestroyTunnelAnswer(ans,p.getFrom(),p.getTo(),p.getNetworkId());
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn(String.format("Destroy tunnel(account:%1$s, hostId:%2$s) failed",vm.getAccountId(),vm.getHostId()),e);
+  }
+}

@@ -1,0 +1,70 @@
+{
+  if (!_isEnabled) {
+    return;
+  }
+  s_logger.debug("Creating tunnels with OVS tunnel manager");
+  if (instance.getType() != VirtualMachine.Type.User && instance.getType() != VirtualMachine.Type.DomainRouter) {
+    s_logger.debug("Will not work if you're not an instance or a virtual router");
+    return;
+  }
+  long hostId=dest.getHost().getId();
+  List<UserVmVO> vms=_userVmDao.listByNetworkIdAndStates(nw.getId(),State.Running,State.Starting,State.Stopping,State.Unknown,State.Migrating);
+  List<DomainRouterVO> routers=_routerDao.findByNetwork(nw.getId());
+  List<VMInstanceVO> ins=new ArrayList<VMInstanceVO>();
+  if (vms != null) {
+    ins.addAll(vms);
+  }
+  if (routers.size() != 0) {
+    ins.addAll(routers);
+  }
+  s_logger.debug("### Virtual Machines:" + vms.size());
+  s_logger.debug("### Virtual Routers:" + routers.size());
+  List<Long> toHostIds=new ArrayList<Long>();
+  List<Long> fromHostIds=new ArrayList<Long>();
+  for (  VMInstanceVO v : ins) {
+    Long rh=v.getHostId();
+    if (rh == null || rh.longValue() == hostId) {
+      continue;
+    }
+    OvsTunnelNetworkVO ta=_tunnelNetworkDao.getByFromToNetwork(hostId,rh.longValue(),nw.getId());
+    if (ta == null || ta.getState().equals("FAILED")) {
+      s_logger.debug("Attempting to create tunnel from:" + hostId + " to:"+ rh.longValue());
+      if (ta == null) {
+        this.createTunnelRecord(hostId,rh.longValue(),nw.getId());
+      }
+      if (!toHostIds.contains(rh)) {
+        toHostIds.add(rh);
+      }
+    }
+    ta=_tunnelNetworkDao.getByFromToNetwork(rh.longValue(),hostId,nw.getId());
+    if (ta == null || ta.getState().equals("FAILED")) {
+      s_logger.debug("Attempting to create tunnel from:" + rh.longValue() + " to:"+ hostId);
+      if (ta == null) {
+        this.createTunnelRecord(rh.longValue(),hostId,nw.getId());
+      }
+      if (!fromHostIds.contains(rh)) {
+        fromHostIds.add(rh);
+      }
+    }
+  }
+  try {
+    String myIp=dest.getHost().getPrivateIpAddress();
+    for (    Long i : toHostIds) {
+      HostVO rHost=_hostDao.findById(i);
+      Commands cmds=new Commands(new OvsCreateTunnelCommand(rHost.getPrivateIpAddress(),String.valueOf(nw.getId()),Long.valueOf(hostId),i,nw.getId(),myIp));
+      s_logger.debug("Ask host " + hostId + " to create gre tunnel to "+ i);
+      Answer[] answers=_agentMgr.send(hostId,cmds);
+      handleCreateTunnelAnswer(answers);
+    }
+    for (    Long i : fromHostIds) {
+      HostVO rHost=_hostDao.findById(i);
+      Commands cmd2s=new Commands(new OvsCreateTunnelCommand(myIp,String.valueOf(nw.getId()),i,Long.valueOf(hostId),nw.getId(),rHost.getPrivateIpAddress()));
+      s_logger.debug("Ask host " + i + " to create gre tunnel to "+ hostId);
+      Answer[] answers=_agentMgr.send(i,cmd2s);
+      handleCreateTunnelAnswer(answers);
+    }
+  }
+ catch (  Exception e) {
+    s_logger.debug("Ovs Tunnel network created tunnel failed",e);
+  }
+}
