@@ -16,11 +16,11 @@
   Long domainId=cmd.getDomainId();
   boolean isDomainSpecific=false;
   Boolean subdomainAccess=cmd.getSubdomainAccess();
-  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
-  if (networkOffering == null || networkOffering.isSystemOnly()) {
+  NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(networkOfferingId);
+  if (ntwkOff == null || ntwkOff.isSystemOnly()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find network offering by specified id");
-    if (networkOffering != null) {
-      String tablename=AnnotationHelper.getTableName(networkOffering);
+    if (ntwkOff != null) {
+      String tablename=AnnotationHelper.getTableName(ntwkOff);
       if (tablename != null) {
         ex.addProxyObject(tablename,networkOfferingId,"networkOfferingId");
       }
@@ -67,37 +67,37 @@
  else {
       throw new InvalidParameterValueException("Incorrect aclType specified. Check the API documentation for supported types");
     }
-    if (networkOffering.getGuestType() == GuestType.Isolated) {
+    if (ntwkOff.getGuestType() == GuestType.Isolated) {
       if (aclType != ACLType.Account) {
         throw new InvalidParameterValueException("AclType should be " + ACLType.Account + " for network of type "+ Network.GuestType.Isolated);
       }
     }
- else     if (networkOffering.getGuestType() == GuestType.Shared) {
+ else     if (ntwkOff.getGuestType() == GuestType.Shared) {
       if (!(aclType == ACLType.Domain || aclType == ACLType.Account)) {
         throw new InvalidParameterValueException("AclType should be " + ACLType.Domain + " or "+ ACLType.Account+ " for network of type "+ Network.GuestType.Shared);
       }
     }
   }
  else {
-    if (networkOffering.getGuestType() == GuestType.Isolated) {
+    if (ntwkOff.getGuestType() == GuestType.Isolated) {
       aclType=ACLType.Account;
     }
- else     if (networkOffering.getGuestType() == GuestType.Shared) {
+ else     if (ntwkOff.getGuestType() == GuestType.Shared) {
       aclType=ACLType.Domain;
     }
   }
-  if (networkOffering.getGuestType() == GuestType.Shared && !_accountMgr.isAdmin(caller.getType())) {
+  if (ntwkOff.getGuestType() == GuestType.Shared && !_accountMgr.isAdmin(caller.getType())) {
     throw new InvalidParameterValueException("Only Admins can create network with guest type " + GuestType.Shared);
   }
   if (aclType == ACLType.Domain) {
     if (!_accountMgr.isAdmin(caller.getType())) {
       throw new PermissionDeniedException("Only admin can create networks with aclType=Domain");
     }
-    if (networkOffering.getGuestType() != GuestType.Shared) {
+    if (ntwkOff.getGuestType() != GuestType.Shared) {
       throw new InvalidParameterValueException("Only " + GuestType.Shared + " networks can have aclType="+ ACLType.Domain);
     }
     if (domainId != null) {
-      if (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != Network.GuestType.Shared) {
+      if (ntwkOff.getTrafficType() != TrafficType.Guest || ntwkOff.getGuestType() != Network.GuestType.Shared) {
         throw new InvalidParameterValueException("Domain level networks are supported just for traffic type " + TrafficType.Guest + " and guest type "+ Network.GuestType.Shared);
       }
       DomainVO domain=_domainDao.findById(domainId);
@@ -145,11 +145,11 @@
     }
     cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
   }
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (networkOffering.getTrafficType() != TrafficType.Guest || networkOffering.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat))) {
+  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (ntwkOff.getTrafficType() != TrafficType.Guest || ntwkOff.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))) {
     throw new InvalidParameterValueException("Regular user can create a network only from the network offering having traffic type " + TrafficType.Guest + " and network type "+ Network.GuestType.Isolated+ " with a service "+ Service.SourceNat.getName()+ " enabled");
   }
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (cidr != null || vlanId != null)) {
-    throw new InvalidParameterValueException("Regular user is not allowed to specify gateway/netmask/ipRange/vlanId");
+  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (ntwkOff.getSpecifyVlan() || vlanId != null)) {
+    throw new InvalidParameterValueException("Regular user is not allowed to specify vlanId");
   }
   if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && cidr != null) {
     String[] cidrPair=cidr.split("\\/");
@@ -164,12 +164,12 @@
   if (cidr != null) {
     checkVirtualNetworkCidrOverlap(zoneId,cidr);
   }
-  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((networkOffering.getGuestType() == Network.GuestType.Shared) || (networkOffering.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(networkOffering.getId(),Service.SourceNat))));
-  if (createVlan && !networkOffering.getSpecifyIpRanges()) {
+  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((ntwkOff.getGuestType() == Network.GuestType.Shared) || (ntwkOff.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))));
+  if (createVlan && !ntwkOff.getSpecifyIpRanges()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Network offering with specified id doesn't support adding multiple ip ranges");
-    String tablename=AnnotationHelper.getTableName(networkOffering);
+    String tablename=AnnotationHelper.getTableName(ntwkOff);
     if (tablename != null) {
-      ex.addProxyObject(tablename,networkOffering.getId(),"networkOfferingId");
+      ex.addProxyObject(tablename,ntwkOff.getId(),"networkOfferingId");
     }
  else {
       s_logger.info("\nCould not retrieve table name (annotation) from " + tablename + " VO proxy object\n");
