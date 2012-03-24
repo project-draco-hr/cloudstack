@@ -1,30 +1,38 @@
 {
   while (true) {
     try {
-      ClusterServicePdu pdu=popIncomingClusterPdu(1000);
+      final ClusterServicePdu pdu=popIncomingClusterPdu(1000);
       if (pdu == null)       continue;
-      if (pdu.isRequest()) {
-        String result=dispatchClusterServicePdu(pdu);
-        if (result == null)         result="";
-        ClusterServicePdu responsePdu=new ClusterServicePdu();
-        responsePdu.setSourcePeer(pdu.getDestPeer());
-        responsePdu.setDestPeer(pdu.getSourcePeer());
-        responsePdu.setAckSequenceId(pdu.getSequenceId());
-        responsePdu.setJsonPackage(result);
-        addOutgoingClusterPdu(responsePdu);
-      }
- else {
-        ClusterServiceRequestPdu requestPdu=popRequestPdu(pdu.getAckSequenceId());
-        if (requestPdu != null) {
-          requestPdu.setResponseResult(pdu.getJsonPackage());
+      _executor.execute(new Runnable(){
+        public void run(){
+          if (pdu.getPduType() == ClusterServicePdu.PDU_TYPE_RESPONSE) {
+            ClusterServiceRequestPdu requestPdu=popRequestPdu(pdu.getAckSequenceId());
+            if (requestPdu != null) {
+              requestPdu.setResponseResult(pdu.getJsonPackage());
 synchronized (requestPdu) {
-            requestPdu.notifyAll();
+                requestPdu.notifyAll();
+              }
+            }
+ else {
+              s_logger.warn("Original request has already been cancelled. pdu: " + _gson.toJson(pdu));
+            }
+          }
+ else {
+            String result=dispatchClusterServicePdu(pdu);
+            if (result == null)             result="";
+            if (pdu.getPduType() == ClusterServicePdu.PDU_TYPE_REQUEST) {
+              ClusterServicePdu responsePdu=new ClusterServicePdu();
+              responsePdu.setPduType(ClusterServicePdu.PDU_TYPE_RESPONSE);
+              responsePdu.setSourcePeer(pdu.getDestPeer());
+              responsePdu.setDestPeer(pdu.getSourcePeer());
+              responsePdu.setAckSequenceId(pdu.getSequenceId());
+              responsePdu.setJsonPackage(result);
+              addOutgoingClusterPdu(responsePdu);
+            }
           }
         }
- else {
-          s_logger.warn("Original request has already been cancelled. pdu: " + _gson.toJson(pdu));
-        }
       }
+);
     }
  catch (    Throwable e) {
       s_logger.error("Unexcpeted exception: ",e);
