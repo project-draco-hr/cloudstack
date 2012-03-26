@@ -47,32 +47,57 @@
     }
   }
   try {
-    String myIp=dest.getHost().getPublicIpAddress();
-    boolean noHost=true;
-    for (    Long i : toHostIds) {
-      HostVO rHost=_hostDao.findById(i);
-      Commands cmds=new Commands(new OvsCreateTunnelCommand(rHost.getPublicIpAddress(),key,Long.valueOf(hostId),i,nw.getId(),myIp));
-      s_logger.debug("Ask host " + hostId + " to create gre tunnel to "+ i);
-      Answer[] answers=_agentMgr.send(hostId,cmds);
-      handleCreateTunnelAnswer(answers);
-      noHost=false;
+    String myIp=null;
+    String physNetLabel="cloud-public";
+    Long physNetId=nw.getPhysicalNetworkId();
+    PhysicalNetworkTrafficType physNetTT=_physNetTTDao.findBy(physNetId,TrafficType.Guest);
+    s_logger.debug("### Physical network:" + physNetId + " - traffic type:"+ physNetTT.getUuid());
+    HypervisorType hvType=dest.getHost().getHypervisorType();
+switch (hvType) {
+case XenServer:
+      String label=physNetTT.getXenNetworkLabel();
+    if ((label != null) && (!label.equals(""))) {
+      physNetLabel=label;
     }
-    for (    Long i : fromHostIds) {
-      HostVO rHost=_hostDao.findById(i);
-      Commands cmds=new Commands(new OvsCreateTunnelCommand(myIp,key,i,Long.valueOf(hostId),nw.getId(),rHost.getPublicIpAddress()));
-      s_logger.debug("Ask host " + i + " to create gre tunnel to "+ hostId);
-      Answer[] answers=_agentMgr.send(i,cmds);
-      handleCreateTunnelAnswer(answers);
-      noHost=false;
-    }
-    if (noHost) {
-      Commands cmds=new Commands(new OvsSetupBridgeCommand(key,hostId,nw.getId()));
-      s_logger.debug("Ask host " + hostId + " to configure bridge for network:"+ nw.getId());
-      Answer[] answers=_agentMgr.send(hostId,cmds);
-      handleSetupBridgeAnswer(answers);
-    }
-  }
- catch (  Exception e) {
-    s_logger.warn("Ovs Tunnel network created tunnel failed",e);
-  }
+  break;
+default :
+throw new CloudRuntimeException("Hypervisor " + hvType.toString() + " unsupported by OVS Tunnel Manager");
+}
+OvsTunnelInterfaceVO tunnelIface=_tunnelInterfaceDao.getByHostAndLabel(hostId,physNetLabel);
+if (tunnelIface == null) {
+Commands fetchIfaceCmds=new Commands(new OvsFetchInterfaceCommand(physNetLabel));
+s_logger.debug("Ask host " + hostId + " to retrieve interface for phy net with label:"+ physNetLabel);
+Answer[] fetchIfaceAnswers=_agentMgr.send(hostId,fetchIfaceCmds);
+myIp=handleFetchInterfaceAnswer(fetchIfaceAnswers,hostId);
+}
+ else {
+myIp=tunnelIface.getIp();
+}
+boolean noHost=true;
+for (Long i : toHostIds) {
+HostVO rHost=_hostDao.findById(i);
+Commands cmds=new Commands(new OvsCreateTunnelCommand(rHost.getPublicIpAddress(),key,Long.valueOf(hostId),i,nw.getId(),myIp));
+s_logger.debug("Ask host " + hostId + " to create gre tunnel to "+ i);
+Answer[] answers=_agentMgr.send(hostId,cmds);
+handleCreateTunnelAnswer(answers);
+noHost=false;
+}
+for (Long i : fromHostIds) {
+HostVO rHost=_hostDao.findById(i);
+Commands cmds=new Commands(new OvsCreateTunnelCommand(myIp,key,i,Long.valueOf(hostId),nw.getId(),rHost.getPublicIpAddress()));
+s_logger.debug("Ask host " + i + " to create gre tunnel to "+ hostId);
+Answer[] answers=_agentMgr.send(i,cmds);
+handleCreateTunnelAnswer(answers);
+noHost=false;
+}
+if (noHost) {
+Commands cmds=new Commands(new OvsSetupBridgeCommand(key,hostId,nw.getId()));
+s_logger.debug("Ask host " + hostId + " to configure bridge for network:"+ nw.getId());
+Answer[] answers=_agentMgr.send(hostId,cmds);
+handleSetupBridgeAnswer(answers);
+}
+}
+ catch (Exception e) {
+s_logger.warn("Ovs Tunnel network created tunnel failed",e);
+}
 }
