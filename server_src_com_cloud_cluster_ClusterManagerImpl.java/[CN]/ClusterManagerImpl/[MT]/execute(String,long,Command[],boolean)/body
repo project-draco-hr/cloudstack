@@ -1,41 +1,32 @@
 {
-  ClusterService peerService=null;
   if (s_logger.isDebugEnabled()) {
     s_logger.debug(getSelfPeerName() + " -> " + strPeer+ "."+ agentId+ " "+ _gson.toJson(cmds,Command[].class));
   }
-  for (int i=0; i < 2; i++) {
+  ClusterServiceRequestPdu pdu=new ClusterServiceRequestPdu();
+  pdu.setSourcePeer(getSelfPeerName());
+  pdu.setDestPeer(strPeer);
+  pdu.setAgentId(agentId);
+  pdu.setJsonPackage(_gson.toJson(cmds,Command[].class));
+  pdu.setStopOnError(stopOnError);
+  pdu.setRequest(true);
+  registerRequestPdu(pdu);
+  _clusterPduOutgoingQueue.add(pdu);
+synchronized (pdu) {
     try {
-      peerService=getPeerService(strPeer);
+      pdu.wait();
     }
- catch (    RemoteException e) {
-      s_logger.error("Unable to get cluster service on peer : " + strPeer);
+ catch (    InterruptedException e) {
     }
-    if (peerService != null) {
-      try {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Send " + getSelfPeerName() + " -> "+ strPeer+ "."+ agentId+ " to remote");
-        }
-        long startTick=System.currentTimeMillis();
-        String strResult=peerService.execute(getSelfPeerName(),agentId,_gson.toJson(cmds,Command[].class),stopOnError);
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Completed " + getSelfPeerName() + " -> "+ strPeer+ "."+ agentId+ "in "+ (System.currentTimeMillis() - startTick)+ " ms, result: "+ strResult);
-        }
-        if (strResult != null) {
-          try {
-            return _gson.fromJson(strResult,Answer[].class);
-          }
- catch (          Throwable e) {
-            s_logger.error("Exception on parsing gson package from remote call to " + strPeer);
-          }
-        }
-        return null;
-      }
- catch (      RemoteException e) {
-        invalidatePeerService(strPeer);
-        if (s_logger.isInfoEnabled()) {
-          s_logger.info("Exception on remote execution, peer: " + strPeer + ", iteration: "+ i+ ", exception message :"+ e.getMessage());
-        }
-      }
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug(getSelfPeerName() + " -> " + strPeer+ "."+ agentId+ " completed. result: "+ pdu.getResponseResult());
+  }
+  if (pdu.getResponseResult() != null && pdu.getResponseResult().length() > 0) {
+    try {
+      return _gson.fromJson(pdu.getResponseResult(),Answer[].class);
+    }
+ catch (    Throwable e) {
+      s_logger.error("Exception on parsing gson package from remote call to " + strPeer);
     }
   }
   return null;

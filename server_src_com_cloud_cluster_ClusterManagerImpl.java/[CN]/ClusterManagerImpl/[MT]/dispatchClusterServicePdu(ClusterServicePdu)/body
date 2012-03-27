@@ -1,0 +1,83 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Dispatch ->" + pdu.getAgentId() + ", json: "+ pdu.getJsonPackage());
+  }
+  Command[] cmds=null;
+  try {
+    cmds=_gson.fromJson(pdu.getJsonPackage(),Command[].class);
+  }
+ catch (  Throwable e) {
+    assert(false);
+    s_logger.error("Excection in gson decoding : ",e);
+  }
+  if (cmds.length == 1 && cmds[0] instanceof ChangeAgentCommand) {
+    ChangeAgentCommand cmd=(ChangeAgentCommand)cmds[0];
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Intercepting command for agent change: agent " + cmd.getAgentId() + " event: "+ cmd.getEvent());
+    }
+    boolean result=false;
+    try {
+      result=executeAgentUserRequest(cmd.getAgentId(),cmd.getEvent());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Result is " + result);
+      }
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.warn("Agent is unavailable",e);
+      return null;
+    }
+    Answer[] answers=new Answer[1];
+    answers[0]=new ChangeAgentAnswer(cmd,result);
+    return _gson.toJson(answers);
+  }
+ else   if (cmds.length == 1 && cmds[0] instanceof TransferAgentCommand) {
+    TransferAgentCommand cmd=(TransferAgentCommand)cmds[0];
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Intercepting command for agent rebalancing: agent " + cmd.getAgentId() + " event: "+ cmd.getEvent());
+    }
+    boolean result=false;
+    try {
+      result=rebalanceAgent(cmd.getAgentId(),cmd.getEvent(),cmd.getCurrentOwner(),cmd.getFutureOwner());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Result is " + result);
+      }
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.warn("Agent is unavailable",e);
+      return null;
+    }
+catch (    OperationTimedoutException e) {
+      s_logger.warn("Operation timed out",e);
+      return null;
+    }
+    Answer[] answers=new Answer[1];
+    answers[0]=new Answer(cmd,result,null);
+    return _gson.toJson(answers);
+  }
+  try {
+    long startTick=System.currentTimeMillis();
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Dispatch -> " + pdu.getAgentId() + ", json: "+ pdu.getJsonPackage());
+    }
+    Answer[] answers=sendToAgent(pdu.getAgentId(),cmds,pdu.isStopOnError());
+    if (answers != null) {
+      String jsonReturn=_gson.toJson(answers);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Completed dispatching -> " + pdu.getAgentId() + ", json: "+ pdu.getJsonPackage()+ " in "+ (System.currentTimeMillis() - startTick)+ " ms, return result: "+ jsonReturn);
+      }
+      return jsonReturn;
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Completed dispatching -> " + pdu.getAgentId() + ", json: "+ pdu.getJsonPackage()+ " in "+ (System.currentTimeMillis() - startTick)+ " ms, return null result");
+      }
+    }
+  }
+ catch (  AgentUnavailableException e) {
+    s_logger.warn("Agent is unavailable",e);
+  }
+catch (  OperationTimedoutException e) {
+    s_logger.warn("Timed Out",e);
+  }
+  return null;
+}
