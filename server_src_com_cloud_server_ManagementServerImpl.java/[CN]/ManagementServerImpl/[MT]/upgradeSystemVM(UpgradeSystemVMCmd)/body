@@ -1,0 +1,36 @@
+{
+  Long systemVmId=cmd.getId();
+  Long serviceOfferingId=cmd.getServiceOfferingId();
+  Account caller=UserContext.current().getCaller();
+  VMInstanceVO systemVm=_vmInstanceDao.findByIdTypes(systemVmId,VirtualMachine.Type.ConsoleProxy,VirtualMachine.Type.SecondaryStorageVm);
+  if (systemVm == null) {
+    throw new InvalidParameterValueException("Unable to find SystemVm with id " + systemVmId);
+  }
+  _accountMgr.checkAccess(caller,null,true,systemVm);
+  if (systemVm.getServiceOfferingId() == serviceOfferingId) {
+    s_logger.debug("System vm id: " + systemVmId + "already has service offering: "+ serviceOfferingId);
+    return systemVm;
+  }
+  ServiceOffering newServiceOffering=_configMgr.getServiceOffering(serviceOfferingId);
+  if (newServiceOffering == null) {
+    throw new InvalidParameterValueException("Unable to find service offering with id " + serviceOfferingId);
+  }
+  if (!newServiceOffering.getSystemUse()) {
+    throw new InvalidParameterValueException("Cannot upgrade system vm to a non system service offering " + serviceOfferingId);
+  }
+  if (!systemVm.getState().equals(State.Stopped)) {
+    s_logger.warn("Unable to upgrade system vm " + systemVm + " in state "+ systemVm.getState());
+    throw new InvalidParameterValueException("Unable to upgrade system vm " + systemVm + " in state "+ systemVm.getState()+ "; make sure the system vm is stopped and not in an error state before upgrading.");
+  }
+  ServiceOffering currentServiceOffering=_configMgr.getServiceOffering(systemVm.getServiceOfferingId());
+  if (currentServiceOffering.getUseLocalStorage() != newServiceOffering.getUseLocalStorage()) {
+    throw new InvalidParameterValueException("Can't upgrade, due to new local storage status : " + newServiceOffering.getUseLocalStorage() + " is different from "+ "curruent local storage status: "+ currentServiceOffering.getUseLocalStorage());
+  }
+  systemVm.setServiceOfferingId(serviceOfferingId);
+  if (_vmInstanceDao.update(systemVmId,systemVm)) {
+    return _vmInstanceDao.findById(systemVmId);
+  }
+ else {
+    throw new CloudRuntimeException("Unable to upgrade system vm " + systemVm);
+  }
+}
