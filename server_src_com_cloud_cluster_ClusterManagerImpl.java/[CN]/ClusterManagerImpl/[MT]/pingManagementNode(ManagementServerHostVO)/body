@@ -4,27 +4,39 @@
     s_logger.info("ping management node cluster service can not be performed on self");
     return false;
   }
-  String targetPeer=String.valueOf(mshost.getMsid());
-  ClusterService peerService=null;
-  for (int i=0; i < 2; i++) {
+  int retry=10;
+  while (--retry > 0) {
+    SocketChannel sch=null;
     try {
-      peerService=getPeerService(targetPeer);
+      s_logger.info("Trying to connect to " + targetIp);
+      sch=SocketChannel.open();
+      sch.configureBlocking(true);
+      sch.socket().setSoTimeout(5000);
+      InetSocketAddress addr=new InetSocketAddress(targetIp,mshost.getServicePort());
+      sch.connect(addr);
+      return true;
     }
- catch (    RemoteException e) {
-      s_logger.error("cluster service for peer " + targetPeer + " no longer exists");
-    }
-    if (peerService != null) {
-      try {
-        return peerService.ping(getSelfPeerName());
+ catch (    IOException e) {
+      if (e instanceof ConnectException) {
+        s_logger.error("Unable to ping management server at " + targetIp + ":"+ mshost.getServicePort()+ " due to ConnectException",e);
+        return false;
       }
- catch (      RemoteException e) {
-        s_logger.warn("Exception in performing remote call, ",e);
-        invalidatePeerService(targetPeer);
+    }
+ finally {
+      if (sch != null) {
+        try {
+          sch.close();
+        }
+ catch (        IOException e) {
+        }
       }
     }
- else {
-      s_logger.warn("Remote peer " + mshost.getMsid() + " no longer exists");
+    try {
+      Thread.sleep(1000);
+    }
+ catch (    InterruptedException ex) {
     }
   }
+  s_logger.error("Unable to ping management server at " + targetIp + ":"+ mshost.getServicePort()+ " after retries");
   return false;
 }
