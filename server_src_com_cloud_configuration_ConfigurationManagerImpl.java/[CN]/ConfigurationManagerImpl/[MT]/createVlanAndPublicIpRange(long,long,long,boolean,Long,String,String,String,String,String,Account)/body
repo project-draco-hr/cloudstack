@@ -1,52 +1,50 @@
 {
-  if (podId != null && ((_podDao.findById(podId)) == null)) {
-    throw new InvalidParameterValueException("Please specify a valid pod.");
+  Network network=_networkMgr.getNetwork(networkId);
+  DataCenterVO zone=_zoneDao.findById(zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
   }
-  if (podId != null && _podDao.findById(podId).getDataCenterId() != zoneId) {
-    throw new InvalidParameterValueException("Pod id=" + podId + " doesn't belong to zone id="+ zoneId);
+  checkZoneAccess(UserContext.current().getCaller(),zone);
+  if (_physicalNetworkDao.findById(physicalNetworkId) == null) {
+    throw new InvalidParameterValueException("Please specify a valid physical network id");
+  }
+  if (podId != null) {
+    Pod pod=_podDao.findById(podId);
+    if (pod == null) {
+      throw new InvalidParameterValueException("Please specify a valid pod.");
+    }
+    if (pod.getDataCenterId() != zoneId) {
+      throw new InvalidParameterValueException("Pod id=" + podId + " doesn't belong to zone id="+ zoneId);
+    }
+    if (zone.getNetworkType() != NetworkType.Basic || network.getTrafficType() != TrafficType.Guest) {
+      throw new InvalidParameterValueException("Pod id can be specified only for the networks of type " + TrafficType.Guest + " in zone of type "+ NetworkType.Basic);
+    }
+  }
+  if (network.getTrafficType() == TrafficType.Guest) {
+    String networkVlanId=null;
+    URI uri=network.getBroadcastUri();
+    if (uri != null) {
+      String[] vlan=uri.toString().split("vlan:\\/\\/");
+      networkVlanId=vlan[1];
+    }
+    if (vlanId != null) {
+      if (networkVlanId != null && !networkVlanId.equalsIgnoreCase(vlanId)) {
+        throw new InvalidParameterValueException("Vlan doesn't match vlan of the network");
+      }
+    }
+ else {
+      vlanId=networkVlanId;
+    }
+  }
+ else   if (network.getTrafficType() == TrafficType.Public && vlanId == null) {
+    throw new InvalidParameterValueException("Vlan id is required when add ip range to the public network");
   }
   if (vlanId == null) {
     vlanId=Vlan.UNTAGGED;
   }
-  DataCenterVO zone;
-  if (zoneId == null || ((zone=_zoneDao.findById(zoneId)) == null)) {
-    throw new InvalidParameterValueException("Please specify a valid zone.");
-  }
-  if (physicalNetworkId == null || ((_physicalNetworkDao.findById(physicalNetworkId)) == null)) {
-    throw new InvalidParameterValueException("Please specify a valid physical network.");
-  }
-  if (zone.getNetworkType() == NetworkType.Advanced && vlanId.equals(Vlan.UNTAGGED) && (!forVirtualNetwork || zone.isSecurityGroupEnabled())) {
-    throw new InvalidParameterValueException("Direct untagged network is not supported for the zone " + zone.getId() + " of type "+ zone.getNetworkType());
-  }
- else   if (zone.getNetworkType() == NetworkType.Basic && !((vlanId.equals(Vlan.UNTAGGED) && !forVirtualNetwork) || (forVirtualNetwork))) {
-    throw new InvalidParameterValueException("Only Direct Untagged and Virtual networks are supported in the zone " + zone.getId() + " of type "+ zone.getNetworkType());
-  }
   VlanType vlanType=forVirtualNetwork ? VlanType.VirtualNetwork : VlanType.DirectAttached;
-  checkAccess(account,zone);
-  if (vlanType.equals(VlanType.DirectAttached)) {
-    if (account != null) {
-      if (vlanId.equals(Vlan.UNTAGGED)) {
-        throw new InvalidParameterValueException("Direct Attached IP ranges for an account must be tagged.");
-      }
-      List<HostPodVO> podsInZone=_podDao.listByDataCenterId(zone.getId());
-      for (      HostPodVO pod : podsInZone) {
-        if (_podVlanMapDao.listPodVlanMapsByPod(pod.getId()).size() > 0) {
-          throw new InvalidParameterValueException("Zone " + zone.getName() + " already has pod-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
-        }
-      }
-    }
- else     if (podId != null) {
-      if (!vlanId.equals(Vlan.UNTAGGED)) {
-        throw new InvalidParameterValueException("Direct Attached IP ranges for a pod must be untagged.");
-      }
-      List<AccountVlanMapVO> accountVlanMaps=_accountVlanMapDao.listAllIncludingRemoved();
-      for (      AccountVlanMapVO accountVlanMap : accountVlanMaps) {
-        VlanVO vlan=_vlanDao.findById(accountVlanMap.getVlanDbId());
-        if (vlan.getDataCenterId() == zone.getId()) {
-          throw new InvalidParameterValueException("Zone " + zone.getName() + " already has account-wide IP ranges. A zone may contain either pod-wide IP ranges or account-wide IP ranges, but not both.");
-        }
-      }
-    }
+  if (vlanOwner != null && zone.getNetworkType() != NetworkType.Advanced) {
+    throw new InvalidParameterValueException("Vlan owner can be defined only in the zone of type " + NetworkType.Advanced);
   }
   if (!NetUtils.isValidIp(vlanGateway)) {
     throw new InvalidParameterValueException("Please specify a valid gateway");
@@ -126,8 +124,8 @@
   if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId(),networkId,physicalNetworkId)) {
     throw new CloudRuntimeException("Failed to save IP range. Please contact Cloud Support.");
   }
-  if (account != null) {
-    AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(account.getId(),vlan.getId());
+  if (vlanOwner != null) {
+    AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(vlanOwner.getId(),vlan.getId());
     _accountVlanMapDao.persist(accountVlanMapVO);
   }
  else   if (podId != null) {

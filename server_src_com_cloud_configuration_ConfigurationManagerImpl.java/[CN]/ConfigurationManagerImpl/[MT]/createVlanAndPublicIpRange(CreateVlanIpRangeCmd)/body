@@ -9,12 +9,11 @@
   String vlanId=cmd.getVlan();
   Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
   Long networkId=cmd.getNetworkID();
-  String networkVlanId=null;
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
   String accountName=cmd.getAccountName();
   Long projectId=cmd.getProjectId();
   Long domainId=cmd.getDomainId();
-  Account account=null;
+  Account vlanOwner=null;
   if (projectId != null) {
     if (accountName != null) {
       throw new InvalidParameterValueException("Account and projectId are mutually exclusive");
@@ -23,11 +22,11 @@
     if (project == null) {
       throw new InvalidParameterValueException("Unable to find project by id " + projectId);
     }
-    account=_accountMgr.getAccount(project.getProjectAccountId());
+    vlanOwner=_accountMgr.getAccount(project.getProjectAccountId());
   }
   if ((accountName != null) && (domainId != null)) {
-    account=_accountDao.findActiveAccount(accountName,domainId);
-    if (account == null) {
+    vlanOwner=_accountDao.findActiveAccount(accountName,domainId);
+    if (vlanOwner == null) {
       throw new InvalidParameterValueException("Please specify a valid account.");
     }
   }
@@ -42,21 +41,24 @@
       physicalNetworkId=network.getPhysicalNetworkId();
     }
   }
+  DataCenterVO zone=_zoneDao.findById(zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Unable to find zone by id " + zoneId);
+  }
   PhysicalNetworkVO pNtwk=null;
   if (physicalNetworkId != null) {
     pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
     if (pNtwk == null) {
       throw new InvalidParameterValueException("Unable to find Physical Network with id=" + physicalNetworkId);
     }
+    if (zoneId == null) {
+      zoneId=pNtwk.getDataCenterId();
+    }
   }
-  if (zoneId == null && pNtwk != null) {
-    zoneId=pNtwk.getDataCenterId();
-  }
-  DataCenterVO zone=_zoneDao.findById(zoneId);
-  if (zone == null) {
-    throw new InvalidParameterValueException("Unable to find zone by id " + zoneId);
-  }
-  if (physicalNetworkId == null) {
+ else {
+    if (zoneId == null) {
+      throw new InvalidParameterValueException("");
+    }
     if (network != null && network.getPhysicalNetworkId() != null) {
       physicalNetworkId=network.getPhysicalNetworkId();
     }
@@ -84,11 +86,12 @@
     throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
   }
   if (zone.isSecurityGroupEnabled() && zone.getNetworkType() != DataCenter.NetworkType.Basic && forVirtualNetwork) {
-    throw new InvalidParameterValueException("Can't add virtual network into a zone with security group enabled");
+    throw new InvalidParameterValueException("Can't add virtual ip range into a zone with security group enabled");
   }
   if (forVirtualNetwork) {
     if (network == null) {
       networkId=_networkMgr.getSystemNetworkByZoneAndTrafficType(zoneId,TrafficType.Public).getId();
+      network=_networkMgr.getNetwork(networkId);
     }
  else     if (network.getGuestType() != null || network.getTrafficType() != TrafficType.Public) {
       throw new InvalidParameterValueException("Can't find Public network by id=" + networkId);
@@ -111,24 +114,11 @@
       throw new InvalidParameterValueException("Can't create direct vlan for network id=" + networkId + " with type: "+ network.getGuestType());
     }
   }
-  if (network == null) {
-    network=_networkMgr.getNetwork(networkId);
-  }
   if (!network.getSpecifyIpRanges()) {
-    throw new InvalidParameterValueException("Network " + network + " doesn't support adding multiple ip ranges");
+    throw new InvalidParameterValueException("Network " + network + " doesn't support adding ip ranges");
   }
   if (endIP == null && startIP != null) {
     endIP=startIP;
-  }
-  if (network != null) {
-    URI uri=network.getBroadcastUri();
-    if (uri != null) {
-      String[] vlan=uri.toString().split("vlan:\\/\\/");
-      networkVlanId=vlan[1];
-    }
-  }
-  if (vlanId != null && networkVlanId != null && !networkVlanId.equalsIgnoreCase(vlanId)) {
-    throw new InvalidParameterValueException("Vlan doesn't match vlan of the network");
   }
   if (forVirtualNetwork || zone.getNetworkType() == DataCenter.NetworkType.Basic || zone.isSecurityGroupEnabled()) {
     if (vlanGateway == null || vlanNetmask == null || zoneId == null) {
@@ -151,14 +141,11 @@
     vlanGateway=networkGateway;
     vlanNetmask=networkNetmask;
     zoneId=networkZoneId;
-    if (networkVlanId != null) {
-      vlanId=networkVlanId;
-    }
   }
   boolean associateIpRangeToAccount=false;
   if (forVirtualNetwork) {
-    if (account != null) {
-      long ipResourceLimit=_resourceLimitMgr.findCorrectResourceLimitForAccount(account,ResourceType.public_ip);
+    if (vlanOwner != null) {
+      long ipResourceLimit=_resourceLimitMgr.findCorrectResourceLimitForAccount(vlanOwner,ResourceType.public_ip);
       long accountIpRange=NetUtils.ip2Long(endIP) - NetUtils.ip2Long(startIP) + 1;
       if (s_logger.isDebugEnabled()) {
         s_logger.debug(" IPResourceLimit " + ipResourceLimit + " accountIpRange "+ accountIpRange);
@@ -172,16 +159,16 @@
   checkOverlapPrivateIpRange(zoneId,startIP,endIP);
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  Vlan vlan=createVlanAndPublicIpRange(userId,zoneId,podId,startIP,endIP,vlanGateway,vlanNetmask,forVirtualNetwork,vlanId,account,networkId,physicalNetworkId);
+  Vlan vlan=createVlanAndPublicIpRange(zoneId,networkId,physicalNetworkId,forVirtualNetwork,podId,startIP,endIP,vlanGateway,vlanNetmask,vlanId,vlanOwner);
   if (associateIpRangeToAccount) {
-    _networkMgr.associateIpAddressListToAccount(userId,account.getId(),zoneId,vlan.getId(),network);
+    _networkMgr.associateIpAddressListToAccount(userId,vlanOwner.getId(),zoneId,vlan.getId(),network);
   }
   txn.commit();
   if (associateIpRangeToAccount) {
     if (network.getState() == Network.State.Implemented) {
       s_logger.debug("Applying ip associations for vlan id=" + vlanId + " in network "+ network);
       if (!_networkMgr.applyIpAssociations(network,false)) {
-        s_logger.warn("Failed to apply ip associations for vlan id=1 as a part of add vlan range for account id=" + account.getId());
+        s_logger.warn("Failed to apply ip associations for vlan id=1 as a part of add vlan range for account id=" + vlanOwner.getId());
       }
     }
  else {
