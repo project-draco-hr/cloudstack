@@ -1,14 +1,14 @@
 {
-  Account caller=UserContext.current().getCaller();
-  Long userId=UserContext.current().getCallerUserId();
-  if (caller != null && caller.getRemoved() != null) {
-    throw new InvalidParameterValueException("The account " + caller.getId() + " is removed");
+  Account callerAccount=UserContext.current().getCaller();
+  UserVO callerUser=_userDao.findById(UserContext.current().getCallerUserId());
+  if (callerAccount != null && callerAccount.getRemoved() != null) {
+    throw new InvalidParameterValueException("The account " + callerAccount.getId() + " is removed");
   }
   UserVmVO vm=_vmDao.findById(vmId);
   if (vm == null) {
     throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
   }
-  _accountMgr.checkAccess(caller,null,true,vm);
+  _accountMgr.checkAccess(callerAccount,null,true,vm);
   Account owner=_accountDao.findById(vm.getAccountId());
   if (owner == null) {
     throw new InvalidParameterValueException("The owner of " + vm + " does not exist: "+ vm.getAccountId());
@@ -27,7 +27,6 @@
       throw new InvalidParameterValueException("Unable to find the host to deploy the VM, host id=" + hostId);
     }
   }
-  UserVO user=_userDao.findById(userId);
   if (_securityGroupMgr.isVmSecurityGroupEnabled(vmId) && !_securityGroupMgr.isVmMappedToDefaultSecurityGroup(vmId) && _networkMgr.canAddDefaultSecurityGroup()) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Vm " + vm + " is security group enabled, but not mapped to default security group; creating the mapping automatically");
@@ -44,5 +43,36 @@
     s_logger.debug("Destination Host to deploy the VM is specified, specifying a deployment plan to deploy the VM");
     plan=new DataCenterDeployment(vm.getDataCenterIdToDeployIn(),destinationHost.getPodId(),destinationHost.getClusterId(),destinationHost.getId(),null,null);
   }
-  return _itMgr.start(vm,null,user,caller,plan);
+  Map<VirtualMachineProfile.Param,Object> params=null;
+  if (vm.isUpdateParameters()) {
+    _vmDao.loadDetails(vm);
+    VMTemplateVO template=_templateDao.findByIdIncludingRemoved(vm.getTemplateId());
+    String password="saved_password";
+    if (template.getEnablePassword()) {
+      password=generateRandomPassword();
+    }
+    if (!validPassword(password)) {
+      throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
+    }
+    String sshPublicKey=vm.getDetail("SSH.PublicKey");
+    if (sshPublicKey != null && !sshPublicKey.equals("") && password != null && !password.equals("saved_password")) {
+      String encryptedPasswd=RSAHelper.encryptWithSSHPublicKey(sshPublicKey,password);
+      if (encryptedPasswd == null) {
+        throw new CloudRuntimeException("Error encrypting password");
+      }
+      vm.setDetail("Encrypted.Password",encryptedPasswd);
+      _vmDao.saveDetails(vm);
+    }
+    params=new HashMap<VirtualMachineProfile.Param,Object>();
+    if (additionalParams != null) {
+      params.putAll(additionalParams);
+    }
+    params.put(VirtualMachineProfile.Param.VmPassword,password);
+  }
+  vm=_itMgr.start(vm,params,callerUser,callerAccount,plan);
+  if (vm != null && vm.isUpdateParameters()) {
+    vm.setUpdateParameters(false);
+    _vmDao.update(vm.getId(),vm);
+  }
+  return new Pair(vm,params);
 }

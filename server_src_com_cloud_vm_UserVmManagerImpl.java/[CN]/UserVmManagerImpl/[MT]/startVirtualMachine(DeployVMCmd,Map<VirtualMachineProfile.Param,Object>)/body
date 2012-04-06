@@ -1,56 +1,19 @@
 {
-  Host destinationHost=null;
-  if (cmd.getHostId() != null) {
-    Account account=UserContext.current().getCaller();
-    if (!_accountService.isRootAdmin(account.getType())) {
-      throw new PermissionDeniedException("Parameter hostid can only be specified by a Root Admin, permission denied");
-    }
-    destinationHost=_hostDao.findById(cmd.getHostId());
-    if (destinationHost == null) {
-      throw new InvalidParameterValueException("Unable to find the host to deploy the VM, host id=" + cmd.getHostId());
-    }
-  }
   long vmId=cmd.getEntityId();
+  Long hostId=cmd.getHostId();
   UserVmVO vm=_vmDao.findById(vmId);
-  _vmDao.loadDetails(vm);
-  VMTemplateVO template=_templateDao.findByIdIncludingRemoved(vm.getTemplateId());
-  String password="saved_password";
-  if (template.getEnablePassword()) {
-    password=generateRandomPassword();
-  }
-  if (!validPassword(password)) {
-    throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
-  }
-  String sshPublicKey=vm.getDetail("SSH.PublicKey");
-  if (sshPublicKey != null && !sshPublicKey.equals("") && password != null && !password.equals("saved_password")) {
-    String encryptedPasswd=RSAHelper.encryptWithSSHPublicKey(sshPublicKey,password);
-    if (encryptedPasswd == null) {
-      throw new CloudRuntimeException("Error encrypting password");
-    }
-    vm.setDetail("Encrypted.Password",encryptedPasswd);
-    _vmDao.saveDetails(vm);
-  }
-  long userId=UserContext.current().getCallerUserId();
-  UserVO caller=_userDao.findById(userId);
-  AccountVO owner=_accountDao.findById(vm.getAccountId());
+  Pair<UserVmVO,Map<VirtualMachineProfile.Param,Object>> vmParamPair=null;
   try {
-    Map<VirtualMachineProfile.Param,Object> params=new HashMap<VirtualMachineProfile.Param,Object>();
-    if (additonalParams != null) {
-      params.putAll(additonalParams);
-    }
-    params.put(VirtualMachineProfile.Param.VmPassword,password);
-    DataCenterDeployment plan=null;
-    if (destinationHost != null) {
-      s_logger.debug("Destination Host to deploy the VM is specified, specifying a deployment plan to deploy the VM");
-      plan=new DataCenterDeployment(vm.getDataCenterIdToDeployIn(),destinationHost.getPodId(),destinationHost.getClusterId(),destinationHost.getId(),null,null);
-    }
-    vm=_itMgr.start(vm,params,caller,owner,plan);
+    vmParamPair=startVirtualMachine(vmId,hostId,additonalParams);
+    vm=vmParamPair.first();
+    ;
   }
   finally {
     updateVmStateForFailedVmCreation(vm.getId());
   }
+  VMTemplateVO template=_templateDao.findByIdIncludingRemoved(vm.getTemplateId());
   if (template.getEnablePassword()) {
-    vm.setPassword(password);
+    vm.setPassword((String)vmParamPair.second().get(VirtualMachineProfile.Param.VmPassword));
   }
   return vm;
 }
