@@ -1,0 +1,43 @@
+def _send_authentication(self):
+    self.client_flag |= CAPABILITIES
+    if self.server_version.startswith('5'):
+        self.client_flag |= MULTI_RESULTS
+    if (self.user is None):
+        raise ValueError, 'Did not specify a username'
+    charset_id = charset_by_name(self.charset).id
+    self.user = self.user.encode(self.charset)
+    data_init = (((struct.pack('<i', self.client_flag) + struct.pack('<I', 1)) + int2byte(charset_id)) + (int2byte(0) * 23))
+    next_packet = 1
+    if self.ssl:
+        data = ((pack_int24(len(data_init)) + int2byte(next_packet)) + data_init)
+        next_packet += 1
+        if DEBUG:
+            dump_packet(data)
+        self.wfile.write(data)
+        self.wfile.flush()
+        self.socket = ssl.wrap_self.socketet(self.socket, keyfile=self.key, certfile=self.cert, ssl_version=ssl.PROTOCOL_TLSv1, cert_reqs=ssl.CERT_REQUIRED, ca_certs=self.ca)
+        self.rfile = self.socket.makefile('rb')
+        self.wfile = self.socket.makefile('wb')
+    data = (((data_init + self.user) + int2byte(0)) + _scramble(self.password.encode(self.charset), self.salt))
+    if self.db:
+        self.db = self.db.encode(self.charset)
+        data += (self.db + int2byte(0))
+    data = ((pack_int24(len(data)) + int2byte(next_packet)) + data)
+    next_packet += 2
+    if DEBUG:
+        dump_packet(data)
+    self.wfile.write(data)
+    self.wfile.flush()
+    auth_packet = MysqlPacket(self)
+    auth_packet.check_error()
+    if DEBUG:
+        auth_packet.dump()
+    if auth_packet.is_eof_packet():
+        data = (_scramble_323(self.password.encode(self.charset), self.salt.encode(self.charset)) + int2byte(0))
+        data = ((pack_int24(len(data)) + int2byte(next_packet)) + data)
+        self.wfile.write(data)
+        self.wfile.flush()
+        auth_packet = MysqlPacket(self)
+        auth_packet.check_error()
+        if DEBUG:
+            auth_packet.dump()
