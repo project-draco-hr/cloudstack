@@ -1,20 +1,35 @@
 {
+  s_logger.debug("Encrypting vm_instance vnc_password");
   PreparedStatement pstmt=null;
   ResultSet rs=null;
   try {
-    pstmt=conn.prepareStatement("select id, vnc_password from `cloud`.`vm_instance` where removed is null");
+    int numRows=0;
+    pstmt=conn.prepareStatement("select count(id) from `cloud`.`vm_instance` where removed is null");
     rs=pstmt.executeQuery();
-    while (rs.next()) {
-      long id=rs.getLong(1);
-      String value=rs.getString(2);
-      if (value == null) {
-        continue;
+    if (rs.next()) {
+      numRows=rs.getInt(1);
+    }
+    rs.close();
+    pstmt.close();
+    int offset=0;
+    while (offset < numRows) {
+      pstmt=conn.prepareStatement("select id, vnc_password from `cloud`.`vm_instance` where removed is null limit " + offset + ", 500");
+      rs=pstmt.executeQuery();
+      while (rs.next()) {
+        long id=rs.getLong(1);
+        String value=rs.getString(2);
+        if (value == null) {
+          continue;
+        }
+        String encryptedValue=DBEncryptionUtil.encrypt(value);
+        pstmt=conn.prepareStatement("update `cloud`.`vm_instance` set vnc_password=? where id=?");
+        pstmt.setBytes(1,encryptedValue.getBytes("UTF-8"));
+        pstmt.setLong(2,id);
+        pstmt.executeUpdate();
+        pstmt.close();
       }
-      String encryptedValue=DBEncryptionUtil.encrypt(value);
-      pstmt=conn.prepareStatement("update `cloud`.`vm_instance` set vnc_password=? where id=?");
-      pstmt.setBytes(1,encryptedValue.getBytes("UTF-8"));
-      pstmt.setLong(2,id);
-      pstmt.executeUpdate();
+      rs.close();
+      offset+=500;
     }
   }
  catch (  SQLException e) {
@@ -35,4 +50,5 @@ catch (  UnsupportedEncodingException e) {
  catch (    SQLException e) {
     }
   }
+  s_logger.debug("Done encrypting vm_instance vnc_password");
 }
