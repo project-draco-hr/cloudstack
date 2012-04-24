@@ -1,0 +1,57 @@
+{
+  VlanVO vlan=_vlanDao.findById(vlanDbId);
+  if (vlan == null) {
+    throw new InvalidParameterValueException("Please specify a valid IP range id.");
+  }
+  boolean isAccountSpecific=false;
+  List<AccountVlanMapVO> acctVln=_accountVlanMapDao.listAccountVlanMapsByVlan(vlan.getId());
+  if (acctVln != null && !acctVln.isEmpty()) {
+    isAccountSpecific=true;
+  }
+  long allocIpCount=_publicIpAddressDao.countIPs(vlan.getDataCenterId(),vlanDbId,true);
+  boolean success=true;
+  if (allocIpCount > 0) {
+    if (isAccountSpecific) {
+      try {
+        vlan=_vlanDao.acquireInLockTable(vlanDbId,30);
+        if (vlan == null) {
+          throw new CloudRuntimeException("Unable to acquire vlan configuration: " + vlanDbId);
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("lock vlan " + vlanDbId + " is acquired");
+        }
+        List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlanDbId);
+        for (        IPAddressVO ip : ips) {
+          if (ip.isOneToOneNat()) {
+            throw new InvalidParameterValueException("Can't delete account specific vlan " + vlanDbId + " as ip "+ ip+ " belonging to the range is used for static nat purposes. Cleanup the rules first");
+          }
+          if (ip.isSourceNat() && _nicDao.findByIp4AddressAndNetworkId(ip.getAddress().addr(),ip.getSourceNetworkId()) != null) {
+            throw new InvalidParameterValueException("Can't delete account specific vlan " + vlanDbId + " as ip "+ ip+ " belonging to the range is a source nat ip for the network id="+ ip.getSourceNetworkId()+ ". Either delete the network, or Virtual Router instance using this ip address");
+          }
+          if (_firewallDao.countRulesByIpId(ip.getId()) > 0) {
+            throw new InvalidParameterValueException("Can't delete account specific vlan " + vlanDbId + " as ip "+ ip+ " belonging to the range has firewall rules applied. Cleanup the rules first");
+          }
+          success=success && _networkMgr.releasePublicIpAddress(ip.getId(),userId,caller);
+        }
+        if (!success) {
+          s_logger.warn("Some ip addresses failed to be released as a part of vlan " + vlanDbId + " removal");
+        }
+      }
+  finally {
+        _vlanDao.releaseFromLockTable(vlanDbId);
+      }
+    }
+ else {
+      throw new InvalidParameterValueException("The IP range can't be deleted because it has allocated public IP addresses.");
+    }
+  }
+  if (success) {
+    if (!deletePublicIPRange(vlanDbId)) {
+      return false;
+    }
+    return _vlanDao.expunge(vlanDbId);
+  }
+ else {
+    return false;
+  }
+}
