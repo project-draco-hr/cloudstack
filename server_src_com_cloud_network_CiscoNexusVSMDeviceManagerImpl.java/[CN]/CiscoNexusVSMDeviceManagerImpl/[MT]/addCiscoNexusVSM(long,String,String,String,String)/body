@@ -1,0 +1,42 @@
+{
+  ClusterVO cluster=_clusterDao.findById(clusterId);
+  if (cluster.getHypervisorType() != HypervisorType.VMware) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Cluster with specified id is not a VMWare hypervisor cluster");
+    throw ex;
+  }
+  DataCenterVO zone=_dcDao.findById(cluster.getDataCenterId());
+  CiscoNexusVSM vsmObj=new CiscoNexusVSM(ipaddress,username,password);
+  if (!vsmObj.connectToVSM()) {
+    throw new CloudRuntimeException("Couldn't login to the specified VSM");
+  }
+  Map hostDetails=new HashMap<String,String>();
+  hostDetails.put(ApiConstants.IP_ADDRESS,ipaddress);
+  hostDetails.put(ApiConstants.USERNAME,username);
+  hostDetails.put(ApiConstants.PASSWORD,password);
+  long dbZoneId=clusterId;
+  hostDetails.put(ApiConstants.ZONE_ID,dbZoneId);
+  hostDetails.put(ApiConstants.GUID,UUID.randomUUID().toString());
+  Map<String,String> configParams=new HashMap<String,String>();
+  hostDetails.putAll(configParams);
+  Transaction txn=Transaction.currentTxn();
+  try {
+    resource.configure(vsmName,hostDetails);
+    Host host=_resourceMgr.addHost(dbZoneId,resource,Host.Type.ExternalVirtualSwitchSupervisor,hostDetails);
+    if (host != null) {
+      txn.start();
+      CiscoNexusVSMDeviceVO vsmDeviceVO=new CiscoNexusVSMDeviceVO(host.getId(),ipaddress,username,password);
+      _ciscoNexusVSMDeviceDao.persist(vsmDeviceVO);
+      DetailVO hostDetail=new DetailVO(host.getId(),ApiConstants.EXTERNAL_SWITCH_MGMT_DEVICE_ID,String.valueOf(vsmDeviceVO.getId()));
+      _hostDetailDao.persist(hostDetail);
+      txn.commit();
+      return vsmDeviceVO;
+    }
+ else {
+      throw new CloudRuntimeException("Failed to add load balancer device due to internal error.");
+    }
+  }
+ catch (  ConfigurationException e) {
+    txn.rollback();
+    throw new CloudRuntimeException(e.getMessage());
+  }
+}
