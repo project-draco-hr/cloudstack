@@ -1,18 +1,27 @@
 {
-  HostVO cisconexusvsm=_hostDao.findById(hostId);
+  CiscoNexusVSMDeviceVO cisconexusvsm=_ciscoNexusVSMDeviceDao.findById(vsmId);
   if (cisconexusvsm == null) {
-    throw new InvalidParameterValueException("Could not find a Cisco Nexus 1000v VSM with specified ID" + hostId);
-  }
-  DetailVO vsmHostDetails=_hostDetailDao.findDetail(hostId,ApiConstants.EXTERNAL_SWITCH_MGMT_DEVICE_ID);
-  long vsmDeviceId=Long.parseLong(vsmHostDetails.getValue());
-  try {
-    _hostDao.update(hostId,cisconexusvsm);
-    _resourceMgr.deleteHost(hostId,false,false);
-    _ciscoNexusVSMDeviceDao.remove(vsmDeviceId);
     return true;
   }
- catch (  Exception e) {
-    s_logger.debug(e);
-    return false;
+  List<ClusterVSMMapVO> clusterList=_clusterVSMDao.listByVSMId(vsmId);
+  for (  ClusterVSMMapVO record : clusterList) {
+    Long clusterId=record.getClusterId();
+    List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(clusterId);
+    if (hosts != null && hosts.size() > 0) {
+      throw new ResourceInUseException("Non-empty cluster with id" + clusterId + "still uses VSM. Please empty the cluster first");
+    }
   }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    for (    ClusterVSMMapVO record : clusterList) {
+      _ciscoNexusVSMDeviceDao.remove(vsmId);
+      _clusterVSMDao.removeByVsmId(vsmId);
+    }
+    txn.commit();
+  }
+ catch (  CloudRuntimeException e) {
+    throw e;
+  }
+  return true;
 }
