@@ -4,24 +4,29 @@
     return true;
   }
   List<ClusterVSMMapVO> clusterList=_clusterVSMDao.listByVSMId(vsmId);
-  for (  ClusterVSMMapVO record : clusterList) {
-    Long clusterId=record.getClusterId();
-    List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(clusterId);
-    if (hosts != null && hosts.size() > 0) {
-      throw new ResourceInUseException("Non-empty cluster with id" + clusterId + "still uses VSM. Please empty the cluster first");
+  if (clusterList != null) {
+    for (    ClusterVSMMapVO record : clusterList) {
+      Long clusterId=record.getClusterId();
+      List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(clusterId);
+      if (hosts != null && hosts.size() > 0) {
+        for (        Host host : hosts) {
+          if (host.getType() == Host.Type.Routing) {
+            throw new ResourceInUseException("Non-empty cluster with id" + clusterId + "still has a host that uses this VSM. Please empty the cluster first");
+          }
+        }
+      }
     }
   }
   Transaction txn=Transaction.currentTxn();
   try {
     txn.start();
-    for (    ClusterVSMMapVO record : clusterList) {
-      _ciscoNexusVSMDeviceDao.remove(vsmId);
-      _clusterVSMDao.removeByVsmId(vsmId);
-    }
+    _ciscoNexusVSMDeviceDao.remove(vsmId);
+    _clusterVSMDao.removeByVsmId(vsmId);
     txn.commit();
   }
- catch (  CloudRuntimeException e) {
-    throw e;
+ catch (  Exception e) {
+    s_logger.info("Caught exception when trying to delete VSM record.." + e.getMessage());
+    throw new CloudRuntimeException("Failed to delete VSM");
   }
   return true;
 }
