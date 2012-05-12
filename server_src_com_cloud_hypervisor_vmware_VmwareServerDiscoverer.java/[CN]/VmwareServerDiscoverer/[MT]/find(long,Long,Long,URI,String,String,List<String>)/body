@@ -15,10 +15,29 @@
     s_logger.error(msg);
     throw new DiscoveredWithErrorException(msg);
   }
+  String privateTrafficLabel=null;
+  Map<String,String> vsmCredentials=null;
+  if (_vmwareMgr.getNexusVSwitchGlobalParameter()) {
+    privateTrafficLabel=_netmgr.getDefaultManagementTrafficLabel(dcId,HypervisorType.VMware);
+    if (privateTrafficLabel != null) {
+      s_logger.info("Detected private network label : " + privateTrafficLabel);
+    }
+    vsmCredentials=_vmwareMgr.getNexusVSMCredentialsByClusterId(clusterId);
+  }
   VmwareContext context=null;
   try {
     context=VmwareContextFactory.create(url.getHost(),username,password);
+    if (_vmwareMgr.getNexusVSwitchGlobalParameter()) {
+      privateTrafficLabel=_netmgr.getDefaultManagementTrafficLabel(dcId,HypervisorType.VMware);
+      if (privateTrafficLabel != null) {
+        context.registerStockObject("privateTrafficLabel",privateTrafficLabel);
+        s_logger.info("Detected private network label : " + privateTrafficLabel);
+      }
+      vsmCredentials=_vmwareMgr.getNexusVSMCredentialsByClusterId(clusterId);
+      if (vsmCredentials != null)       context.registerStockObject("vsmCredentials",vsmCredentials);
+    }
     List<ManagedObjectReference> morHosts=_vmwareMgr.addHostToPodCluster(context,dcId,podId,clusterId,URLDecoder.decode(url.getPath()));
+    if (privateTrafficLabel != null)     context.uregisterStockObject("privateTrafficLabel");
     if (morHosts == null) {
       s_logger.error("Unable to find host or cluster based on url: " + URLDecoder.decode(url.getPath()));
       return null;
@@ -63,6 +82,9 @@
       params.put("pod",Long.toString(podId));
       params.put("cluster",Long.toString(clusterId));
       params.put("guid",guid);
+      if (privateTrafficLabel != null) {
+        params.put("private.network.vswitch.name",privateTrafficLabel);
+      }
       VmwareResource resource=new VmwareResource();
       try {
         resource.configure("VMware",params);
