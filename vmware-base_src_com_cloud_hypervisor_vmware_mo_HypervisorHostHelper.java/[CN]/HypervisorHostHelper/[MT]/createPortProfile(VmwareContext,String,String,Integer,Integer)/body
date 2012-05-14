@@ -6,7 +6,9 @@
   String msg;
   NetconfHelper netconfClient;
   try {
+    s_logger.info("Connecting to Nexus VSM : " + vsmIp);
     netconfClient=new NetconfHelper(vsmIp,vsmUserName,vsmPassword);
+    s_logger.info("Successfully connected to Nexus VSM : " + vsmIp);
   }
  catch (  CloudRuntimeException e) {
     msg="Failed to connect to Nexus VSM " + vsmIp + " with credentials of user "+ vsmUserName;
@@ -14,20 +16,31 @@
     throw new CloudRuntimeException(msg);
   }
   List<Pair<OperationType,String>> params=new ArrayList<Pair<OperationType,String>>();
-  params.add(new Pair<OperationType,String>(OperationType.addvlanid,vid.toString()));
+  if (vlanId != null) {
+    params.add(new Pair<OperationType,String>(OperationType.addvlanid,vlanId.toString()));
+    try {
+      s_logger.info("Updating Ethernet port profile " + ethPortProfileName + " with VLAN "+ vlanId);
+      netconfClient.updatePortProfile(ethPortProfileName,SwitchPortMode.trunk,params);
+      s_logger.info("Added " + vlanId + " to Ethernet port profile "+ ethPortProfileName);
+    }
+ catch (    CloudRuntimeException e) {
+      msg="Failed to modify ethernet port profile " + ethPortProfileName + " with parameters "+ params.toString();
+      s_logger.error(msg);
+      throw new CloudRuntimeException(msg);
+    }
+  }
   try {
-    netconfClient.updatePortProfile(ethPortProfileName,SwitchPortMode.access,params);
+    if (vlanId == null) {
+      s_logger.info("Adding port profile configured over untagged VLAN.");
+      netconfClient.addPortProfile(networkName,PortProfileType.vethernet,BindingType.portbindingstatic,SwitchPortMode.access,0);
+    }
+ else {
+      s_logger.info("Adding port profile configured over VLAN : " + vlanId.toString());
+      netconfClient.addPortProfile(networkName,PortProfileType.vethernet,BindingType.portbindingstatic,SwitchPortMode.access,vlanId.intValue());
+    }
   }
  catch (  CloudRuntimeException e) {
-    msg="Failed to modify ethernet port profile " + ethPortProfileName + " with parameters "+ params.toString();
-    s_logger.error(msg);
-    throw new CloudRuntimeException(msg);
-  }
-  try {
-    netconfClient.addPortProfile(networkName,PortProfileType.vethernet,BindingType.portbindingstatic,SwitchPortMode.access,vid);
-  }
- catch (  CloudRuntimeException e) {
-    msg="Failed to add vethernet port profile " + networkName + " with parameters "+ params.toString();
+    msg="Failed to add vEthernet port profile " + networkName + ". Exception: "+ e.toString();
     s_logger.error(msg);
     throw new CloudRuntimeException(msg);
   }
