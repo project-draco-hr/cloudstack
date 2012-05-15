@@ -4,6 +4,33 @@
   if ((lbDeviceVo == null) || !isNetscalerDevice(lbDeviceVo.getDeviceName())) {
     throw new InvalidParameterValueException("No netscaler device found with ID: " + lbDeviceId);
   }
+  List<Long> currentPodsConfig=new ArrayList<Long>();
+  List<NetScalerPodVO> currentPodVOs=_netscalerPodDao.listByNetScalerDeviceId(lbDeviceVo.getId());
+  if (currentPodVOs != null && currentPodVOs.size() > 0) {
+    for (    NetScalerPodVO nsPodVo : currentPodVOs) {
+      currentPodsConfig.add(nsPodVo.getPodId());
+    }
+  }
+  List<Long> podsToAssociate=new ArrayList<Long>();
+  if (newPodsConfig != null && newPodsConfig.size() > 0) {
+    for (    Long podId : newPodsConfig) {
+      HostPodVO pod=_podDao.findById(podId);
+      if (pod == null) {
+        throw new InvalidParameterValueException("Can't find pod by id " + podId);
+      }
+    }
+    for (    Long podId : newPodsConfig) {
+      if (!currentPodsConfig.contains(podId)) {
+        podsToAssociate.add(podId);
+      }
+    }
+  }
+  List<Long> podsToDeassociate=new ArrayList<Long>();
+  for (  Long podId : currentPodsConfig) {
+    if (!newPodsConfig.contains(podId)) {
+      podsToDeassociate.add(podId);
+    }
+  }
   String deviceName=lbDeviceVo.getDeviceName();
   if (dedicatedUse != null || capacity != null || inline != null) {
     if (NetworkDevice.NetscalerSDXLoadBalancer.getName().equalsIgnoreCase(deviceName) || NetworkDevice.NetscalerMPXLoadBalancer.getName().equalsIgnoreCase(deviceName)) {
@@ -48,6 +75,14 @@
   Transaction txn=Transaction.currentTxn();
   txn.start();
   _lbDeviceDao.update(lbDeviceId,lbDeviceVo);
+  for (  Long podId : podsToAssociate) {
+    NetScalerPodVO nsPodVo=new NetScalerPodVO(lbDeviceId,podId);
+    _netscalerPodDao.persist(nsPodVo);
+  }
+  for (  Long podId : podsToDeassociate) {
+    NetScalerPodVO nsPodVo=_netscalerPodDao.findByPodId(podId);
+    _netscalerPodDao.remove(nsPodVo.getId());
+  }
   _detailsDao.persist(lbDeviceVo.getHostId(),lbDetails);
   HostVO host=_hostDao.findById(lbDeviceVo.getHostId());
   txn.commit();
