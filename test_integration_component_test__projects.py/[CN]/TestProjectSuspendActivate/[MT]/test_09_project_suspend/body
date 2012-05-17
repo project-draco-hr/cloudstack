@@ -1,0 +1,40 @@
+def test_09_project_suspend(self):
+    ' Test Verify after an account is removed from the project, all his\n            resources stay with the project.\n        '
+    configs = Configurations.list(self.apiclient, name='project.invite.required')
+    self.assertEqual(isinstance(configs, list), True, 'Check for a valid list configurations response')
+    config = configs[0]
+    self.assertEqual(config.value.lower(), 'false', "'project.invite.required' should be set to false")
+    self.debug(('Adding %s user to project: %s' % (self.user.account.name, self.project.name)))
+    self.project.addAccount(self.apiclient, self.user.account.name)
+    accounts_reponse = Project.listAccounts(self.apiclient, projectid=self.project.id, account=self.user.account.name)
+    self.assertEqual(isinstance(accounts_reponse, list), True, 'Check for a valid list accounts response')
+    self.assertNotEqual(len(accounts_reponse), 0, 'Check list project response returns a valid project')
+    account = accounts_reponse[0]
+    self.assertEqual(account.role, 'Regular', 'Newly added user is not added as a regular user')
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.template.id, serviceofferingid=self.service_offering.id, projectid=self.project.id)
+    self.debug(('Created a VM: %s for project: %s' % (virtual_machine.id, self.project.id)))
+    self.debug(('Suspending a project: %s' % self.project.name))
+    self.project.suspend(self.apiclient)
+    vms = VirtualMachine.list(self.apiclient, projectid=self.project.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'Check for a valid list accounts response')
+    self.assertNotEqual(len(vms), 0, 'Check list project response returns a valid project')
+    for vm in vms:
+        self.debug(('VM ID: %s state: %s' % (vm.id, vm.state)))
+        self.assertEqual(vm.state, 'Stopped', 'VM should be in stopped state after project suspension')
+    self.debug('Attempting to create volume in suspended project')
+    with self.assertRaises(Exception):
+        volume = Volume.create(self.apiclient, self.services['volume'], zoneid=self.zone.id, diskofferingid=self.disk_offering.id, projectid=self.project.id)
+    self.debug('Volume creation failed')
+    self.debug(('Attempting to start VM: %s in suspended project' % virtual_machine.id))
+    with self.assertRaises(Exception):
+        virtual_machine.start(self.apiclient)
+    self.debug('VM start failed!')
+    virtual_machine.delete(self.apiclient)
+    self.debug(('Destroying VM: %s' % virtual_machine.id))
+    vms = VirtualMachine.list(self.apiclient, projectid=self.project.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'Check for a valid list accounts response')
+    self.assertNotEqual(len(vms), 0, 'Check list project response returns a valid project')
+    for vm in vms:
+        self.debug(('VM ID: %s state: %s' % (vm.id, vm.state)))
+        self.assertEqual(vm.state, 'Destroyed', 'VM should be in stopped state after project suspension')
+    return

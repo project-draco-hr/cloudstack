@@ -1,0 +1,43 @@
+def test_01_create_volume(self):
+    'Test Volume creation for all Disk Offerings (incl. custom)\n        '
+    self.volumes = []
+    for (k, v) in self.services['volume_offerings'].items():
+        volume = Volume.create(self.apiClient, v, zoneid=self.zone.id, account=self.account.account.name, domainid=self.account.account.domainid, diskofferingid=self.disk_offering.id)
+        self.debug(('Created a volume with ID: %s' % volume.id))
+        self.volumes.append(volume)
+    volume = Volume.create_custom_disk(self.apiClient, self.services, account=self.account.account.name, domainid=self.account.account.domainid)
+    self.debug(('Created a volume with custom offering: %s' % volume.id))
+    self.volumes.append(volume)
+    for volume in self.volumes:
+        list_volume_response = list_volumes(self.apiClient, id=volume.id)
+        self.assertEqual(isinstance(list_volume_response, list), True, 'Check list response returns a valid list')
+        self.assertNotEqual(list_volume_response, None, 'Check if volume exists in ListVolumes')
+        self.debug(('Attaching volume (ID: %s) to VM (ID: %s)' % (volume.id, self.virtual_machine.id)))
+        self.virtual_machine.attach_volume(self.apiClient, volume)
+        try:
+            ssh = self.virtual_machine.get_ssh_client()
+            ssh.execute('reboot')
+        except Exception as e:
+            self.fail(('SSH access failed for VM %s - %s' % (self.virtual_machine.ipaddress, e)))
+        timeout = self.services['timeout']
+        while True:
+            time.sleep(self.services['sleep'])
+            list_vm_response = list_virtual_machines(self.apiClient, id=self.virtual_machine.id)
+            if isinstance(list_vm_response, list):
+                vm = list_vm_response[0]
+                if (vm.state == 'Running'):
+                    self.debug(('VM state: %s' % vm.state))
+                    break
+            if (timeout == 0):
+                raise Exception(('Failed to start VM (ID: %s) ' % vm.id))
+            timeout = (timeout - 1)
+        try:
+            ssh = self.virtual_machine.get_ssh_client(reconnect=True)
+            c = 'fdisk -l'
+            res = ssh.execute(c)
+        except Exception as e:
+            self.fail(('SSH access failed for VM: %s - %s' % (self.virtual_machine.ipaddress, e)))
+        result = str(res)
+        self.debug(('fdisk result: %s' % result))
+        self.assertEqual((str(list_volume_response[0].size) in result), True, 'Check if promised disk size actually available')
+        self.virtual_machine.detach_volume(self.apiClient, volume)
