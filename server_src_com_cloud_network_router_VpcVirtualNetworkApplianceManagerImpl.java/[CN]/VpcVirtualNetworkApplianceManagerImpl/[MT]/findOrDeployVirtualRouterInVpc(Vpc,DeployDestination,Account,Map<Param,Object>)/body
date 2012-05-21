@@ -1,0 +1,27 @@
+{
+  Vpc vpcLock=_vpcDao.acquireInLockTable(vpc.getId());
+  if (vpcLock == null) {
+    throw new ConcurrentOperationException("Unable to lock vpc " + vpc.getId());
+  }
+  Pair<DeploymentPlan,List<DomainRouterVO>> planAndRouters=getDeploymentPlanAndRouters(vpc.getId(),dest);
+  DeploymentPlan plan=planAndRouters.first();
+  List<DomainRouterVO> routers=planAndRouters.second();
+  if (routers.size() >= 1) {
+    return routers;
+  }
+  Long offeringId=_vpcOffDao.findById(vpc.getVpcOfferingId()).getServiceOfferingId();
+  if (offeringId == null) {
+    offeringId=_offering.getId();
+  }
+  try {
+    VirtualRouterProvider vrProvider=_vrProviderDao.findByNspIdAndType(1,VirtualRouterProviderType.VirtualRouter);
+    DomainRouterVO router=deployRouter(owner,dest,plan,params,true,null,false,vrProvider,offeringId);
+    routers.add(router);
+  }
+  finally {
+    if (vpcLock != null) {
+      _vpcDao.releaseFromLockTable(vpc.getId());
+    }
+  }
+  return routers;
+}

@@ -1,0 +1,58 @@
+{
+  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(3);
+  if (setupPublicNetwork) {
+    s_logger.debug("Adding nic for Virtual Router in Public network ");
+    PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddress(owner,guestNetwork,_accountMgr.getSystemUser().getId());
+    NicProfile defaultNic=new NicProfile();
+    defaultNic.setDefaultNic(true);
+    defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
+    defaultNic.setGateway(sourceNatIp.getGateway());
+    defaultNic.setNetmask(sourceNatIp.getNetmask());
+    defaultNic.setMacAddress(sourceNatIp.getMacAddress());
+    defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+    defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
+    defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
+    defaultNic.setDeviceId(2);
+    NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
+    List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false);
+    networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),defaultNic));
+  }
+  List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork);
+  NetworkOfferingVO controlOffering=offerings.get(0);
+  NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false).get(0);
+  s_logger.debug("Adding nic for Virtual Router in Control network ");
+  networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
+  if (guestNetwork != null) {
+    String defaultNetworkStartIp=null;
+    s_logger.debug("Adding nic for Virtual Router in Guest network " + guestNetwork);
+    if (guestNetwork.getCidr() != null && !setupPublicNetwork) {
+      String startIp=_networkMgr.getStartIpAddress(guestNetwork.getId());
+      if (startIp != null && _ipAddressDao.findByIpAndSourceNetworkId(guestNetwork.getId(),startIp).getAllocatedTime() == null) {
+        defaultNetworkStartIp=startIp;
+      }
+ else       if (s_logger.isDebugEnabled()) {
+        s_logger.debug("First ip " + startIp + " in network id="+ guestNetwork.getId()+ " is already allocated, can't use it for domain router; will get random ip address from the range");
+      }
+    }
+    NicProfile gatewayNic=new NicProfile(defaultNetworkStartIp);
+    if (setupPublicNetwork) {
+      if (isRedundant) {
+        gatewayNic.setIp4Address(_networkMgr.acquireGuestIpAddress(guestNetwork,null));
+      }
+ else {
+        gatewayNic.setIp4Address(guestNetwork.getGateway());
+      }
+      gatewayNic.setBroadcastUri(guestNetwork.getBroadcastUri());
+      gatewayNic.setBroadcastType(guestNetwork.getBroadcastDomainType());
+      gatewayNic.setIsolationUri(guestNetwork.getBroadcastUri());
+      gatewayNic.setMode(guestNetwork.getMode());
+      String gatewayCidr=guestNetwork.getCidr();
+      gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
+    }
+ else {
+      gatewayNic.setDefaultNic(true);
+    }
+    networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,gatewayNic));
+  }
+  return networks;
+}
