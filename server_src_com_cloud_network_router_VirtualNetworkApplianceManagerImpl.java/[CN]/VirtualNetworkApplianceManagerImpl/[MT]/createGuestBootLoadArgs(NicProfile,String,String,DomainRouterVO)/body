@@ -1,0 +1,69 @@
+{
+  long guestNetworkId=guestNic.getNetworkId();
+  NetworkVO guestNetwork=_networkDao.findById(guestNetworkId);
+  String dhcpRange=null;
+  DataCenterVO dc=_dcDao.findById(guestNetwork.getDataCenterId());
+  if (dc.getNetworkType() == NetworkType.Advanced) {
+    String cidr=guestNetwork.getCidr();
+    if (cidr != null) {
+      dhcpRange=NetUtils.getDhcpRange(cidr);
+    }
+  }
+  StringBuilder buf=new StringBuilder();
+  boolean isRedundant=router.getIsRedundantRouter();
+  if (isRedundant) {
+    buf.append(" redundant_router=1");
+    List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(guestNetwork.getId(),Role.VIRTUAL_ROUTER);
+    try {
+      int priority=getUpdatedPriority(guestNetwork,routers,router);
+      router.setPriority(priority);
+    }
+ catch (    InsufficientVirtualNetworkCapcityException e) {
+      s_logger.error("Failed to get update priority!",e);
+      throw new CloudRuntimeException("Failed to get update priority!");
+    }
+  }
+  if (guestNic.isDefaultNic() && dc.getNetworkType() == NetworkType.Basic) {
+    long cidrSize=NetUtils.getCidrSize(guestNic.getNetmask());
+    String cidr=NetUtils.getCidrSubNet(guestNic.getGateway(),cidrSize);
+    if (cidr != null) {
+      dhcpRange=NetUtils.getIpRangeStartIpFromCidr(cidr,cidrSize);
+    }
+  }
+  if (dhcpRange != null) {
+    buf.append(" dhcprange=" + dhcpRange);
+  }
+  if (isRedundant) {
+    Network net=_networkMgr.getNetwork(guestNic.getNetworkId());
+    buf.append(" guestgw=").append(net.getGateway());
+    String brd=NetUtils.long2Ip(NetUtils.ip2Long(guestNic.getIp4Address()) | ~NetUtils.ip2Long(guestNic.getNetmask()));
+    buf.append(" guestbrd=").append(brd);
+    buf.append(" guestcidrsize=").append(NetUtils.getCidrSize(guestNic.getNetmask()));
+    buf.append(" router_pr=").append(router.getPriority());
+  }
+  String domain=guestNetwork.getNetworkDomain();
+  if (domain != null) {
+    buf.append(" domain=" + domain);
+  }
+  boolean dnsProvided=false;
+  boolean dhcpProvided=false;
+  if (guestNic.getTrafficType() == TrafficType.Guest) {
+    dnsProvided=_networkMgr.isProviderSupportServiceInNetwork(guestNic.getNetworkId(),Service.Dns,Provider.VirtualRouter);
+    dhcpProvided=_networkMgr.isProviderSupportServiceInNetwork(guestNic.getNetworkId(),Service.Dhcp,Provider.VirtualRouter);
+  }
+  if (dnsProvided || dhcpProvided) {
+    buf.append(" dns1=").append(defaultDns1);
+    if (defaultDns2 != null) {
+      buf.append(" dns2=").append(defaultDns2);
+    }
+    boolean useExtDns=!dnsProvided;
+    String use_external_dns=_configDao.getValue(Config.UseExternalDnsServers.key());
+    if (use_external_dns != null && use_external_dns.equals("true")) {
+      useExtDns=true;
+    }
+    if (useExtDns) {
+      buf.append(" useextdns=true");
+    }
+  }
+  return buf;
+}
