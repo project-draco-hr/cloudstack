@@ -1,0 +1,66 @@
+def test_01_elb_create(self):
+    'Test ELB by creating a LB rule\n        '
+    security_groups = SecurityGroup.list(self.apiclient, account=self.account.account.name, domainid=self.account.account.domainid)
+    self.assertEqual(isinstance(security_groups, list), True, 'Check for list security groups response')
+    self.assertEqual(len(security_groups), 1, 'Check List Security groups response')
+    self.debug(('List Security groups response: %s' % str(security_groups)))
+    security_group = security_groups[0]
+    self.debug('Creating Ingress rule to allow SSH on default security group')
+    cmd = authorizeSecurityGroupIngress.authorizeSecurityGroupIngressCmd()
+    cmd.domainid = self.account.account.domainid
+    cmd.account = self.account.account.name
+    cmd.securitygroupid = security_group.id
+    cmd.protocol = 'TCP'
+    cmd.startport = 22
+    cmd.endport = 22
+    cmd.cidrlist = '0.0.0.0/0'
+    self.apiclient.authorizeSecurityGroupIngress(cmd)
+    self.debug(('Fetching LB IP for account: %s' % self.account.account.name))
+    ip_addrs = PublicIPAddress.list(self.api_client, associatednetworkid=self.guest_network.id, account=self.account.account.name, domainid=self.account.account.domainid, forloadbalancing=True, listall=True)
+    self.assertEqual(isinstance(ip_addrs, list), True, 'List Public IP address should return valid IP address for network')
+    lb_ip = ip_addrs[0]
+    self.debug(('LB IP generated for account: %s is: %s' % (self.account.account.name, lb_ip.ipaddress)))
+    self.debug(('SSHing into VMs using ELB IP: %s' % lb_ip.ipaddress))
+    try:
+        ssh_1 = self.vm_1.get_ssh_client(ipaddress=lb_ip.ipaddress)
+        self.debug('Command: hostname')
+        result = ssh_1.execute('hostname')
+        self.debug(('Result: %s' % result))
+        if isinstance(result, list):
+            res = result[0]
+        else:
+            self.fail('hostname retrieval failed!')
+        self.assertIn(res, [self.vm_1.name, self.vm_2.name], 'SSH should return hostname of one of the VM')
+        ssh_2 = self.vm_2.get_ssh_client(ipaddress=lb_ip.ipaddress)
+        self.debug('Command: hostname')
+        result = ssh_2.execute('hostname')
+        self.debug(('Result: %s' % result))
+        if isinstance(result, list):
+            res = result[0]
+        else:
+            self.fail('hostname retrieval failed!')
+        self.assertIn(res, [self.vm_1.name, self.vm_2.name], 'SSH should return hostname of one of the VM')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.vm_1.ipaddress, e)))
+    self.debug(("select is_system from user_ip_address where public_ip_address='%s';" % lb_ip.ipaddress))
+    qresultset = self.dbclient.execute(("select is_system from user_ip_address where public_ip_address='%s';" % lb_ip.ipaddress))
+    self.assertEqual(isinstance(qresultset, list), True, 'Check DB query result set for valid data')
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    qresult = qresultset[0]
+    self.assertEqual(qresult[0], 1, 'is_system value should be 1 for system generated LB rule')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient.remoteSSHClient(self.services['netscaler']['ipaddress'], 22, self.services['netscaler']['username'], self.services['netscaler']['password'])
+        self.debug('command: show ip')
+        res = ssh_client.execute('show ip')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count(lb_ip.ipaddress), 1, 'One IP from EIP pool should be taken and configured on NS')
+        self.debug('Command:show lb vserver')
+        res = ssh_client.execute('show lb vserver')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('State: UP'), 2, 'User subnet IP should be enabled for LB service')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

@@ -1,0 +1,35 @@
+@classmethod
+def setUpClass(cls):
+    cls.api_client = super(TestVMPasswordEnabled, cls).getClsTestClient().getApiClient()
+    cls.services = Services().services
+    domain = get_domain(cls.api_client, cls.services)
+    zone = get_zone(cls.api_client, cls.services)
+    template = get_template(cls.api_client, zone.id, cls.services['ostypeid'])
+    cls.services['small']['zoneid'] = zone.id
+    cls.services['small']['template'] = template.id
+    cls.account = Account.create(cls.api_client, cls.services['account'], domainid=domain.id)
+    cls.small_offering = ServiceOffering.create(cls.api_client, cls.services['service_offerings']['small'])
+    cls.virtual_machine = VirtualMachine.create(cls.api_client, cls.services['small'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, serviceofferingid=cls.small_offering.id, mode=cls.services['mode'])
+    cls.virtual_machine.stop(cls.api_client)
+    timeout = cls.services['timeout']
+    while True:
+        time.sleep(cls.services['sleep'])
+        list_vm_response = list_virtual_machines(cls.api_client, id=cls.virtual_machine.id)
+        if isinstance(list_vm_response, list):
+            vm = list_vm_response[0]
+            if (vm.state == 'Stopped'):
+                break
+        if (timeout == 0):
+            raise Exception(('Failed to stop VM (ID: %s) in change service offering' % vm.id))
+        timeout = (timeout - 1)
+    list_volume = list_volumes(cls.api_client, virtualmachineid=cls.virtual_machine.id, type='ROOT', listall=True)
+    if isinstance(list_volume, list):
+        cls.volume = list_volume[0]
+    else:
+        raise Exception(('Exception: Unable to find root volume foe VM: %s' % cls.virtual_machine.id))
+    cls.services['template']['ostypeid'] = cls.services['ostypeid']
+    cls.pw_enabled_template = Template.create(cls.api_client, cls.services['template'], cls.volume.id, account=cls.account.account.name, domainid=cls.account.account.domainid)
+    cls.virtual_machine.delete(cls.api_client)
+    cls.services['small']['template'] = cls.pw_enabled_template.id
+    cls.vm = VirtualMachine.create(cls.api_client, cls.services['small'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, serviceofferingid=cls.small_offering.id, mode=cls.services['mode'])
+    cls._cleanup = [cls.small_offering, cls.pw_enabled_template, cls.account]

@@ -1,3 +1,4 @@
+@unittest.skip('skipped')
 def test_01_host_maintenance_mode(self):
     'Test host maintenance mode\n        '
     hosts = Host.list(self.apiclient, zoneid=self.zone.id, resourcestate='Enabled', type='Routing')
@@ -21,6 +22,7 @@ def test_01_host_maintenance_mode(self):
     self.debug(('Creating PF rule for IP address: %s' % public_ip.ipaddress.ipaddress))
     nat_rule = NATRule.create(self.apiclient, virtual_machine, self.services['natrule'], ipaddressid=public_ip.ipaddress.id)
     self.debug(('Creating LB rule on IP with NAT: %s' % public_ip.ipaddress.ipaddress))
+    fw_rule = FireWallRule.create(self.apiclient, ipaddressid=public_ip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=['0.0.0.0/0'], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
     lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.account.name)
     self.debug(('Created LB rule with ID: %s' % lb_rule.id))
     try:
@@ -42,7 +44,7 @@ def test_01_host_maintenance_mode(self):
         self.assertNotEqual(len(vms), 0, 'List VMs should return valid response for deployed VM')
         vm = vms[0]
         self.debug(('VM 1 state: %s' % vm.state))
-        if (vm.state in ['Stopping', 'Stopped', 'Running', 'Starting']):
+        if (vm.state in ['Stopping', 'Stopped', 'Running', 'Starting', 'Migrating']):
             if (vm.state == 'Running'):
                 break
             else:
@@ -85,7 +87,22 @@ def test_01_host_maintenance_mode(self):
         self.assertNotEqual(len(vms), 0, 'List VMs should return valid response for deployed VM')
         vm = vms[0]
         self.debug(('VM state after enabling maintenance on first host: %s' % vm.state))
-        if (vm.state in ['Stopping', 'Stopped', 'Running', 'Starting']):
+        if (vm.state in ['Stopping', 'Stopped', 'Running', 'Starting', 'Migrating']):
+            if (vm.state == 'Running'):
+                break
+            else:
+                time.sleep(self.services['sleep'])
+                timeout = (timeout - 1)
+        else:
+            self.fail('VM migration from one-host-to-other failed while enabling maintenance')
+    timeout = self.services['timeout']
+    while True:
+        vms = VirtualMachine.list(self.apiclient, account=self.account.account.name, domainid=self.account.account.domainid, listall=True)
+        self.assertEqual(isinstance(vms, list), True, 'List VMs should return valid response for deployed VM')
+        self.assertNotEqual(len(vms), 0, 'List VMs should return valid response for deployed VM')
+        vm = vms[1]
+        self.debug(('VM state after enabling maintenance on first host: %s' % vm.state))
+        if (vm.state in ['Stopping', 'Stopped', 'Running', 'Starting', 'Migrating']):
             if (vm.state == 'Running'):
                 break
             else:

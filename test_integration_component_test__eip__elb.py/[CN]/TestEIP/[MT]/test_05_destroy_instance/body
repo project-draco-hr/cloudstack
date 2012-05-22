@@ -1,0 +1,45 @@
+def test_05_destroy_instance(self):
+    'Test EIO after destroying instance\n        '
+    self.debug(('Fetching static NAT for VM: %s' % self.virtual_machine.name))
+    ip_addrs = PublicIPAddress.list(self.api_client, associatednetworkid=self.guest_network.id, isstaticnat=True, account=self.account.account.name, domainid=self.account.account.domainid, listall=True)
+    self.assertEqual(isinstance(ip_addrs, list), True, 'List Public IP address should return valid IP address for network')
+    static_nat = ip_addrs[0]
+    self.debug(('Static NAT for VM: %s is: %s' % (self.virtual_machine.name, static_nat.ipaddress)))
+    self.debug(('Destroying an instance: %s' % self.virtual_machine.name))
+    self.virtual_machine.delete(self.apiclient)
+    self.debug('Destroy instance complete!')
+    config = list_configurations(self.apiclient, name='expunge.delay')
+    self.assertEqual(isinstance(config, list), True, 'Check list configurations response')
+    exp_delay = config[0]
+    self.debug(('expunge.delay: %s' % exp_delay.value))
+    config = list_configurations(self.apiclient, name='expunge.interval')
+    self.assertEqual(isinstance(config, list), True, 'Check list configurations response')
+    exp_interval = config[0]
+    self.debug(('expunge.interval: %s' % exp_interval.value))
+    total_wait = (int(exp_interval.value) + int(exp_delay.value))
+    time.sleep(total_wait)
+    vms = VirtualMachine.list(self.apiclient, id=self.virtual_machine.id)
+    self.assertEqual(vms, None, 'list VM should not return anything after destroy')
+    self.debug(("select is_system, state from user_ip_address where public_ip_address='%s';" % static_nat.ipaddress))
+    qresultset = self.dbclient.execute(("select is_system, state from user_ip_address where public_ip_address='%s';" % static_nat.ipaddress))
+    self.assertEqual(isinstance(qresultset, list), True, 'Check DB query result set for valid data')
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    qresult = qresultset[0]
+    self.assertEqual(qresult[0], 0, 'user_ip_address.is_system value should be 0')
+    self.assertEqual(qresult[1], 'Free', 'IP should be marked as Free after destroying VM')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient.remoteSSHClient(self.services['netscaler']['ipaddress'], 22, self.services['netscaler']['username'], self.services['netscaler']['password'])
+        self.debug('command: show ip')
+        res = ssh_client.execute('show ip')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count(static_nat.ipaddress), 0, 'show ip should return nothing after VM destroy')
+        self.debug('Command:show inat')
+        res = ssh_client.execute('show inat')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count(static_nat.ipaddress), 0, 'show inat should return nothing after VM destroy')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

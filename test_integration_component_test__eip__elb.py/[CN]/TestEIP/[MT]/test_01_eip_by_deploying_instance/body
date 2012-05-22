@@ -1,0 +1,59 @@
+def test_01_eip_by_deploying_instance(self):
+    'Test EIP by deploying an instance\n        '
+    self.debug('Fetching public network IP range for public network')
+    ip_ranges = PublicIpRange.list(self.apiclient, zoneid=self.zone.id, forvirtualnetwork=True)
+    self.assertEqual(isinstance(ip_ranges, list), True, 'Public IP range should return a valid range')
+    for ip_range in ip_ranges:
+        self.debug(('IP range: %s - %s' % (ip_range.startip, ip_range.endip)))
+        start_ip_list = ip_range.startip.split('.')
+        end_ip_list = ip_range.endip.split('.')
+        source_nat_list = self.source_nat.ipaddress.split('.')
+        flag = True
+        for i in range(3):
+            if (int(start_ip_list[i]) != int(source_nat_list[i])):
+                flag = False
+        self.assertGreaterEqual(int(source_nat_list[3]), int(start_ip_list[3]), 'The NAT should be greater/equal to start IP of guest network')
+        self.assertLessEqual(int(source_nat_list[3]), int(end_ip_list[3]), 'The NAT should be less/equal to start IP of guest network')
+    security_groups = SecurityGroup.list(self.apiclient, account=self.account.account.name, domainid=self.account.account.domainid)
+    self.assertEqual(isinstance(security_groups, list), True, 'Check for list security groups response')
+    self.assertEqual(len(security_groups), 1, 'Check List Security groups response')
+    self.debug(('List Security groups response: %s' % str(security_groups)))
+    security_group = security_groups[0]
+    self.debug('Creating Ingress rule to allow SSH on default security group')
+    cmd = authorizeSecurityGroupIngress.authorizeSecurityGroupIngressCmd()
+    cmd.domainid = self.account.account.domainid
+    cmd.account = self.account.account.name
+    cmd.securitygroupid = security_group.id
+    cmd.protocol = 'TCP'
+    cmd.startport = 22
+    cmd.endport = 22
+    cmd.cidrlist = '0.0.0.0/0'
+    self.apiclient.authorizeSecurityGroupIngress(cmd)
+    try:
+        self.debug(('SSH into VM: %s' % self.virtual_machine.ssh_ip))
+        ssh = self.virtual_machine.get_ssh_client(ipaddress=self.source_nat.ipaddress)
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.virtual_machine.ipaddress, e)))
+    self.debug(("select is_system, one_to_one_nat from user_ip_address where public_ip_address='%s';" % self.source_nat.ipaddress))
+    qresultset = self.dbclient.execute(("select is_system, one_to_one_nat from user_ip_address where public_ip_address='%s';" % self.source_nat.ipaddress))
+    self.assertEqual(isinstance(qresultset, list), True, 'Check DB query result set for valid data')
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    qresult = qresultset[0]
+    self.assertEqual(qresult[0], 1, 'user_ip_address.is_system value should be 1 for static NAT')
+    self.assertEqual(qresult[1], 1, 'user_ip_address.one_to_one_nat value should be 1 for static NAT')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient.remoteSSHClient(self.services['netscaler']['ipaddress'], 22, self.services['netscaler']['username'], self.services['netscaler']['password'])
+        self.debug('command: show ip')
+        res = ssh_client.execute('show ip')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count(self.source_nat.ipaddress), 1, 'One IP from EIP pool should be taken and configured on NS')
+        self.debug('Command:show inat')
+        res = ssh_client.execute('show inat')
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('USIP: ON'), 2, 'User source IP should be enabled for INAT service')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return
