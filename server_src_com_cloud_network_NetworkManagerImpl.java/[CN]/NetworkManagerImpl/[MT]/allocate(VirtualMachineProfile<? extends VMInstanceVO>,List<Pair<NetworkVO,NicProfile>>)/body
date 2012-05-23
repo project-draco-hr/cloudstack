@@ -4,51 +4,40 @@
   int deviceId=0;
   boolean[] deviceIds=new boolean[networks.size()];
   Arrays.fill(deviceIds,false);
-  List<NicVO> nics=new ArrayList<NicVO>(networks.size());
-  NicVO defaultNic=null;
+  List<NicProfile> nics=new ArrayList<NicProfile>(networks.size());
+  NicProfile defaultNic=null;
   for (  Pair<NetworkVO,NicProfile> network : networks) {
     NetworkVO config=network.first();
-    NetworkGuru guru=_networkGurus.get(config.getGuruName());
     NicProfile requested=network.second();
-    if (requested != null && requested.getMode() == null) {
-      requested.setMode(config.getMode());
+    Boolean isDefaultNic=false;
+    if (vm != null && (requested != null && requested.isDefaultNic())) {
+      isDefaultNic=true;
     }
-    NicProfile profile=guru.allocate(config,requested,vm);
-    if (vm != null && vm.getVirtualMachine().getType() == Type.User && (requested != null && requested.isDefaultNic())) {
-      profile.setDefaultNic(true);
-    }
-    if (profile == null) {
-      continue;
-    }
-    if (requested != null && requested.getMode() == null) {
-      profile.setMode(requested.getMode());
-    }
- else {
-      profile.setMode(config.getMode());
-    }
-    NicVO vo=new NicVO(guru.getName(),vm.getId(),config.getId(),vm.getType());
     while (deviceIds[deviceId] && deviceId < deviceIds.length) {
       deviceId++;
     }
-    deviceId=applyProfileToNic(vo,profile,deviceId);
-    vo=_nicDao.persist(vo);
-    if (vo.isDefaultNic()) {
-      if (defaultNic != null) {
-        throw new IllegalArgumentException("You cannot specify two nics as default nics: nic 1 = " + defaultNic + "; nic 2 = "+ vo);
-      }
-      defaultNic=vo;
+    Pair<NicProfile,Integer> vmNicPair=allocateNic(requested,config,isDefaultNic,deviceId,vm);
+    NicProfile vmNic=vmNicPair.first();
+    if (vmNic == null) {
+      continue;
     }
-    int devId=vo.getDeviceId();
+    deviceId=vmNicPair.second();
+    int devId=vmNic.getDeviceId();
     if (devId > deviceIds.length) {
-      throw new IllegalArgumentException("Device id for nic is too large: " + vo);
+      throw new IllegalArgumentException("Device id for nic is too large: " + vmNic);
     }
     if (deviceIds[devId]) {
-      throw new IllegalArgumentException("Conflicting device id for two different nics: " + devId);
+      throw new IllegalArgumentException("Conflicting device id for two different nics: " + vmNic);
     }
     deviceIds[devId]=true;
-    nics.add(vo);
-    Integer networkRate=getNetworkRate(config.getId(),vm.getId());
-    vm.addNic(new NicProfile(vo,network.first(),vo.getBroadcastUri(),vo.getIsolationUri(),networkRate,isSecurityGroupSupportedInNetwork(network.first()),getNetworkTag(vm.getHypervisorType(),network.first())));
+    if (vmNic.isDefaultNic()) {
+      if (defaultNic != null) {
+        throw new IllegalArgumentException("You cannot specify two nics as default nics: nic 1 = " + defaultNic + "; nic 2 = "+ vmNic);
+      }
+      defaultNic=vmNic;
+    }
+    nics.add(vmNic);
+    vm.addNic(vmNic);
   }
   if (nics.size() != networks.size()) {
     s_logger.warn("Number of nics " + nics.size() + " doesn't match number of requested networks "+ networks.size());
