@@ -1,0 +1,90 @@
+{
+  String bucket=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String contentType=request.getHeader("Content-Type");
+  int boundaryIndex=contentType.indexOf("boundary=");
+  String boundary="--" + (contentType.substring(boundaryIndex + 9));
+  String lastBoundary=boundary + "--";
+  InputStreamReader isr=new InputStreamReader(request.getInputStream());
+  BufferedReader br=new BufferedReader(isr);
+  StringBuffer temp=new StringBuffer();
+  String oneLine=null;
+  String name=null;
+  String value=null;
+  String metaName=null;
+  boolean isMetaTag=false;
+  int countMeta=0;
+  int state=0;
+  S3AuthParams params=new S3AuthParams();
+  List<S3MetaDataEntry> metaSet=new ArrayList<S3MetaDataEntry>();
+  S3PutObjectInlineRequest engineRequest=new S3PutObjectInlineRequest();
+  engineRequest.setBucketName(bucket);
+  while (null != (oneLine=br.readLine())) {
+    if (oneLine.startsWith(lastBoundary)) {
+      if (0 < temp.length()) {
+        value=temp.toString();
+        temp.setLength(0);
+        engineRequest.setContentLength(value.length());
+        engineRequest.setDataAsString(value);
+      }
+      break;
+    }
+ else     if (oneLine.startsWith(boundary)) {
+      if (0 < temp.length()) {
+        value=temp.toString().trim();
+        temp.setLength(0);
+        if (name.equalsIgnoreCase("key")) {
+          engineRequest.setKey(value);
+        }
+ else         if (name.equalsIgnoreCase("x-amz-acl")) {
+          engineRequest.setCannedAccess(value);
+        }
+ else         if (isMetaTag) {
+          S3MetaDataEntry oneMeta=new S3MetaDataEntry();
+          oneMeta.setName(metaName);
+          oneMeta.setValue(value);
+          metaSet.add(oneMeta);
+          countMeta++;
+          metaName=null;
+        }
+        HeaderParam oneHeader=new HeaderParam();
+        oneHeader.setName(name);
+        oneHeader.setValue(value);
+        params.addHeader(oneHeader);
+      }
+      state=1;
+    }
+ else     if (1 == state && 0 == oneLine.length()) {
+      state=2;
+    }
+ else     if (1 == state) {
+      if (oneLine.startsWith("Content-Disposition: form-data;")) {
+        isMetaTag=false;
+        int nameOffset=oneLine.indexOf("name=");
+        if (-1 != nameOffset) {
+          name=oneLine.substring(nameOffset + 5);
+          if (name.startsWith("\""))           name=name.substring(1);
+          if (name.endsWith("\""))           name=name.substring(0,name.length() - 1);
+          name=name.trim();
+          if (name.startsWith("x-amz-meta-")) {
+            metaName=name.substring(11);
+            isMetaTag=true;
+          }
+        }
+      }
+    }
+ else     if (2 == state) {
+      temp.append(oneLine);
+    }
+  }
+  try {
+    S3RestServlet.authenticateRequest(request,params);
+  }
+ catch (  Exception e) {
+    throw new IOException(e.toString());
+  }
+  if (0 < countMeta)   engineRequest.setMetaEntries(metaSet.toArray(new S3MetaDataEntry[0]));
+  S3PutObjectInlineResponse engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+  response.setHeader("ETag","\"" + engineResponse.getETag() + "\"");
+  String version=engineResponse.getVersion();
+  if (null != version)   response.addHeader("x-amz-version-id",version);
+}

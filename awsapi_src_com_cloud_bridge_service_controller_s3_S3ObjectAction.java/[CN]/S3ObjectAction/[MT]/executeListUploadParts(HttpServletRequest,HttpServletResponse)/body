@@ -1,0 +1,91 @@
+{
+  String bucketName=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String key=(String)request.getAttribute(S3Constants.OBJECT_ATTR_KEY);
+  String owner=null;
+  String initiator=null;
+  S3MultipartPart[] parts=null;
+  int remaining=0;
+  int uploadId=-1;
+  int maxParts=1000;
+  int partMarker=0;
+  int nextMarker=0;
+  String temp=request.getParameter("uploadId");
+  if (null != temp)   uploadId=Integer.parseInt(temp);
+  temp=request.getParameter("max-parts");
+  if (null != temp) {
+    maxParts=Integer.parseInt(temp);
+    if (maxParts > 1000 || maxParts < 0)     maxParts=1000;
+  }
+  temp=request.getParameter("part-number-marker");
+  if (null != temp)   partMarker=Integer.parseInt(temp);
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  if (bucket == null) {
+    logger.error("listUploadParts failed since " + bucketName + " does not exist");
+    response.setStatus(404);
+    return;
+  }
+  try {
+    MultipartLoadDao uploadDao=new MultipartLoadDao();
+    OrderedPair<String,String> exists=uploadDao.multipartExits(uploadId);
+    if (null == exists) {
+      response.setStatus(404);
+      return;
+    }
+    owner=exists.getFirst();
+    initiator=uploadDao.getInitiator(uploadId);
+    if (null == initiator || !initiator.equals(UserContext.current().getAccessKey())) {
+      try {
+        S3PolicyContext context=new S3PolicyContext(PolicyActions.ListMultipartUploadParts,bucketName);
+        context.setKeyName(exists.getSecond());
+        S3Engine.verifyAccess(context,"SBucket",bucket.getId(),SAcl.PERMISSION_WRITE);
+      }
+ catch (      PermissionDeniedException e) {
+        response.setStatus(403);
+        return;
+      }
+    }
+    parts=uploadDao.getParts(uploadId,maxParts,partMarker);
+    remaining=uploadDao.numParts(uploadId,partMarker + maxParts);
+  }
+ catch (  Exception e) {
+    logger.error("List Uploads failed due to " + e.getMessage(),e);
+    response.setStatus(500);
+  }
+  StringBuffer xml=new StringBuffer();
+  xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+  xml.append("<ListPartsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+  xml.append("<Bucket>").append(bucket).append("</Bucket>");
+  xml.append("<Key>").append(key).append("</Key>");
+  xml.append("<UploadId>").append(uploadId).append("</UploadId>");
+  xml.append("<Initiator>");
+  xml.append("<ID>").append(initiator).append("</ID>");
+  xml.append("<DisplayName></DisplayName>");
+  xml.append("</Initiator>");
+  xml.append("<Owner>");
+  xml.append("<ID>").append(owner).append("</ID>");
+  xml.append("<DisplayName></DisplayName>");
+  xml.append("</Owner>");
+  StringBuffer partsList=new StringBuffer();
+  for (int i=0; i < parts.length; i++) {
+    S3MultipartPart onePart=parts[i];
+    if (null == onePart)     break;
+    nextMarker=onePart.getPartNumber();
+    partsList.append("<Part>");
+    partsList.append("<PartNumber>").append(nextMarker).append("</PartNumber>");
+    partsList.append("<LastModified>").append(DatatypeConverter.printDateTime(onePart.getLastModified())).append("</LastModified>");
+    partsList.append("<ETag>\"").append(onePart.getETag()).append("\"</ETag>");
+    partsList.append("<Size>").append(onePart.getSize()).append("</Size>");
+    partsList.append("</Part>");
+  }
+  xml.append("<StorageClass>STANDARD</StorageClass>");
+  xml.append("<PartNumberMarker>").append(partMarker).append("</PartNumberMarker>");
+  xml.append("<NextPartNumberMarker>").append(nextMarker).append("</NextPartNumberMarker>");
+  xml.append("<MaxParts>").append(maxParts).append("</MaxParts>");
+  xml.append("<IsTruncated>").append((0 < remaining ? "true" : "false")).append("</IsTruncated>");
+  xml.append(partsList.toString());
+  xml.append("</ListPartsResult>");
+  response.setStatus(200);
+  response.setContentType("text/xml; charset=UTF-8");
+  S3RestServlet.endResponse(response,xml.toString());
+}

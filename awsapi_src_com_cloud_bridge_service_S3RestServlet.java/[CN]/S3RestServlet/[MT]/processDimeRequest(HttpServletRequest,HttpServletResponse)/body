@@ -1,0 +1,66 @@
+{
+  S3PutObjectRequest putRequest=null;
+  S3PutObjectResponse putResponse=null;
+  int bytesRead=0;
+  S3Engine engine=new S3Engine();
+  try {
+    logRequest(request);
+    MultiPartDimeInputStream ds=new MultiPartDimeInputStream(request.getInputStream());
+    if (ds.nextInputStream()) {
+      byte[] buffer=new byte[8192];
+      bytesRead=ds.read(buffer,0,8192);
+      ByteArrayInputStream bis=new ByteArrayInputStream(buffer,0,bytesRead);
+      putRequest=toEnginePutObjectRequest(bis);
+    }
+    if (null != putRequest && ds.nextInputStream()) {
+      InputStream is=ds.getInputStream();
+      putRequest.setData(is);
+    }
+    StringBuffer xml=new StringBuffer();
+    String AWSAccessKey=putRequest.getAccessKey();
+    UserInfo info=ServiceProvider.getInstance().getUserInfo(AWSAccessKey);
+    try {
+      S3SoapAuth.verifySignature(putRequest.getSignature(),"PutObject",putRequest.getRawTimestamp(),AWSAccessKey,info.getSecretKey());
+    }
+ catch (    AxisFault e) {
+      String reason=e.toString();
+      int start=reason.indexOf(".AxisFault:");
+      if (-1 != start)       reason=reason.substring(start + 11);
+      xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+      xml.append("<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" >\n");
+      xml.append("<soap:Body>\n");
+      xml.append("<soap:Fault>\n");
+      xml.append("<faultcode>").append(e.getFaultCode().toString()).append("</faultcode>\n");
+      xml.append("<faultstring>").append(reason).append("</faultstring>\n");
+      xml.append("</soap:Fault>\n");
+      xml.append("</soap:Body></soap:Envelope>");
+      endResponse(response,xml.toString());
+      PersistContext.commitTransaction();
+      return;
+    }
+    UserContext.current().initContext(AWSAccessKey,info.getSecretKey(),AWSAccessKey,"S3 DIME request",request);
+    putResponse=engine.handleRequest(putRequest);
+    xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+    xml.append("<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:tns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+    xml.append("<soap:Body>");
+    xml.append("<tns:PutObjectResponse>");
+    xml.append("<tns:PutObjectResponse>");
+    xml.append("<tns:ETag>\"").append(putResponse.getETag()).append("\"</tns:ETag>");
+    xml.append("<tns:LastModified>").append(DatatypeConverter.printDateTime(putResponse.getLastModified())).append("</tns:LastModified>");
+    xml.append("</tns:PutObjectResponse></tns:PutObjectResponse>");
+    xml.append("</soap:Body></soap:Envelope>");
+    endResponse(response,xml.toString());
+    PersistContext.commitTransaction();
+  }
+ catch (  PermissionDeniedException e) {
+    logger.error("Unexpected exception " + e.getMessage(),e);
+    response.setStatus(403);
+    endResponse(response,"Access denied");
+  }
+catch (  Throwable e) {
+    logger.error("Unexpected exception " + e.getMessage(),e);
+  }
+ finally {
+    PersistContext.closeSession();
+  }
+}

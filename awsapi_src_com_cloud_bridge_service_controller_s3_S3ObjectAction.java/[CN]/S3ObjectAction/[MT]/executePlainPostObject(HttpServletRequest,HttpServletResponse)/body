@@ -1,0 +1,30 @@
+{
+  String continueHeader=request.getHeader("Expect");
+  if (continueHeader != null && continueHeader.equalsIgnoreCase("100-continue")) {
+    S3RestServlet.writeResponse(response,"HTTP/1.1 100 Continue\r\n");
+  }
+  long contentLength=Converter.toLong(request.getHeader("Content-Length"),0);
+  String bucket=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String key=(String)request.getAttribute(S3Constants.OBJECT_ATTR_KEY);
+  String accessKey=(String)request.getAttribute(S3Constants.PLAIN_POST_ACCESS_KEY);
+  String signature=(String)request.getAttribute(S3Constants.PLAIN_POST_SIGNATURE);
+  S3Grant grant=new S3Grant();
+  grant.setCanonicalUserID(accessKey);
+  grant.setGrantee(SAcl.GRANTEE_USER);
+  grant.setPermission(SAcl.PERMISSION_FULL);
+  S3AccessControlList acl=new S3AccessControlList();
+  acl.addGrant(grant);
+  S3PutObjectInlineRequest engineRequest=new S3PutObjectInlineRequest();
+  engineRequest.setBucketName(bucket);
+  engineRequest.setKey(key);
+  engineRequest.setAcl(acl);
+  engineRequest.setContentLength(contentLength);
+  engineRequest.setMetaEntries(extractMetaData(request));
+  engineRequest.setCannedAccess(request.getHeader("x-amz-acl"));
+  DataHandler dataHandler=new DataHandler(new ServletRequestDataSource(request));
+  engineRequest.setData(dataHandler);
+  S3PutObjectInlineResponse engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+  response.setHeader("ETag","\"" + engineResponse.getETag() + "\"");
+  String version=engineResponse.getVersion();
+  if (null != version)   response.addHeader("x-amz-version-id",version);
+}

@@ -1,0 +1,46 @@
+{
+  String continueHeader=request.getHeader("Expect");
+  if (continueHeader != null && continueHeader.equalsIgnoreCase("100-continue")) {
+    S3RestServlet.writeResponse(response,"HTTP/1.1 100 Continue\r\n");
+  }
+  String bucket=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String key=(String)request.getAttribute(S3Constants.OBJECT_ATTR_KEY);
+  int partNumber=-1;
+  int uploadId=-1;
+  long contentLength=Converter.toLong(request.getHeader("Content-Length"),0);
+  String temp=request.getParameter("uploadId");
+  if (null != temp)   uploadId=Integer.parseInt(temp);
+  temp=request.getParameter("partNumber");
+  if (null != temp)   partNumber=Integer.parseInt(temp);
+  if (partNumber < 1 || partNumber > 10000) {
+    logger.error("uploadPart invalid part number " + partNumber);
+    response.setStatus(416);
+    return;
+  }
+  try {
+    MultipartLoadDao uploadDao=new MultipartLoadDao();
+    if (null == uploadDao.multipartExits(uploadId)) {
+      response.setStatus(404);
+      return;
+    }
+    String initiator=uploadDao.getInitiator(uploadId);
+    if (null == initiator || !initiator.equals(UserContext.current().getAccessKey())) {
+      response.setStatus(403);
+      return;
+    }
+  }
+ catch (  Exception e) {
+    logger.error("executeUploadPart failed due to " + e.getMessage(),e);
+    response.setStatus(500);
+    return;
+  }
+  S3PutObjectInlineRequest engineRequest=new S3PutObjectInlineRequest();
+  engineRequest.setBucketName(bucket);
+  engineRequest.setKey(key);
+  engineRequest.setContentLength(contentLength);
+  DataHandler dataHandler=new DataHandler(new ServletRequestDataSource(request));
+  engineRequest.setData(dataHandler);
+  S3PutObjectInlineResponse engineResponse=ServiceProvider.getInstance().getS3Engine().saveUploadPart(engineRequest,uploadId,partNumber);
+  if (null != engineResponse.getETag())   response.setHeader("ETag","\"" + engineResponse.getETag() + "\"");
+  response.setStatus(engineResponse.getResultCode());
+}

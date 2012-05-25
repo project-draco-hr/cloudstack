@@ -1,0 +1,76 @@
+{
+  int contentLength=request.getContentLength();
+  StringBuffer xmlDeleteResponse=null;
+  boolean quite=true;
+  if (contentLength > 0) {
+    InputStream is=null;
+    String versionID=null;
+    try {
+      is=request.getInputStream();
+      String xml=StringHelper.stringFromStream(is);
+      String elements[]={"Key","VersionId"};
+      Document doc=XmlHelper.parse(xml);
+      Node node=XmlHelper.getRootNode(doc);
+      if (node == null) {
+        System.out.println("Invalid XML document, no root element");
+        return;
+      }
+      xmlDeleteResponse=new StringBuffer("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" + "<DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+      String bucket=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+      S3DeleteObjectRequest engineRequest=new S3DeleteObjectRequest();
+      engineRequest.setBucketName(bucket);
+      is.close();
+      doc.getDocumentElement().normalize();
+      NodeList qList=doc.getElementsByTagName("Quiet");
+      if (qList.getLength() == 1) {
+        Node qNode=qList.item(0);
+        if (qNode.getFirstChild().getNodeValue().equalsIgnoreCase("true") == false)         quite=false;
+        logger.debug("Quite value  :" + qNode.getFirstChild().getNodeValue());
+      }
+      NodeList objList=doc.getElementsByTagName("Object");
+      for (int i=0; i < objList.getLength(); i++) {
+        Node key=objList.item(i);
+        NodeList key_data=key.getChildNodes();
+        if (key.getNodeType() == Node.ELEMENT_NODE) {
+          Element eElement=(Element)key;
+          String key_name=getTagValue(elements[0],eElement);
+          engineRequest.setBucketName(bucket);
+          engineRequest.setKey(key_name);
+          if (key_data.getLength() == 2) {
+            versionID=getTagValue(elements[1],eElement);
+            engineRequest.setVersion(versionID);
+          }
+          S3Response engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+          int resultCode=engineResponse.getResultCode();
+          String resutlDesc=engineResponse.getResultDescription();
+          if (resultCode == 204) {
+            if (quite) {
+              xmlDeleteResponse.append("<Deleted><Key>" + key_name + "</Key>");
+              if (resutlDesc != null)               xmlDeleteResponse.append(resutlDesc);
+              xmlDeleteResponse.append("</Deleted>");
+            }
+          }
+ else {
+            logger.debug("Error in delete ::" + key_name + " eng response:: "+ engineResponse.getResultDescription());
+            xmlDeleteResponse.append("<Error><Key>" + key_name + "</Key>");
+            if (resutlDesc != null)             xmlDeleteResponse.append(resutlDesc);
+            xmlDeleteResponse.append("</Error>");
+          }
+        }
+      }
+      String version=engineRequest.getVersion();
+      if (null != version)       response.addHeader("x-amz-version-id",version);
+    }
+ catch (    IOException e) {
+      logger.error("Unable to read request data due to " + e.getMessage(),e);
+      throw new NetworkIOException(e);
+    }
+ finally {
+      if (is != null)       is.close();
+    }
+    xmlDeleteResponse.append("</DeleteResult>");
+  }
+  response.setStatus(200);
+  response.setContentType("text/xml; charset=UTF-8");
+  S3RestServlet.endResponse(response,xmlDeleteResponse.toString());
+}

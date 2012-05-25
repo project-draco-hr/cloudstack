@@ -1,0 +1,36 @@
+{
+  try {
+    SOAPEnvelope soapEnvelope=msgContext.getEnvelope();
+    String xmlHeader=soapEnvelope.toString();
+    InputStream is=new ByteArrayInputStream(xmlHeader.getBytes("UTF-8"));
+    DocumentBuilder db=dbf.newDocumentBuilder();
+    Document request=db.parse(is);
+    NodeList certs=request.getElementsByTagNameNS("http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd","BinarySecurityToken");
+    if (0 < certs.getLength()) {
+      Node item=certs.item(0);
+      String result=new String(item.getFirstChild().getNodeValue());
+      byte[] certBytes=Base64.decodeBase64(result.getBytes());
+      Certificate userCert=null;
+      CertificateFactory cf=CertificateFactory.getInstance("X.509");
+      ByteArrayInputStream bs=new ByteArrayInputStream(certBytes);
+      while (bs.available() > 0)       userCert=cf.generateCertificate(bs);
+      String uniqueId=AuthenticationUtils.X509CertUniqueId(userCert);
+      logger.debug("X509 cert's uniqueId: " + uniqueId);
+      UserCredentialsDao credentialDao=new UserCredentialsDao();
+      UserCredentials cloudKeys=credentialDao.getByCertUniqueId(uniqueId);
+      if (null == cloudKeys) {
+        logger.error("Cert does not map to Cloud API keys: " + uniqueId);
+        throw new AxisFault("User not properly registered: Certificate does not map to Cloud API Keys","Client.Blocked");
+      }
+ else       UserContext.current().initContext(cloudKeys.getAccessKey(),cloudKeys.getSecretKey(),cloudKeys.getAccessKey(),"SOAP Request",null);
+    }
+  }
+ catch (  AxisFault e) {
+    throw e;
+  }
+catch (  Exception e) {
+    logger.error("EC2 Authentication Handler: ",e);
+    throw new AxisFault("An unknown error occurred.","Server.InternalError");
+  }
+  return InvocationResponse.CONTINUE;
+}

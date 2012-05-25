@@ -1,0 +1,43 @@
+{
+  S3CopyObjectRequest engineRequest=new S3CopyObjectRequest();
+  String versionId=null;
+  String bucketName=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String key=(String)request.getAttribute(S3Constants.OBJECT_ATTR_KEY);
+  String sourceBucketName=null;
+  String sourceKey=null;
+  int index=copy.indexOf('?');
+  if (-1 != index) {
+    versionId=copy.substring(index + 1);
+    if (versionId.startsWith("versionId="))     engineRequest.setVersion(versionId.substring(10));
+    copy=copy.substring(0,index);
+  }
+  index=copy.indexOf('/');
+  if (0 == index) {
+    copy=copy.substring(1);
+    index=copy.indexOf('/');
+  }
+  if (-1 == index)   throw new IllegalArgumentException("Invalid x-amz-copy-source header value [" + copy + "]");
+  sourceBucketName=copy.substring(0,index);
+  sourceKey=copy.substring(index + 1);
+  engineRequest.setSourceBucketName(sourceBucketName);
+  engineRequest.setSourceKey(sourceKey);
+  engineRequest.setDestinationBucketName(bucketName);
+  engineRequest.setDestinationKey(key);
+  engineRequest.setDataDirective(request.getHeader("x-amz-metadata-directive"));
+  engineRequest.setMetaEntries(extractMetaData(request));
+  engineRequest.setCannedAccess(request.getHeader("x-amz-acl"));
+  engineRequest.setConditions(conditionalRequest(request,true));
+  S3CopyObjectResponse engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+  versionId=engineResponse.getCopyVersion();
+  if (null != versionId)   response.addHeader("x-amz-copy-source-version-id",versionId);
+  versionId=engineResponse.getPutVersion();
+  if (null != versionId)   response.addHeader("x-amz-version-id",versionId);
+  CopyObjectResponse allBuckets=S3SerializableServiceImplementation.toCopyObjectResponse(engineResponse);
+  OutputStream outputStream=response.getOutputStream();
+  response.setStatus(200);
+  response.setContentType("application/xml");
+  MTOMAwareResultStreamWriter resultWriter=new MTOMAwareResultStreamWriter("CopyObjectResult",outputStream);
+  resultWriter.startWrite();
+  resultWriter.writeout(allBuckets);
+  resultWriter.stopWrite();
+}

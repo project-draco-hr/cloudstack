@@ -1,0 +1,23 @@
+{
+  MHostDao mhostDao=new MHostDao();
+  SHostDao shostDao=new SHostDao();
+  MHost mhost=mhostDao.get(ServiceProvider.getInstance().getManagementHostId());
+  if (mhost == null)   throw new OutOfServiceException("Temporarily out of service");
+  if (mhost.getMounts().size() > 0) {
+    Random random=new Random();
+    MHostMount[] mounts=(MHostMount[])mhost.getMounts().toArray();
+    MHostMount mount=mounts[random.nextInt(mounts.length)];
+    S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(mount.getShost());
+    bucketAdapter.createContainer(mount.getMountPath(),(null != overrideName ? overrideName : bucketName));
+    return new OrderedPair<SHost,String>(mount.getShost(),mount.getMountPath());
+  }
+  String localStorageRoot=ServiceProvider.getInstance().getStartupProperties().getProperty("storage.root");
+  if (localStorageRoot != null) {
+    SHost localSHost=shostDao.getLocalStorageHost(mhost.getId(),localStorageRoot);
+    if (localSHost == null)     throw new InternalErrorException("storage.root is configured but not initialized");
+    S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(localSHost);
+    bucketAdapter.createContainer(localSHost.getExportRoot(),(null != overrideName ? overrideName : bucketName));
+    return new OrderedPair<SHost,String>(localSHost,localStorageRoot);
+  }
+  throw new OutOfStorageException("No storage host is available");
+}

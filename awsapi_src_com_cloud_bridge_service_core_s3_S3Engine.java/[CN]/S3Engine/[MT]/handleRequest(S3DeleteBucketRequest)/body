@@ -1,0 +1,54 @@
+{
+  S3Response response=new S3Response();
+  SBucketDao bucketDao=new SBucketDao();
+  String bucketName=request.getBucketName();
+  SBucket sbucket=bucketDao.getByName(bucketName);
+  if (sbucket != null) {
+    S3PolicyContext context=new S3PolicyContext(PolicyActions.DeleteBucket,bucketName);
+switch (verifyPolicy(context)) {
+case ALLOW:
+      break;
+case DENY:
+    throw new PermissionDeniedException("Access Denied - bucket policy DENY result");
+case DEFAULT_DENY:
+default :
+  String client=UserContext.current().getCanonicalUserId();
+if (!client.equals(sbucket.getOwnerCanonicalId())) {
+  throw new PermissionDeniedException("Access Denied - only the owner can delete a bucket");
+}
+break;
+}
+OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(sbucket);
+S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
+bucketAdapter.deleteContainer(host_storagelocation_pair.getSecond(),request.getBucketName());
+Set<SObject> objectsInBucket=sbucket.getObjectsInBucket();
+Iterator<SObject> it=objectsInBucket.iterator();
+while (it.hasNext()) {
+SObject oneObject=(SObject)it.next();
+Set<SObjectItem> itemsInObject=oneObject.getItems();
+Iterator<SObjectItem> is=itemsInObject.iterator();
+while (is.hasNext()) {
+SObjectItem oneItem=(SObjectItem)is.next();
+deleteMetaData(oneItem.getId());
+deleteObjectAcls("SObjectItem",oneItem.getId());
+}
+}
+try {
+ServiceProvider.getInstance().deleteBucketPolicy(bucketName);
+BucketPolicyDao policyDao=new BucketPolicyDao();
+policyDao.deletePolicy(bucketName);
+}
+ catch (Exception e) {
+logger.error("When deleting a bucket we must try to delete its policy: ",e);
+}
+deleteBucketAcls(sbucket.getId());
+bucketDao.delete(sbucket);
+response.setResultCode(204);
+response.setResultDescription("OK");
+}
+ else {
+response.setResultCode(404);
+response.setResultDescription("Bucket does not exist");
+}
+return response;
+}

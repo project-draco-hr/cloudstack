@@ -1,0 +1,47 @@
+{
+  String bucketName=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  BucketPolicyDao policyDao=new BucketPolicyDao();
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  String owner=null;
+  if (null != bucket) {
+    owner=bucket.getOwnerCanonicalId();
+  }
+ else {
+    try {
+      owner=policyDao.getPolicyOwner(bucketName);
+    }
+ catch (    Exception e) {
+    }
+  }
+  String client=UserContext.current().getCanonicalUserId();
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.GetBucketPolicy,bucketName);
+switch (S3Engine.verifyPolicy(context)) {
+case ALLOW:
+    break;
+case DEFAULT_DENY:
+  if (null != owner && !client.equals(owner)) {
+    response.setStatus(405);
+    return;
+  }
+break;
+case DENY:
+response.setStatus(403);
+return;
+}
+try {
+String policy=policyDao.getPolicy(bucketName);
+if (null == policy) {
+response.setStatus(404);
+}
+ else {
+response.setStatus(200);
+response.setContentType("application/json");
+S3RestServlet.endResponse(response,policy);
+}
+}
+ catch (Exception e) {
+logger.error("Get Bucket Policy failed due to " + e.getMessage(),e);
+response.setStatus(500);
+}
+}

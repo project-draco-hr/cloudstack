@@ -1,0 +1,54 @@
+{
+  String accessKey=null;
+  String operation=null;
+  String msgSig=null;
+  String timestamp=null;
+  String secretKey=null;
+  String temp=null;
+  HttpServletRequest httpObj=(HttpServletRequest)msgContext.getProperty("transport.http.servletRequest");
+  if (null != httpObj)   System.out.println("S3 SOAP auth test header access - acceptable Encoding type: " + httpObj.getHeader("Accept-Encoding"));
+  try {
+    SOAPEnvelope soapEnvelope=msgContext.getEnvelope();
+    SOAPBody soapBody=soapEnvelope.getBody();
+    String xmlBody=soapBody.toString();
+    int offset=xmlBody.indexOf("http://ec2.amazonaws.com");
+    if (-1 != offset)     return InvocationResponse.CONTINUE;
+    int start=xmlBody.indexOf("AWSAccessKeyId>");
+    if (-1 == start) {
+      UserContext.current().initContext();
+      return InvocationResponse.CONTINUE;
+    }
+    temp=xmlBody.substring(start + 15);
+    int end=temp.indexOf("</");
+    accessKey=temp.substring(0,end);
+    if (null != (secretKey=lookupSecretKey(accessKey))) {
+      if (null != (operation=soapBody.getFirstElementLocalName()))       operation=operation.trim();
+ else       operation="";
+      start=xmlBody.indexOf("Timestamp>");
+      if (-1 < start) {
+        temp=xmlBody.substring(start + 10);
+        end=temp.indexOf("</");
+        timestamp=temp.substring(0,end);
+      }
+ else       timestamp="";
+      start=xmlBody.indexOf("Signature>");
+      if (-1 < start) {
+        temp=xmlBody.substring(start + 10);
+        end=temp.indexOf("</");
+        msgSig=temp.substring(0,end);
+      }
+ else       msgSig="";
+    }
+  }
+ catch (  Exception e) {
+    logger.error("Signature calculation failed due to: ",e);
+    throw new AxisFault(e.toString(),"Server.InternalError");
+  }
+  if (null == secretKey) {
+    logger.error("Unknown AWSAccessKeyId: [" + accessKey + "]");
+    throw new AxisFault("Unknown AWSAccessKeyId: [" + accessKey + "]","Client.InvalidAccessKeyId");
+  }
+  S3SoapAuth.verifySignature(msgSig,operation,timestamp,accessKey,secretKey);
+  UserContext.current().initContext(accessKey,secretKey,accessKey,"S3 SOAP request",httpObj);
+  return InvocationResponse.CONTINUE;
+}

@@ -1,0 +1,94 @@
+{
+  String bucketName=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  String delimiter=request.getParameter("delimiter");
+  String keyMarker=request.getParameter("key-marker");
+  String prefix=request.getParameter("prefix");
+  int maxUploads=1000;
+  int nextUploadId=0;
+  String nextKey=null;
+  boolean isTruncated=false;
+  S3MultipartUpload[] uploads=null;
+  S3MultipartUpload onePart=null;
+  String temp=request.getParameter("max-uploads");
+  if (null != temp) {
+    maxUploads=Integer.parseInt(temp);
+    if (maxUploads > 1000 || maxUploads < 0)     maxUploads=1000;
+  }
+  String uploadIdMarker=request.getParameter("upload-id-marker");
+  if (null == keyMarker)   uploadIdMarker=null;
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  if (bucket == null) {
+    logger.error("listMultipartUpload failed since " + bucketName + " does not exist");
+    response.setStatus(404);
+    return;
+  }
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.ListBucketMultipartUploads,bucketName);
+  context.setEvalParam(ConditionKeys.Prefix,prefix);
+  context.setEvalParam(ConditionKeys.Delimiter,delimiter);
+  S3Engine.verifyAccess(context,"SBucket",bucket.getId(),SAcl.PERMISSION_READ);
+  try {
+    MultipartLoadDao uploadDao=new MultipartLoadDao();
+    OrderedPair<S3MultipartUpload[],Boolean> result=uploadDao.getInitiatedUploads(bucketName,maxUploads,prefix,keyMarker,uploadIdMarker);
+    uploads=result.getFirst();
+    isTruncated=result.getSecond().booleanValue();
+  }
+ catch (  Exception e) {
+    logger.error("List Multipart Uploads failed due to " + e.getMessage(),e);
+    response.setStatus(500);
+  }
+  StringBuffer xml=new StringBuffer();
+  xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+  xml.append("<ListMultipartUploadsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+  xml.append("<Bucket>").append(bucketName).append("</Bucket>");
+  xml.append("<KeyMarker>").append((null == keyMarker ? "" : keyMarker)).append("</KeyMarker>");
+  xml.append("<UploadIdMarker>").append((null == uploadIdMarker ? "" : uploadIdMarker)).append("</UploadIdMarker>");
+  StringBuffer partsList=new StringBuffer();
+  for (int i=0; i < uploads.length; i++) {
+    onePart=uploads[i];
+    if (null == onePart)     break;
+    if (delimiter != null && !delimiter.isEmpty()) {
+      if (StringHelper.substringInBetween(onePart.getKey(),prefix,delimiter) != null)       continue;
+    }
+    nextKey=onePart.getKey();
+    nextUploadId=onePart.getId();
+    partsList.append("<Upload>");
+    partsList.append("<Key>").append(nextKey).append("</Key>");
+    partsList.append("<UploadId>").append(nextUploadId).append("</UploadId>");
+    partsList.append("<Initiator>");
+    partsList.append("<ID>").append(onePart.getAccessKey()).append("</ID>");
+    partsList.append("<DisplayName></DisplayName>");
+    partsList.append("</Initiator>");
+    partsList.append("<Owner>");
+    partsList.append("<ID>").append(onePart.getAccessKey()).append("</ID>");
+    partsList.append("<DisplayName></DisplayName>");
+    partsList.append("</Owner>");
+    partsList.append("<StorageClass>STANDARD</StorageClass>");
+    partsList.append("<Initiated>").append(DatatypeConverter.printDateTime(onePart.getLastModified())).append("</Initiated>");
+    partsList.append("</Upload>");
+  }
+  for (int i=0; i < uploads.length; i++) {
+    onePart=uploads[i];
+    if (null == onePart)     break;
+    if (delimiter != null && !delimiter.isEmpty()) {
+      String subName=StringHelper.substringInBetween(onePart.getKey(),prefix,delimiter);
+      if (subName != null) {
+        partsList.append("<CommonPrefixes>");
+        partsList.append("<Prefix>");
+        if (prefix != null && prefix.length() > 0)         partsList.append(prefix + delimiter + subName);
+ else         partsList.append(subName);
+        partsList.append("</Prefix>");
+        partsList.append("</CommonPrefixes>");
+      }
+    }
+  }
+  xml.append("<NextKeyMarker>").append((null == nextKey ? "" : nextKey)).append("</NextKeyMarker>");
+  xml.append("<NextUploadIdMarker>").append((0 == nextUploadId ? "" : nextUploadId)).append("</NextUploadIdMarker>");
+  xml.append("<MaxUploads>").append(maxUploads).append("</MaxUploads>");
+  xml.append("<IsTruncated>").append(isTruncated).append("</IsTruncated>");
+  xml.append(partsList.toString());
+  xml.append("</ListMultipartUploadsResult>");
+  response.setStatus(200);
+  response.setContentType("text/xml; charset=UTF-8");
+  S3RestServlet.endResponse(response,xml.toString());
+}

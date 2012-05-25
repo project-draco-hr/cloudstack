@@ -1,0 +1,45 @@
+{
+  int contentLength=request.getContentLength();
+  Object objectInContent=null;
+  if (contentLength > 0) {
+    InputStream is=null;
+    try {
+      is=request.getInputStream();
+      String xml=StringHelper.stringFromStream(is);
+      Class.forName("com.cloud.bridge.service.core.s3.S3CreateBucketConfiguration");
+      XSerializer serializer=new XSerializer(new XSerializerXmlAdapter());
+      objectInContent=serializer.serializeFrom(xml);
+      if (objectInContent != null && !(objectInContent instanceof S3CreateBucketConfiguration)) {
+        throw new InvalidRequestContentException("Invalid request content in create-bucket: " + xml);
+      }
+      is.close();
+    }
+ catch (    IOException e) {
+      logger.error("Unable to read request data due to " + e.getMessage(),e);
+      throw new NetworkIOException(e);
+    }
+catch (    ClassNotFoundException e) {
+      logger.error("In a normal world this should never never happen:" + e.getMessage(),e);
+      throw new RuntimeException("A required class was not found in the classpath:" + e.getMessage());
+    }
+ finally {
+      if (is != null)       is.close();
+    }
+  }
+  S3CreateBucketRequest engineRequest=new S3CreateBucketRequest();
+  engineRequest.setBucketName((String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY));
+  engineRequest.setConfig((S3CreateBucketConfiguration)objectInContent);
+  try {
+    S3CreateBucketResponse engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+    response.addHeader("Location","/" + engineResponse.getBucketName());
+    response.setContentLength(0);
+    response.setStatus(200);
+    response.flushBuffer();
+  }
+ catch (  ObjectAlreadyExistsException oaee) {
+    response.setStatus(409);
+    String xml="<?xml version=\"1.0\" encoding=\"UTF-8\"?> <Error><Code>OperationAborted</Code><Message>A conflicting conditional operation is currently in progress against this resource. Please try again..</Message>";
+    response.setContentType("text/xml; charset=UTF-8");
+    S3RestServlet.endResponse(response,xml.toString());
+  }
+}

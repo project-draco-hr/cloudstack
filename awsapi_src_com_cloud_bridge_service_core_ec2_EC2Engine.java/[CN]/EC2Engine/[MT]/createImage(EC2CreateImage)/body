@@ -1,0 +1,43 @@
+{
+  EC2CreateImageResponse response=null;
+  boolean needsRestart=false;
+  String volumeId=null;
+  try {
+    EC2DescribeVolumesResponse volumes=new EC2DescribeVolumesResponse();
+    volumes=listVolumes(null,request.getInstanceId(),volumes);
+    EC2Volume[] volSet=volumes.getVolumeSet();
+    for (    EC2Volume vol : volSet) {
+      if (vol.getType().equalsIgnoreCase("ROOT")) {
+        String vmState=vol.getVMState();
+        if (vmState.equalsIgnoreCase("running") || vmState.equalsIgnoreCase("starting")) {
+          needsRestart=true;
+          if (!stopVirtualMachine(request.getInstanceId()))           throw new EC2ServiceException(ClientError.IncorrectState,"CreateImage - instance must be in a stopped state");
+        }
+        volumeId=vol.getId();
+        break;
+      }
+    }
+    EC2DescribeInstancesResponse instances=new EC2DescribeInstancesResponse();
+    instances=lookupInstances(request.getInstanceId(),instances);
+    EC2Instance[] instanceSet=instances.getInstanceSet();
+    String templateId=instanceSet[0].getTemplateId();
+    EC2DescribeImagesResponse images=new EC2DescribeImagesResponse();
+    images=listTemplates(templateId,images);
+    EC2Image[] imageSet=images.getImageSet();
+    String osTypeId=imageSet[0].getOsTypeId();
+    CloudStackTemplate resp=getApi().createTemplate((request.getDescription() == null ? "" : request.getDescription()),request.getName(),osTypeId,null,null,null,null,null,null,volumeId);
+    if (resp == null || resp.getId() == null) {
+      throw new EC2ServiceException(ServerError.InternalError,"An upexpected error occurred.");
+    }
+    response=new EC2CreateImageResponse();
+    response.setId(resp.getId());
+    if (needsRestart) {
+      if (!startVirtualMachine(request.getInstanceId()))       throw new EC2ServiceException(ServerError.InternalError,"CreateImage - restarting instance " + request.getInstanceId() + " failed");
+    }
+    return response;
+  }
+ catch (  Exception e) {
+    logger.error("EC2 CreateImage - ",e);
+    throw new EC2ServiceException(ServerError.InternalError,e.getMessage() != null ? e.getMessage() : "An unexpected error occurred.");
+  }
+}

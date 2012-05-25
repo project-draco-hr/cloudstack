@@ -1,0 +1,40 @@
+{
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  if (bucket == null) {
+    logger.error("initiateMultipartUpload failed since " + bucketName + " does not exist");
+    return 404;
+  }
+  OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(bucket);
+  S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
+  try {
+    MultipartLoadDao uploadDao=new MultipartLoadDao();
+    OrderedPair<String,String> exists=uploadDao.multipartExits(uploadId);
+    if (null == exists) {
+      logger.error("initiateMultipartUpload failed since multipart upload" + uploadId + " does not exist");
+      return 404;
+    }
+    if (verifyPermission) {
+      String initiator=uploadDao.getInitiator(uploadId);
+      if (null == initiator || !initiator.equals(UserContext.current().getAccessKey())) {
+        S3PolicyContext context=new S3PolicyContext(PolicyActions.AbortMultipartUpload,bucketName);
+        context.setKeyName(exists.getSecond());
+        verifyAccess(context,"SBucket",bucket.getId(),SAcl.PERMISSION_WRITE);
+      }
+    }
+    S3MultipartPart[] parts=uploadDao.getParts(uploadId,10000,0);
+    for (int i=0; i < parts.length; i++) {
+      bucketAdapter.deleteObject(host_storagelocation_pair.getSecond(),ServiceProvider.getInstance().getMultipartDir(),parts[i].getPath());
+    }
+    uploadDao.deleteUpload(uploadId);
+    return 204;
+  }
+ catch (  PermissionDeniedException e) {
+    logger.error("freeUploadParts failed due to [" + e.getMessage() + "]",e);
+    throw e;
+  }
+catch (  Exception e) {
+    logger.error("freeUploadParts failed due to [" + e.getMessage() + "]",e);
+    return 500;
+  }
+}

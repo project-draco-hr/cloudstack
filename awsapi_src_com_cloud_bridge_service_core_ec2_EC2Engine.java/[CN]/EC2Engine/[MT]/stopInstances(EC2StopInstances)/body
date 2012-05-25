@@ -1,0 +1,38 @@
+{
+  EC2StopInstancesResponse instances=new EC2StopInstancesResponse();
+  EC2Instance[] virtualMachines=null;
+  try {
+    String[] instanceSet=request.getInstancesSet();
+    EC2DescribeInstancesResponse previousState=listVirtualMachines(instanceSet,null);
+    virtualMachines=previousState.getInstanceSet();
+    for (    EC2Instance vm : virtualMachines) {
+      vm.setPreviousState(vm.getState());
+      CloudStackUserVm resp=null;
+      if (request.getDestroyInstances()) {
+        if (vm.getState().equalsIgnoreCase("Destroyed")) {
+          instances.addInstance(vm);
+          continue;
+        }
+        resp=getApi().destroyVirtualMachine(vm.getId());
+        if (logger.isDebugEnabled())         logger.debug("Destroying VM " + vm.getId() + " job "+ resp.getJobId());
+      }
+ else {
+        if (vm.getState().equalsIgnoreCase("Stopped") || vm.getState().equalsIgnoreCase("Destroyed")) {
+          instances.addInstance(vm);
+          continue;
+        }
+        resp=getApi().stopVirtualMachine(vm.getId(),false);
+        if (logger.isDebugEnabled())         logger.debug("Stopping VM " + vm.getId() + " job "+ resp.getJobId());
+      }
+      if (resp != null) {
+        vm.setState(resp.getState());
+        instances.addInstance(vm);
+      }
+    }
+    return instances;
+  }
+ catch (  Exception e) {
+    logger.error("EC2 StopInstances - ",e);
+    throw new EC2ServiceException(ServerError.InternalError,e.getMessage() != null ? e.getMessage() + ", might already be destroyed" : "An unexpected error occurred.");
+  }
+}

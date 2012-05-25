@@ -1,0 +1,43 @@
+{
+  S3CopyObjectResponse response=new S3CopyObjectResponse();
+  S3GetObjectRequest getRequest=new S3GetObjectRequest();
+  getRequest.setBucketName(request.getSourceBucketName());
+  getRequest.setKey(request.getSourceKey());
+  getRequest.setVersion(request.getVersion());
+  getRequest.setConditions(request.getConditions());
+  getRequest.setInlineData(true);
+  getRequest.setReturnData(true);
+  if (MetadataDirective.COPY == request.getDirective())   getRequest.setReturnMetadata(true);
+ else   getRequest.setReturnMetadata(false);
+  String destinationBucketName=request.getDestinationBucketName();
+  String destinationKeyName=request.getDestinationKey();
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.PutObject,destinationBucketName);
+  context.setKeyName(destinationKeyName);
+  context.setEvalParam(ConditionKeys.MetaData,request.getDirective().toString());
+  context.setEvalParam(ConditionKeys.CopySource,"/" + request.getSourceBucketName() + "/"+ request.getSourceKey());
+  if (PolicyAccess.DENY == verifyPolicy(context))   throw new PermissionDeniedException("Access Denied - bucket policy DENY result");
+  S3GetObjectResponse originalObject=handleRequest(getRequest);
+  int resultCode=originalObject.getResultCode();
+  if (200 != resultCode) {
+    response.setResultCode(resultCode);
+    response.setResultDescription(originalObject.getResultDescription());
+    return response;
+  }
+  response.setCopyVersion(originalObject.getVersion());
+  S3PutObjectInlineRequest putRequest=new S3PutObjectInlineRequest();
+  putRequest.setBucketName(request.getDestinationBucketName());
+  putRequest.setKey(destinationKeyName);
+  if (MetadataDirective.COPY == request.getDirective())   putRequest.setMetaEntries(originalObject.getMetaEntries());
+ else   putRequest.setMetaEntries(request.getMetaEntries());
+  putRequest.setAcl(request.getAcl());
+  putRequest.setCannedAccess(request.getCannedAccess());
+  putRequest.setContentLength(originalObject.getContentLength());
+  putRequest.setData(originalObject.getData());
+  S3PutObjectInlineResponse putResp=handleRequest(putRequest);
+  response.setResultCode(putResp.resultCode);
+  response.setResultDescription(putResp.getResultDescription());
+  response.setETag(putResp.getETag());
+  response.setLastModified(putResp.getLastModified());
+  response.setPutVersion(putResp.getVersion());
+  return response;
+}

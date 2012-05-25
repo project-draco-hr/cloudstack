@@ -1,0 +1,88 @@
+{
+  String cloudSecretKey=null;
+  String cloudAccessKey=null;
+  String signature=null;
+  String sigMethod=null;
+  String[] awsAccess=request.getParameterValues("AWSAccessKeyId");
+  if (null != awsAccess && 0 < awsAccess.length)   cloudAccessKey=awsAccess[0];
+ else {
+    response.sendError(530,"Missing AWSAccessKeyId parameter");
+    return false;
+  }
+  String[] clientSig=request.getParameterValues("Signature");
+  if (null != clientSig && 0 < clientSig.length)   signature=clientSig[0];
+ else {
+    response.sendError(530,"Missing Signature parameter");
+    return false;
+  }
+  String[] method=request.getParameterValues("SignatureMethod");
+  if (null != method && 0 < method.length) {
+    sigMethod=method[0];
+    if (!sigMethod.equals("HmacSHA256") && !sigMethod.equals("HmacSHA1")) {
+      response.sendError(531,"Unsupported SignatureMethod value: " + sigMethod + " expecting: HmacSHA256 or HmacSHA1");
+      return false;
+    }
+  }
+ else {
+    response.sendError(530,"Missing SignatureMethod parameter");
+    return false;
+  }
+  String[] version=request.getParameterValues("Version");
+  if (null != version && 0 < version.length) {
+    if (!version[0].equals(wsdlVersion)) {
+      response.sendError(531,"Unsupported Version value: " + version[0] + " expecting: "+ wsdlVersion);
+      return false;
+    }
+  }
+ else {
+    response.sendError(530,"Missing Version parameter");
+    return false;
+  }
+  String[] sigVersion=request.getParameterValues("SignatureVersion");
+  if (null != sigVersion && 0 < sigVersion.length) {
+    if (!sigVersion[0].equals("2")) {
+      response.sendError(531,"Unsupported SignatureVersion value: " + sigVersion[0] + " expecting: 2");
+      return false;
+    }
+  }
+ else {
+    response.sendError(530,"Missing SignatureVersion parameter");
+    return false;
+  }
+  String[] expires=request.getParameterValues("Expires");
+  if (null != expires && 0 < expires.length) {
+    if (hasSignatureExpired(expires[0])) {
+      response.sendError(531,"Expires parameter indicates signature has expired: " + expires[0]);
+      return false;
+    }
+  }
+ else {
+    String[] time=request.getParameterValues("Timestamp");
+    if (null == time || 0 == time.length) {
+      response.sendError(530,"Missing Timestamp and Expires parameter, one is required");
+      return false;
+    }
+  }
+  UserCredentialsDao credentialDao=new UserCredentialsDao();
+  UserCredentials cloudKeys=credentialDao.getByAccessKey(cloudAccessKey);
+  if (null == cloudKeys) {
+    logger.debug(cloudAccessKey + " is not defined in the EC2 service - call SetUserKeys");
+    response.sendError(404,cloudAccessKey + " is not defined in the EC2 service - call SetUserKeys");
+    return false;
+  }
+ else   cloudSecretKey=cloudKeys.getSecretKey();
+  EC2RestAuth restAuth=new EC2RestAuth();
+  restAuth.setHostHeader(request.getHeader("Host"));
+  String requestUri=request.getRequestURI();
+  String forwardedPath=(String)request.getAttribute("javax.servlet.forward.request_uri");
+  if (forwardedPath != null) {
+    requestUri=forwardedPath;
+  }
+  restAuth.setHTTPRequestURI(requestUri);
+  restAuth.setQueryString(request.getQueryString());
+  if (restAuth.verifySignature(request.getMethod(),cloudSecretKey,signature,sigMethod)) {
+    UserContext.current().initContext(cloudAccessKey,cloudSecretKey,cloudAccessKey,"REST request",null);
+    return true;
+  }
+ else   throw new PermissionDeniedException("Invalid signature");
+}

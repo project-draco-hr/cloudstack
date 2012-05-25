@@ -1,0 +1,44 @@
+{
+  RestAuth auth=new RestAuth(ServiceProvider.getInstance().getUseSubDomain());
+  String AWSAccessKey=null;
+  String signature=null;
+  String authorization=null;
+  if (null == (authorization=params.getHeader("Authorization"))) {
+    UserContext.current().initContext();
+    return;
+  }
+  int offset=authorization.indexOf("AWS");
+  if (-1 != offset) {
+    String temp=authorization.substring(offset + 3).trim();
+    offset=temp.indexOf(":");
+    AWSAccessKey=temp.substring(0,offset);
+    signature=temp.substring(offset + 1);
+  }
+  auth.setDateHeader(request.getHeader("Date"));
+  auth.setContentTypeHeader(request.getHeader("Content-Type"));
+  auth.setContentMD5Header(request.getHeader("Content-MD5"));
+  auth.setHostHeader(request.getHeader("Host"));
+  auth.setQueryString(request.getQueryString());
+  auth.addUriPath(request.getRequestURI());
+  HeaderParam[] headers=params.getHeaders();
+  for (int i=0; null != headers && i < headers.length; i++) {
+    String headerName=headers[i].getName();
+    String ignoreCase=headerName.toLowerCase();
+    if (ignoreCase.startsWith("x-amz-"))     auth.addAmazonHeader(headerName + ":" + headers[i].getValue());
+  }
+  UserInfo info=ServiceProvider.getInstance().getUserInfo(AWSAccessKey);
+  if (info == null)   throw new PermissionDeniedException("Unable to authenticate access key: " + AWSAccessKey);
+  try {
+    if (auth.verifySignature(request.getMethod(),info.getSecretKey(),signature)) {
+      UserContext.current().initContext(AWSAccessKey,info.getSecretKey(),AWSAccessKey,info.getDescription(),request);
+      return;
+    }
+  }
+ catch (  SignatureException e) {
+    throw new PermissionDeniedException(e);
+  }
+catch (  UnsupportedEncodingException e) {
+    throw new PermissionDeniedException(e);
+  }
+  throw new PermissionDeniedException("Invalid signature");
+}

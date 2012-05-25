@@ -1,0 +1,72 @@
+{
+  EC2RunInstancesResponse instances=new EC2RunInstancesResponse();
+  int createInstances=0;
+  int canCreateInstances=-1;
+  int countCreated=0;
+  try {
+    CloudStackAccount caller=getCurrentAccount();
+    canCreateInstances=calculateAllowedInstances();
+    if (-1 == canCreateInstances)     canCreateInstances=request.getMaxCount();
+    if (canCreateInstances < request.getMinCount()) {
+      logger.info("EC2 RunInstances - min count too big (" + request.getMinCount() + "), "+ canCreateInstances+ " left to allocate");
+      throw new EC2ServiceException(ClientError.InstanceLimitExceeded,"Only " + canCreateInstances + " instance(s) left to allocate");
+    }
+    if (canCreateInstances < request.getMaxCount())     createInstances=request.getMinCount();
+ else     createInstances=request.getMaxCount();
+    String instanceType="m1.small";
+    if (request.getInstanceType() != null) {
+      instanceType=request.getInstanceType();
+    }
+    CloudStackServiceOffering svcOffering=getCSServiceOfferingId(instanceType);
+    if (svcOffering == null) {
+      logger.info("No ServiceOffering found to be defined by name, please contact the administrator " + instanceType);
+      throw new EC2ServiceException(ClientError.Unsupported,"instanceType: [" + instanceType + "] not found!");
+    }
+    String zoneId=toZoneId(request.getZoneName(),null);
+    List<CloudStackZone> zones=getApi().listZones(null,null,zoneId,null);
+    if (zones == null || zones.size() == 0) {
+      logger.info("EC2 RunInstances - zone [" + request.getZoneName() + "] not found!");
+      throw new EC2ServiceException(ClientError.InvalidZone_NotFound,"ZoneId [" + request.getZoneName() + "] not found!");
+    }
+    CloudStackZone zone=zones.get(0);
+    CloudStackNetwork network=findNetwork(zone);
+    for (int i=0; i < createInstances; i++) {
+      CloudStackUserVm resp=getApi().deployVirtualMachine(svcOffering.getId(),request.getTemplateId(),zoneId,null,null,null,null,null,null,null,request.getKeyName(),null,(network != null ? network.getId() : null),null,constructList(request.getGroupSet()),request.getSize().longValue(),request.getUserData());
+      EC2Instance vm=new EC2Instance();
+      vm.setId(resp.getId().toString());
+      vm.setName(resp.getName());
+      vm.setZoneName(resp.getZoneName());
+      vm.setTemplateId(resp.getTemplateId().toString());
+      if (resp.getSecurityGroupList() != null && resp.getSecurityGroupList().size() > 0) {
+        List<CloudStackSecurityGroup> securityGroupList=resp.getSecurityGroupList();
+        for (        CloudStackSecurityGroup securityGroup : securityGroupList) {
+          vm.addGroupName(securityGroup.getName());
+        }
+      }
+      vm.setState(resp.getState());
+      vm.setCreated(resp.getCreated());
+      List<CloudStackNic> nicList=resp.getNics();
+      for (      CloudStackNic nic : nicList) {
+        if (nic.getIsDefault()) {
+          vm.setPrivateIpAddress(nic.getIpaddress());
+          break;
+        }
+      }
+      vm.setIpAddress(resp.getIpAddress());
+      vm.setAccountName(resp.getAccountName());
+      vm.setDomainId(resp.getDomainId());
+      vm.setHypervisor(resp.getHypervisor());
+      vm.setServiceOffering(svcOffering.getName());
+      instances.addInstance(vm);
+      countCreated++;
+    }
+    if (0 == countCreated) {
+      throw new EC2ServiceException(ServerError.InsufficientInstanceCapacity,"Insufficient Instance Capacity");
+    }
+    return instances;
+  }
+ catch (  Exception e) {
+    logger.error("EC2 RunInstances - ",e);
+    throw new EC2ServiceException(ServerError.InternalError,e.getMessage() != null ? e.getMessage() : "An unexpected error occurred.");
+  }
+}

@@ -1,0 +1,48 @@
+{
+  S3PutObjectInlineResponse response=new S3PutObjectInlineResponse();
+  String bucketName=request.getBucketName();
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  if (bucket == null) {
+    logger.error("saveUploadedPart failed since " + bucketName + " does not exist");
+    response.setResultCode(404);
+  }
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.PutObject,bucketName);
+  context.setKeyName(request.getKey());
+  verifyAccess(context,"SBucket",bucket.getId(),SAcl.PERMISSION_WRITE);
+  OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(bucket);
+  S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
+  String itemFileName=new String(uploadId + "-" + partNumber);
+  InputStream is=null;
+  try {
+    is=request.getDataInputStream();
+    String md5Checksum=bucketAdapter.saveObject(is,host_storagelocation_pair.getSecond(),ServiceProvider.getInstance().getMultipartDir(),itemFileName);
+    response.setETag(md5Checksum);
+    MultipartLoadDao uploadDao=new MultipartLoadDao();
+    uploadDao.savePart(uploadId,partNumber,md5Checksum,itemFileName,(int)request.getContentLength());
+    response.setResultCode(200);
+  }
+ catch (  IOException e) {
+    logger.error("UploadPart failed due to " + e.getMessage(),e);
+    response.setResultCode(500);
+  }
+catch (  OutOfStorageException e) {
+    logger.error("UploadPart failed due to " + e.getMessage(),e);
+    response.setResultCode(500);
+  }
+catch (  Exception e) {
+    logger.error("UploadPart failed due to " + e.getMessage(),e);
+    response.setResultCode(500);
+  }
+ finally {
+    if (is != null) {
+      try {
+        is.close();
+      }
+ catch (      IOException e) {
+        logger.error("UploadPart unable to close stream from data handler.",e);
+      }
+    }
+  }
+  return response;
+}

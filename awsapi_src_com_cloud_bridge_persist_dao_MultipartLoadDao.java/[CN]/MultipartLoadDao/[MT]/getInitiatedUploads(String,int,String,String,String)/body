@@ -1,0 +1,41 @@
+{
+  S3MultipartUpload[] inProgress=new S3MultipartUpload[maxParts];
+  PreparedStatement statement=null;
+  boolean isTruncated=false;
+  int i=0;
+  int pos=1;
+  if (null != prefix)   prefix=prefix + "%";
+  StringBuffer queryStr=new StringBuffer();
+  queryStr.append("SELECT ID, AccessKey, NameKey, CreateTime FROM multipart_uploads WHERE BucketName=? ");
+  if (null != prefix)   queryStr.append("AND NameKey like ? ");
+  if (null != keyMarker)   queryStr.append("AND NameKey > ? ");
+  if (null != uploadIdMarker)   queryStr.append("AND ID > ? ");
+  queryStr.append("ORDER BY NameKey, CreateTime");
+  openConnection();
+  try {
+    statement=conn.prepareStatement(queryStr.toString());
+    statement.setString(pos++,bucketName);
+    if (null != prefix)     statement.setString(pos++,prefix);
+    if (null != keyMarker)     statement.setString(pos++,keyMarker);
+    if (null != uploadIdMarker)     statement.setString(pos,uploadIdMarker);
+    ResultSet rs=statement.executeQuery();
+    while (rs.next() && i < maxParts) {
+      Calendar tod=Calendar.getInstance();
+      tod.setTime(rs.getTimestamp("CreateTime"));
+      inProgress[i]=new S3MultipartUpload();
+      inProgress[i].setId(rs.getInt("ID"));
+      inProgress[i].setAccessKey(rs.getString("AccessKey"));
+      inProgress[i].setLastModified(tod);
+      inProgress[i].setBucketName(bucketName);
+      inProgress[i].setKey(rs.getString("NameKey"));
+      i++;
+    }
+    if (rs.next())     isTruncated=true;
+    statement.close();
+    if (i < maxParts)     inProgress=(S3MultipartUpload[])resizeArray(inProgress,i);
+    return new OrderedPair<S3MultipartUpload[],Boolean>(inProgress,isTruncated);
+  }
+  finally {
+    closeConnection();
+  }
+}

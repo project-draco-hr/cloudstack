@@ -1,0 +1,58 @@
+{
+  S3ListBucketRequest engineRequest=new S3ListBucketRequest();
+  String keyMarker=request.getParameter("key-marker");
+  String versionIdMarker=request.getParameter("version-id-marker");
+  engineRequest.setBucketName((String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY));
+  engineRequest.setDelimiter(request.getParameter("delimiter"));
+  engineRequest.setMarker(keyMarker);
+  engineRequest.setPrefix(request.getParameter("prefix"));
+  engineRequest.setVersionIdMarker(versionIdMarker);
+  int maxKeys=Converter.toInt(request.getParameter("max-keys"),1000);
+  engineRequest.setMaxKeys(maxKeys);
+  S3ListBucketResponse engineResponse=ServiceProvider.getInstance().getS3Engine().listBucketContents(engineRequest,true);
+  StringBuffer xml=new StringBuffer();
+  xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+  xml.append("<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">");
+  xml.append("<Name>").append(engineResponse.getBucketName()).append("</Name>");
+  if (null == keyMarker)   xml.append("<KeyMarker/>");
+ else   xml.append("<KeyMarker>").append(keyMarker).append("</KeyMarker");
+  if (null == versionIdMarker)   xml.append("<VersionIdMarker/>");
+ else   xml.append("<VersionIdMarker>").append(keyMarker).append("</VersionIdMarker");
+  xml.append("<MaxKeys>").append(engineResponse.getMaxKeys()).append("</MaxKeys>");
+  xml.append("<IsTruncated>").append(engineResponse.isTruncated()).append("</IsTruncated>");
+  S3ListBucketObjectEntry[] versions=engineResponse.getContents();
+  for (int i=0; null != versions && i < versions.length; i++) {
+    S3CanonicalUser owner=versions[i].getOwner();
+    boolean isDeletionMarker=versions[i].getIsDeletionMarker();
+    String displayName=owner.getDisplayName();
+    String id=owner.getID();
+    if (isDeletionMarker) {
+      xml.append("<DeleteMarker>");
+      xml.append("<Key>").append(versions[i].getKey()).append("</Key>");
+      xml.append("<VersionId>").append(versions[i].getVersion()).append("</VersionId>");
+      xml.append("<IsLatest>").append(versions[i].getIsLatest()).append("</IsLatest>");
+      xml.append("<LastModified>").append(DatatypeConverter.printDateTime(versions[i].getLastModified())).append("</LastModified>");
+    }
+ else {
+      xml.append("<Version>");
+      xml.append("<Key>").append(versions[i].getKey()).append("</Key>");
+      xml.append("<VersionId>").append(versions[i].getVersion()).append("</VersionId>");
+      xml.append("<IsLatest>").append(versions[i].getIsLatest()).append("</IsLatest>");
+      xml.append("<LastModified>").append(DatatypeConverter.printDateTime(versions[i].getLastModified())).append("</LastModified>");
+      xml.append("<ETag>").append(versions[i].getETag()).append("</ETag>");
+      xml.append("<Size>").append(versions[i].getSize()).append("</Size>");
+      xml.append("<StorageClass>").append(versions[i].getStorageClass()).append("</StorageClass>");
+    }
+    xml.append("<Owner>");
+    xml.append("<ID>").append(id).append("</ID>");
+    if (null == displayName)     xml.append("<DisplayName/>");
+ else     xml.append("<DisplayName>").append(owner.getDisplayName()).append("</DisplayName>");
+    xml.append("</Owner>");
+    if (isDeletionMarker)     xml.append("</DeleteMarker>");
+ else     xml.append("</Version>");
+  }
+  xml.append("</ListVersionsResult>");
+  response.setStatus(200);
+  response.setContentType("text/xml; charset=UTF-8");
+  S3RestServlet.endResponse(response,xml.toString());
+}

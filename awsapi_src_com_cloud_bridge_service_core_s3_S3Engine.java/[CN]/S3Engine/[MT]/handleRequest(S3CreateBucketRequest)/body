@@ -1,0 +1,45 @@
+{
+  S3CreateBucketResponse response=new S3CreateBucketResponse();
+  String cannedAccessPolicy=request.getCannedAccess();
+  String bucketName=request.getBucketName();
+  response.setBucketName(bucketName);
+  verifyBucketName(bucketName,false);
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.CreateBucket,bucketName);
+  context.setEvalParam(ConditionKeys.Acl,cannedAccessPolicy);
+  if (PolicyAccess.DENY == verifyPolicy(context))   throw new PermissionDeniedException("Access Denied - bucket policy DENY result");
+  if (PersistContext.acquireNamedLock("bucket.creation",LOCK_ACQUIRING_TIMEOUT_SECONDS)) {
+    OrderedPair<SHost,String> shost_storagelocation_pair=null;
+    boolean success=false;
+    try {
+      SBucketDao bucketDao=new SBucketDao();
+      SAclDao aclDao=new SAclDao();
+      if (bucketDao.getByName(request.getBucketName()) != null)       throw new ObjectAlreadyExistsException("Bucket already exists");
+      shost_storagelocation_pair=allocBucketStorageHost(request.getBucketName(),null);
+      SBucket sbucket=new SBucket();
+      sbucket.setName(request.getBucketName());
+      sbucket.setCreateTime(DateHelper.currentGMTTime());
+      sbucket.setOwnerCanonicalId(UserContext.current().getCanonicalUserId());
+      sbucket.setShost(shost_storagelocation_pair.getFirst());
+      shost_storagelocation_pair.getFirst().getBuckets().add(sbucket);
+      bucketDao.save(sbucket);
+      S3AccessControlList acl=request.getAcl();
+      if (null != cannedAccessPolicy)       setCannedAccessControls(cannedAccessPolicy,"SBucket",sbucket.getId(),sbucket);
+ else       if (null != acl)       aclDao.save("SBucket",sbucket.getId(),acl);
+ else       setSingleAcl("SBucket",sbucket.getId(),SAcl.PERMISSION_FULL);
+      PersistContext.commitTransaction();
+      success=true;
+    }
+  finally {
+      if (!success && shost_storagelocation_pair != null) {
+        S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(shost_storagelocation_pair.getFirst());
+        bucketAdapter.deleteContainer(shost_storagelocation_pair.getSecond(),request.getBucketName());
+      }
+      PersistContext.rollbackTransaction(false);
+      PersistContext.releaseNamedLock("bucket.creation");
+    }
+  }
+ else {
+    throw new OutOfServiceException("Unable to acquire synchronization lock");
+  }
+  return response;
+}

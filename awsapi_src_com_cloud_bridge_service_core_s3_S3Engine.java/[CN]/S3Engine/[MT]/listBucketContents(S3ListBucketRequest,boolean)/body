@@ -1,0 +1,36 @@
+{
+  S3ListBucketResponse response=new S3ListBucketResponse();
+  String bucketName=request.getBucketName();
+  String prefix=request.getPrefix();
+  if (prefix == null)   prefix=StringHelper.EMPTY_STRING;
+  String marker=request.getMarker();
+  if (marker == null)   marker=StringHelper.EMPTY_STRING;
+  String delimiter=request.getDelimiter();
+  int maxKeys=request.getMaxKeys();
+  if (maxKeys <= 0)   maxKeys=1000;
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket sbucket=bucketDao.getByName(bucketName);
+  if (sbucket == null)   throw new NoSuchObjectException("Bucket " + bucketName + " does not exist");
+  PolicyActions action=(includeVersions ? PolicyActions.ListBucketVersions : PolicyActions.ListBucket);
+  S3PolicyContext context=new S3PolicyContext(action,bucketName);
+  context.setEvalParam(ConditionKeys.MaxKeys,new String("" + maxKeys));
+  context.setEvalParam(ConditionKeys.Prefix,prefix);
+  context.setEvalParam(ConditionKeys.Delimiter,delimiter);
+  verifyAccess(context,"SBucket",sbucket.getId(),SAcl.PERMISSION_READ);
+  SObjectDao sobjectDao=new SObjectDao();
+  List<SObject> l=null;
+  if (includeVersions)   l=sobjectDao.listAllBucketObjects(sbucket,prefix,marker,maxKeys + 1);
+ else   l=sobjectDao.listBucketObjects(sbucket,prefix,marker,maxKeys + 1);
+  response.setBucketName(bucketName);
+  response.setMarker(marker);
+  response.setMaxKeys(maxKeys);
+  response.setPrefix(prefix);
+  response.setDelimiter(delimiter);
+  response.setTruncated(l.size() > maxKeys);
+  if (l.size() > maxKeys) {
+    response.setNextMarker(l.get(l.size() - 1).getNameKey());
+  }
+  response.setContents(composeListBucketContentEntries(l,prefix,delimiter,maxKeys,includeVersions,request.getVersionIdMarker()));
+  response.setCommonPrefixes(composeListBucketPrefixEntries(l,prefix,delimiter,maxKeys));
+  return response;
+}

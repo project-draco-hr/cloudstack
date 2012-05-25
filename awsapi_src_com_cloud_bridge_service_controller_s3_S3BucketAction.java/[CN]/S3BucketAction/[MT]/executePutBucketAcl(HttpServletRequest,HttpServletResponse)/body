@@ -1,0 +1,24 @@
+{
+  String bucketName=(String)request.getAttribute(S3Constants.BUCKET_ATTR_KEY);
+  SBucketDao bucketDao=new SBucketDao();
+  SBucket bucket=bucketDao.getByName(bucketName);
+  String owner=null;
+  if (null != bucket)   owner=bucket.getOwnerCanonicalId();
+  if (null == owner) {
+    logger.error("ACL update failed since " + bucketName + " does not exist");
+    throw new IOException("ACL update failed");
+  }
+  S3SetBucketAccessControlPolicyRequest engineRequest=new S3SetBucketAccessControlPolicyRequest();
+  S3Grant grantRequest=new S3Grant();
+  S3AccessControlList aclRequest=new S3AccessControlList();
+  String aclRequestString=request.getHeader("x-amz-acl");
+  OrderedPair<Integer,Integer> accessControlsForBucketOwner=SAcl.getCannedAccessControls(aclRequestString,"SBucket");
+  grantRequest.setPermission(accessControlsForBucketOwner.getFirst());
+  grantRequest.setGrantee(accessControlsForBucketOwner.getSecond());
+  grantRequest.setCanonicalUserID(owner);
+  aclRequest.addGrant(grantRequest);
+  engineRequest.setAcl(aclRequest);
+  engineRequest.setBucketName(bucketName);
+  S3Response engineResponse=ServiceProvider.getInstance().getS3Engine().handleRequest(engineRequest);
+  response.setStatus(engineResponse.getResultCode());
+}
