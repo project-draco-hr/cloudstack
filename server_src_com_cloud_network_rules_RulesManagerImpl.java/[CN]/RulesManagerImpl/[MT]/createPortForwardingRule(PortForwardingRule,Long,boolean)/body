@@ -9,8 +9,19 @@
  else   if (ipAddress.isOneToOneNat()) {
     throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " has static nat enabled");
   }
+  Long networkId=rule.getNetworkId();
+  if (ipAddress.getAssociatedWithNetworkId() == null) {
+    s_logger.debug("The ip is not associated with the network id=" + networkId + " so assigning");
+    try {
+      _networkMgr.associateIPToGuestNetwork(ipAddrId,networkId);
+    }
+ catch (    Exception ex) {
+      s_logger.warn("Failed to associate ip id=" + ipAddrId + " to network id="+ networkId+ " as "+ "a part of port forwarding rule creation");
+      return null;
+    }
+  }
+  _networkMgr.checkIpForService(ipAddress,Service.PortForwarding);
   _firewallMgr.validateFirewallRule(caller,ipAddress,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),Purpose.PortForwarding,FirewallRuleType.User);
-  Long networkId=ipAddress.getAssociatedWithNetworkId();
   Long accountId=ipAddress.getAllocatedToAccountId();
   Long domainId=ipAddress.getAllocatedInDomainId();
   if (rule.getDestinationPortStart() > rule.getDestinationPortEnd()) {
@@ -26,7 +37,6 @@
  else {
     checkRuleAndUserVm(rule,vm,caller);
   }
-  _networkMgr.checkIpForService(ipAddress,Service.PortForwarding);
   Ip dstIp=rule.getDestinationIpAddress();
   Nic guestNic=_networkMgr.getNicInNetwork(vmId,networkId);
   if (guestNic == null || guestNic.getIp4Address() == null) {
@@ -40,7 +50,7 @@
   PortForwardingRuleVO newRule=new PortForwardingRuleVO(rule.getXid(),rule.getSourceIpAddressId(),rule.getSourcePortStart(),rule.getSourcePortEnd(),dstIp,rule.getDestinationPortStart(),rule.getDestinationPortEnd(),rule.getProtocol().toLowerCase(),networkId,accountId,domainId,vmId);
   newRule=_portForwardingDao.persist(newRule);
   if (openFirewall) {
-    _firewallMgr.createRuleForAllCidrs(ipAddrId,caller,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),null,null,newRule.getId());
+    _firewallMgr.createRuleForAllCidrs(ipAddrId,caller,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),null,null,newRule.getId(),networkId);
   }
   try {
     _firewallMgr.detectRulesConflict(newRule,ipAddress);
