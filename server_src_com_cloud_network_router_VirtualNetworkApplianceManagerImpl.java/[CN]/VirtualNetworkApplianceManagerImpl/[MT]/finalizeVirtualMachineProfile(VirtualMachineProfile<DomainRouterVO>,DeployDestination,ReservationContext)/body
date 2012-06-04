@@ -1,6 +1,4 @@
 {
-  boolean dnsProvided=true;
-  boolean dhcpProvided=true;
   DataCenterVO dc=_dcDao.findById(dest.getDataCenter().getId());
   _dcDao.loadDetails(dc);
   DomainRouterVO router=profile.getVirtualMachine();
@@ -15,7 +13,6 @@
   NicProfile controlNic=null;
   String defaultDns1=null;
   String defaultDns2=null;
-  boolean publicNetwork=false;
   for (  NicProfile nic : profile.getNics()) {
     int deviceId=nic.getDeviceId();
     buf.append(" eth").append(deviceId).append("ip=").append(nic.getIp4Address());
@@ -44,14 +41,6 @@
         }
       }
     }
- else     if (nic.getTrafficType() == TrafficType.Guest) {
-      dnsProvided=_networkMgr.isProviderSupportServiceInNetwork(nic.getNetworkId(),Service.Dns,Provider.VirtualRouter);
-      dhcpProvided=_networkMgr.isProviderSupportServiceInNetwork(nic.getNetworkId(),Service.Dhcp,Provider.VirtualRouter);
-      buf.append(createGuestBootLoadArgs(nic,defaultDns1,defaultDns2,router));
-    }
- else     if (nic.getTrafficType() == TrafficType.Public) {
-      publicNetwork=true;
-    }
   }
   if (controlNic == null) {
     throw new CloudRuntimeException("Didn't start a control port");
@@ -64,15 +53,9 @@
     _disable_rp_filter=false;
   }
   String rpFilter=" ";
-  String type=null;
-  if (!publicNetwork) {
-    type="dhcpsrvr";
-  }
- else {
-    type="router";
-    if (_disable_rp_filter) {
-      rpFilter=" disable_rp_filter=true";
-    }
+  String type="router";
+  if (_disable_rp_filter) {
+    rpFilter=" disable_rp_filter=true";
   }
   buf.append(" type=" + type + rpFilter);
   String domain_suffix=dc.getDetail(ZoneConfig.DnsSearchOrder.getName());
@@ -82,19 +65,19 @@
   if (profile.getHypervisorType() == HypervisorType.VMware) {
     buf.append(" extra_pubnics=" + _routerExtraPublicNics);
   }
-  if (dnsProvided || dhcpProvided) {
+  if (defaultDns1 != null) {
     buf.append(" dns1=").append(defaultDns1);
-    if (defaultDns2 != null) {
-      buf.append(" dns2=").append(defaultDns2);
-    }
-    boolean useExtDns=!dnsProvided;
-    String use_external_dns=_configDao.getValue(Config.UseExternalDnsServers.key());
-    if (use_external_dns != null && use_external_dns.equals("true")) {
-      useExtDns=true;
-    }
-    if (useExtDns) {
-      buf.append(" useextdns=true");
-    }
+  }
+  if (defaultDns2 != null) {
+    buf.append(" dns2=").append(defaultDns2);
+  }
+  boolean useExtDns=false;
+  String use_external_dns=_configDao.getValue(Config.UseExternalDnsServers.key());
+  if (use_external_dns != null && use_external_dns.equals("true")) {
+    useExtDns=true;
+  }
+  if (useExtDns) {
+    buf.append(" useextdns=true");
   }
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Boot Args for " + profile + ": "+ buf.toString());
