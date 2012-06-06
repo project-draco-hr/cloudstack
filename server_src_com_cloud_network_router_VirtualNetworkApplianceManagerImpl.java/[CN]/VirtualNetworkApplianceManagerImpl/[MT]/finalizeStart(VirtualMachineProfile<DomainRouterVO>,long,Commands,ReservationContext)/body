@@ -1,12 +1,5 @@
 {
   DomainRouterVO router=profile.getVirtualMachine();
-  List<NicProfile> routerNics=profile.getNics();
-  List<Network> guestNetworks=new ArrayList<Network>();
-  for (  NicProfile routerNic : routerNics) {
-    if (routerNic.getTrafficType() == TrafficType.Guest) {
-      guestNetworks.add(_networkMgr.getNetwork(routerNic.getNetworkId()));
-    }
-  }
   boolean result=true;
   Answer answer=cmds.getAnswer("checkSsh");
   if (answer != null && answer instanceof CheckSshAnswer) {
@@ -21,6 +14,20 @@
   }
   if (result == false) {
     return result;
+  }
+  Map<Nic,Network> guestNics=new HashMap<Nic,Network>();
+  Map<Nic,Network> publicNics=new HashMap<Nic,Network>();
+  List<Network> guestNetworks=new ArrayList<Network>();
+  List<? extends Nic> routerNics=_nicDao.listByVmId(profile.getId());
+  for (  Nic routerNic : routerNics) {
+    Network network=_networkMgr.getNetwork(routerNic.getNetworkId());
+    if (network.getTrafficType() == TrafficType.Guest) {
+      guestNics.put(routerNic,network);
+      guestNetworks.add(network);
+    }
+ else     if (network.getTrafficType() == TrafficType.Public) {
+      publicNics.put(routerNic,network);
+    }
   }
   answer=cmds.getAnswer("getDomRVersion");
   if (answer != null && answer instanceof GetDomRVersionAnswer) {
@@ -37,6 +44,26 @@
   }
  else {
     result=false;
+  }
+  try {
+    for (    Nic publicNic : publicNics.keySet()) {
+      Network publicNtwk=publicNics.get(publicNic);
+      if (!addRouterToPublicNetwork(router,publicNtwk,_ipAddressDao.findByIpAndSourceNetworkId(publicNtwk.getId(),publicNic.getIp4Address()))) {
+        s_logger.warn("Failed to plug nic " + publicNic + " to router "+ router);
+        return false;
+      }
+    }
+    for (    Nic guestNic : guestNics.keySet()) {
+      Network guestNtwk=guestNics.get(guestNic);
+      if (!addRouterToGuestNetwork(router,guestNtwk,false)) {
+        s_logger.warn("Failed to plug nic " + guestNic + " to router "+ router);
+        return false;
+      }
+    }
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Failed to plug nic for router " + router + " due to exception ",ex);
+    return false;
   }
   return result;
 }
