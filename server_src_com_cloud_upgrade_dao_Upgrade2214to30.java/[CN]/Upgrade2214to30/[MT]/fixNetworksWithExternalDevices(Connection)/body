@@ -1,0 +1,86 @@
+{
+  PreparedStatement pstmt=null;
+  ResultSet rs=null;
+  ResultSet rs1=null;
+  List<Long> zoneIds=new ArrayList<Long>();
+  try {
+    pstmt=conn.prepareStatement("select id from `cloud`.`data_center` where lb_provider='F5BigIp' or firewall_provider='JuniperSRX' or gateway_provider='JuniperSRX'");
+    rs=pstmt.executeQuery();
+    while (rs.next()) {
+      zoneIds.add(rs.getLong(1));
+    }
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Unable to switch networks to the new network offering",e);
+  }
+  String uniqueName=null;
+  HashMap<Long,Long> newNetworkOfferingMap=new HashMap<Long,Long>();
+  for (  Long zoneId : zoneIds) {
+    try {
+      pstmt=conn.prepareStatement("select id, network_offering_id from `cloud`.`networks` where guest_type='Virtual' and data_center_id=?");
+      pstmt.setLong(1,zoneId);
+      rs=pstmt.executeQuery();
+      pstmt=conn.prepareStatement("select count(*) from `cloud`.`network_offerings`");
+      rs1=pstmt.executeQuery();
+      long ntwkOffCount=0;
+      while (rs1.next()) {
+        ntwkOffCount=rs1.getLong(1);
+      }
+      pstmt=conn.prepareStatement("CREATE TEMPORARY TABLE `cloud`.`network_offerings2` ENGINE=MEMORY SELECT * FROM `cloud`.`network_offerings` WHERE id=1");
+      pstmt.executeUpdate();
+      while (rs.next()) {
+        long networkId=rs.getLong(1);
+        long networkOfferingId=rs.getLong(2);
+        s_logger.debug("Updating network offering for the network id=" + networkId + " as it has switch_to_isolated=1");
+        Long newNetworkOfferingId=null;
+        if (!newNetworkOfferingMap.containsKey(networkOfferingId)) {
+          uniqueName="Isolated with external providers";
+          pstmt=conn.prepareStatement("INSERT INTO `cloud`.`network_offerings2` SELECT * FROM `cloud`.`network_offerings` WHERE id=?");
+          pstmt.setLong(1,networkOfferingId);
+          pstmt.executeUpdate();
+          pstmt=conn.prepareStatement("UPDATE `cloud`.`network_offerings2` SET id=?, unique_name=?, name=? WHERE id=?");
+          ntwkOffCount=ntwkOffCount + 1;
+          newNetworkOfferingId=ntwkOffCount;
+          pstmt.setLong(1,newNetworkOfferingId);
+          pstmt.setString(2,uniqueName);
+          pstmt.setString(3,uniqueName);
+          pstmt.setLong(4,networkOfferingId);
+          pstmt.executeUpdate();
+          pstmt=conn.prepareStatement("INSERT INTO `cloud`.`network_offerings` SELECT * from " + "`cloud`.`network_offerings2` WHERE id=" + newNetworkOfferingId);
+          pstmt.executeUpdate();
+          pstmt=conn.prepareStatement("UPDATE `cloud`.`networks` SET network_offering_id=? where id=?");
+          pstmt.setLong(1,newNetworkOfferingId);
+          pstmt.setLong(2,networkId);
+          pstmt.executeUpdate();
+          newNetworkOfferingMap.put(networkOfferingId,ntwkOffCount);
+        }
+ else {
+          pstmt=conn.prepareStatement("UPDATE `cloud`.`networks` SET network_offering_id=? where id=?");
+          newNetworkOfferingId=newNetworkOfferingMap.get(networkOfferingId);
+          pstmt.setLong(1,newNetworkOfferingId);
+          pstmt.setLong(2,networkId);
+          pstmt.executeUpdate();
+        }
+        s_logger.debug("Successfully updated network id=" + networkId + " with new network offering id "+ newNetworkOfferingId);
+      }
+    }
+ catch (    SQLException e) {
+      throw new CloudRuntimeException("Unable to switch networks to the new network offering",e);
+    }
+ finally {
+      try {
+        pstmt=conn.prepareStatement("DROP TABLE `cloud`.`network_offerings2`");
+        pstmt.executeUpdate();
+        if (rs != null) {
+          rs.close();
+        }
+        if (pstmt != null) {
+          pstmt.close();
+        }
+      }
+ catch (      SQLException e) {
+      }
+    }
+  }
+  return uniqueName;
+}
