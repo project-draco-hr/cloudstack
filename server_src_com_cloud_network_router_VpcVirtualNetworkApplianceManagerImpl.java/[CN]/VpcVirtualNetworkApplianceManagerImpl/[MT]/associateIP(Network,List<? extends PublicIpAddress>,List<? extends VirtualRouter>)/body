@@ -1,0 +1,51 @@
+{
+  if (ipAddress == null || ipAddress.isEmpty()) {
+    s_logger.debug("No ip association rules to be applied for network " + network.getId());
+    return true;
+  }
+  for (  PublicIpAddress ip : ipAddress) {
+    for (    VirtualRouter router : routers) {
+      URI broadcastUri=BroadcastDomainType.Vlan.toUri(ip.getVlanTag());
+      Nic nic=_nicDao.findByInstanceIdNetworkIdAndBroadcastUri(network.getId(),router.getId(),broadcastUri.toString());
+      if (nic != null) {
+        NicProfile defaultNic=new NicProfile();
+        if (ip.isSourceNat()) {
+          defaultNic.setDefaultNic(true);
+        }
+        defaultNic.setIp4Address(ip.getAddress().addr());
+        defaultNic.setGateway(ip.getGateway());
+        defaultNic.setNetmask(ip.getNetmask());
+        defaultNic.setMacAddress(ip.getMacAddress());
+        defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+        defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(ip.getVlanTag()));
+        defaultNic.setIsolationUri(IsolationType.Vlan.toUri(ip.getVlanTag()));
+        NicProfile publicNic=null;
+        Network publicNtwk=null;
+        try {
+          publicNtwk=_networkMgr.getNetwork(ip.getNetworkId());
+          publicNic=_itMgr.addVmToNetwork(router,publicNtwk,defaultNic);
+        }
+ catch (        ConcurrentOperationException e) {
+          s_logger.warn("Failed to add router " + router + " to vlan "+ ip.getVlanTag()+ " in public network "+ publicNtwk+ " due to ",e);
+        }
+catch (        InsufficientCapacityException e) {
+          s_logger.warn("Failed to add router " + router + " to vlan "+ ip.getVlanTag()+ " in public network "+ publicNtwk+ " due to ",e);
+        }
+ finally {
+          if (publicNic == null) {
+            s_logger.warn("Failed to add router " + router + " to vlan "+ ip.getVlanTag()+ " in public network "+ publicNtwk);
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return applyRules(network,routers,"vpc ip association",false,null,false,new RuleApplier(){
+    @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
+      Commands cmds=new Commands(OnError.Continue);
+      createVpcAssociateIPCommands(router,ipAddress,cmds,0);
+      return sendCommandsToRouter(router,cmds);
+    }
+  }
+);
+}

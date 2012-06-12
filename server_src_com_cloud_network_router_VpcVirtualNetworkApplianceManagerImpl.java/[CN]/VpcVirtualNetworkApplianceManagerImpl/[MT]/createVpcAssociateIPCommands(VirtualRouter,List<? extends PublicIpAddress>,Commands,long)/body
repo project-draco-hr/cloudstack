@@ -1,4 +1,6 @@
 {
+  Pair<IpAddressTO,Long> sourceNatIpAdd=null;
+  Boolean addSourceNat=null;
   Map<String,ArrayList<PublicIpAddress>> vlanIpMap=new HashMap<String,ArrayList<PublicIpAddress>>();
   for (  final PublicIpAddress ipAddress : ips) {
     String vlanTag=ipAddress.getVlanTag();
@@ -20,16 +22,14 @@
     int i=0;
     for (    final PublicIpAddress ipAddr : ipAddrList) {
       boolean add=(ipAddr.getState() == IpAddress.State.Releasing ? false : true);
-      boolean sourceNat=ipAddr.isSourceNat();
-      String vlanId=ipAddr.getVlanTag();
-      String vlanGateway=ipAddr.getGateway();
-      String vlanNetmask=ipAddr.getNetmask();
-      String vifMacAddress=ipAddr.getMacAddress();
-      String vmGuestAddress=null;
-      IpAddressTO ip=new IpAddressTO(ipAddr.getAccountId(),ipAddr.getAddress().addr(),add,false,sourceNat,vlanId,vlanGateway,vlanNetmask,vifMacAddress,vmGuestAddress,networkRate,ipAddr.isOneToOneNat());
+      IpAddressTO ip=new IpAddressTO(ipAddr.getAccountId(),ipAddr.getAddress().addr(),add,false,ipAddr.isSourceNat(),ipAddr.getVlanTag(),ipAddr.getGateway(),ipAddr.getNetmask(),ipAddr.getMacAddress(),null,networkRate,ipAddr.isOneToOneNat());
       ip.setTrafficType(network.getTrafficType());
       ip.setNetworkName(_networkMgr.getNetworkTag(router.getHypervisorType(),network));
       ipsToSend[i++]=ip;
+      if (ipAddr.isSourceNat()) {
+        sourceNatIpAdd=new Pair<IpAddressTO,Long>(ip,ipAddr.getNetworkId());
+        addSourceNat=add;
+      }
     }
     IpAssocVpcCommand cmd=new IpAssocVpcCommand(ipsToSend);
     cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
@@ -38,5 +38,16 @@
     DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
     cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
     cmds.addCommand("IPAssocVpcCommand",cmd);
+  }
+  if (sourceNatIpAdd != null) {
+    IpAddressTO sourceNatIp=sourceNatIpAdd.first();
+    Long networkId=sourceNatIpAdd.second();
+    SetSourceNatCommand cmd=new SetSourceNatCommand(sourceNatIp,addSourceNat);
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,getRouterIpInNetwork(networkId,router.getId()));
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+    DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
+    cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+    cmds.addCommand("SetSourceNatCommand",cmd);
   }
 }
