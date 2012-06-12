@@ -1,0 +1,42 @@
+{
+  Map<String,ArrayList<PublicIpAddress>> vlanIpMap=new HashMap<String,ArrayList<PublicIpAddress>>();
+  for (  final PublicIpAddress ipAddress : ips) {
+    String vlanTag=ipAddress.getVlanTag();
+    ArrayList<PublicIpAddress> ipList=vlanIpMap.get(vlanTag);
+    if (ipList == null) {
+      ipList=new ArrayList<PublicIpAddress>();
+    }
+    if (ipAddress.isSourceNat() && ipAddress.getState() == IpAddress.State.Releasing) {
+      ipAddress.setState(IpAddress.State.Allocated);
+    }
+    ipList.add(ipAddress);
+    vlanIpMap.put(vlanTag,ipList);
+  }
+  for (  Map.Entry<String,ArrayList<PublicIpAddress>> vlanAndIp : vlanIpMap.entrySet()) {
+    List<PublicIpAddress> ipAddrList=vlanAndIp.getValue();
+    Integer networkRate=_networkMgr.getNetworkRate(ipAddrList.get(0).getNetworkId(),router.getId());
+    Network network=_networkMgr.getNetwork(ipAddrList.get(0).getNetworkId());
+    IpAddressTO[] ipsToSend=new IpAddressTO[ipAddrList.size()];
+    int i=0;
+    for (    final PublicIpAddress ipAddr : ipAddrList) {
+      boolean add=(ipAddr.getState() == IpAddress.State.Releasing ? false : true);
+      boolean sourceNat=ipAddr.isSourceNat();
+      String vlanId=ipAddr.getVlanTag();
+      String vlanGateway=ipAddr.getGateway();
+      String vlanNetmask=ipAddr.getNetmask();
+      String vifMacAddress=ipAddr.getMacAddress();
+      String vmGuestAddress=null;
+      IpAddressTO ip=new IpAddressTO(ipAddr.getAccountId(),ipAddr.getAddress().addr(),add,false,sourceNat,vlanId,vlanGateway,vlanNetmask,vifMacAddress,vmGuestAddress,networkRate,ipAddr.isOneToOneNat());
+      ip.setTrafficType(network.getTrafficType());
+      ip.setNetworkName(_networkMgr.getNetworkTag(router.getHypervisorType(),network));
+      ipsToSend[i++]=ip;
+    }
+    IpAssocVpcCommand cmd=new IpAssocVpcCommand(ipsToSend);
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,getRouterIpInNetwork(ipAddrList.get(0).getNetworkId(),router.getId()));
+    cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+    DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
+    cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+    cmds.addCommand("IPAssocVpcCommand",cmd);
+  }
+}
