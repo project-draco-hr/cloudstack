@@ -1,0 +1,66 @@
+{
+  DomainRouterVO router=profile.getVirtualMachine();
+  boolean isVpc=(router.getVpcId() != null);
+  boolean result=super.finalizeCommandsOnStart(cmds,profile);
+  if (!isVpc) {
+    return result;
+  }
+  Map<Nic,Network> guestNics=new HashMap<Nic,Network>();
+  Map<Nic,Network> publicNics=new HashMap<Nic,Network>();
+  List<? extends Nic> routerNics=_nicDao.listByVmId(profile.getId());
+  for (  Nic routerNic : routerNics) {
+    Network network=_networkMgr.getNetwork(routerNic.getNetworkId());
+    if (network.getTrafficType() == TrafficType.Guest) {
+      guestNics.put(routerNic,network);
+    }
+ else     if (network.getTrafficType() == TrafficType.Public) {
+      publicNics.put(routerNic,network);
+    }
+  }
+  List<PublicIp> publicIps=new ArrayList<PublicIp>(1);
+  try {
+    for (    Nic publicNic : publicNics.keySet()) {
+      Network publicNtwk=publicNics.get(publicNic);
+      IPAddressVO userIp=_ipAddressDao.findByIpAndSourceNetworkId(publicNtwk.getId(),publicNic.getIp4Address());
+      PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
+      if (publicIp.isSourceNat()) {
+        publicIps.add(publicIp);
+      }
+      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,publicNic.getNetworkId()));
+      cmds.addCommand(plugNicCmd);
+    }
+    if (!publicIps.isEmpty()) {
+      createVpcAssociateIPCommands(router,publicIps,cmds);
+    }
+    for (    Nic guestNic : guestNics.keySet()) {
+      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,guestNic.getNetworkId()));
+      cmds.addCommand(plugNicCmd);
+      VirtualMachine vm=_vmDao.findById(router.getId());
+      NicProfile nicProfile=_networkMgr.getNicProfile(vm,guestNic.getNetworkId());
+      SetupGuestNetworkCommand setupCmd=createSetupGuestNetworkCommand(router,true,nicProfile);
+      cmds.addCommand(setupCmd);
+    }
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Failed to add router " + router + " to network due to exception ",ex);
+    return false;
+  }
+  boolean reprogramGuestNtwks=true;
+  if (profile.getParameter(Param.ReProgramGuestNetworks) != null && (Boolean)profile.getParameter(Param.ReProgramGuestNetworks) == false) {
+    reprogramGuestNtwks=false;
+  }
+  List<Long> routerGuestNtwkIds=_routerDao.getRouterNetworks(router.getId());
+  if (reprogramGuestNtwks) {
+    for (    Long guestNetworkId : routerGuestNtwkIds) {
+      s_logger.debug("Resending network ACLs as a part of VPC Virtual router start");
+      if (_networkMgr.isProviderSupportServiceInNetwork(guestNetworkId,Service.Firewall,Provider.VPCVirtualRouter)) {
+        List<? extends NetworkACL> networkACLs=_networkACLService.listNetworkACLs(guestNetworkId);
+        s_logger.debug("Found " + networkACLs.size() + " network ACLs to apply as a part of VPC VR "+ router+ " start.");
+        if (!networkACLs.isEmpty()) {
+          createNetworkACLsCommands((List<NetworkACL>)networkACLs,router,cmds,guestNetworkId);
+        }
+      }
+    }
+  }
+  return result;
+}
