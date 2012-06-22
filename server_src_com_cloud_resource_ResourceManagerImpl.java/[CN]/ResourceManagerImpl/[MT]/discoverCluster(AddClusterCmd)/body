@@ -101,31 +101,48 @@
         _clusterDao.remove(clusterId);
         throw new CloudRuntimeException(msg);
       }
-      CiscoNexusVSMDeviceVO vsm=new CiscoNexusVSMDeviceVO(vsmIp,vsmUser,vsmPassword);
-      Transaction txn=Transaction.currentTxn();
-      try {
-        txn.start();
-        vsm=_vsmDao.persist(vsm);
-        txn.commit();
+      Transaction txn;
+      CiscoNexusVSMDeviceVO vsm=_vsmDao.getVSMbyIpaddress(vsmIp);
+      if (vsm != null) {
+        List<ClusterVSMMapVO> clusterList=_clusterVSMDao.listByVSMId(vsm.getId());
+        if (clusterList != null && !clusterList.isEmpty()) {
+          s_logger.error("Failed to add cluster: specified Nexus VSM is already associated with another cluster");
+          _clusterDao.remove(clusterId);
+          ResourceInUseException ex=new ResourceInUseException("Failed to add cluster: specified Nexus VSM is already associated with another cluster with specified Id");
+          ex.addProxyObject("cluster",clusterList.get(0).getClusterId(),"clusterId");
+          throw ex;
+        }
       }
- catch (      Exception e) {
-        txn.rollback();
-        s_logger.error("Failed to persist Cisco Nexus 1000v VSM details to database. Exception: " + e.getMessage());
-        _clusterDao.remove(clusterId);
-        throw new CloudRuntimeException(e.getMessage());
+      if (_vsmDao.getVSMbyIpaddress(vsmIp) == null) {
+        vsm=new CiscoNexusVSMDeviceVO(vsmIp,vsmUser,vsmPassword);
+        txn=Transaction.currentTxn();
+        try {
+          txn.start();
+          vsm=_vsmDao.persist(vsm);
+          txn.commit();
+        }
+ catch (        Exception e) {
+          txn.rollback();
+          s_logger.error("Failed to persist Cisco Nexus 1000v VSM details to database. Exception: " + e.getMessage());
+          _clusterDao.remove(clusterId);
+          throw new CloudRuntimeException(e.getMessage());
+        }
       }
-      ClusterVSMMapVO connectorObj=new ClusterVSMMapVO(clusterId,vsm.getId());
-      txn=Transaction.currentTxn();
-      try {
-        txn.start();
-        _clusterVSMDao.persist(connectorObj);
-        txn.commit();
-      }
- catch (      Exception e) {
-        txn.rollback();
-        s_logger.error("Failed to associate Cisco Nexus 1000v VSM with cluster: " + clusterName + ". Exception: "+ e.getMessage());
-        _clusterDao.remove(clusterId);
-        throw new CloudRuntimeException(e.getMessage());
+      vsm=_vsmDao.getVSMbyIpaddress(vsmIp);
+      if (vsm != null) {
+        ClusterVSMMapVO connectorObj=new ClusterVSMMapVO(clusterId,vsm.getId());
+        txn=Transaction.currentTxn();
+        try {
+          txn.start();
+          _clusterVSMDao.persist(connectorObj);
+          txn.commit();
+        }
+ catch (        Exception e) {
+          txn.rollback();
+          s_logger.error("Failed to associate Cisco Nexus 1000v VSM with cluster: " + clusterName + ". Exception: "+ e.getMessage());
+          _clusterDao.remove(clusterId);
+          throw new CloudRuntimeException(e.getMessage());
+        }
       }
     }
  else {
