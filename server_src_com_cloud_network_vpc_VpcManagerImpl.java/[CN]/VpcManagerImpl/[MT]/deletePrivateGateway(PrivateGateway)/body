@@ -1,0 +1,27 @@
+{
+  long networkId=gateway.getNetworkId();
+  boolean deleteNetwork=true;
+  List<PrivateIpVO> privateIps=_privateIpDao.listByNetworkId(networkId);
+  if (privateIps.size() > 1 || !privateIps.get(0).getIpAddress().equalsIgnoreCase(gateway.getIp4Address())) {
+    s_logger.debug("Not removing network id=" + gateway.getNetworkId() + " as it has private ip addresses for other gateways");
+    deleteNetwork=false;
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  PrivateIpVO ip=_privateIpDao.findByIpAndSourceNetworkId(gateway.getNetworkId(),gateway.getIp4Address());
+  if (ip != null) {
+    _privateIpDao.remove(ip.getId());
+    s_logger.debug("Deleted private ip " + ip);
+  }
+  if (deleteNetwork) {
+    User callerUser=_accountMgr.getActiveUser(UserContext.current().getCallerUserId());
+    Account owner=_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
+    ReservationContext context=new ReservationContextImpl(null,null,callerUser,owner);
+    _ntwkMgr.destroyNetwork(networkId,context);
+    s_logger.debug("Deleted private network id=" + networkId);
+  }
+  _vpcGatewayDao.remove(gateway.getId());
+  s_logger.debug("Deleted private gateway " + gateway);
+  txn.commit();
+  return true;
+}

@@ -26,9 +26,25 @@
   cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  Network privateNetwork=createGuestNetwork(ntwkOff.getId(),networkName,displayText,gateway,cidr,vlan,null,owner,null,pNtwk,pNtwk.getDataCenterId(),ACLType.Account,null,null);
-  PrivateIpVO privateIp=new PrivateIpVO(startIp,privateNetwork.getId());
+  DataCenterVO dc=_dcDao.lockRow(pNtwk.getDataCenterId(),true);
+  Network privateNetwork=_networksDao.getPrivateNetwork(BroadcastDomainType.Vlan.toUri(vlan).toString(),cidr,networkOwnerId,pNtwk.getDataCenterId());
+  if (privateNetwork == null) {
+    privateNetwork=createGuestNetwork(ntwkOff.getId(),networkName,displayText,gateway,cidr,vlan,null,owner,null,pNtwk,pNtwk.getDataCenterId(),ACLType.Account,null,null);
+    s_logger.debug("Created private network " + privateNetwork);
+  }
+ else {
+    s_logger.debug("Private network already exists: " + privateNetwork);
+  }
+  PrivateIpVO privateIp=_privateIpDao.findByIpAndSourceNetworkId(privateNetwork.getId(),startIp);
+  if (privateIp != null) {
+    throw new InvalidParameterValueException("Private ip address " + startIp + " already used for private gateway"+ " in zone "+ _configMgr.getZone(pNtwk.getDataCenterId()).getName());
+  }
+  Long mac=dc.getMacAddress();
+  Long nextMac=mac + 1;
+  dc.setMacAddress(nextMac);
+  privateIp=new PrivateIpVO(startIp,privateNetwork.getId(),nextMac);
   _privateIpDao.persist(privateIp);
+  _dcDao.update(dc.getId(),dc);
   txn.commit();
   s_logger.debug("Private network " + privateNetwork + " is created");
   return privateNetwork;
