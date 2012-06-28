@@ -23,19 +23,26 @@
     }
   }
   try {
-    List<PublicIp> publicIps=new ArrayList<PublicIp>(1);
+    List<PublicIp> sourceNat=new ArrayList<PublicIp>(1);
     for (    Nic publicNic : publicNics.keySet()) {
       Network publicNtwk=publicNics.get(publicNic);
       IPAddressVO userIp=_ipAddressDao.findByIpAndSourceNetworkId(publicNtwk.getId(),publicNic.getIp4Address());
       if (userIp.isSourceNat()) {
         PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
-        publicIps.add(publicIp);
+        sourceNat.add(publicIp);
+        if (router.getPublicIpAddress() == null) {
+          DomainRouterVO routerVO=_routerDao.findById(router.getId());
+          routerVO.setPublicIpAddress(publicNic.getIp4Address());
+          routerVO.setPublicNetmask(publicNic.getNetmask());
+          routerVO.setPublicMacAddress(publicNic.getMacAddress());
+          _routerDao.update(routerVO.getId(),routerVO);
+        }
       }
       PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,publicNic.getNetworkId()));
       cmds.addCommand(plugNicCmd);
     }
-    if (!publicIps.isEmpty()) {
-      createVpcAssociateIPCommands(router,publicIps,cmds);
+    if (!sourceNat.isEmpty()) {
+      createVpcAssociateIPCommands(router,sourceNat,cmds);
     }
     for (    Nic guestNic : guestNics.keySet()) {
       PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,guestNic.getNetworkId()));
