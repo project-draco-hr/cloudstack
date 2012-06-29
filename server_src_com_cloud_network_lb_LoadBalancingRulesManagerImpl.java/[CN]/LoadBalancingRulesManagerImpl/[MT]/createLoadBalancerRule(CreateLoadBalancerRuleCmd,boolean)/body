@@ -23,6 +23,7 @@
     }
   }
   LoadBalancer result=_elbMgr.handleCreateLoadBalancerRule(lb,lbOwner,lb.getNetworkId());
+  boolean performedIpAssoc=false;
   if (result == null) {
     IpAddress ip=null;
     Network guestNetwork=_networkMgr.getNetwork(lb.getNetworkId());
@@ -34,8 +35,11 @@
     try {
       if (ipAddressVO != null) {
         if (ipAddressVO.getAssociatedWithNetworkId() == null) {
+          ipAddressVO.setAssociatedWithNetworkId(lb.getNetworkId());
+          _networkMgr.checkIpForService(ipAddressVO,Service.Lb);
           s_logger.debug("The ip is not associated with the network id=" + lb.getNetworkId() + " so assigning");
           ipAddressVO=_networkMgr.associateIPToGuestNetwork(ipAddrId,lb.getNetworkId());
+          boolean perfomedIpAssoc=true;
         }
         _networkMgr.checkIpForService(ipAddressVO,Service.Lb);
       }
@@ -54,6 +58,13 @@
       if (result == null && ip != null) {
         s_logger.debug("Releasing system IP address " + ip + " as corresponding lb rule failed to create");
         _networkMgr.handleSystemIpRelease(ip);
+      }
+      if (performedIpAssoc) {
+        ip=_ipAddressDao.findById(ip.getId());
+        if (ip != null && ip.getVpcId() != null && _firewallDao.listByIp(ip.getId()).isEmpty()) {
+          s_logger.debug("Releasing VPC ip address " + ip + " as LB rule failed to create");
+          _networkMgr.unassignIPFromVpcNetwork(ip.getId());
+        }
       }
     }
   }
