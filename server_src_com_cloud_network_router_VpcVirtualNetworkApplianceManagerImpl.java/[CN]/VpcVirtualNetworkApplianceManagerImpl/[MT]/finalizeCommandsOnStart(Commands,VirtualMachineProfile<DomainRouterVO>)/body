@@ -23,12 +23,12 @@
     }
   }
   try {
-    List<PublicIp> sourceNat=new ArrayList<PublicIp>(1);
+    List<PrivateIp> sourceNat=new ArrayList<PrivateIp>(1);
     for (    Nic publicNic : publicNics.keySet()) {
       Network publicNtwk=publicNics.get(publicNic);
       IPAddressVO userIp=_ipAddressDao.findByIpAndSourceNetworkId(publicNtwk.getId(),publicNic.getIp4Address());
       if (userIp.isSourceNat()) {
-        PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
+        PrivateIp publicIp=new PrivateIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
         sourceNat.add(publicIp);
         if (router.getPublicIpAddress() == null) {
           DomainRouterVO routerVO=_routerDao.findById(router.getId());
@@ -42,22 +42,26 @@
       cmds.addCommand(plugNicCmd);
     }
     if (!sourceNat.isEmpty()) {
-      createVpcAssociateIPCommands(router,sourceNat,cmds);
+      createVpcAssociatePublicIPCommands(router,sourceNat,cmds);
     }
-    for (    Nic guestNic : guestNics.keySet()) {
-      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,guestNic.getNetworkId()));
+    for (    Nic nic : guestNics.keySet()) {
+      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,nic.getNetworkId()));
       cmds.addCommand(plugNicCmd);
-      if (!_networkMgr.isPrivateGateway(guestNic)) {
+      if (!_networkMgr.isPrivateGateway(nic)) {
         VirtualMachine vm=_vmDao.findById(router.getId());
-        NicProfile nicProfile=_networkMgr.getNicProfile(vm,guestNic.getNetworkId());
+        NicProfile nicProfile=_networkMgr.getNicProfile(vm,nic.getNetworkId());
         SetupGuestNetworkCommand setupCmd=createSetupGuestNetworkCommand(router,true,nicProfile);
         cmds.addCommand(setupCmd);
       }
  else {
-        Integer networkRate=_networkMgr.getNetworkRate(guestNic.getNetworkId(),router.getId());
-        IpAddressTO ip=new IpAddressTO(Account.ACCOUNT_ID_SYSTEM,guestNic.getIp4Address(),true,false,true,guestNic.getBroadcastUri().getHost(),guestNic.getGateway(),guestNic.getNetmask(),guestNic.getMacAddress(),null,networkRate,false);
-        SetSourceNatCommand cmd=new SetSourceNatCommand(ip,true);
-        cmds.addCommand(cmd);
+        PrivateIpVO ipVO=_privateIpDao.findByIpAndSourceNetworkId(nic.getNetworkId(),nic.getIp4Address());
+        Network network=_networkDao.findById(nic.getNetworkId());
+        String vlanTag=network.getBroadcastUri().getHost();
+        String netmask=NetUtils.getCidrNetmask(network.getCidr());
+        PrivateIpAddress ip=new PrivateIpAddress(ipVO,vlanTag,network.getGateway(),netmask,ipVO.getMacAddress());
+        List<PrivateIpAddress> privateIps=new ArrayList<PrivateIpAddress>(1);
+        privateIps.add(ip);
+        createVpcAssociatePrivateIPCommands(router,privateIps,cmds,true);
       }
     }
   }

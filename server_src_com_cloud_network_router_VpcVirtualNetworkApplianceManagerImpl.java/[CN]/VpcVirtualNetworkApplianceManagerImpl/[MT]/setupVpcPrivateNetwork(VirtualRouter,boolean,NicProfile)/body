@@ -1,22 +1,19 @@
 {
-  boolean result=true;
+  PrivateIpVO ipVO=_privateIpDao.findByIpAndSourceNetworkId(privateNic.getNetworkId(),privateNic.getIp4Address());
+  Network network=_networkDao.findById(privateNic.getNetworkId());
+  String vlanTag=network.getBroadcastUri().getHost();
+  String netmask=NetUtils.getCidrNetmask(network.getCidr());
+  PrivateIpAddress ip=new PrivateIpAddress(ipVO,vlanTag,network.getGateway(),netmask,ipVO.getMacAddress());
+  List<PrivateIpAddress> privateIps=new ArrayList<PrivateIpAddress>(1);
+  privateIps.add(ip);
   Commands cmds=new Commands(OnError.Stop);
-  Integer networkRate=_networkMgr.getNetworkRate(privateNic.getNetworkId(),router.getId());
-  IpAddressTO ip=new IpAddressTO(Account.ACCOUNT_ID_SYSTEM,privateNic.getIp4Address(),add,false,true,privateNic.getBroadCastUri().getHost(),privateNic.getGateway(),privateNic.getNetmask(),privateNic.getMacAddress(),null,networkRate,false);
-  Network network=_networkMgr.getNetwork(privateNic.getNetworkId());
-  ip.setTrafficType(network.getTrafficType());
-  SetSourceNatCommand cmd=new SetSourceNatCommand(ip,add);
-  cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
-  cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
-  DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
-  cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
-  cmds.addCommand("SetSourceNatCommand",cmd);
-  sendCommandsToRouter(router,cmds);
-  SetSourceNatAnswer setupAnswer=cmds.getAnswer(SetSourceNatAnswer.class);
-  String setup=add ? "set" : "destroy";
-  if (!(setupAnswer != null && setupAnswer.getResult())) {
-    s_logger.warn("Unable to " + setup + " source nat for private gateway "+ privateNic+ " on router "+ router);
-    result=false;
+  createVpcAssociatePrivateIPCommands(router,privateIps,cmds,add);
+  if (sendCommandsToRouter(router,cmds)) {
+    s_logger.debug("Successfully applied ip association for ip " + ip + " in vpc network "+ network);
+    return true;
   }
-  return result;
+ else {
+    s_logger.warn("Failed to associate ip address " + ip + " in vpc network "+ network);
+    return false;
+  }
 }
