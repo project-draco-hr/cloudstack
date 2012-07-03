@@ -1,6 +1,7 @@
 {
   Long ipId=cmd.getIpAddressId();
   Long id=cmd.getId();
+  Map<String,String> tags=cmd.getTags();
   Account caller=UserContext.current().getCaller();
   List<Long> permittedAccounts=new ArrayList<Long>();
   if (ipId != null) {
@@ -21,10 +22,30 @@
   sb.and("id",sb.entity().getId(),Op.EQ);
   sb.and("ip",sb.entity().getSourceIpAddressId(),Op.EQ);
   sb.and("purpose",sb.entity().getPurpose(),Op.EQ);
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
   SearchCriteria<PortForwardingRuleVO> sc=sb.create();
   _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   if (id != null) {
     sc.setParameters("id",id);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.PortForwardingRule.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
   }
   if (ipId != null) {
     sc.setParameters("ip",ipId);
