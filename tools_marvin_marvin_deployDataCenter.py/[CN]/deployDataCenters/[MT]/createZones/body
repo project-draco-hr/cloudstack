@@ -12,21 +12,27 @@ def createZones(self, zones):
         zoneresponse = self.apiClient.createZone(createzone)
         zoneId = zoneresponse.id
         phynetwrk = self.createPhysicalNetwork((zone.name + '-pnet'), zoneId)
-        self.addTrafficTypes(phynetwrk.id, ['Guest', 'Public', 'Management'])
         self.configureProviders(phynetwrk, zone)
         self.updatePhysicalNetwork(phynetwrk.id, 'Enabled', vlan=zone.vlan)
         if (zone.networktype == 'Basic'):
+            self.addTrafficTypes(phynetwrk.id, ['Guest', 'Management'])
             listnetworkoffering = listNetworkOfferings.listNetworkOfferingsCmd()
-            listnetworkoffering.name = 'DefaultSharedNetworkOfferingWithSGService'
+            if zone.securitygroupenabled:
+                listnetworkoffering.name = 'DefaultSharedNetworkOfferingWithSGService'
+            else:
+                listnetworkoffering.name = 'DefaultSharedNetworkOffering'
+                listnetworkoffering.displaytext = 'Offering for Shared networks'
             listnetworkofferingresponse = self.apiClient.listNetworkOfferings(listnetworkoffering)
             guestntwrk = configGenerator.network()
             guestntwrk.displaytext = 'guestNetworkForBasicZone'
             guestntwrk.name = 'guestNetworkForBasicZone'
             guestntwrk.zoneid = zoneId
             guestntwrk.networkofferingid = listnetworkofferingresponse[0].id
-            self.createnetworks([guestntwrk], zoneId, zone.networktype)
-        self.createpods(zone.pods, zone, zoneId)
+            networkid = self.createnetworks([guestntwrk], zoneId, zone.networktype)
+            self.createpods(zone.pods, zone, zoneId, networkid)
         if (zone.networktype == 'Advanced'):
+            self.createpods(zone.pods, zone, zoneId)
+            self.addTrafficTypes(phynetwrk.id, ['Guest', 'Public', 'Management'])
             self.createVlanIpRanges(zone.networktype, zone.ipranges, zoneId)
         self.createSecondaryStorages(zone.secondaryStorages, zoneId)
         self.enableZone(zoneId, 'Enabled')
