@@ -1,18 +1,28 @@
 {
   boolean result=true;
-  try {
-    PlugNicCommand plugNicCmd=new PlugNicCommand(vm,nic);
-    Commands cmds=new Commands(OnError.Stop);
-    cmds.addCommand("plugnic",plugNicCmd);
-    _agentMgr.send(dest.getHost().getId(),cmds);
-    PlugNicAnswer plugNicAnswer=cmds.getAnswer(PlugNicAnswer.class);
-    if (!(plugNicAnswer != null && plugNicAnswer.getResult())) {
-      s_logger.warn("Unable to plug nic for vm " + vm.getHostName());
-      result=false;
+  DomainRouterVO router=_routerDao.findById(vm.getId());
+  if (router.getState() == State.Running) {
+    try {
+      PlugNicCommand plugNicCmd=new PlugNicCommand(vm,nic);
+      Commands cmds=new Commands(OnError.Stop);
+      cmds.addCommand("plugnic",plugNicCmd);
+      _agentMgr.send(dest.getHost().getId(),cmds);
+      PlugNicAnswer plugNicAnswer=cmds.getAnswer(PlugNicAnswer.class);
+      if (!(plugNicAnswer != null && plugNicAnswer.getResult())) {
+        s_logger.warn("Unable to plug nic for vm " + vm.getHostName());
+        result=false;
+      }
+    }
+ catch (    OperationTimedoutException e) {
+      throw new AgentUnavailableException("Unable to plug nic for router " + vm.getHostName() + " in network "+ network,dest.getHost().getId(),e);
     }
   }
- catch (  OperationTimedoutException e) {
-    throw new AgentUnavailableException("Unable to plug nic for router " + vm.getHostName() + " in network "+ network,dest.getHost().getId(),e);
+ else   if (router.getState() == State.Stopped || router.getState() == State.Stopping) {
+    s_logger.debug("Router " + router.getInstanceName() + " is in "+ router.getState()+ ", so not sending PlugNic command to the backend");
+  }
+ else {
+    s_logger.warn("Unable to apply PlugNic, vm " + router + " is not in the right state "+ router.getState());
+    throw new ResourceUnavailableException("Unable to apply PlugNic on the backend," + " vm " + vm + " is not in the right state",DataCenter.class,router.getDataCenterIdToDeployIn());
   }
   return result;
 }
