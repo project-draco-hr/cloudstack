@@ -21,6 +21,7 @@
     String guestOSJoin="";
     StringBuilder templateHostRefJoin=new StringBuilder();
     String dataCenterJoin="", lpjoin="";
+    String tagsJoin="";
     if (isIso && !hyperType.equals(HypervisorType.None)) {
       guestOSJoin=" INNER JOIN guest_os guestOS on (guestOS.id = t.guest_os_id) INNER JOIN guest_os_hypervisor goh on ( goh.guest_os_id = guestOS.id) ";
     }
@@ -35,7 +36,10 @@
     if (templateFilter == TemplateFilter.sharedexecutable) {
       lpjoin=" INNER JOIN launch_permission lp ON t.id = lp.template_id ";
     }
-    sql+=guestOSJoin + templateHostRefJoin + dataCenterJoin+ lpjoin;
+    if (tags != null && !tags.isEmpty()) {
+      tagsJoin=" INNER JOIN resource_tags r ON t.id = r.resource_id ";
+    }
+    sql+=guestOSJoin + templateHostRefJoin + dataCenterJoin+ lpjoin+ tagsJoin;
     String whereClause="";
     if ((listProjectResourcesCriteria == ListProjectResourcesCriteria.SkipProjectResources || (!permittedAccounts.isEmpty() && !(templateFilter == TemplateFilter.community || templateFilter == TemplateFilter.featured))) && !(caller.getType() != Account.ACCOUNT_TYPE_NORMAL && templateFilter == TemplateFilter.all)) {
       whereClause+=" INNER JOIN account a on (t.account_id = a.id)";
@@ -120,6 +124,18 @@
  else     if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && !isIso) {
       return templateZonePairList;
     }
+    if (tags != null && !tags.isEmpty()) {
+      whereClause+=" AND (";
+      boolean first=true;
+      for (      String key : tags.keySet()) {
+        if (!first) {
+          whereClause+=" OR ";
+        }
+        whereClause+="(r.key=\"" + key + "\" and r.value=\""+ tags.get(key)+ "\")";
+        first=false;
+      }
+      whereClause+=")";
+    }
     if (whereClause.equals("")) {
       whereClause+=" WHERE ";
     }
@@ -134,7 +150,7 @@
       templateZonePairList.add(templateZonePair);
     }
     if (isIso && templateZonePairList.size() < (pageSize != null ? pageSize : 500) && templateFilter != TemplateFilter.community && !(templateFilter == TemplateFilter.self && !BaseCmd.isRootAdmin(caller.getType()))) {
-      List<VMTemplateVO> publicIsos=publicIsoSearch(bootable,false);
+      List<VMTemplateVO> publicIsos=publicIsoSearch(bootable,false,tags);
       for (int i=0; i < publicIsos.size(); i++) {
         if (keyword != null && publicIsos.get(i).getName().contains(keyword)) {
           templateZonePairList.add(new Pair<Long,Long>(publicIsos.get(i).getId(),null));
