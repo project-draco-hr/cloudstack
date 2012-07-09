@@ -10,6 +10,7 @@
   Long ipId=cmd.getId();
   Boolean sourceNat=cmd.getIsSourceNat();
   Boolean staticNat=cmd.getIsStaticNat();
+  Map<String,String> tags=cmd.getTags();
   Account caller=UserContext.current().getCaller();
   List<Long> permittedAccounts=new ArrayList<Long>();
   Boolean isAllocated=cmd.isAllocatedOnly();
@@ -40,6 +41,17 @@
   if (keyword != null && address == null) {
     sb.and("addressLIKE",sb.entity().getAddress(),SearchCriteria.Op.LIKE);
   }
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
   SearchBuilder<VlanVO> vlanSearch=_vlanDao.createSearchBuilder();
   vlanSearch.and("vlanType",vlanSearch.entity().getVlanType(),SearchCriteria.Op.EQ);
   sb.join("vlanSearch",vlanSearch,sb.entity().getVlanId(),vlanSearch.entity().getId(),JoinBuilder.JoinType.INNER);
@@ -61,6 +73,15 @@
   SearchCriteria<IPAddressVO> sc=sb.create();
   _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   sc.setJoinParameters("vlanSearch","vlanType",vlanType);
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.PublicIpAddress.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
   if (zone != null) {
     sc.setParameters("dataCenterId",zone);
   }
