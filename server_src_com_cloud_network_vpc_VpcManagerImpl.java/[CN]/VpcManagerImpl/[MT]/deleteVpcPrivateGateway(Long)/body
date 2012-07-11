@@ -1,19 +1,29 @@
 {
-  VpcGatewayVO gatewayVO=_vpcGatewayDao.findById(gatewayId);
+  VpcGatewayVO gatewayVO=_vpcGatewayDao.acquireInLockTable(gatewayId);
   if (gatewayVO == null || gatewayVO.getType() != VpcGateway.Type.Private) {
-    throw new InvalidParameterValueException("Can't find private gateway by id specified");
+    throw new ConcurrentOperationException("Unable to lock gateway " + gatewayId);
   }
-  long routeCount=_staticRouteDao.countRoutesByGateway(gatewayVO.getId());
-  if (routeCount > 0) {
-    throw new CloudRuntimeException("Can't delete private gateway " + gatewayVO + " as it has "+ routeCount+ " static routes applied. Remove the routes first");
-  }
-  PrivateGateway gateway=getVpcPrivateGateway(gatewayId);
-  if (getVpcElement().deletePrivateGateway(gateway)) {
-    s_logger.debug("Private gateway " + gateway + " was applied succesfully on the backend");
-  }
+  try {
+    gatewayVO.setState(VpcGateway.State.Deleting);
+    _vpcGatewayDao.update(gatewayVO.getId(),gatewayVO);
+    s_logger.debug("Marked gateway " + gatewayVO + " with state "+ VpcGateway.State.Deleting);
+    long routeCount=_staticRouteDao.countRoutesByGateway(gatewayVO.getId());
+    if (routeCount > 0) {
+      throw new CloudRuntimeException("Can't delete private gateway " + gatewayVO + " as it has "+ routeCount+ " static routes applied. Remove the routes first");
+    }
+    PrivateGateway gateway=getVpcPrivateGateway(gatewayId);
+    if (getVpcElement().deletePrivateGateway(gateway)) {
+      s_logger.debug("Private gateway " + gateway + " was applied succesfully on the backend");
+    }
  else {
-    s_logger.warn("Private gateway " + gateway + " failed to apply on the backend");
-    return false;
+      s_logger.warn("Private gateway " + gateway + " failed to apply on the backend");
+      return false;
+    }
+    return deletePrivateGatewayFromTheDB(gateway);
   }
-  return deletePrivateGatewayFromTheDB(gateway);
+  finally {
+    if (gatewayVO != null) {
+      _vpcGatewayDao.releaseFromLockTable(gatewayId);
+    }
+  }
 }
