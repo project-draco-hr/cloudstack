@@ -10,21 +10,28 @@
     throw new InvalidParameterValueException("Unable to create port forwarding rule; ip id=" + ipAddrId + " has static nat enabled");
   }
   Long networkId=rule.getNetworkId();
+  Network network=_networkMgr.getNetwork(networkId);
   boolean performedIpAssoc=false;
   if (ipAddress.getAssociatedWithNetworkId() == null) {
-    ipAddress.setAssociatedWithNetworkId(networkId);
-    _networkMgr.checkIpForService(ipAddress,Service.PortForwarding);
-    s_logger.debug("The ip is not associated with the network id=" + networkId + " so assigning");
-    try {
-      ipAddress=_networkMgr.associateIPToGuestNetwork(ipAddrId,networkId);
-      performedIpAssoc=true;
-    }
- catch (    Exception ex) {
-      throw new CloudRuntimeException("Failed to associate ip to network as " + "a part of port forwarding rule creation");
+    boolean assignToVpcNtwk=network.getVpcId() != null && ipAddress.getVpcId() != null && ipAddress.getVpcId().longValue() == network.getVpcId();
+    if (assignToVpcNtwk) {
+      ipAddress.setAssociatedWithNetworkId(networkId);
+      _networkMgr.checkIpForService(ipAddress,Service.PortForwarding,networkId);
+      s_logger.debug("The ip is not associated with the VPC network id=" + networkId + ", so assigning");
+      try {
+        ipAddress=_networkMgr.associateIPToGuestNetwork(ipAddrId,networkId);
+        performedIpAssoc=true;
+      }
+ catch (      Exception ex) {
+        throw new CloudRuntimeException("Failed to associate ip to VPC network as " + "a part of port forwarding rule creation");
+      }
     }
   }
  else {
-    _networkMgr.checkIpForService(ipAddress,Service.PortForwarding);
+    _networkMgr.checkIpForService(ipAddress,Service.PortForwarding,null);
+  }
+  if (ipAddress.getAssociatedWithNetworkId() == null) {
+    throw new InvalidParameterValueException("Ip address " + ipAddress + " is not assigned to the network "+ network);
   }
   try {
     _firewallMgr.validateFirewallRule(caller,ipAddress,rule.getSourcePortStart(),rule.getSourcePortEnd(),rule.getProtocol(),Purpose.PortForwarding,FirewallRuleType.User);
