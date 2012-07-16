@@ -15,39 +15,37 @@
   IPAddressVO ipVO=null;
   if (ipAddrId != null) {
     ipVO=_ipAddressDao.findById(ipAddrId);
+  }
+  Network network=_networkMgr.getNetwork(lb.getNetworkId());
+  LoadBalancer result=null;
+  if (result == null) {
+    IpAddress systemIp=null;
+    NetworkOffering off=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+    if (off.getElasticLb() && ipVO == null && network.getVpcId() == null) {
+      systemIp=_networkMgr.assignSystemIp(lb.getNetworkId(),lbOwner,true,false);
+      lb.setSourceIpAddressId(systemIp.getId());
+      ipVO=_ipAddressDao.findById(systemIp.getId());
+    }
     if (ipVO == null) {
-      throw new InvalidParameterValueException("Unable to create load balance rule; ip id=" + ipAddrId + ""+ " doesn't exist in the system");
+      throw new InvalidParameterValueException("Unable to create load balance rule; can't find/allocate source IP");
     }
  else     if (ipVO.isOneToOneNat()) {
       throw new NetworkRuleConflictException("Can't do load balance on ip address: " + ipVO.getAddress());
     }
-  }
-  LoadBalancer result=null;
-  if (result == null) {
-    IpAddress systemIp=null;
-    Network guestNetwork=_networkMgr.getNetwork(lb.getNetworkId());
-    NetworkOffering off=_configMgr.getNetworkOffering(guestNetwork.getNetworkOfferingId());
-    if (off.getElasticLb() && ipVO == null) {
-      systemIp=_networkMgr.assignSystemIp(lb.getNetworkId(),lbOwner,true,false);
-      lb.setSourceIpAddressId(systemIp.getId());
-    }
     boolean performedIpAssoc=false;
     try {
-      Network network=_networkMgr.getNetwork(lb.getNetworkId());
-      if (ipVO != null) {
-        if (ipVO.getAssociatedWithNetworkId() == null) {
-          boolean assignToVpcNtwk=network.getVpcId() != null && ipVO.getVpcId() != null && ipVO.getVpcId().longValue() == network.getVpcId();
-          if (assignToVpcNtwk) {
-            ipVO.setAssociatedWithNetworkId(lb.getNetworkId());
-            _networkMgr.checkIpForService(ipVO,Service.Lb,lb.getNetworkId());
-            s_logger.debug("The ip is not associated with the VPC network id=" + lb.getNetworkId() + " so assigning");
-            ipVO=_networkMgr.associateIPToGuestNetwork(ipAddrId,lb.getNetworkId());
-            performedIpAssoc=true;
-          }
+      if (ipVO.getAssociatedWithNetworkId() == null) {
+        boolean assignToVpcNtwk=network.getVpcId() != null && ipVO.getVpcId() != null && ipVO.getVpcId().longValue() == network.getVpcId();
+        if (assignToVpcNtwk) {
+          ipVO.setAssociatedWithNetworkId(lb.getNetworkId());
+          _networkMgr.checkIpForService(ipVO,Service.Lb,lb.getNetworkId());
+          s_logger.debug("The ip is not associated with the VPC network id=" + lb.getNetworkId() + " so assigning");
+          ipVO=_networkMgr.associateIPToGuestNetwork(ipAddrId,lb.getNetworkId());
+          performedIpAssoc=true;
         }
+      }
  else {
-          _networkMgr.checkIpForService(ipVO,Service.Lb,null);
-        }
+        _networkMgr.checkIpForService(ipVO,Service.Lb,null);
       }
       if (ipVO.getAssociatedWithNetworkId() == null) {
         throw new InvalidParameterValueException("Ip address " + ipVO + " is not assigned to the network "+ network);
