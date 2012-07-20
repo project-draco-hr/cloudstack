@@ -1,0 +1,89 @@
+{
+  if (ipAddress == null || ipAddress.isEmpty()) {
+    s_logger.debug("No ip association rules to be applied for network " + network.getId());
+    return true;
+  }
+  VirtualRouter router=routers.get(0);
+  Map<String,PublicIpAddress> nicsToPlug=new HashMap<String,PublicIpAddress>();
+  Map<String,PublicIpAddress> nicsToUnPlug=new HashMap<String,PublicIpAddress>();
+  for (  PublicIpAddress ip : ipAddress) {
+    long publicNtwkId=ip.getNetworkId();
+    if (!_networkMgr.ipUsedInVpc(ip)) {
+      ip.setState(IpAddress.State.Releasing);
+    }
+    if (ip.getState() == IpAddress.State.Releasing) {
+      Nic nic=_nicDao.findByIp4AddressAndNetworkIdAndInstanceId(publicNtwkId,router.getId(),ip.getAddress().addr());
+      if (nic != null) {
+        nicsToUnPlug.put(ip.getVlanTag(),ip);
+        s_logger.debug("Need to unplug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
+      }
+    }
+  }
+  for (  PublicIpAddress ip : ipAddress) {
+    URI broadcastUri=BroadcastDomainType.Vlan.toUri(ip.getVlanTag());
+    long publicNtwkId=ip.getNetworkId();
+    if (!_networkMgr.ipUsedInVpc(ip)) {
+      ip.setState(IpAddress.State.Releasing);
+    }
+    if (ip.getState() == IpAddress.State.Allocated || ip.getState() == IpAddress.State.Allocating) {
+      Nic nic=_nicDao.findByInstanceIdNetworkIdAndBroadcastUri(publicNtwkId,router.getId(),broadcastUri.toString());
+      if ((nic == null && nicsToPlug.get(ip.getVlanTag()) == null) || nicsToUnPlug.get(ip.getVlanTag()) != null) {
+        nicsToPlug.put(ip.getVlanTag(),ip);
+        s_logger.debug("Need to plug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
+      }
+    }
+  }
+  for (  String vlanTag : nicsToPlug.keySet()) {
+    PublicIpAddress ip=nicsToPlug.get(vlanTag);
+    NicProfile defaultNic=new NicProfile();
+    if (ip.isSourceNat()) {
+      defaultNic.setDefaultNic(true);
+    }
+    defaultNic.setIp4Address(ip.getAddress().addr());
+    defaultNic.setGateway(ip.getGateway());
+    defaultNic.setNetmask(ip.getNetmask());
+    defaultNic.setMacAddress(ip.getMacAddress());
+    defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+    defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(ip.getVlanTag()));
+    defaultNic.setIsolationUri(IsolationType.Vlan.toUri(ip.getVlanTag()));
+    NicProfile publicNic=null;
+    Network publicNtwk=null;
+    try {
+      publicNtwk=_networkMgr.getNetwork(ip.getNetworkId());
+      publicNic=_itMgr.addVmToNetwork(router,publicNtwk,defaultNic);
+    }
+ catch (    ConcurrentOperationException e) {
+      s_logger.warn("Failed to add router " + router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk+ " due to ",e);
+    }
+catch (    InsufficientCapacityException e) {
+      s_logger.warn("Failed to add router " + router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk+ " due to ",e);
+    }
+ finally {
+      if (publicNic == null) {
+        s_logger.warn("Failed to add router " + router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk);
+        return false;
+      }
+    }
+  }
+  boolean result=applyRules(network,routers,"vpc ip association",false,null,false,new RuleApplier(){
+    @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
+      Commands cmds=new Commands(OnError.Continue);
+      createVpcAssociatePublicIPCommands(router,ipAddress,cmds);
+      return sendCommandsToRouter(router,cmds);
+    }
+  }
+);
+  for (  String vlanTag : nicsToUnPlug.keySet()) {
+    Network publicNtwk=null;
+    try {
+      publicNtwk=_networkMgr.getNetwork(nicsToUnPlug.get(vlanTag).getNetworkId());
+      URI broadcastUri=BroadcastDomainType.Vlan.toUri(vlanTag);
+      _itMgr.removeVmFromNetwork(router,publicNtwk,broadcastUri);
+    }
+ catch (    ConcurrentOperationException e) {
+      s_logger.warn("Failed to remove router " + router + " from vlan "+ vlanTag+ " in public network "+ publicNtwk+ " due to ",e);
+      return false;
+    }
+  }
+  return result;
+}
