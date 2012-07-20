@@ -4,8 +4,9 @@
     return true;
   }
   VirtualRouter router=routers.get(0);
-  Map<String,PublicIpAddress> nicsToPlug=new HashMap<String,PublicIpAddress>();
-  Map<String,PublicIpAddress> nicsToUnPlug=new HashMap<String,PublicIpAddress>();
+  Pair<Map<String,PublicIpAddress>,Map<String,PublicIpAddress>> nicsToChange=getNicsToChangeOnRouter(ipAddress,router);
+  Map<String,PublicIpAddress> nicsToPlug=nicsToChange.first();
+  Map<String,PublicIpAddress> nicsToUnplug=nicsToChange.second();
   for (  PublicIpAddress ip : ipAddress) {
     long publicNtwkId=ip.getNetworkId();
     if (!_networkMgr.ipUsedInVpc(ip)) {
@@ -14,7 +15,7 @@
     if (ip.getState() == IpAddress.State.Releasing) {
       Nic nic=_nicDao.findByIp4AddressAndNetworkIdAndInstanceId(publicNtwkId,router.getId(),ip.getAddress().addr());
       if (nic != null) {
-        nicsToUnPlug.put(ip.getVlanTag(),ip);
+        nicsToUnplug.put(ip.getVlanTag(),ip);
         s_logger.debug("Need to unplug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
       }
     }
@@ -27,7 +28,7 @@
     }
     if (ip.getState() == IpAddress.State.Allocated || ip.getState() == IpAddress.State.Allocating) {
       Nic nic=_nicDao.findByInstanceIdNetworkIdAndBroadcastUri(publicNtwkId,router.getId(),broadcastUri.toString());
-      if ((nic == null && nicsToPlug.get(ip.getVlanTag()) == null) || nicsToUnPlug.get(ip.getVlanTag()) != null) {
+      if ((nic == null && nicsToPlug.get(ip.getVlanTag()) == null) || nicsToUnplug.get(ip.getVlanTag()) != null) {
         nicsToPlug.put(ip.getVlanTag(),ip);
         s_logger.debug("Need to plug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
       }
@@ -73,10 +74,10 @@ catch (    InsufficientCapacityException e) {
     }
   }
 );
-  for (  String vlanTag : nicsToUnPlug.keySet()) {
+  for (  String vlanTag : nicsToUnplug.keySet()) {
     Network publicNtwk=null;
     try {
-      publicNtwk=_networkMgr.getNetwork(nicsToUnPlug.get(vlanTag).getNetworkId());
+      publicNtwk=_networkMgr.getNetwork(nicsToUnplug.get(vlanTag).getNetworkId());
       URI broadcastUri=BroadcastDomainType.Vlan.toUri(vlanTag);
       _itMgr.removeVmFromNetwork(router,publicNtwk,broadcastUri);
     }

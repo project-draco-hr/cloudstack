@@ -1,0 +1,33 @@
+{
+  Map<String,PublicIpAddress> nicsToPlug=new HashMap<String,PublicIpAddress>();
+  Map<String,PublicIpAddress> nicsToUnplug=new HashMap<String,PublicIpAddress>();
+  for (  PublicIpAddress ip : publicIps) {
+    long publicNtwkId=ip.getNetworkId();
+    if (!_networkMgr.ipUsedInVpc(ip)) {
+      ip.setState(IpAddress.State.Releasing);
+    }
+    if (ip.getState() == IpAddress.State.Releasing) {
+      Nic nic=_nicDao.findByIp4AddressAndNetworkIdAndInstanceId(publicNtwkId,router.getId(),ip.getAddress().addr());
+      if (nic != null) {
+        nicsToUnplug.put(ip.getVlanTag(),ip);
+        s_logger.debug("Need to unplug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
+      }
+    }
+  }
+  for (  PublicIpAddress ip : publicIps) {
+    URI broadcastUri=BroadcastDomainType.Vlan.toUri(ip.getVlanTag());
+    long publicNtwkId=ip.getNetworkId();
+    if (!_networkMgr.ipUsedInVpc(ip)) {
+      ip.setState(IpAddress.State.Releasing);
+    }
+    if (ip.getState() == IpAddress.State.Allocated || ip.getState() == IpAddress.State.Allocating) {
+      Nic nic=_nicDao.findByInstanceIdNetworkIdAndBroadcastUri(publicNtwkId,router.getId(),broadcastUri.toString());
+      if ((nic == null && nicsToPlug.get(ip.getVlanTag()) == null) || nicsToUnplug.get(ip.getVlanTag()) != null) {
+        nicsToPlug.put(ip.getVlanTag(),ip);
+        s_logger.debug("Need to plug the nic for ip=" + ip + "; vlan="+ ip.getVlanTag()+ " in public network id ="+ publicNtwkId);
+      }
+    }
+  }
+  Pair<Map<String,PublicIpAddress>,Map<String,PublicIpAddress>> nicsToChange=new Pair<Map<String,PublicIpAddress>,Map<String,PublicIpAddress>>(nicsToPlug,nicsToUnplug);
+  return nicsToChange;
+}
