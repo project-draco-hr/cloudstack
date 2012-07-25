@@ -10,22 +10,28 @@
     return false;
   }
   finalizeSshAndVersionAndNetworkUsageOnStart(cmds,profile,router,controlNic);
-  Map<Nic,Network> guestNics=new HashMap<Nic,Network>();
-  Map<Nic,Network> publicNics=new HashMap<Nic,Network>();
+  List<Pair<Nic,Network>> guestNics=new ArrayList<Pair<Nic,Network>>();
+  List<Pair<Nic,Network>> publicNics=new ArrayList<Pair<Nic,Network>>();
+  Map<String,String> vlanMacAddress=new HashMap<String,String>();
   List<? extends Nic> routerNics=_nicDao.listByVmId(profile.getId());
   for (  Nic routerNic : routerNics) {
     Network network=_networkMgr.getNetwork(routerNic.getNetworkId());
     if (network.getTrafficType() == TrafficType.Guest) {
-      guestNics.put(routerNic,network);
+      Pair<Nic,Network> guestNic=new Pair<Nic,Network>(routerNic,network);
+      guestNics.add(guestNic);
     }
  else     if (network.getTrafficType() == TrafficType.Public) {
-      publicNics.put(routerNic,network);
+      Pair<Nic,Network> publicNic=new Pair<Nic,Network>(routerNic,network);
+      publicNics.add(publicNic);
+      String vlanTag=routerNic.getBroadcastUri().getHost();
+      vlanMacAddress.put(vlanTag,routerNic.getMacAddress());
     }
   }
   try {
     List<PublicIp> sourceNat=new ArrayList<PublicIp>(1);
-    for (    Nic publicNic : publicNics.keySet()) {
-      Network publicNtwk=publicNics.get(publicNic);
+    for (    Pair<Nic,Network> nicNtwk : publicNics) {
+      Nic publicNic=nicNtwk.first();
+      Network publicNtwk=nicNtwk.second();
       IPAddressVO userIp=_ipAddressDao.findByIpAndSourceNetworkId(publicNtwk.getId(),publicNic.getIp4Address());
       if (userIp.isSourceNat()) {
         PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
@@ -38,24 +44,25 @@
           _routerDao.update(routerVO.getId(),routerVO);
         }
       }
-      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,publicNic.getNetworkId()));
+      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,publicNic.getNetworkId(),publicNic.getBroadcastUri().toString()));
       cmds.addCommand(plugNicCmd);
     }
     if (!sourceNat.isEmpty()) {
-      createVpcAssociatePublicIPCommands(router,sourceNat,cmds);
+      createVpcAssociatePublicIPCommands(router,sourceNat,cmds,vlanMacAddress);
     }
-    for (    Nic nic : guestNics.keySet()) {
-      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,nic.getNetworkId()));
+    for (    Pair<Nic,Network> nicNtwk : guestNics) {
+      Nic guestNic=nicNtwk.first();
+      PlugNicCommand plugNicCmd=new PlugNicCommand(_itMgr.toVmTO(profile),getNicTO(router,guestNic.getNetworkId(),null));
       cmds.addCommand(plugNicCmd);
-      if (!_networkMgr.isPrivateGateway(nic)) {
+      if (!_networkMgr.isPrivateGateway(guestNic)) {
         VirtualMachine vm=_vmDao.findById(router.getId());
-        NicProfile nicProfile=_networkMgr.getNicProfile(vm,nic.getNetworkId());
+        NicProfile nicProfile=_networkMgr.getNicProfile(vm,guestNic.getNetworkId(),null);
         SetupGuestNetworkCommand setupCmd=createSetupGuestNetworkCommand(router,true,nicProfile);
         cmds.addCommand(setupCmd);
       }
  else {
-        PrivateIpVO ipVO=_privateIpDao.findByIpAndSourceNetworkId(nic.getNetworkId(),nic.getIp4Address());
-        Network network=_networkDao.findById(nic.getNetworkId());
+        PrivateIpVO ipVO=_privateIpDao.findByIpAndSourceNetworkId(guestNic.getNetworkId(),guestNic.getIp4Address());
+        Network network=_networkDao.findById(guestNic.getNetworkId());
         String vlanTag=network.getBroadcastUri().getHost();
         String netmask=NetUtils.getCidrNetmask(network.getCidr());
         PrivateIpAddress ip=new PrivateIpAddress(ipVO,vlanTag,network.getGateway(),netmask,ipVO.getMacAddress());
@@ -98,12 +105,13 @@
   if (provider == null) {
     throw new CloudRuntimeException("Cannot find related provider of virtual router provider: " + vrProvider.getType().toString());
   }
-  for (  Nic nic : guestNics.keySet()) {
+  for (  Pair<Nic,Network> nicNtwk : guestNics) {
+    Nic guestNic=nicNtwk.first();
     if (reprogramGuestNtwks) {
-      finalizeIpAssocForNetwork(cmds,router,provider,nic.getNetworkId());
-      finalizeNetworkRulesForNetwork(cmds,router,provider,nic.getNetworkId());
+      finalizeIpAssocForNetwork(cmds,router,provider,guestNic.getNetworkId(),vlanMacAddress);
+      finalizeNetworkRulesForNetwork(cmds,router,provider,guestNic.getNetworkId());
     }
-    finalizeUserDataAndDhcpOnStart(cmds,router,provider,nic.getNetworkId());
+    finalizeUserDataAndDhcpOnStart(cmds,router,provider,guestNic.getNetworkId());
   }
   return true;
 }

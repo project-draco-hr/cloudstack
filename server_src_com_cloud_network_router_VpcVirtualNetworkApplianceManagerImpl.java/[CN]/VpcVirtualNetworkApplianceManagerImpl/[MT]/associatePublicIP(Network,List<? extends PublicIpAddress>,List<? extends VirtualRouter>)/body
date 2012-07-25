@@ -57,7 +57,23 @@ catch (    InsufficientCapacityException e) {
   boolean result=applyRules(network,routers,"vpc ip association",false,null,false,new RuleApplier(){
     @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
       Commands cmds=new Commands(OnError.Continue);
-      createVpcAssociatePublicIPCommands(router,ipAddress,cmds);
+      Map<String,String> vlanMacAddress=new HashMap<String,String>();
+      for (      PublicIpAddress ipAddr : ipAddress) {
+        String broadcastURI=BroadcastDomainType.Vlan.toUri(ipAddr.getVlanTag()).toString();
+        Nic nic=_nicDao.findByNetworkIdInstanceIdAndBroadcastUri(ipAddr.getNetworkId(),router.getId(),broadcastURI);
+        String macAddress=null;
+        if (nic == null) {
+          if (ipAddr.getState() != IpAddress.State.Releasing) {
+            throw new CloudRuntimeException("Unable to find the nic in network " + ipAddr.getNetworkId() + "  to apply the ip address "+ ipAddr+ " for");
+          }
+          macAddress=ipAddr.getMacAddress();
+        }
+ else {
+          macAddress=nic.getMacAddress();
+        }
+        vlanMacAddress.put(ipAddr.getVlanTag(),macAddress);
+      }
+      createVpcAssociatePublicIPCommands(router,ipAddress,cmds,vlanMacAddress);
       return sendCommandsToRouter(router,cmds);
     }
   }
