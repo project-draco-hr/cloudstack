@@ -1,0 +1,40 @@
+{
+  if (volumes == null || volumes.isEmpty())   return false;
+  if (!checkUsagedSpace(pool))   return false;
+  StoragePoolVO poolVO=_storagePoolDao.findById(pool.getId());
+  long allocatedSizeWithtemplate=_capacityMgr.getAllocatedPoolCapacity(poolVO,null);
+  long totalAskingSize=0;
+  for (  Volume volume : volumes) {
+    if (volume.getTemplateId() != null) {
+      VMTemplateVO tmpl=_templateDao.findById(volume.getTemplateId());
+      if (tmpl.getFormat() != ImageFormat.ISO) {
+        allocatedSizeWithtemplate=_capacityMgr.getAllocatedPoolCapacity(poolVO,tmpl);
+      }
+    }
+    if (volume.getState() != Volume.State.Ready)     totalAskingSize=totalAskingSize + volume.getSize();
+  }
+  long totalOverProvCapacity;
+  if (pool.getPoolType() == StoragePoolType.NetworkFilesystem) {
+    totalOverProvCapacity=_storageOverprovisioningFactor.multiply(new BigDecimal(pool.getCapacityBytes())).longValue();
+  }
+ else {
+    totalOverProvCapacity=pool.getCapacityBytes();
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Checking pool: " + pool.getId() + " for volume allocation "+ volumes.toString()+ ", maxSize : "+ totalOverProvCapacity+ ", totalAllocatedSize : "+ allocatedSizeWithtemplate+ ", askingSize : "+ totalAskingSize+ ", allocated disable threshold: "+ _storageAllocatedThreshold);
+  }
+  double usedPercentage=(allocatedSizeWithtemplate + totalAskingSize) / (double)(totalOverProvCapacity);
+  if (usedPercentage > _storageAllocatedThreshold) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Insufficient un-allocated capacity on: " + pool.getId() + " for volume allocation: "+ volumes.toString()+ " since its allocated percentage: "+ usedPercentage+ " has crossed the allocated pool.storage.allocated.capacity.disablethreshold: "+ _storageAllocatedThreshold+ ", skipping this pool");
+    }
+    return false;
+  }
+  if (totalOverProvCapacity < (allocatedSizeWithtemplate + totalAskingSize)) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Insufficient un-allocated capacity on: " + pool.getId() + " for volume allocation: "+ volumes.toString()+ ", not enough storage, maxSize : "+ totalOverProvCapacity+ ", totalAllocatedSize : "+ allocatedSizeWithtemplate+ ", askingSize : "+ totalAskingSize);
+    }
+    return false;
+  }
+  return true;
+}
