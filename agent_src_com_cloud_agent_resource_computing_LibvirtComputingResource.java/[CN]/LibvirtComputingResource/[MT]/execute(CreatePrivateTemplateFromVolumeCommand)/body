@@ -10,14 +10,32 @@
     KVMPhysicalDisk disk=primary.getPhysicalDisk(cmd.getVolumePath());
     String tmpltPath=secondaryStorage.getLocalPath() + File.separator + templateInstallFolder;
     _storage.mkdirs(tmpltPath);
-    Script command=new Script(_createTmplPath,_cmdsTimeout,s_logger);
-    command.add("-f",disk.getPath());
-    command.add("-t",tmpltPath);
-    command.add("-n",cmd.getUniqueName() + ".qcow2");
-    String result=command.execute();
-    if (result != null) {
-      s_logger.debug("failed to create template: " + result);
-      return new CreatePrivateTemplateAnswer(cmd,false,result);
+    if (primary.getType() != StoragePoolType.RBD) {
+      Script command=new Script(_createTmplPath,_cmdsTimeout,s_logger);
+      command.add("-f",disk.getPath());
+      command.add("-t",tmpltPath);
+      command.add("-n",cmd.getUniqueName() + ".qcow2");
+      String result=command.execute();
+      if (result != null) {
+        s_logger.debug("failed to create template: " + result);
+        return new CreatePrivateTemplateAnswer(cmd,false,result);
+      }
+    }
+ else {
+      s_logger.debug("Converting RBD disk " + disk.getPath() + " into template "+ cmd.getUniqueName());
+      Script.runSimpleBashScript("qemu-img convert" + " -f raw -O qcow2 " + KVMPhysicalDisk.RBDStringBuilder(primary.getSourceHost(),primary.getSourcePort(),primary.getAuthUserName(),primary.getAuthSecret(),disk.getPath()) + " "+ tmpltPath+ "/"+ cmd.getUniqueName()+ ".qcow2");
+      File templateProp=new File(tmpltPath + "/template.properties");
+      if (!templateProp.exists()) {
+        templateProp.createNewFile();
+      }
+      String templateContent="filename=" + cmd.getUniqueName() + ".qcow2"+ System.getProperty("line.separator");
+      DateFormat dateFormat=new SimpleDateFormat("MM_dd_yyyy");
+      Date date=new Date();
+      templateContent+="snapshot.name=" + dateFormat.format(date) + System.getProperty("line.separator");
+      FileOutputStream templFo=new FileOutputStream(templateProp);
+      templFo.write(templateContent.getBytes());
+      templFo.flush();
+      templFo.close();
     }
     Map<String,Object> params=new HashMap<String,Object>();
     params.put(StorageLayer.InstanceConfigKey,_storage);
