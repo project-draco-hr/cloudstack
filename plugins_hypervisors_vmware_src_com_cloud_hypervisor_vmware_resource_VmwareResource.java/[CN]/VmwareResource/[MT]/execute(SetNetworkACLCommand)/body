@@ -1,0 +1,39 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource SetNetworkACLCommand " + _gson.toJson(cmd));
+  }
+  VmwareManager mgr=getServiceContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+  String routerIp=getRouterSshControlIp(cmd);
+  String[] results=new String[cmd.getRules().length];
+  try {
+    String[][] rules=cmd.generateFwRules();
+    StringBuilder sb=new StringBuilder();
+    String[] aclRules=rules[0];
+    if (aclRules.length == 0) {
+      return new SetNetworkACLAnswer(cmd,true,results);
+    }
+    for (int i=0; i < aclRules.length; i++) {
+      sb.append(aclRules[i]).append(',');
+    }
+    NicTO nic=cmd.getNic();
+    int ethDeviceNum=findRouterEthDeviceIndex(routerName,routerIp,nic.getMac());
+    String args="";
+    args+=" -d " + "eth" + ethDeviceNum;
+    args+=" -i " + nic.getIp();
+    args+=" -m " + Long.toString(NetUtils.getCidrSize(nic.getNetmask()));
+    args+=" -a " + sb.toString();
+    Pair<Boolean,String> result=SshHelper.sshExecute(routerIp,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"/opt/cloud/bin/vpc_acl.sh " + args);
+    if (!result.first()) {
+      String msg="SetNetworkACLAnswer on domain router " + routerIp + " failed. message: "+ result.second();
+      s_logger.error(msg);
+      return new SetNetworkACLAnswer(cmd,false,results);
+    }
+    return new SetNetworkACLAnswer(cmd,true,results);
+  }
+ catch (  Exception e) {
+    String msg="SetNetworkACL failed due to " + e.toString();
+    s_logger.error(msg,e);
+    return new SetNetworkACLAnswer(cmd,false,results);
+  }
+}
