@@ -43,11 +43,8 @@
       permittedAccounts.add(owner.getId());
     }
   }
-  if (!_accountMgr.isAdmin(caller.getType()) || !listAll) {
+  if (!_accountMgr.isAdmin(caller.getType()) || (!listAll && (projectId != null && projectId != -1 && domainId == null))) {
     permittedAccounts.add(caller.getId());
-    domainId=caller.getDomainId();
-  }
-  if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
     domainId=caller.getDomainId();
   }
   boolean skipProjectNetworks=true;
@@ -70,8 +67,13 @@
     }
     skipProjectNetworks=false;
   }
-  path=_domainDao.findById(caller.getDomainId()).getPath();
-  if (listAll) {
+  if (domainId != null) {
+    path=_domainDao.findById(domainId).getPath();
+  }
+ else {
+    path=_domainDao.findById(caller.getDomainId()).getPath();
+  }
+  if (listAll && domainId == null) {
     isRecursive=true;
   }
   Filter searchFilter=new Filter(NetworkVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
@@ -110,22 +112,24 @@
     domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
     sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
-  if (skipProjectNetworks) {
-    SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
-    accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
-    sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
+  SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
+  accountSearch.and("typeNEQ",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
+  accountSearch.and("typeEQ",accountSearch.entity().getType(),SearchCriteria.Op.EQ);
+  sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
   if (isSystem == null || !isSystem) {
-    if (domainId != null) {
-      networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,domainId));
-    }
     if (!permittedAccounts.isEmpty()) {
       networksToReturn.addAll(listAccountSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,permittedAccounts));
+      if (domainId != null) {
+        networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,true,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,domainId,false));
+      }
     }
- else     if (domainId == null) {
+ else {
       networksToReturn.addAll(listAccountSpecificNetworksByDomainPath(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,path,isRecursive));
       networksToReturn.addAll(listDomainSpecificNetworksByDomainPath(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,path,isRecursive));
+      if (domainId == null) {
+        networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,true,restartRequired,specifyIpRanges,vpcId,tags),searchFilter,caller.getDomainId(),true));
+      }
     }
   }
  else {
