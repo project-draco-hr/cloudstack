@@ -1,11 +1,10 @@
 {
-  VpcGatewayVO vo=_vpcGatewayDao.acquireInLockTable(gatewayId);
-  if (vo == null) {
-    throw new ConcurrentOperationException("Unable to lock gateway " + gatewayId);
-  }
+  VpcGatewayVO vo=_vpcGatewayDao.findById(gatewayId);
+  boolean success=false;
   try {
     PrivateGateway gateway=getVpcPrivateGateway(gatewayId);
-    if (getVpcElement().createPrivateGateway(gateway)) {
+    success=getVpcElement().createPrivateGateway(gateway);
+    if (success) {
       s_logger.debug("Private gateway " + gateway + " was applied succesfully on the backend");
       if (vo.getState() != VpcGateway.State.Ready) {
         vo.setState(VpcGateway.State.Ready);
@@ -20,8 +19,16 @@
     }
   }
   finally {
-    if (vo != null) {
-      _vpcGatewayDao.releaseFromLockTable(gatewayId);
+    if (!success) {
+      if (destroyOnFailure) {
+        s_logger.debug("Destroying private gateway " + vo + " that failed to start");
+        if (deleteVpcPrivateGateway(gatewayId)) {
+          s_logger.warn("Successfully destroyed vpc " + vo + " that failed to start");
+        }
+ else {
+          s_logger.warn("Failed to destroy vpc " + vo + " that failed to start");
+        }
+      }
     }
   }
 }
