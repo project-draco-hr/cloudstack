@@ -1,21 +1,29 @@
 {
-  Site2SiteVpnConnectionVO conn=_vpnConnectionDao.findById(id);
-  if (conn.getState() != State.Pending && conn.getState() != State.Disconnected) {
-    throw new InvalidParameterValueException("Site to site VPN connection " + id + " not in correct state(pending or disconnected) to process!");
+  Site2SiteVpnConnectionVO conn=_vpnConnectionDao.acquireInLockTable(id);
+  if (conn == null) {
+    throw new CloudRuntimeException("Unable to acquire lock on " + conn);
   }
-  conn.setState(State.Pending);
-  _vpnConnectionDao.persist(conn);
-  List<? extends Site2SiteVpnServiceProvider> elements=_networkMgr.getSite2SiteVpnElements();
-  boolean result=true;
-  for (  Site2SiteVpnServiceProvider element : elements) {
-    result=result & element.startSite2SiteVpn(conn);
-  }
-  if (result) {
-    conn.setState(State.Connected);
+  try {
+    if (conn.getState() != State.Pending && conn.getState() != State.Disconnected) {
+      throw new InvalidParameterValueException("Site to site VPN connection with specified connectionId not in correct state(pending or disconnected) to process!");
+    }
+    conn.setState(State.Pending);
     _vpnConnectionDao.persist(conn);
-    return conn;
+    List<? extends Site2SiteVpnServiceProvider> elements=_networkMgr.getSite2SiteVpnElements();
+    boolean result=true;
+    for (    Site2SiteVpnServiceProvider element : elements) {
+      result=result & element.startSite2SiteVpn(conn);
+    }
+    if (result) {
+      conn.setState(State.Connected);
+      _vpnConnectionDao.persist(conn);
+      return conn;
+    }
+    conn.setState(State.Error);
+    _vpnConnectionDao.persist(conn);
+    throw new ResourceUnavailableException("Failed to apply site-to-site VPN",Site2SiteVpnConnection.class,id);
   }
-  conn.setState(State.Error);
-  _vpnConnectionDao.persist(conn);
-  throw new ResourceUnavailableException("Failed to apply site-to-site VPN",Site2SiteVpnConnection.class,id);
+  finally {
+    _vpnConnectionDao.releaseFromLockTable(conn.getId());
+  }
 }
