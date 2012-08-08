@@ -1,2 +1,241 @@
 {
+  boolean success=super.configure(name,params);
+  if (!success) {
+    return false;
+  }
+  try {
+    Class<?> clazz=Class.forName("com.cloud.storage.JavaStorageLayer");
+    _storage=(StorageLayer)ComponentLocator.inject(clazz);
+    _storage.configure("StorageLayer",params);
+  }
+ catch (  ClassNotFoundException e) {
+    throw new ConfigurationException("Unable to find class " + "com.cloud.storage.JavaStorageLayer");
+  }
+  String domrScriptsDir=(String)params.get("domr.scripts.dir");
+  if (domrScriptsDir == null) {
+    domrScriptsDir=getDefaultDomrScriptsDir();
+  }
+  String kvmScriptsDir=(String)params.get("kvm.scripts.dir");
+  if (kvmScriptsDir == null) {
+    kvmScriptsDir=getDefaultKvmScriptsDir();
+  }
+  String networkScriptsDir=(String)params.get("network.scripts.dir");
+  if (networkScriptsDir == null) {
+    networkScriptsDir=getDefaultNetworkScriptsDir();
+  }
+  String storageScriptsDir=(String)params.get("storage.scripts.dir");
+  if (storageScriptsDir == null) {
+    storageScriptsDir=getDefaultStorageScriptsDir();
+  }
+  params.put("domr.scripts.dir",domrScriptsDir);
+  _virtRouterResource=new VirtualRoutingResource();
+  success=_virtRouterResource.configure(name,params);
+  if (!success) {
+    return false;
+  }
+  _host=(String)params.get("host");
+  if (_host == null) {
+    _host="localhost";
+  }
+  _dcId=(String)params.get("zone");
+  if (_dcId == null) {
+    _dcId="default";
+  }
+  _pod=(String)params.get("pod");
+  if (_pod == null) {
+    _pod="default";
+  }
+  _clusterId=(String)params.get("cluster");
+  _modifyVlanPath=Script.findScript(networkScriptsDir,"modifyvlan.sh");
+  if (_modifyVlanPath == null) {
+    throw new ConfigurationException("Unable to find modifyvlan.sh");
+  }
+  _versionstringpath=Script.findScript(kvmScriptsDir,"versions.sh");
+  if (_versionstringpath == null) {
+    throw new ConfigurationException("Unable to find versions.sh");
+  }
+  _patchdomrPath=Script.findScript(kvmScriptsDir + "/patch/","rundomrpre.sh");
+  if (_patchdomrPath == null) {
+    throw new ConfigurationException("Unable to find rundomrpre.sh");
+  }
+  _heartBeatPath=Script.findScript(kvmScriptsDir,"kvmheartbeat.sh");
+  if (_heartBeatPath == null) {
+    throw new ConfigurationException("Unable to find kvmheartbeat.sh");
+  }
+  _createvmPath=Script.findScript(storageScriptsDir,"createvm.sh");
+  if (_createvmPath == null) {
+    throw new ConfigurationException("Unable to find the createvm.sh");
+  }
+  _manageSnapshotPath=Script.findScript(storageScriptsDir,"managesnapshot.sh");
+  if (_manageSnapshotPath == null) {
+    throw new ConfigurationException("Unable to find the managesnapshot.sh");
+  }
+  _createTmplPath=Script.findScript(storageScriptsDir,"createtmplt.sh");
+  if (_createTmplPath == null) {
+    throw new ConfigurationException("Unable to find the createtmplt.sh");
+  }
+  _securityGroupPath=Script.findScript(networkScriptsDir,"security_group.py");
+  if (_securityGroupPath == null) {
+    throw new ConfigurationException("Unable to find the security_group.py");
+  }
+  _networkUsagePath=Script.findScript("scripts/network/domr/","networkUsage.sh");
+  if (_networkUsagePath == null) {
+    throw new ConfigurationException("Unable to find the networkUsage.sh");
+  }
+  String value=(String)params.get("developer");
+  boolean isDeveloper=Boolean.parseBoolean(value);
+  if (isDeveloper) {
+    params.putAll(getDeveloperProperties());
+  }
+  _pool=(String)params.get("pool");
+  if (_pool == null) {
+    _pool="/root";
+  }
+  String instance=(String)params.get("instance");
+  _hypervisorType=(String)params.get("hypervisor.type");
+  if (_hypervisorType == null) {
+    _hypervisorType="kvm";
+  }
+  _hypervisorURI=(String)params.get("hypervisor.uri");
+  if (_hypervisorURI == null) {
+    _hypervisorURI="qemu:///system";
+  }
+  String startMac=(String)params.get("private.macaddr.start");
+  if (startMac == null) {
+    startMac="00:16:3e:77:e2:a0";
+  }
+  String startIp=(String)params.get("private.ipaddr.start");
+  if (startIp == null) {
+    startIp="192.168.166.128";
+  }
+  _pingTestPath=Script.findScript(kvmScriptsDir,"pingtest.sh");
+  if (_pingTestPath == null) {
+    throw new ConfigurationException("Unable to find the pingtest.sh");
+  }
+  _linkLocalBridgeName=(String)params.get("private.bridge.name");
+  if (_linkLocalBridgeName == null) {
+    if (isDeveloper) {
+      _linkLocalBridgeName="cloud-" + instance + "-0";
+    }
+ else {
+      _linkLocalBridgeName="cloud0";
+    }
+  }
+  _publicBridgeName=(String)params.get("public.network.device");
+  if (_publicBridgeName == null) {
+    _publicBridgeName="cloudbr0";
+  }
+  _privBridgeName=(String)params.get("private.network.device");
+  if (_privBridgeName == null) {
+    _privBridgeName="cloudbr1";
+  }
+  _guestBridgeName=(String)params.get("guest.network.device");
+  if (_guestBridgeName == null) {
+    _guestBridgeName=_privBridgeName;
+  }
+  _privNwName=(String)params.get("private.network.name");
+  if (_privNwName == null) {
+    if (isDeveloper) {
+      _privNwName="cloud-" + instance + "-private";
+    }
+ else {
+      _privNwName="cloud-private";
+    }
+  }
+  _localStoragePath=(String)params.get("local.storage.path");
+  if (_localStoragePath == null) {
+    _localStoragePath="/var/lib/libvirt/images/";
+  }
+  _localStorageUUID=(String)params.get("local.storage.uuid");
+  if (_localStorageUUID == null) {
+    throw new ConfigurationException("local.storage.uuid is not set! Please set this to a valid UUID");
+  }
+  value=(String)params.get("scripts.timeout");
+  _timeout=NumbersUtil.parseInt(value,30 * 60) * 1000;
+  value=(String)params.get("stop.script.timeout");
+  _stopTimeout=NumbersUtil.parseInt(value,120) * 1000;
+  value=(String)params.get("cmds.timeout");
+  _cmdsTimeout=NumbersUtil.parseInt(value,7200) * 1000;
+  value=(String)params.get("host.reserved.mem.mb");
+  _dom0MinMem=NumbersUtil.parseInt(value,0) * 1024 * 1024;
+  LibvirtConnection.initialize(_hypervisorURI);
+  Connect conn=null;
+  try {
+    conn=LibvirtConnection.getConnection();
+  }
+ catch (  LibvirtException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+  if (!IsHVMEnabled(conn)) {
+    throw new ConfigurationException("NO HVM support on this machine, please make sure: " + "1. VT/SVM is supported by your CPU, or is enabled in BIOS. " + "2. kvm modules are loaded (kvm, kvm_amd|kvm_intel)");
+  }
+  _hypervisorPath=getHypervisorPath(conn);
+  try {
+    _hvVersion=conn.getVersion();
+    _hvVersion=(_hvVersion % 1000000) / 1000;
+  }
+ catch (  LibvirtException e) {
+  }
+  String[] info=NetUtils.getNetworkParams(_privateNic);
+  _monitor=new KVMHAMonitor(null,info[0],_heartBeatPath);
+  Thread ha=new Thread(_monitor);
+  ha.start();
+  _storagePoolMgr=new KVMStoragePoolManager(_storage,_monitor);
+  _sysvmISOPath=(String)params.get("systemvm.iso.path");
+  if (_sysvmISOPath == null) {
+    String[] isoPaths={"/usr/lib64/cloud/agent/vms/systemvm.iso","/usr/lib/cloud/agent/vms/systemvm.iso"};
+    for (    String isoPath : isoPaths) {
+      if (_storage.exists(isoPath)) {
+        _sysvmISOPath=isoPath;
+        break;
+      }
+    }
+    if (_sysvmISOPath == null) {
+      s_logger.debug("Can't find system vm ISO");
+    }
+  }
+  try {
+    createControlNetwork();
+  }
+ catch (  LibvirtException e) {
+    throw new ConfigurationException(e.getMessage());
+  }
+  _pifs=getPifs();
+  if (_pifs.first() == null) {
+    s_logger.debug("Failed to get private nic name");
+    throw new ConfigurationException("Failed to get private nic name");
+  }
+  if (_pifs.second() == null) {
+    s_logger.debug("Failed to get public nic name");
+    throw new ConfigurationException("Failed to get public nic name");
+  }
+  s_logger.debug("Found pif: " + _pifs.first() + " on "+ _privBridgeName+ ", pif: "+ _pifs.second()+ " on "+ _publicBridgeName);
+  _can_bridge_firewall=can_bridge_firewall(_pifs.second());
+  _localGateway=Script.runSimpleBashScript("ip route |grep default|awk '{print $3}'");
+  if (_localGateway == null) {
+    s_logger.debug("Failed to found the local gateway");
+  }
+  _mountPoint=(String)params.get("mount.path");
+  if (_mountPoint == null) {
+    _mountPoint="/mnt";
+  }
+  value=(String)params.get("vm.migrate.speed");
+  _migrateSpeed=NumbersUtil.parseInt(value,-1);
+  if (_migrateSpeed == -1) {
+    _migrateSpeed=0;
+    String speed=Script.runSimpleBashScript("ethtool " + _pifs.second() + " |grep Speed | cut -d \\  -f 2");
+    if (speed != null) {
+      String[] tokens=speed.split("M");
+      if (tokens.length == 2) {
+        try {
+          _migrateSpeed=Integer.parseInt(tokens[0]);
+        }
+ catch (        Exception e) {
+        }
+        s_logger.debug("device " + _pifs.second() + " has speed: "+ String.valueOf(_migrateSpeed));
+      }
+    }
+    params.put("vm.migrate.speed",String.valueOf(_migrateSpeed));
+  }
+  return true;
 }
