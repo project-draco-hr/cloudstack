@@ -1,41 +1,52 @@
-def configureProviders(self, phynetwrk, zone):
-    pnetprov = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
-    pnetprov.physicalnetworkid = phynetwrk.id
-    pnetprov.state = 'Disabled'
-    pnetprov.name = 'VirtualRouter'
-    pnetprovres = self.apiClient.listNetworkServiceProviders(pnetprov)
-    vrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
-    vrprov.nspid = pnetprovres[0].id
-    vrprovresponse = self.apiClient.listVirtualRouterElements(vrprov)
-    vrprovid = vrprovresponse[0].id
-    vrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
-    vrconfig.enabled = 'true'
-    vrconfig.id = vrprovid
-    vrconfigresponse = self.apiClient.configureVirtualRouterElement(vrconfig)
-    upnetprov = updateNetworkServiceProvider.updateNetworkServiceProviderCmd()
-    upnetprov.id = vrprov.nspid
-    upnetprov.state = 'Enabled'
-    upnetprovresponse = self.apiClient.updateNetworkServiceProvider(upnetprov)
-    if ((zone.networktype == 'Basic') and zone.securitygroupenabled):
-        sgprovider = configGenerator.provider()
-        sgprovider.name = 'SecurityGroupProvider'
-        zone.providers.append(sgprovider)
-    if (zone.networktype == 'Advanced'):
+def configureProviders(self, phynetwrk, providers):
+    '\n        We will enable the virtualrouter elements for all zones. Other providers \n        like NetScalers, SRX, etc are explicitly added/configured\n        '
+    for provider in providers:
         pnetprov = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
         pnetprov.physicalnetworkid = phynetwrk.id
         pnetprov.state = 'Disabled'
-        pnetprov.name = 'VpcVirtualRouter'
+        pnetprov.name = provider.name
         pnetprovres = self.apiClient.listNetworkServiceProviders(pnetprov)
         if (pnetprovres and (len(pnetprovres) > 0)):
-            vpcvrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
-            vpcvrprov.nspid = pnetprovres[0].id
-            vpcvrprovresponse = self.apiClient.listVirtualRouterElements(vpcvrprov)
-            vpcvrprovid = vpcvrprovresponse[0].id
-            vpcvrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
-            vpcvrconfig.enabled = 'true'
-            vpcvrconfig.id = vpcvrprovid
-            vpcvrconfigresponse = self.apiClient.configureVirtualRouterElement(vpcvrconfig)
-            upnetprov = updateNetworkServiceProvider.updateNetworkServiceProviderCmd()
-            upnetprov.id = vpcvrprov.nspid
-            upnetprov.state = 'Enabled'
-            upnetprovresponse = self.apiClient.updateNetworkServiceProvider(upnetprov)
+            if ((provider.name == 'VirtualRouter') or (provider.name == 'VpcVirtualRouter')):
+                vrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
+                vrprov.nspid = pnetprovres[0].id
+                vrprovresponse = self.apiClient.listVirtualRouterElements(vrprov)
+                vrprovid = vrprovresponse[0].id
+                vrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
+                vrconfig.enabled = 'true'
+                vrconfig.id = vrprovid
+                self.apiClient.configureVirtualRouterElement(vrconfig)
+                self.enableProvider(pnetprovres[0].id)
+        elif (provider.name in ['Netscaler', 'JuniperSRX', 'F5BigIp']):
+            netprov = addNetworkServiceProvider.addNetworkServiceProviderCmd()
+            netprov.name = provider.name
+            netprov.physicalnetworkid = phynetwrk.id
+            result = self.apiClient.addNetworkServiceProvider(netprov)
+            for device in provider.devices:
+                if (provider.name == 'Netscaler'):
+                    dev = addNetscalerLoadBalancer.addNetscalerLoadBalancerCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addNetscalerLoadBalancer(dev)
+                elif (provider.name == 'JuniperSRX'):
+                    dev = addSrxFirewall.addSrxFirewallCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addSrxFirewall(dev)
+                elif (provider.name == 'F5BigIp'):
+                    dev = addF5LoadBalancer.addF5LoadBalancerCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addF5LoadBalancer(dev)
+                else:
+                    print ("Device %s doesn't match any know provider type" % device)
+            self.enableProvider(result.id)
