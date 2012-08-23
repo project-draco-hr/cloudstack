@@ -1,16 +1,61 @@
 {
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
   boolean toSecondaryStorage=cmd.toSecondaryStorage();
-  MockSecStorageVO sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageURL());
-  if (sec == null) {
-    return new CopyVolumeAnswer(cmd,false,"can't find secondary storage",null,null);
+  MockSecStorageVO sec=null;
+  MockStoragePoolVO primaryStorage=null;
+  try {
+    txn.start();
+    sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageURL());
+    if (sec == null) {
+      return new CopyVolumeAnswer(cmd,false,"can't find secondary storage",null,null);
+    }
+    txn.commit();
   }
-  MockStoragePoolVO primaryStorage=_mockStoragePoolDao.findByUuid(cmd.getPool().getUuid());
-  if (primaryStorage == null) {
-    return new CopyVolumeAnswer(cmd,false,"Can't find primary storage",null,null);
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when accessing secondary at "+ cmd.getSecondaryStorageURL(),ex);
   }
-  MockVolumeVO volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
-  if (volume == null) {
-    return new CopyVolumeAnswer(cmd,false,"cant' find volume" + cmd.getVolumePath(),null,null);
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    primaryStorage=_mockStoragePoolDao.findByUuid(cmd.getPool().getUuid());
+    if (primaryStorage == null) {
+      return new CopyVolumeAnswer(cmd,false,"Can't find primary storage",null,null);
+    }
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when accessing primary at "+ cmd.getPool(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
+  MockVolumeVO volume=null;
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
+    if (volume == null) {
+      return new CopyVolumeAnswer(cmd,false,"cant' find volume" + cmd.getVolumePath(),null,null);
+    }
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when accessing volume at "+ cmd.getVolumePath(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   String name=UUID.randomUUID().toString();
   if (toSecondaryStorage) {
@@ -21,7 +66,21 @@
     vol.setSize(volume.getSize());
     vol.setStatus(Status.DOWNLOADED);
     vol.setType(MockVolumeType.VOLUME);
-    vol=_mockVolumeDao.persist(vol);
+    txn=Transaction.open(Transaction.SIMULATOR_DB);
+    try {
+      txn.start();
+      vol=_mockVolumeDao.persist(vol);
+      txn.commit();
+    }
+ catch (    Exception ex) {
+      txn.rollback();
+      throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when persisting volume "+ vol.getName(),ex);
+    }
+ finally {
+      txn.close();
+      txn=Transaction.open(Transaction.CLOUD_DB);
+      txn.close();
+    }
     return new CopyVolumeAnswer(cmd,true,null,sec.getMountPoint(),vol.getPath());
   }
  else {
@@ -32,7 +91,21 @@
     vol.setSize(volume.getSize());
     vol.setStatus(Status.DOWNLOADED);
     vol.setType(MockVolumeType.VOLUME);
-    vol=_mockVolumeDao.persist(vol);
+    txn=Transaction.open(Transaction.SIMULATOR_DB);
+    try {
+      txn.start();
+      vol=_mockVolumeDao.persist(vol);
+      txn.commit();
+    }
+ catch (    Exception ex) {
+      txn.rollback();
+      throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when persisting volume "+ vol.getName(),ex);
+    }
+ finally {
+      txn.close();
+      txn=Transaction.open(Transaction.CLOUD_DB);
+      txn.close();
+    }
     return new CopyVolumeAnswer(cmd,true,null,primaryStorage.getMountPoint(),vol.getPath());
   }
 }

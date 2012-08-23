@@ -1,11 +1,27 @@
 {
-  MockVolumeVO volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
-  if (volume == null) {
-    return new CreatePrivateTemplateAnswer(cmd,false,"cant' find volume" + cmd.getVolumePath());
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockVolumeVO volume=null;
+  MockSecStorageVO sec=null;
+  try {
+    txn.start();
+    volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
+    if (volume == null) {
+      return new CreatePrivateTemplateAnswer(cmd,false,"cant' find volume" + cmd.getVolumePath());
+    }
+    sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageUrl());
+    if (sec == null) {
+      return new CreatePrivateTemplateAnswer(cmd,false,"can't find secondary storage");
+    }
+    txn.commit();
   }
-  MockSecStorageVO sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageUrl());
-  if (sec == null) {
-    return new CreatePrivateTemplateAnswer(cmd,false,"can't find secondary storage");
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when creating private template from volume");
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   MockVolumeVO template=new MockVolumeVO();
   String uuid=UUID.randomUUID().toString();
@@ -15,6 +31,20 @@
   template.setSize(volume.getSize());
   template.setStatus(Status.DOWNLOADED);
   template.setType(MockVolumeType.TEMPLATE);
-  template=_mockVolumeDao.persist(template);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    template=_mockVolumeDao.persist(template);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Encountered " + ex.getMessage() + " when persisting template "+ template.getName(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new CreatePrivateTemplateAnswer(cmd,true,"",template.getName(),template.getSize(),template.getSize(),template.getName(),ImageFormat.QCOW2);
 }
