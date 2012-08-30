@@ -1,0 +1,63 @@
+{
+  DataStore destStore=null;
+  if (destPoolId != null) {
+    destStore=_storageProviderMgr.getDataStore(destPoolId);
+  }
+  for (  VolumeVO volume : vols) {
+    if (volume.getPoolId() == null && destStore == null) {
+      throw new CloudRuntimeException("Volume has no pool associate and also no storage pool assigned in DeployDestination, Unable to create.");
+    }
+    if (destStore == null) {
+      continue;
+    }
+    DataStore srcStore=_storageProviderMgr.getDataStore(volume.getPoolId());
+    boolean needToCreateVolume=false;
+    boolean needToRecreateVolume=false;
+    boolean needToMigrateVolume=false;
+    boolean needToCopyFromSec=false;
+    Volume.State state=volume.getState();
+    if (state == Volume.State.Allocated) {
+      needToCreateVolume=true;
+    }
+ else     if (state == Volume.State.UploadOp) {
+      needToCopyFromSec=true;
+    }
+ else     if (destStore.getId() != srcStore.getId()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Mismatch in storage pool " + destStore.getId() + " assigned by deploymentPlanner and the one associated with volume "+ volume);
+      }
+      if (Volume.Type.ROOT == volume.getVolumeType()) {
+        needToMigrateVolume=true;
+      }
+ else {
+        if (destStore.getCluterId() != srcStore.getCluterId()) {
+          needToMigrateVolume=true;
+        }
+ else         if (!srcStore.isSharedStorage() && srcStore.getId() != destStore.getId()) {
+          needToMigrateVolume=true;
+        }
+ else {
+          continue;
+        }
+      }
+    }
+ else {
+      continue;
+    }
+    VolumeStrategy vs=srcStore.getVolumeStrategy();
+    if (needToCreateVolume) {
+      volume.setReservationId(reservationId);
+      volume=_volumeMgr.processEvent(volume,Volume.Event.CreateRequested);
+      vs.createVolume(volume,destStore);
+      volume=_volumeMgr.processEvent(volume,Volume.Event.OperationSucceeded);
+    }
+ else     if (needToMigrateVolume) {
+      migrateVolume(volume,srcStore,destStore,reservationId);
+    }
+ else     if (needToCopyFromSec) {
+      _volumeMgr.processEvent(volume,Volume.Event.CopyRequested);
+    }
+ else     if (needToRecreateVolume) {
+    }
+  }
+}
