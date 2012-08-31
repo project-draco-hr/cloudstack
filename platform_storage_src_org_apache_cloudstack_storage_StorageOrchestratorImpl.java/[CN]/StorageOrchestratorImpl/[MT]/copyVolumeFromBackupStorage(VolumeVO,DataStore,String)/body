@@ -1,6 +1,20 @@
 {
-  StorageProvider sp=_storageProviderMgr.getBackupStorageProvider(volume.getDataCenterId());
-  VolumeHostVO volumeHostVO=_volumeHostDao.findByVolumeId(volume.getId());
-  long poolId=volumeHostVO.getHostId();
-  DataStore srcStore=_storageProviderMgr.getDataStore(poolId);
+  DataStore ds=_secondaryStorageMgr.getBackupDataStore(volume);
+  if (!ds.contains(volume)) {
+    throw new CloudRuntimeException("volume: " + volume + "doesn't exist on backup storage");
+  }
+  VolumeProfile vp=ds.prepareVolume(volume,destStore);
+  VolumeStrategy vs=destStore.getVolumeStrategy();
+  Transaction txn=Transaction.currentTxn();
+  volume.setReservationId(reservationId);
+  _volumeMgr.processEvent(volume,Volume.Event.CopyRequested);
+  VolumeVO destVolume=_volumeMgr.allocateDuplicateVolume(volume);
+  destVolume=_volumeMgr.processEvent(destVolume,Volume.Event.CreateRequested);
+  txn.commit();
+  vs.copyVolumeFromBackup(vp,destVolume,destStore);
+  txn.start();
+  volume=_volumeMgr.processEvent(volume,Volume.Event.OperationSucceeded);
+  destVolume=_volumeMgr.processEvent(destVolume,Volume.Event.OperationSucceeded);
+  txn.commit();
+  return destVolume;
 }
