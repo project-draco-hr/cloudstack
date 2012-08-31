@@ -1,9 +1,11 @@
 {
   S3Response response=new S3Response();
-  SBucketDao bucketDao=new SBucketDao();
   String bucketName=request.getBucketName();
-  SBucket sbucket=bucketDao.getByName(bucketName);
+  SBucketVO sbucket=bucketDao.getByName(bucketName);
+  Transaction txn=null;
   if (sbucket != null) {
+    txn=Transaction.open(Transaction.AWSAPI_DB);
+    txn.start();
     S3PolicyContext context=new S3PolicyContext(PolicyActions.DeleteBucket,bucketName);
 switch (verifyPolicy(context)) {
 case ALLOW:
@@ -18,33 +20,33 @@ if (!client.equals(sbucket.getOwnerCanonicalId())) {
 }
 break;
 }
-OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(sbucket);
+OrderedPair<SHostVO,String> host_storagelocation_pair=getBucketStorageHost(sbucket);
 S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
 bucketAdapter.deleteContainer(host_storagelocation_pair.getSecond(),request.getBucketName());
-Set<SObject> objectsInBucket=sbucket.getObjectsInBucket();
-Iterator<SObject> it=objectsInBucket.iterator();
+Set<SObjectVO> objectsInBucket=sbucket.getObjectsInBucket();
+Iterator<SObjectVO> it=objectsInBucket.iterator();
 while (it.hasNext()) {
-SObject oneObject=(SObject)it.next();
-Set<SObjectItem> itemsInObject=oneObject.getItems();
-Iterator<SObjectItem> is=itemsInObject.iterator();
+SObjectVO oneObject=(SObjectVO)it.next();
+Set<SObjectItemVO> itemsInObject=oneObject.getItems();
+Iterator<SObjectItemVO> is=itemsInObject.iterator();
 while (is.hasNext()) {
-SObjectItem oneItem=(SObjectItem)is.next();
+SObjectItemVO oneItem=(SObjectItemVO)is.next();
 deleteMetaData(oneItem.getId());
 deleteObjectAcls("SObjectItem",oneItem.getId());
 }
 }
 try {
 ServiceProvider.getInstance().deleteBucketPolicy(bucketName);
-BucketPolicyDao policyDao=new BucketPolicyDao();
-policyDao.deletePolicy(bucketName);
+bPolicyDao.deletePolicy(bucketName);
 }
  catch (Exception e) {
 logger.error("When deleting a bucket we must try to delete its policy: ",e);
 }
 deleteBucketAcls(sbucket.getId());
-bucketDao.delete(sbucket);
+bucketDao.remove(sbucket.getId());
 response.setResultCode(204);
 response.setResultDescription("OK");
+txn.close();
 }
  else {
 response.setResultCode(404);
