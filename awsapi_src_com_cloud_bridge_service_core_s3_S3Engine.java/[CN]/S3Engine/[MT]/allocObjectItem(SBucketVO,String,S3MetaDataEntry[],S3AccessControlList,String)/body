@@ -1,0 +1,87 @@
+{
+  SObjectItemVO item=null;
+  int versionSeq=1;
+  int versioningStatus=bucket.getVersioningStatus();
+  S3PolicyContext context=new S3PolicyContext(PolicyActions.PutObject,bucket.getName());
+  context.setKeyName(nameKey);
+  context.setEvalParam(ConditionKeys.Acl,cannedAccessPolicy);
+  verifyAccess(context,"SBucket",bucket.getId(),SAcl.PERMISSION_WRITE);
+  Transaction txn=Transaction.open(Transaction.AWSAPI_DB);
+  txn.start();
+  SObjectVO object=objectDao.getByNameKey(bucket,nameKey);
+  if (object != null) {
+    if (SBucket.VERSIONING_ENABLED == versioningStatus) {
+      versionSeq=object.getNextSequence();
+      object.setNextSequence(versionSeq + 1);
+      objectDao.update(object.getId(),object);
+      item=new SObjectItemVO();
+      item.setTheObject(object);
+      object.getItems().add(item);
+      item.setsObjectID(object.getId());
+      item.setVersion(String.valueOf(versionSeq));
+      Date ts=DateHelper.currentGMTTime();
+      item.setCreateTime(ts);
+      item.setLastAccessTime(ts);
+      item.setLastModifiedTime(ts);
+      item=itemDao.persist(item);
+      txn.commit();
+    }
+ else {
+      item=itemDao.getByObjectIdNullVersion(object.getId());
+      if (item == null) {
+        item=new SObjectItemVO();
+        item.setTheObject(object);
+        item.setsObjectID(object.getId());
+        object.getItems().add(item);
+        Date ts=DateHelper.currentGMTTime();
+        item.setCreateTime(ts);
+        item.setLastAccessTime(ts);
+        item.setLastModifiedTime(ts);
+        item=itemDao.persist(item);
+        txn.commit();
+      }
+    }
+  }
+ else {
+    Transaction txn1=Transaction.open(Transaction.AWSAPI_DB);
+    txn1.start();
+    object=new SObjectVO();
+    object.setBucket(bucket);
+    object.setNameKey(nameKey);
+    object.setNextSequence(2);
+    object.setBucketID(bucket.getId());
+    object.setCreateTime(DateHelper.currentGMTTime());
+    object.setOwnerCanonicalId(UserContext.current().getCanonicalUserId());
+    object=objectDao.persist(object);
+    item=new SObjectItemVO();
+    item.setTheObject(object);
+    item.setsObjectID(object.getId());
+    object.getItems().add(item);
+    if (SBucket.VERSIONING_ENABLED == versioningStatus)     item.setVersion(String.valueOf(versionSeq));
+    Date ts=DateHelper.currentGMTTime();
+    item.setCreateTime(ts);
+    item.setLastAccessTime(ts);
+    item.setLastModifiedTime(ts);
+    item=itemDao.persist(item);
+    txn.commit();
+    txn.close();
+  }
+  String suffix=null;
+  int dotPos=nameKey.lastIndexOf('.');
+  if (dotPos >= 0)   suffix=nameKey.substring(dotPos);
+  if (suffix != null)   item.setStoredPath(String.valueOf(item.getId()) + suffix);
+ else   item.setStoredPath(String.valueOf(item.getId()));
+  metaDao.save("SObjectItem",item.getId(),meta);
+  if (null != cannedAccessPolicy) {
+    setCannedAccessControls(cannedAccessPolicy,"SObjectItem",item.getId(),bucket);
+  }
+ else   if (null == acl || 0 == acl.size()) {
+    setSingleAcl("SObjectItem",item.getId(),SAcl.PERMISSION_FULL);
+  }
+ else   if (null != acl) {
+    aclDao.save("SObjectItem",item.getId(),acl);
+  }
+  itemDao.update(item.getId(),item);
+  txn.close();
+  return new OrderedPair<SObjectVO,SObjectItemVO>(object,item);
+}

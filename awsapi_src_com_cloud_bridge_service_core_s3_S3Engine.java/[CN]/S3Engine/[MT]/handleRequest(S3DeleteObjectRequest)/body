@@ -1,23 +1,21 @@
 {
   S3Response response=new S3Response();
-  SBucketDao bucketDao=new SBucketDao();
   String bucketName=request.getBucketName();
-  SBucket sbucket=bucketDao.getByName(bucketName);
+  SBucketVO sbucket=bucketDao.getByName(bucketName);
   if (sbucket == null) {
     response.setResultCode(404);
     response.setResultDescription("<Code>Bucket dosen't exists</Code><Message>Bucket " + bucketName + " does not exist</Message>");
     return response;
   }
-  SObjectDao objectDao=new SObjectDao();
   String nameKey=request.getKey();
-  SObject sobject=objectDao.getByNameKey(sbucket,nameKey);
+  SObjectVO sobject=objectDao.getByNameKey(sbucket,nameKey);
   if (sobject == null) {
     response.setResultCode(404);
     response.setResultDescription("<Code>Not Found</Code><Message>No object with key " + nameKey + " exists in bucket "+ bucketName+ "</Message>");
     return response;
   }
   String storedPath=null;
-  SObjectItem item=null;
+  SObjectItemVO item=null;
   int versioningStatus=sbucket.getVersioningStatus();
   if (SBucket.VERSIONING_ENABLED == versioningStatus) {
     String wantVersion=request.getVersion();
@@ -27,14 +25,14 @@
     verifyAccess(context,"SBucket",sbucket.getId(),SAcl.PERMISSION_WRITE);
     if (null == wantVersion) {
       sobject.setDeletionMark(UUID.randomUUID().toString());
-      objectDao.update(sobject);
+      objectDao.update(sobject.getId(),sobject);
       response.setResultDescription("<DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>" + sobject.getDeletionMark() + "</DeleteMarkerVersionId>");
     }
  else {
       String deletionMarker=sobject.getDeletionMark();
       if (null != deletionMarker && wantVersion.equalsIgnoreCase(deletionMarker)) {
         sobject.setDeletionMark(null);
-        objectDao.update(sobject);
+        objectDao.update(sobject.getId(),sobject);
         response.setResultDescription("<VersionId>" + wantVersion + "</VersionId>");
         response.setResultDescription("<DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>" + sobject.getDeletionMark() + "</DeleteMarkerVersionId>");
         response.setResultCode(204);
@@ -47,7 +45,7 @@
  else {
         storedPath=item.getStoredPath();
         sobject.deleteItem(item.getId());
-        objectDao.update(sobject);
+        objectDao.update(sobject.getId(),sobject);
         response.setResultDescription("<VersionId>" + wantVersion + "</VersionId>");
       }
     }
@@ -66,12 +64,12 @@
         storedPath=item.getStoredPath();
         deleteMetaData(item.getId());
         deleteObjectAcls("SObjectItem",item.getId());
-        objectDao.delete(sobject);
+        objectDao.remove(sobject.getId());
       }
     }
   }
   if (null != storedPath) {
-    OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(sbucket);
+    OrderedPair<SHostVO,String> host_storagelocation_pair=getBucketStorageHost(sbucket);
     S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
     bucketAdapter.deleteObject(host_storagelocation_pair.getSecond(),bucketName,storedPath);
   }
