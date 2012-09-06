@@ -1,0 +1,73 @@
+{
+  FileOutputStream fos=null;
+  MessageDigest md5=null;
+  try {
+    md5=MessageDigest.getInstance("MD5");
+  }
+ catch (  NoSuchAlgorithmException e) {
+    s_logger.error("Unexpected exception " + e.getMessage(),e);
+    throw new InternalErrorException("Unable to get MD5 MessageDigest",e);
+  }
+  File spoolFile=null;
+  try {
+    spoolFile=File.createTempFile("castor",null);
+  }
+ catch (  IOException e) {
+    s_logger.error("Unexpected exception creating temporary CAStor spool file: " + e.getMessage(),e);
+    throw new InternalErrorException("Unable to create temporary CAStor spool file",e);
+  }
+  try {
+    String retVal;
+    int streamLen=0;
+    try {
+      fos=new FileOutputStream(spoolFile);
+      byte[] buffer=new byte[4096];
+      int len=0;
+      while ((len=is.read(buffer)) > 0) {
+        fos.write(buffer,0,len);
+        streamLen=streamLen + len;
+        md5.update(buffer,0,len);
+      }
+      retVal=StringHelper.toHexString(md5.digest());
+    }
+ catch (    IOException e) {
+      s_logger.error("Unexpected exception " + e.getMessage(),e);
+      throw new OutOfStorageException(e);
+    }
+ finally {
+      try {
+        if (null != fos)         fos.close();
+      }
+ catch (      Exception e) {
+        s_logger.error("Can't close CAStor spool file " + spoolFile.getAbsolutePath() + ": "+ e.getMessage(),e);
+        throw new OutOfStorageException("Unable to close CAStor spool file: " + e.getMessage(),e);
+      }
+    }
+    try {
+      ScspResponse bwResponse=myClient(mountedRoot).write(bucket + "/" + fileName,new ResettableFileInputStream(spoolFile),streamLen,domainQueryArg(),new ScspHeaders());
+      if (bwResponse.getHttpStatusCode() >= HTTP_UNSUCCESSFUL) {
+        s_logger.error("CAStor write responded with error " + bwResponse.getHttpStatusCode());
+        throw new OutOfStorageException("Unable to write object to CAStor " + bucket + "/"+ fileName+ ": "+ bwResponse.getHttpStatusCode());
+      }
+    }
+ catch (    ScspExecutionException e) {
+      s_logger.error("Unable to write object to CAStor " + bucket + "/"+ fileName,e);
+      throw new OutOfStorageException("Unable to write object to CAStor " + bucket + "/"+ fileName+ ": "+ e.getMessage());
+    }
+catch (    IOException ie) {
+      s_logger.error("Unable to write object to CAStor " + bucket + "/"+ fileName,ie);
+      throw new OutOfStorageException("Unable to write object to CAStor " + bucket + "/"+ fileName+ ": "+ ie.getMessage());
+    }
+    return retVal;
+  }
+  finally {
+    try {
+      if (!spoolFile.delete()) {
+        s_logger.error("Failed to delete CAStor spool file " + spoolFile.getAbsolutePath());
+      }
+    }
+ catch (    SecurityException e) {
+      s_logger.error("Unable to delete CAStor spool file " + spoolFile.getAbsolutePath(),e);
+    }
+  }
+}
