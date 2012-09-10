@@ -3,6 +3,10 @@
   s_logger.debug("Restarting network " + networkId + "...");
   ReservationContext context=new ReservationContextImpl(null,null,callerUser,callerAccount);
   if (cleanup) {
+    if (network.getGuestType() != GuestType.Isolated) {
+      s_logger.warn("Only support clean up network for isolated network!");
+      return false;
+    }
     s_logger.debug("Shutting down the network id=" + networkId + " as a part of network restart");
     if (!shutdownNetworkElementsAndResources(context,true,network)) {
       s_logger.debug("Failed to shutdown the network elements and resources as a part of network restart: " + network.getState());
@@ -13,36 +17,11 @@
  else {
     s_logger.debug("Skip the shutting down of network id=" + networkId);
   }
+  DeployDestination dest=new DeployDestination(_dcDao.findById(network.getDataCenterId()),null,null,null);
   s_logger.debug("Implementing the network " + network + " elements and resources as a part of network restart");
   NetworkOfferingVO offering=_networkOfferingDao.findById(network.getNetworkOfferingId());
   try {
-    DataCenter dc=_dcDao.findById(network.getDataCenterId());
-    if (dc.getNetworkType() == NetworkType.Basic) {
-      for (      HostPodVO pod : _podDao.listByDataCenterId(dc.getId())) {
-        s_logger.debug("Trying to restart network for Pod: " + pod.getName() + ", id="+ pod.getId());
-        List<DomainRouterVO> virtualRouters=_domainRouterDao.listByPodId(pod.getId());
-        Boolean podHasSingleVR=(virtualRouters.size() == 1);
-        if (!podHasSingleVR) {
-          s_logger.warn("Pod should have only one VR in Basic Zone, please check!");
-        }
-        if (!cleanup && virtualRouters != null && podHasSingleVR && virtualRouters.get(0).getState() == VirtualMachine.State.Running) {
-          s_logger.debug("Cleanup=false: Found a running VR, skipping network implementation for the pod");
-          continue;
-        }
-        List<VMInstanceVO> vms=_vmDao.listByPodId(pod.getId());
-        for (        VMInstanceVO vm : vms) {
-          if (vm.getType() == Type.User && vm.getState() == VirtualMachine.State.Running) {
-            DeployDestination dest=new DeployDestination(dc,pod,null,null);
-            implementNetworkElementsAndResources(dest,context,network,offering);
-            break;
-          }
-        }
-      }
-    }
- else {
-      DeployDestination dest=new DeployDestination(dc,null,null,null);
-      implementNetworkElementsAndResources(dest,context,network,offering);
-    }
+    implementNetworkElementsAndResources(dest,context,network,offering);
     setRestartRequired(network,true);
   }
  catch (  Exception ex) {
