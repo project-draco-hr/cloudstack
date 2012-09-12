@@ -2,24 +2,39 @@
   List<DiskDef> disks=vm.getDevices().getDisks();
   DiskDef rootDisk=disks.get(0);
   VolumeTO rootVol=getVolume(vmSpec,Volume.Type.ROOT);
+  String patchName=vmName + "-patchdisk";
   KVMStoragePool pool=_storagePoolMgr.getStoragePool(rootVol.getPoolUuid());
-  KVMPhysicalDisk disk=pool.createPhysicalDisk(UUID.randomUUID().toString(),KVMPhysicalDisk.PhysicalDiskFormat.RAW,10L * 1024 * 1024);
+  String patchDiskPath=pool.getLocalPath() + "/" + patchName;
+  List<KVMPhysicalDisk> phyDisks=pool.listPhysicalDisks();
+  boolean foundDisk=false;
+  for (  KVMPhysicalDisk phyDisk : phyDisks) {
+    if (phyDisk.getPath().equals(patchDiskPath)) {
+      foundDisk=true;
+      break;
+    }
+  }
+  if (!foundDisk) {
+    s_logger.debug("generating new patch disk for " + vmName + " since none was found");
+    KVMPhysicalDisk disk=pool.createPhysicalDisk(patchName,KVMPhysicalDisk.PhysicalDiskFormat.RAW,10L * 1024 * 1024);
+  }
+ else {
+    s_logger.debug("found existing patch disk at " + patchDiskPath + " using it for "+ vmName);
+  }
   final Script command=new Script(_createvmPath,_timeout,s_logger);
-  command.add("-f",disk.getPath());
+  command.add("-f",patchDiskPath);
   String result=command.execute();
   if (result != null) {
     s_logger.debug("Failed to create data disk: " + result);
     throw new InternalErrorException("Failed to create data disk: " + result);
   }
-  String datadiskPath=disk.getPath();
   DiskDef patchDisk=new DiskDef();
   if (pool.getType() == StoragePoolType.CLVM) {
-    patchDisk.defBlockBasedDisk(datadiskPath,1,rootDisk.getBusType());
+    patchDisk.defBlockBasedDisk(patchDiskPath,1,rootDisk.getBusType());
   }
  else {
-    patchDisk.defFileBasedDisk(datadiskPath,1,rootDisk.getBusType(),DiskDef.diskFmtType.RAW);
+    patchDisk.defFileBasedDisk(patchDiskPath,1,rootDisk.getBusType(),DiskDef.diskFmtType.RAW);
   }
   disks.add(patchDisk);
   String bootArgs=vmSpec.getBootArgs();
-  patchSystemVm(bootArgs,datadiskPath,vmName);
+  patchSystemVm(bootArgs,patchDiskPath,vmName);
 }
