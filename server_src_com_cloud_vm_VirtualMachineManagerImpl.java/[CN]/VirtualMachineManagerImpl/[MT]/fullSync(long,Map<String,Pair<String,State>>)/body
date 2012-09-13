@@ -5,7 +5,6 @@
   set_vms.addAll(_vmDao.listByClusterId(clusterId));
   set_vms.addAll(_vmDao.listLHByClusterId(clusterId));
   for (  VMInstanceVO vm : set_vms) {
-    if (vm.isRemoved() || vm.getState() == State.Destroyed || vm.getState() == State.Expunging)     continue;
     AgentVmInfo info=infos.remove(vm.getId());
     VMInstanceVO castedVm=null;
     if ((info == null && (vm.getState() == State.Running || vm.getState() == State.Starting)) || (info != null && (info.state == State.Running && vm.getState() == State.Starting))) {
@@ -44,13 +43,15 @@
         e.printStackTrace();
       }
     }
- else     if (info != null && (vm.getState() == State.Stopped || vm.getState() == State.Stopping)) {
+ else     if (info != null && (vm.getState() == State.Stopped || vm.getState() == State.Stopping || vm.isRemoved() || vm.getState() == State.Destroyed || vm.getState() == State.Expunging)) {
       Host host=_hostDao.findByGuid(info.getHostUuid());
       if (host != null) {
-        s_logger.warn("Stopping a VM which is stopped/stopping " + info.name);
-        vm.setState(State.Stopped);
-        vm.setHostId(null);
-        _vmDao.persist(vm);
+        s_logger.warn("Stopping a VM which is stopped/stopping/destroyed/expunging " + info.name);
+        if (vm.getState() == State.Stopped || vm.getState() == State.Stopping) {
+          vm.setState(State.Stopped);
+          vm.setHostId(null);
+          _vmDao.persist(vm);
+        }
         try {
           Answer answer=_agentMgr.send(host.getId(),cleanup(info.name));
           if (!answer.getResult()) {
@@ -76,7 +77,7 @@
     }
   }
   for (  final AgentVmInfo left : infos.values()) {
-    if (VirtualMachineName.isValidVmName(left.name))     continue;
+    if (!VirtualMachineName.isValidVmName(left.name))     continue;
     try {
       Host host=_hostDao.findByGuid(left.getHostUuid());
       if (host != null) {
