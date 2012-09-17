@@ -1,9 +1,25 @@
 {
-  MockHost host=_mockHostDao.findByGuid(hostGuid);
-  if (host == null) {
-    return "can't find host";
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockHost host=null;
+  MockVm vm=null;
+  try {
+    txn.start();
+    host=_mockHostDao.findByGuid(hostGuid);
+    if (host == null) {
+      return "can't find host";
+    }
+    vm=_mockVmDao.findByVmName(vmName);
+    txn.commit();
   }
-  MockVm vm=_mockVmDao.findByVmName(vmName);
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Unable to start VM " + vmName,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   if (vm == null) {
     int vncPort=0;
     if (vncPort < 0)     return "Unable to allocate VNC port";
@@ -26,12 +42,40 @@
  else     if (vmName.startsWith("i-")) {
       vm.setType("User");
     }
-    vm=_mockVmDao.persist((MockVMVO)vm);
+    txn=Transaction.open(Transaction.SIMULATOR_DB);
+    try {
+      txn.start();
+      vm=_mockVmDao.persist((MockVMVO)vm);
+      txn.commit();
+    }
+ catch (    Exception ex) {
+      txn.rollback();
+      throw new CloudRuntimeException("unable to save vm to db " + vm.getName(),ex);
+    }
+ finally {
+      txn.close();
+      txn=Transaction.open(Transaction.CLOUD_DB);
+      txn.close();
+    }
   }
  else {
     if (vm.getState() == State.Stopped) {
       vm.setState(State.Running);
-      _mockVmDao.update(vm.getId(),(MockVMVO)vm);
+      txn=Transaction.open(Transaction.SIMULATOR_DB);
+      try {
+        txn.start();
+        _mockVmDao.update(vm.getId(),(MockVMVO)vm);
+        txn.commit();
+      }
+ catch (      Exception ex) {
+        txn.rollback();
+        throw new CloudRuntimeException("unable to update vm " + vm.getName(),ex);
+      }
+ finally {
+        txn.close();
+        txn=Transaction.open(Transaction.CLOUD_DB);
+        txn.close();
+      }
     }
   }
   if (vm.getState() == State.Running && vmName.startsWith("s-")) {

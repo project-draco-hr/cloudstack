@@ -1,23 +1,38 @@
 {
   String uuid=cmd.getStorageId();
-  if (uuid == null) {
-    String secUrl=cmd.getSecUrl();
-    MockSecStorageVO secondary=_mockSecStorageDao.findByUrl(secUrl);
-    if (secondary == null) {
-      return new GetStorageStatsAnswer(cmd,"Can't find the secondary storage:" + secUrl);
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    if (uuid == null) {
+      String secUrl=cmd.getSecUrl();
+      MockSecStorageVO secondary=_mockSecStorageDao.findByUrl(secUrl);
+      if (secondary == null) {
+        return new GetStorageStatsAnswer(cmd,"Can't find the secondary storage:" + secUrl);
+      }
+      Long totalUsed=_mockVolumeDao.findTotalStorageId(secondary.getId());
+      txn.commit();
+      return new GetStorageStatsAnswer(cmd,secondary.getCapacity(),totalUsed);
     }
-    Long totalUsed=_mockVolumeDao.findTotalStorageId(secondary.getId());
-    return new GetStorageStatsAnswer(cmd,secondary.getCapacity(),totalUsed);
-  }
  else {
-    MockStoragePoolVO pool=_mockStoragePoolDao.findByUuid(uuid);
-    if (pool == null) {
-      return new GetStorageStatsAnswer(cmd,"Can't find the pool");
+      MockStoragePoolVO pool=_mockStoragePoolDao.findByUuid(uuid);
+      if (pool == null) {
+        return new GetStorageStatsAnswer(cmd,"Can't find the pool");
+      }
+      Long totalUsed=_mockVolumeDao.findTotalStorageId(pool.getId());
+      if (totalUsed == null) {
+        totalUsed=0L;
+      }
+      txn.commit();
+      return new GetStorageStatsAnswer(cmd,pool.getCapacity(),totalUsed);
     }
-    Long totalUsed=_mockVolumeDao.findTotalStorageId(pool.getId());
-    if (totalUsed == null) {
-      totalUsed=0L;
-    }
-    return new GetStorageStatsAnswer(cmd,pool.getCapacity(),totalUsed);
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("DBException during storage stats collection for pool " + uuid,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
 }

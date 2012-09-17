@@ -1,16 +1,28 @@
 {
-  String snapshotUUId=cmd.getSnapshotUuid();
-  MockVolumeVO snapshot=_mockVolumeDao.findByName(snapshotUUId);
-  if (snapshot == null) {
-    snapshotUUId=cmd.getSnapshotName();
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockVolumeVO snapshot=null;
+  MockSecStorageVO sec=null;
+  try {
+    txn.start();
+    String snapshotUUId=cmd.getSnapshotUuid();
     snapshot=_mockVolumeDao.findByName(snapshotUUId);
     if (snapshot == null) {
-      return new CreatePrivateTemplateAnswer(cmd,false,"can't find snapshot:" + snapshotUUId);
+      snapshotUUId=cmd.getSnapshotName();
+      snapshot=_mockVolumeDao.findByName(snapshotUUId);
+      if (snapshot == null) {
+        return new CreatePrivateTemplateAnswer(cmd,false,"can't find snapshot:" + snapshotUUId);
+      }
     }
+    sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageUrl());
+    if (sec == null) {
+      return new CreatePrivateTemplateAnswer(cmd,false,"can't find secondary storage");
+    }
+    txn.commit();
   }
-  MockSecStorageVO sec=_mockSecStorageDao.findByUrl(cmd.getSecondaryStorageUrl());
-  if (sec == null) {
-    return new CreatePrivateTemplateAnswer(cmd,false,"can't find secondary storage");
+  finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   MockVolumeVO template=new MockVolumeVO();
   String uuid=UUID.randomUUID().toString();
@@ -20,6 +32,20 @@
   template.setSize(snapshot.getSize());
   template.setStatus(Status.DOWNLOADED);
   template.setType(MockVolumeType.TEMPLATE);
-  template=_mockVolumeDao.persist(template);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    template=_mockVolumeDao.persist(template);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when saving template " + template,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new CreatePrivateTemplateAnswer(cmd,true,"",template.getName(),template.getSize(),template.getSize(),template.getName(),ImageFormat.QCOW2);
 }

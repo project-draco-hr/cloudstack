@@ -1,7 +1,22 @@
 {
-  MockSecStorageVO ssvo=_mockSecStorageDao.findByUrl(cmd.getSecUrl());
-  if (ssvo == null) {
-    return new DownloadAnswer("can't find secondary storage",VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR);
+  MockSecStorageVO ssvo=null;
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    ssvo=_mockSecStorageDao.findByUrl(cmd.getSecUrl());
+    if (ssvo == null) {
+      return new DownloadAnswer("can't find secondary storage",VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR);
+    }
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error accessing secondary storage " + cmd.getSecUrl(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   MockVolumeVO volume=new MockVolumeVO();
   volume.setPoolId(ssvo.getId());
@@ -10,6 +25,20 @@
   volume.setSize(0);
   volume.setType(MockVolumeType.TEMPLATE);
   volume.setStatus(Status.DOWNLOAD_IN_PROGRESS);
-  volume=_mockVolumeDao.persist(volume);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    volume=_mockVolumeDao.persist(volume);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when saving volume " + volume,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new DownloadAnswer(String.valueOf(volume.getId()),0,"Downloading",Status.DOWNLOAD_IN_PROGRESS,cmd.getName(),cmd.getName(),volume.getSize(),volume.getSize(),null);
 }
