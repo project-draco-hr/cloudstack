@@ -5,6 +5,11 @@
   List<Counter> counters=new ArrayList<Counter>();
   List<AutoScalePolicyVO> policies=new ArrayList<AutoScalePolicyVO>();
   List<Long> policyIds=new ArrayList<Long>();
+  List<Long> currentScaleUpPolicyIds=new ArrayList<Long>();
+  List<Long> currentScaleDownPolicyIds=new ArrayList<Long>();
+  if (vmGroup.getCreated() != null) {
+    ApiDBUtils.getAutoScaleVmGroupPolicyIds(vmGroup.getId(),currentScaleUpPolicyIds,currentScaleDownPolicyIds);
+  }
   if (minMembers < 0) {
     throw new InvalidParameterValueException(ApiConstants.MIN_MEMBERS + " is an invalid value: " + minMembers);
   }
@@ -17,11 +22,21 @@
   if (interval < 0) {
     throw new InvalidParameterValueException("interval is an invalid value: " + interval);
   }
-  if (scaleUpPolicyIds != null) {
-    policies.addAll(getAutoScalePolicies("scaleuppolicyid",scaleUpPolicyIds,counters,interval,true));
+  if (passedScaleUpPolicyIds != null) {
+    policies.addAll(getAutoScalePolicies("scaleuppolicyid",passedScaleUpPolicyIds,counters,interval,true));
+    policyIds.addAll(passedScaleUpPolicyIds);
   }
-  if (scaleDownPolicyIds != null) {
-    policies.addAll(getAutoScalePolicies("scaledownpolicyid",scaleDownPolicyIds,counters,interval,false));
+ else {
+    getAutoScalePolicies("scaleuppolicyid",currentScaleUpPolicyIds,counters,interval,true);
+    policyIds.addAll(currentScaleUpPolicyIds);
+  }
+  if (passedScaleDownPolicyIds != null) {
+    policies.addAll(getAutoScalePolicies("scaledownpolicyid",passedScaleDownPolicyIds,counters,interval,false));
+    policyIds.addAll(passedScaleDownPolicyIds);
+  }
+ else {
+    getAutoScalePolicies("scaledownpolicyid",currentScaleDownPolicyIds,counters,interval,false);
+    policyIds.addAll(currentScaleDownPolicyIds);
   }
   LoadBalancerVO loadBalancer=getEntityInDatabase(UserContext.current().getCaller(),ApiConstants.LBID,vmGroup.getLoadBalancerId(),_lbDao);
   validateAutoScaleCounters(loadBalancer.getNetworkId(),counters);
@@ -33,22 +48,7 @@
   final Transaction txn=Transaction.currentTxn();
   txn.start();
   vmGroup=_autoScaleVmGroupDao.persist(vmGroup);
-  if (scaleUpPolicyIds != null || scaleDownPolicyIds != null) {
-    List<Long> bakupScaleUpPolicyIds=new ArrayList<Long>();
-    List<Long> bakupScaleDownPolicyIds=new ArrayList<Long>();
-    ApiDBUtils.getAutoScaleVmGroupPolicyIds(vmGroup.getId(),bakupScaleUpPolicyIds,bakupScaleDownPolicyIds);
-    if (scaleUpPolicyIds == null) {
-      policyIds.addAll(bakupScaleUpPolicyIds);
-    }
- else {
-      policyIds.addAll(scaleUpPolicyIds);
-    }
-    if (scaleDownPolicyIds == null) {
-      policyIds.addAll(bakupScaleDownPolicyIds);
-    }
- else {
-      policyIds.addAll(scaleDownPolicyIds);
-    }
+  if (passedScaleUpPolicyIds != null || passedScaleDownPolicyIds != null) {
     _autoScaleVmGroupPolicyMapDao.removeByGroupId(vmGroup.getId());
     for (    Long policyId : policyIds) {
       _autoScaleVmGroupPolicyMapDao.persist(new AutoScaleVmGroupPolicyMapVO(vmGroup.getId(),policyId));
