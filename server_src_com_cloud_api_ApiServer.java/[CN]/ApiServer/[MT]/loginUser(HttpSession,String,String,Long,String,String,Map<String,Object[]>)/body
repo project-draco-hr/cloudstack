@@ -1,0 +1,60 @@
+{
+  if (domainId == null) {
+    if (domainPath == null || domainPath.trim().length() == 0) {
+      domainId=DomainVO.ROOT_DOMAIN;
+    }
+ else {
+      Domain domainObj=_domainMgr.findDomainByPath(domainPath);
+      if (domainObj != null) {
+        domainId=domainObj.getId();
+      }
+ else {
+        throw new CloudAuthenticationException("Unable to find the domain from the path " + domainPath);
+      }
+    }
+  }
+  UserAccount userAcct=_accountMgr.authenticateUser(username,password,domainId,loginIpAddress,requestParameters);
+  if (userAcct != null) {
+    String timezone=userAcct.getTimezone();
+    float offsetInHrs=0f;
+    if (timezone != null) {
+      TimeZone t=TimeZone.getTimeZone(timezone);
+      s_logger.info("Current user logged in under " + timezone + " timezone");
+      java.util.Date date=new java.util.Date();
+      long longDate=date.getTime();
+      float offsetInMs=(t.getOffset(longDate));
+      offsetInHrs=offsetInMs / (1000 * 60 * 60);
+      s_logger.info("Timezone offset from UTC is: " + offsetInHrs);
+    }
+    Account account=_accountMgr.getAccount(userAcct.getAccountId());
+    session.setAttribute("userid",userAcct.getId());
+    UserVO user=(UserVO)_accountMgr.getActiveUser(userAcct.getId());
+    if (user.getUuid() != null) {
+      session.setAttribute("user_UUID",user.getUuid());
+    }
+    session.setAttribute("username",userAcct.getUsername());
+    session.setAttribute("firstname",userAcct.getFirstname());
+    session.setAttribute("lastname",userAcct.getLastname());
+    session.setAttribute("accountobj",account);
+    session.setAttribute("account",account.getAccountName());
+    session.setAttribute("domainid",account.getDomainId());
+    DomainVO domain=(DomainVO)_domainMgr.getDomain(account.getDomainId());
+    if (domain.getUuid() != null) {
+      session.setAttribute("domain_UUID",domain.getUuid());
+    }
+    session.setAttribute("type",Short.valueOf(account.getType()).toString());
+    session.setAttribute("registrationtoken",userAcct.getRegistrationToken());
+    session.setAttribute("registered",new Boolean(userAcct.isRegistered()).toString());
+    if (timezone != null) {
+      session.setAttribute("timezone",timezone);
+      session.setAttribute("timezoneoffset",Float.valueOf(offsetInHrs).toString());
+    }
+    SecureRandom sesssionKeyRandom=new SecureRandom();
+    byte sessionKeyBytes[]=new byte[20];
+    sesssionKeyRandom.nextBytes(sessionKeyBytes);
+    String sessionKey=Base64.encodeBytes(sessionKeyBytes);
+    session.setAttribute("sessionkey",sessionKey);
+    return;
+  }
+  throw new CloudAuthenticationException("Failed to authenticate user " + username + " in domain "+ domainId+ "; please provide valid credentials");
+}
