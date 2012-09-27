@@ -1,43 +1,68 @@
 {
   Long accountId=cmd.getId();
   Long domainId=cmd.getDomainId();
+  DomainVO domain=_domainDao.findById(domainId);
   String accountName=cmd.getAccountName();
   String newAccountName=cmd.getNewName();
   String networkDomain=cmd.getNetworkDomain();
   Map<String,String> details=cmd.getDetails();
-  AccountVO account=_accountDao.findById(accountId);
-  String accountUUID=account.getUuid();
+  Account account=null;
+  if (accountId != null) {
+    account=_accountDao.findById(accountId);
+  }
+ else {
+    account=_accountDao.findEnabledAccount(accountName,domainId);
+  }
+  if (account == null || account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    s_logger.error("Unable to find account by accountId: " + accountId + " OR by name: "+ accountName+ " in domain "+ domainId);
+    throw new InvalidParameterValueException("Unable to find account by accountId: " + accountId + " OR by name: "+ accountName+ " in domain "+ domainId);
+  }
+  StringBuffer params=new StringBuffer("/api?command=updateAccount");
+  params.append("&" + ApiConstants.NEW_NAME + "="+ newAccountName);
+  if (account != null) {
+    params.append("&" + ApiConstants.ID + "="+ account.getUuid());
+  }
+  if (accountName != null) {
+    params.append("&" + ApiConstants.ACCOUNT + "="+ accountName);
+  }
+  if (domain != null) {
+    params.append("&" + ApiConstants.DOMAIN_ID + "="+ domain.getUuid());
+  }
+  if (networkDomain != null) {
+    params.append("&" + ApiConstants.NETWORK_DOMAIN + "="+ networkDomain);
+  }
+  if (details != null) {
+    params.append("&" + ApiConstants.ACCOUNT_DETAILS + "="+ details);
+  }
   long regionId=account.getRegionId();
   if (getId() == regionId) {
     Account updateAccount=_accountMgr.updateAccount(cmd);
     if (updateAccount != null) {
       List<RegionVO> regions=_regionDao.listAll();
-      StringBuffer params=new StringBuffer("/api?command=updateAccount" + "&ispropagate=true");
       for (      Region region : regions) {
         if (region.getId() == getId()) {
           continue;
         }
-        String url=region.getEndPoint() + params;
+        String url=region.getEndPoint() + params + "&"+ ApiConstants.IS_PROPAGATE+ "=true";
         if (makeAPICall(url)) {
-          s_logger.debug("Successfully updated account :" + accountUUID + " in Region: "+ region.getId());
+          s_logger.debug("Successfully updated account :" + account.getUuid() + " in Region: "+ region.getId());
         }
  else {
-          s_logger.error("Error while updated account :" + accountUUID + " in Region: "+ region.getId());
+          s_logger.error("Error while updating account :" + account.getUuid() + " in Region: "+ region.getId());
         }
       }
     }
     return updateAccount;
   }
  else {
-    StringBuffer params=new StringBuffer("/api?command=updateAccount");
     Region region=_regionDao.findById(regionId);
     String url=region.getEndPoint() + params;
     if (makeAPICall(url)) {
-      s_logger.debug("Successfully updated account :" + accountUUID + " in source Region: "+ region.getId());
+      s_logger.debug("Successfully updated account :" + account.getUuid() + " in source Region: "+ region.getId());
       return null;
     }
  else {
-      s_logger.error("Error while updated account :" + accountUUID + " in source Region: "+ region.getId());
+      s_logger.error("Error while updating account :" + account.getUuid() + " in source Region: "+ region.getId());
       return null;
     }
   }

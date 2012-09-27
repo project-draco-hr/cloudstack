@@ -1,0 +1,60 @@
+{
+  Account account=null;
+  if (accountId != null) {
+    account=_accountDao.findById(accountId);
+  }
+ else {
+    account=_accountDao.findActiveAccount(accountName,domainId);
+  }
+  if (account == null || account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    throw new InvalidParameterValueException("Unable to find active account by accountId: " + accountId + " OR by name: "+ accountName+ " in domain "+ domainId);
+  }
+  String accountUUID=account.getUuid();
+  StringBuffer params=new StringBuffer("/api?command=disableAccount" + "&" + ApiConstants.LOCK + "="+ lockRequested);
+  params.append("&" + ApiConstants.ID + "="+ accountUUID);
+  if (accountName != null) {
+    params.append("&" + ApiConstants.ACCOUNT + "="+ accountName);
+  }
+  DomainVO domain=_domainDao.findById(domainId);
+  if (domain != null) {
+    params.append("&" + ApiConstants.DOMAIN_ID + "="+ domain.getUuid());
+  }
+  long regionId=account.getRegionId();
+  if (getId() == regionId) {
+    Account retAccount=null;
+    if (lockRequested) {
+      retAccount=_accountMgr.lockAccount(accountName,domainId,accountId);
+    }
+ else {
+      retAccount=_accountMgr.disableAccount(accountName,domainId,accountId);
+    }
+    if (retAccount != null) {
+      List<RegionVO> regions=_regionDao.listAll();
+      for (      Region region : regions) {
+        if (region.getId() == getId()) {
+          continue;
+        }
+        String url=region.getEndPoint() + params + "&"+ ApiConstants.IS_PROPAGATE+ "=true";
+        if (makeAPICall(url)) {
+          s_logger.debug("Successfully disabled account :" + accountUUID + " in Region: "+ region.getId());
+        }
+ else {
+          s_logger.error("Error while disabling account :" + accountUUID + " in Region: "+ region.getId());
+        }
+      }
+    }
+    return retAccount;
+  }
+ else {
+    Region region=_regionDao.findById(regionId);
+    String url=region.getEndPoint() + params;
+    if (makeAPICall(url)) {
+      s_logger.debug("Successfully disabled account :" + accountUUID + " in source Region: "+ region.getId());
+      return null;
+    }
+ else {
+      s_logger.error("Error while disabling account :" + accountUUID + " in source Region: "+ region.getId());
+      return null;
+    }
+  }
+}
