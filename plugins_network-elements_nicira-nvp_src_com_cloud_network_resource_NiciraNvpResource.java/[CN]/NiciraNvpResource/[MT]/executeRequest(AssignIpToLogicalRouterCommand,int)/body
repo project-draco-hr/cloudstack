@@ -1,0 +1,51 @@
+{
+  try {
+    LogicalRouterConfig lrc=_niciraNvpApi.findOneLogicalRouterByUuid(cmd.getLogicalRouterUuid());
+    NiciraNvpList<LogicalRouterPort> ports=_niciraNvpApi.findLogicalRouterPortByGatewayServiceAndVlanId(cmd.getLogicalRouterUuid(),cmd.getGatewayServiceUuid(),cmd.getPublicIpVlan());
+    String publicNetworkIpAddress=cmd.getPublicIpCidr();
+    if (ports.isEmpty()) {
+      LogicalRouterPort lrpo=new LogicalRouterPort();
+      lrpo.setAdminStatusEnabled(true);
+      lrpo.setDisplayName(lrc.getDisplayName() + "-outside-port");
+      lrpo.setTags(lrc.getTags());
+      List<String> outsideIpAddresses=new ArrayList<String>();
+      outsideIpAddresses.add(publicNetworkIpAddress);
+      lrpo.setIpAddresses(outsideIpAddresses);
+      lrpo=_niciraNvpApi.createLogicalRouterPort(lrc.getUuid(),lrpo);
+      L3GatewayAttachment attachment=new L3GatewayAttachment(cmd.getGatewayServiceUuid());
+      if (cmd.getPublicIpVlan() != 0) {
+        attachment.setVlanId(cmd.getPublicIpVlan());
+      }
+      _niciraNvpApi.modifyLogicalRouterPortAttachment(lrc.getUuid(),lrpo.getUuid(),attachment);
+      return new AssignIpToLogicalRouterAnswer(cmd,true,"Ip address configured on new logical router port");
+    }
+ else {
+      boolean found=false;
+      LogicalRouterPort publicPort=null;
+      for (      LogicalRouterPort port : ports.getResults()) {
+        for (        String cidr : port.getIpAddresses()) {
+          if (publicNetworkIpAddress.equals(cidr)) {
+            found=true;
+            publicPort=port;
+            break;
+          }
+        }
+      }
+      if (found) {
+        s_logger.warn("Ip " + publicNetworkIpAddress + " is already configured on logical router "+ cmd.getLogicalRouterUuid());
+        return new AssignIpToLogicalRouterAnswer(cmd,true,"Ip address already alocated on logical Router");
+      }
+      publicPort.getIpAddresses().add(publicNetworkIpAddress);
+      _niciraNvpApi.updateLogicalRouterPortConfig(cmd.getLogicalRouterUuid(),publicPort);
+      return new AssignIpToLogicalRouterAnswer(cmd,true,"Ip address configured on existing logical router port");
+    }
+  }
+ catch (  NiciraNvpApiException e) {
+    if (numRetries > 0) {
+      return retry(cmd,--numRetries);
+    }
+ else {
+      return new DeleteLogicalRouterAnswer(cmd,e);
+    }
+  }
+}
