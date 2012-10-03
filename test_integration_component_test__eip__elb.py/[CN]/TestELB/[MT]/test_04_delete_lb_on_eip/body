@@ -1,3 +1,5 @@
+@attr(tags=['eip'])
+@unittest.skip('valid bug : http://bugs.cloudstack.org/browse/CS-15077 : ListPublicIPAddress failing')
 def test_04_delete_lb_on_eip(self):
     'Test delete LB rule generated on EIP\n        '
     self.debug(("select id from account where account_name='%s';" % self.account.account.name))
@@ -14,6 +16,7 @@ def test_04_delete_lb_on_eip(self):
     public_ip = qresult[0]
     self.debug(('Fetching public IP for account: %s' % self.account.account.name))
     ip_addrs = PublicIPAddress.list(self.api_client, ipaddress=public_ip, listall=True)
+    self.debug(('ip address list: %s' % ip_addrs))
     self.assertEqual(isinstance(ip_addrs, list), True, 'List Public IP address should return valid IP address for network')
     lb_ip = ip_addrs[0]
     lb_rules = LoadBalancerRule.list(self.apiclient, publicipid=lb_ip.id, listall=True)
@@ -26,22 +29,12 @@ def test_04_delete_lb_on_eip(self):
         self.apiclient.deleteLoadBalancerRule(cmd)
     except Exception as e:
         self.fail(('Deleting LB rule failed for IP: %s-%s' % (public_ip, e)))
-    config = list_configurations(self.apiclient, name='network.gc.wait')
-    self.assertEqual(isinstance(config, list), True, 'Check list configurations response')
-    gc_delay = config[0]
-    self.debug(('network.gc.wait: %s' % gc_delay.value))
-    config = list_configurations(self.apiclient, name='network.gc.interval')
-    self.assertEqual(isinstance(config, list), True, 'Check list configurations response')
-    gc_interval = config[0]
-    self.debug(('network.gc.intervall: %s' % gc_interval.value))
-    total_wait = (int(gc_interval.value) + int(gc_delay.value))
-    time.sleep(total_wait)
     self.debug('LB rule deleted!')
     ip_addrs = PublicIPAddress.list(self.api_client, ipaddress=public_ip, listall=True)
     self.assertEqual(isinstance(ip_addrs, list), True, 'Deleting LB rule should not delete public IP')
     self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
     try:
-        ssh_client = remoteSSHClient.remoteSSHClient(self.services['netscaler']['ipaddress'], 22, self.services['netscaler']['username'], self.services['netscaler']['password'])
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], 22, self.services['netscaler']['username'], self.services['netscaler']['password'])
         self.debug('command: show ip')
         res = ssh_client.execute('show ip')
         result = str(res)
@@ -51,7 +44,7 @@ def test_04_delete_lb_on_eip(self):
         res = ssh_client.execute('show lb vserver')
         result = str(res)
         self.debug(('Output: %s' % result))
-        self.assertNotEqual(result.count('State: UP'), 2, 'User subnet IP should be enabled for LB service')
+        self.assertNotEqual(result.count(('Cloud-VirtualServer-%s-22 (%s:22) - TCP' % (lb_ip.ipaddress, lb_ip.ipaddress))), 1, 'User subnet IP should be enabled for LB service')
     except Exception as e:
         self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
     return

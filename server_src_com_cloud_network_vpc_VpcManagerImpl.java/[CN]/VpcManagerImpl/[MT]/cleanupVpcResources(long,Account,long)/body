@@ -1,0 +1,38 @@
+{
+  s_logger.debug("Cleaning up resources for vpc id=" + vpcId);
+  boolean success=true;
+  s_logger.debug("Cleaning up existed site to site VPN connections");
+  _s2sVpnMgr.cleanupVpnConnectionByVpc(vpcId);
+  s_logger.debug("Cleaning up existed site to site VPN gateways");
+  _s2sVpnMgr.cleanupVpnGatewayByVpc(vpcId);
+  List<IPAddressVO> ipsToRelease=_ipAddressDao.listByAssociatedVpc(vpcId,null);
+  s_logger.debug("Releasing ips for vpc id=" + vpcId + " as a part of vpc cleanup");
+  for (  IPAddressVO ipToRelease : ipsToRelease) {
+    success=success && _ntwkMgr.disassociatePublicIpAddress(ipToRelease.getId(),callerUserId,caller);
+    if (!success) {
+      s_logger.warn("Failed to cleanup ip " + ipToRelease + " as a part of vpc id="+ vpcId+ " cleanup");
+    }
+  }
+  if (success) {
+    s_logger.debug("Released ip addresses for vpc id=" + vpcId + " as a part of cleanup vpc process");
+  }
+ else {
+    s_logger.warn("Failed to release ip addresses for vpc id=" + vpcId + " as a part of cleanup vpc process");
+  }
+  if (!revokeStaticRoutesForVpc(vpcId,caller)) {
+    s_logger.warn("Failed to revoke static routes for vpc " + vpcId + " as a part of cleanup vpc process");
+    return false;
+  }
+  VpcGateway gateway=getPrivateGatewayForVpc(vpcId);
+  if (gateway != null) {
+    s_logger.debug("Deleting private gateway " + gateway + " as a part of vpc "+ vpcId+ " resources cleanup");
+    if (!deleteVpcPrivateGateway(gateway.getId())) {
+      success=false;
+      s_logger.debug("Failed to delete private gateway " + gateway + " as a part of vpc "+ vpcId+ " resources cleanup");
+    }
+ else {
+      s_logger.debug("Deleted private gateway " + gateway + " as a part of vpc "+ vpcId+ " resources cleanup");
+    }
+  }
+  return success;
+}

@@ -1,32 +1,28 @@
 {
-  PreparedStatement statement=null;
   int uploadId=-1;
-  openConnection();
+  Transaction txn=null;
   try {
+    txn=Transaction.open(Transaction.AWSAPI_DB);
     Date tod=new Date();
-    java.sql.Timestamp dateTime=new Timestamp(tod.getTime());
-    statement=conn.prepareStatement("INSERT INTO multipart_uploads (AccessKey, BucketName, NameKey, x_amz_acl, CreateTime) VALUES (?,?,?,?,?)");
-    statement.setString(1,accessKey);
-    statement.setString(2,bucketName);
-    statement.setString(3,key);
-    statement.setString(4,cannedAccess);
-    statement.setTimestamp(5,dateTime);
-    int count=statement.executeUpdate();
-    statement.close();
-    statement=conn.prepareStatement("SELECT ID FROM multipart_uploads WHERE AccessKey=? AND BucketName=? AND NameKey=? AND CreateTime=?");
-    statement.setString(1,accessKey);
-    statement.setString(2,bucketName);
-    statement.setString(3,key);
-    statement.setTimestamp(4,dateTime);
-    ResultSet rs=statement.executeQuery();
-    if (rs.next()) {
-      uploadId=rs.getInt("ID");
-      saveMultipartMeta(uploadId,meta);
+    MultiPartUploadsVO uploadVO=new MultiPartUploadsVO(accessKey,bucketName,key,cannedAccess,tod);
+    uploadVO=mpartUploadDao.persist(uploadVO);
+    if (null != uploadVO) {
+      uploadId=uploadVO.getId().intValue();
+      if (null != meta) {
+        for (int i=0; i < meta.length; i++) {
+          MultipartMetaVO mpartMeta=new MultipartMetaVO();
+          mpartMeta.setUploadID(uploadId);
+          S3MetaDataEntry entry=meta[i];
+          mpartMeta.setName(entry.getName());
+          mpartMeta.setValue(entry.getValue());
+          mpartMetaDao.persist(mpartMeta);
+        }
+        txn.commit();
+      }
     }
-    statement.close();
     return uploadId;
   }
   finally {
-    closeConnection();
+    txn.close();
   }
 }

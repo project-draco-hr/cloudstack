@@ -1,9 +1,24 @@
 {
   StorageFilerTO sf=cmd.getPool();
   DiskProfile dskch=cmd.getDiskCharacteristics();
-  MockStoragePoolVO storagePool=_mockStoragePoolDao.findByUuid(sf.getUuid());
-  if (storagePool == null) {
-    return new CreateAnswer(cmd,"Failed to find storage pool: " + sf.getUuid());
+  MockStoragePoolVO storagePool=null;
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    storagePool=_mockStoragePoolDao.findByUuid(sf.getUuid());
+    txn.commit();
+    if (storagePool == null) {
+      return new CreateAnswer(cmd,"Failed to find storage pool: " + sf.getUuid());
+    }
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding storage " + sf.getUuid(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   String volumeName=UUID.randomUUID().toString();
   MockVolumeVO volume=new MockVolumeVO();
@@ -12,7 +27,21 @@
   volume.setPath(storagePool.getMountPoint() + volumeName);
   volume.setSize(dskch.getSize());
   volume.setType(MockVolumeType.VOLUME);
-  volume=_mockVolumeDao.persist(volume);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    volume=_mockVolumeDao.persist(volume);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when saving volume " + volume,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   VolumeTO volumeTo=new VolumeTO(cmd.getVolumeId(),dskch.getType(),sf.getType(),sf.getUuid(),volume.getName(),storagePool.getMountPoint(),volume.getPath(),volume.getSize(),null);
   return new CreateAnswer(cmd,volumeTo);
 }

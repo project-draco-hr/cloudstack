@@ -1,0 +1,45 @@
+{
+  long ownerId=owner.getId();
+  try {
+    _resourceLimitMgr.checkResourceLimit(owner,ResourceType.public_ip);
+  }
+ catch (  ResourceAllocationException ex) {
+    s_logger.warn("Failed to allocate resource of type " + ex.getResourceType() + " for account "+ owner);
+    throw new AccountLimitException("Maximum number of public IP addresses for account: " + owner.getAccountName() + " has been exceeded.");
+  }
+  PublicIp ip=null;
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    owner=_accountDao.acquireInLockTable(ownerId);
+    if (owner == null) {
+      ConcurrentOperationException ex=new ConcurrentOperationException("Unable to lock account");
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("lock account " + ownerId + " is acquired");
+    }
+    Long vlanId=null;
+    List<AccountVlanMapVO> maps=_accountVlanMapDao.listAccountVlanMapsByAccount(ownerId);
+    if (maps != null && !maps.isEmpty()) {
+      vlanId=maps.get(0).getVlanDbId();
+    }
+    ip=fetchNewPublicIp(dcId,null,vlanId,owner,VlanType.VirtualNetwork,guestNtwkId,isSourceNat,false,null,false,vpcId);
+    IPAddressVO publicIp=ip.ip();
+    markPublicIpAsAllocated(publicIp);
+    _ipAddressDao.update(publicIp.getId(),publicIp);
+    txn.commit();
+    return ip;
+  }
+  finally {
+    if (owner != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Releasing lock account " + ownerId);
+      }
+      _accountDao.releaseFromLockTable(ownerId);
+    }
+    if (ip == null) {
+      txn.rollback();
+      s_logger.error("Unable to get source nat ip address for account " + ownerId);
+    }
+  }
+}

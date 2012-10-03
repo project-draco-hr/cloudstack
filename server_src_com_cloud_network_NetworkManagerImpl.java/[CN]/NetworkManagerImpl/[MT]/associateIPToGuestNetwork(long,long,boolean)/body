@@ -1,0 +1,77 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=null;
+  IPAddressVO ipToAssoc=_ipAddressDao.findById(ipId);
+  if (ipToAssoc != null) {
+    _accountMgr.checkAccess(caller,null,true,ipToAssoc);
+    owner=_accountMgr.getAccount(ipToAssoc.getAllocatedToAccountId());
+  }
+ else {
+    s_logger.debug("Unable to find ip address by id: " + ipId);
+    return null;
+  }
+  if (ipToAssoc.getAssociatedWithNetworkId() != null) {
+    s_logger.debug("IP " + ipToAssoc + " is already assocaited with network id"+ networkId);
+    return ipToAssoc;
+  }
+  Network network=_networksDao.findById(networkId);
+  if (network != null) {
+    _accountMgr.checkAccess(caller,AccessType.UseNetwork,false,network);
+  }
+ else {
+    s_logger.debug("Unable to find ip address by id: " + ipId);
+    return null;
+  }
+  DataCenter zone=_configMgr.getZone(network.getDataCenterId());
+  if (network.getTrafficType() != TrafficType.Guest) {
+    throw new InvalidParameterValueException("Ip address can be associated to the network with trafficType " + TrafficType.Guest);
+  }
+  if (zone.getNetworkType() != NetworkType.Basic && network.getAccountId() != owner.getId()) {
+    throw new InvalidParameterValueException("The owner of the network is not the same as owner of the IP");
+  }
+  if (zone.getNetworkType() == NetworkType.Advanced && !(network.getGuestType() == GuestType.Isolated && areServicesSupportedInNetwork(network.getId(),Service.SourceNat))) {
+    throw new InvalidParameterValueException("In zone of type " + NetworkType.Advanced + " ip address can be associated only to the network of guest type "+ GuestType.Isolated+ " with the "+ Service.SourceNat.getName()+ " enabled");
+  }
+  NetworkOffering offering=_networkOfferingDao.findById(network.getNetworkOfferingId());
+  boolean sharedSourceNat=offering.getSharedSourceNat();
+  boolean isSourceNat=false;
+  if (!sharedSourceNat) {
+    if (getExistingSourceNatInNetwork(owner.getId(),networkId) == null) {
+      if (network.getGuestType() == GuestType.Isolated && network.getVpcId() == null) {
+        isSourceNat=true;
+      }
+    }
+  }
+  s_logger.debug("Associating ip " + ipToAssoc + " to network "+ network);
+  IPAddressVO ip=_ipAddressDao.findById(ipId);
+  ip.setAssociatedWithNetworkId(networkId);
+  ip.setSourceNat(isSourceNat);
+  _ipAddressDao.update(ipId,ip);
+  boolean success=false;
+  try {
+    success=applyIpAssociations(network,false);
+    if (success) {
+      s_logger.debug("Successfully associated ip address " + ip.getAddress().addr() + " to network "+ network);
+    }
+ else {
+      s_logger.warn("Failed to associate ip address " + ip.getAddress().addr() + " to network "+ network);
+    }
+    return ip;
+  }
+  finally {
+    if (!success && releaseOnFailure) {
+      if (ip != null) {
+        try {
+          s_logger.warn("Failed to associate ip address, so releasing ip from the database " + ip);
+          _ipAddressDao.markAsUnavailable(ip.getId());
+          if (!applyIpAssociations(network,true)) {
+            _ipAddressDao.unassignIpAddress(ip.getId());
+          }
+        }
+ catch (        Exception e) {
+          s_logger.warn("Unable to disassociate ip address for recovery",e);
+        }
+      }
+    }
+  }
+}

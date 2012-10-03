@@ -1,0 +1,55 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=_accountMgr.getAccount(cmd.getEntityOwnerId());
+  _accountMgr.checkAccess(caller,null,false,owner);
+  Long customerGatewayId=cmd.getCustomerGatewayId();
+  Site2SiteCustomerGateway customerGateway=_customerGatewayDao.findById(customerGatewayId);
+  if (customerGateway == null) {
+    throw new InvalidParameterValueException("Unable to found specified Site to Site VPN customer gateway " + customerGatewayId + " !");
+  }
+  _accountMgr.checkAccess(caller,null,false,customerGateway);
+  Long vpnGatewayId=cmd.getVpnGatewayId();
+  Site2SiteVpnGateway vpnGateway=_vpnGatewayDao.findById(vpnGatewayId);
+  if (vpnGateway == null) {
+    throw new InvalidParameterValueException("Unable to found specified Site to Site VPN gateway " + vpnGatewayId + " !");
+  }
+  _accountMgr.checkAccess(caller,null,false,vpnGateway);
+  if (customerGateway.getAccountId() != vpnGateway.getAccountId() || customerGateway.getDomainId() != vpnGateway.getDomainId()) {
+    throw new InvalidParameterValueException("VPN connection can only be esitablished between same account's VPN gateway and customer gateway!");
+  }
+  if (_vpnConnectionDao.findByVpnGatewayIdAndCustomerGatewayId(vpnGatewayId,customerGatewayId) != null) {
+    throw new InvalidParameterValueException("The vpn connection with customer gateway id " + customerGatewayId + " or vpn gateway id "+ vpnGatewayId+ " already existed!");
+  }
+  if (_vpnConnectionDao.findByCustomerGatewayId(customerGatewayId) != null) {
+    throw new InvalidParameterValueException("The vpn connection with specified customer gateway id " + customerGatewayId + " already exists!");
+  }
+  String[] cidrList=customerGateway.getGuestCidrList().split(",");
+  String vpcCidr=_vpcDao.findById(vpnGateway.getVpcId()).getCidr();
+  for (  String cidr : cidrList) {
+    if (NetUtils.isNetworksOverlap(vpcCidr,cidr)) {
+      throw new InvalidParameterValueException("The subnets of customer gateway " + customerGatewayId + "'s subnet "+ cidr+ " is overlapped with VPC cidr "+ vpcCidr+ "!");
+    }
+  }
+  List<Site2SiteVpnConnectionVO> conns=_vpnConnectionDao.listByVpnGatewayId(vpnGatewayId);
+  if (conns.size() >= _connLimit) {
+    throw new InvalidParameterValueException("There are too many VPN connections with current VPN gateway! The limit is " + _connLimit);
+  }
+  for (  Site2SiteVpnConnectionVO vc : conns) {
+    if (vc == null) {
+      continue;
+    }
+    Site2SiteCustomerGatewayVO gw=_customerGatewayDao.findById(vc.getCustomerGatewayId());
+    String[] oldCidrList=gw.getGuestCidrList().split(",");
+    for (    String oldCidr : oldCidrList) {
+      for (      String cidr : cidrList) {
+        if (NetUtils.isNetworksOverlap(cidr,oldCidr)) {
+          throw new InvalidParameterValueException("The new connection's remote subnet " + cidr + " is overlapped with existed VPN connection to customer gateway "+ gw.getName()+ "'s subnet "+ oldCidr);
+        }
+      }
+    }
+  }
+  Site2SiteVpnConnectionVO conn=new Site2SiteVpnConnectionVO(owner.getAccountId(),owner.getDomainId(),vpnGatewayId,customerGatewayId);
+  conn.setState(State.Pending);
+  _vpnConnectionDao.persist(conn);
+  return conn;
+}

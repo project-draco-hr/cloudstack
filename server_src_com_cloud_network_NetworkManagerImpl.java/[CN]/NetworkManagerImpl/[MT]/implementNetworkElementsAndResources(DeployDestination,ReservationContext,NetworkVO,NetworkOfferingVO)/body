@@ -1,18 +1,27 @@
 {
   boolean sharedSourceNat=offering.getSharedSourceNat();
   if (network.getGuestType() == Network.GuestType.Isolated && areServicesSupportedInNetwork(network.getId(),Service.SourceNat) && !sharedSourceNat) {
-    List<IPAddressVO> ips=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+    List<IPAddressVO> ips=null;
+    if (network.getVpcId() != null) {
+      ips=_ipAddressDao.listByAssociatedVpc(network.getVpcId(),true);
+      if (ips.isEmpty()) {
+        throw new CloudRuntimeException("Vpc is not implemented; there is no source nat ip");
+      }
+    }
+ else {
+      ips=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+    }
     if (ips.isEmpty()) {
-      s_logger.debug("Creating a source nat ip for " + network);
+      s_logger.debug("Creating a source nat ip for network " + network);
       Account owner=_accountMgr.getAccount(network.getAccountId());
-      assignSourceNatIpAddress(owner,network,context.getCaller().getId());
+      assignSourceNatIpAddressToGuestNetwork(owner,network);
     }
   }
   List<Provider> providersToImplement=getNetworkProviders(network.getId());
   for (  NetworkElement element : _networkElements) {
     if (providersToImplement.contains(element.getProvider())) {
-      if (!isProviderEnabledInPhysicalNetwork(getPhysicalNetworkId(network),"VirtualRouter")) {
-        throw new CloudRuntimeException("Service provider " + element.getProvider().getName() + "either doesn't exist or is not enabled in physical network id: "+ network.getPhysicalNetworkId());
+      if (!isProviderEnabledInPhysicalNetwork(getPhysicalNetworkId(network),element.getProvider().getName())) {
+        throw new CloudRuntimeException("Service provider " + element.getProvider().getName() + " either doesn't exist or is not enabled in physical network id: "+ network.getPhysicalNetworkId());
       }
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Asking " + element.getName() + " to implemenet "+ network);

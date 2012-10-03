@@ -1,17 +1,31 @@
 {
-  if (this.mode.equalsIgnoreCase("Stop")) {
-    MockHost host=_mockHostDao.findByVmId(this.vmId);
-    if (host != null) {
-      String guid=host.getGuid();
-      if (guid != null) {
-        AgentResourceBase res=_resources.get(guid);
-        if (res != null) {
-          res.stop();
-          _resources.remove(guid);
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    if (this.mode.equalsIgnoreCase("Stop")) {
+      txn.start();
+      MockHost host=_mockHostDao.findByVmId(this.vmId);
+      if (host != null) {
+        String guid=host.getGuid();
+        if (guid != null) {
+          AgentResourceBase res=_resources.get(guid);
+          if (res != null) {
+            res.stop();
+            _resources.remove(guid);
+          }
         }
       }
+      txn.commit();
+      return;
     }
-    return;
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Unable to get host " + guid + " due to "+ ex.getMessage(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   String resource=null;
   if (vmType.equalsIgnoreCase("secstorage")) {
@@ -34,7 +48,21 @@
   mockHost.setVersion(this.getClass().getPackage().getImplementationVersion());
   mockHost.setResource(resource);
   mockHost.setVmId(vmId);
-  mockHost=_mockHostDao.persist(mockHost);
+  Transaction simtxn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    simtxn.start();
+    mockHost=_mockHostDao.persist(mockHost);
+    simtxn.commit();
+  }
+ catch (  Exception ex) {
+    simtxn.rollback();
+    throw new CloudRuntimeException("Unable to persist host " + mockHost.getGuid() + " due to "+ ex.getMessage(),ex);
+  }
+ finally {
+    simtxn.close();
+    simtxn=Transaction.open(Transaction.CLOUD_DB);
+    simtxn.close();
+  }
   if (vmType.equalsIgnoreCase("secstorage")) {
     AgentStorageResource storageResource=new AgentStorageResource();
     try {

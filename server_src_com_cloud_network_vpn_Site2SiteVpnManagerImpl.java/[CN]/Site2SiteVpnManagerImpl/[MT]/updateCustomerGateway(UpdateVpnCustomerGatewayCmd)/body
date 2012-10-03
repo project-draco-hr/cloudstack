@@ -1,0 +1,78 @@
+{
+  UserContext.current().setEventDetails(" Id: " + cmd.getId());
+  Account caller=UserContext.current().getCaller();
+  Long id=cmd.getId();
+  Site2SiteCustomerGatewayVO gw=_customerGatewayDao.findById(id);
+  if (gw == null) {
+    throw new InvalidParameterValueException("Find to find customer gateway with id " + id);
+  }
+  _accountMgr.checkAccess(caller,null,false,gw);
+  List<Site2SiteVpnConnectionVO> conns=_vpnConnectionDao.listByCustomerGatewayId(id);
+  if (conns != null) {
+    for (    Site2SiteVpnConnection conn : conns) {
+      if (conn.getState() != State.Error) {
+        throw new InvalidParameterValueException("Unable to update customer gateway with connections in non-Error state!");
+      }
+    }
+  }
+  String name=cmd.getName();
+  String gatewayIp=cmd.getGatewayIp();
+  if (!NetUtils.isValidIp(gatewayIp)) {
+    throw new InvalidParameterValueException("The customer gateway ip " + gatewayIp + " is invalid!");
+  }
+  if (name == null) {
+    name="VPN-" + gatewayIp;
+  }
+  String guestCidrList=cmd.getGuestCidrList();
+  if (!NetUtils.validateGuestCidrList(guestCidrList)) {
+    throw new InvalidParameterValueException("The customer gateway guest cidr list " + guestCidrList + " contains invalid guest cidr!");
+  }
+  String ipsecPsk=cmd.getIpsecPsk();
+  String ikePolicy=cmd.getIkePolicy();
+  String espPolicy=cmd.getEspPolicy();
+  if (!NetUtils.isValidS2SVpnPolicy(ikePolicy)) {
+    throw new InvalidParameterValueException("The customer gateway IKE policy" + ikePolicy + " is invalid!");
+  }
+  if (!NetUtils.isValidS2SVpnPolicy(espPolicy)) {
+    throw new InvalidParameterValueException("The customer gateway ESP policy" + espPolicy + " is invalid!");
+  }
+  Long ikeLifetime=cmd.getIkeLifetime();
+  if (ikeLifetime == null) {
+    ikeLifetime=(long)86400;
+  }
+  if (ikeLifetime > 86400) {
+    throw new InvalidParameterValueException("The IKE lifetime " + ikeLifetime + " of vpn connection is invalid!");
+  }
+  Long espLifetime=cmd.getEspLifetime();
+  if (espLifetime == null) {
+    espLifetime=(long)3600;
+  }
+  if (espLifetime > 86400) {
+    throw new InvalidParameterValueException("The ESP lifetime " + espLifetime + " of vpn connection is invalid!");
+  }
+  Boolean dpd=cmd.getDpd();
+  if (dpd == null) {
+    dpd=false;
+  }
+  checkCustomerGatewayCidrList(guestCidrList);
+  long accountId=gw.getAccountId();
+  Site2SiteCustomerGatewayVO existedGw=_customerGatewayDao.findByGatewayIp(gatewayIp);
+  if (existedGw != null && existedGw.getId() != gw.getId()) {
+    throw new InvalidParameterValueException("The customer gateway with ip " + gatewayIp + " already existed in the system!");
+  }
+  existedGw=_customerGatewayDao.findByNameAndAccountId(name,accountId);
+  if (existedGw != null && existedGw.getId() != gw.getId()) {
+    throw new InvalidParameterValueException("The customer gateway with name " + name + " already existed!");
+  }
+  gw.setName(name);
+  gw.setGatewayIp(gatewayIp);
+  gw.setGuestCidrList(guestCidrList);
+  gw.setIkePolicy(ikePolicy);
+  gw.setEspPolicy(espPolicy);
+  gw.setIpsecPsk(ipsecPsk);
+  gw.setIkeLifetime(ikeLifetime);
+  gw.setEspLifetime(espLifetime);
+  gw.setDpd(dpd);
+  _customerGatewayDao.persist(gw);
+  return gw;
+}

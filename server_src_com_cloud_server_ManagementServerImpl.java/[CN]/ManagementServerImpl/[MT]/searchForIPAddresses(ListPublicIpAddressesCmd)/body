@@ -10,20 +10,27 @@
   Long ipId=cmd.getId();
   Boolean sourceNat=cmd.getIsSourceNat();
   Boolean staticNat=cmd.getIsStaticNat();
-  Account caller=UserContext.current().getCaller();
-  List<Long> permittedAccounts=new ArrayList<Long>();
+  Long vpcId=cmd.getVpcId();
+  Map<String,String> tags=cmd.getTags();
   Boolean isAllocated=cmd.isAllocatedOnly();
   if (isAllocated == null) {
     isAllocated=Boolean.TRUE;
   }
-  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
-  _accountMgr.buildACLSearchParameters(caller,cmd.getId(),cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
-  Long domainId=domainIdRecursiveListProject.first();
-  Boolean isRecursive=domainIdRecursiveListProject.second();
-  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
   Filter searchFilter=new Filter(IPAddressVO.class,"address",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<IPAddressVO> sb=_publicIpAddressDao.createSearchBuilder();
-  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  Long domainId=null;
+  Boolean isRecursive=null;
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=null;
+  if (isAllocated) {
+    Account caller=UserContext.current().getCaller();
+    Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
+    _accountMgr.buildACLSearchParameters(caller,cmd.getId(),cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
+    domainId=domainIdRecursiveListProject.first();
+    isRecursive=domainIdRecursiveListProject.second();
+    listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+    _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  }
   sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
   sb.and("address",sb.entity().getAddress(),SearchCriteria.Op.EQ);
   sb.and("vlanDbId",sb.entity().getVlanId(),SearchCriteria.Op.EQ);
@@ -32,6 +39,7 @@
   sb.and("associatedNetworkIdEq",sb.entity().getAssociatedWithNetworkId(),SearchCriteria.Op.EQ);
   sb.and("isSourceNat",sb.entity().isSourceNat(),SearchCriteria.Op.EQ);
   sb.and("isStaticNat",sb.entity().isOneToOneNat(),SearchCriteria.Op.EQ);
+  sb.and("vpcId",sb.entity().getVpcId(),SearchCriteria.Op.EQ);
   if (forLoadBalancing != null && (Boolean)forLoadBalancing) {
     SearchBuilder<LoadBalancerVO> lbSearch=_loadbalancerDao.createSearchBuilder();
     sb.join("lbSearch",lbSearch,sb.entity().getId(),lbSearch.entity().getSourceIpAddressId(),JoinType.INNER);
@@ -39,6 +47,17 @@
   }
   if (keyword != null && address == null) {
     sb.and("addressLIKE",sb.entity().getAddress(),SearchCriteria.Op.LIKE);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
   }
   SearchBuilder<VlanVO> vlanSearch=_vlanDao.createSearchBuilder();
   vlanSearch.and("vlanType",vlanSearch.entity().getVlanType(),SearchCriteria.Op.EQ);
@@ -55,14 +74,25 @@
  else {
     vlanType=VlanType.VirtualNetwork;
   }
-  if (vlanType == VlanType.VirtualNetwork && (allocatedOnly)) {
-    sb.and("associatedNetworkId",sb.entity().getAssociatedWithNetworkId(),SearchCriteria.Op.NNULL);
-  }
   SearchCriteria<IPAddressVO> sc=sb.create();
-  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  if (isAllocated) {
+    _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  }
   sc.setJoinParameters("vlanSearch","vlanType",vlanType);
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.PublicIpAddress.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
   if (zone != null) {
     sc.setParameters("dataCenterId",zone);
+  }
+  if (vpcId != null) {
+    sc.setParameters("vpcId",vpcId);
   }
   if (ipId != null) {
     sc.setParameters("id",ipId);

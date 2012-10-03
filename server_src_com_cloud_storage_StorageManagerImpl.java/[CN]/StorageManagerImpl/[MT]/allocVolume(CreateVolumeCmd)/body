@@ -5,6 +5,7 @@
   _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(ownerId),ResourceType.volume);
   Long zoneId=cmd.getZoneId();
   Long diskOfferingId=null;
+  DiskOfferingVO diskOffering=null;
   Long size=null;
   if ((cmd.getSnapshotId() == null && cmd.getDiskOfferingId() == null) || (cmd.getSnapshotId() != null && cmd.getDiskOfferingId() != null)) {
     throw new InvalidParameterValueException("Either disk Offering Id or snapshot Id must be passed whilst creating volume");
@@ -21,10 +22,7 @@
         throw new InvalidParameterValueException("Disk size must be larger than 0");
       }
     }
-    if (diskOfferingId == null) {
-      throw new InvalidParameterValueException("Missing parameter(s),either a positive volume size or a valid disk offering id must be specified.");
-    }
-    DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+    diskOffering=_diskOfferingDao.findById(diskOfferingId);
     if ((diskOffering == null) || diskOffering.getRemoved() != null || !DiskOfferingVO.Type.Disk.equals(diskOffering.getType())) {
       throw new InvalidParameterValueException("Please specify a valid disk offering.");
     }
@@ -60,7 +58,8 @@
     if (snapshotCheck.getStatus() != Snapshot.Status.BackedUp) {
       throw new InvalidParameterValueException("Snapshot id=" + snapshotId + " is not in "+ Snapshot.Status.BackedUp+ " state yet and can't be used for volume creation");
     }
-    diskOfferingId=(cmd.getDiskOfferingId() != null) ? cmd.getDiskOfferingId() : snapshotCheck.getDiskOfferingId();
+    diskOfferingId=snapshotCheck.getDiskOfferingId();
+    diskOffering=_diskOfferingDao.findById(diskOfferingId);
     zoneId=snapshotCheck.getDataCenterId();
     size=snapshotCheck.getSize();
     _accountMgr.checkAccess(caller,null,true,snapshotCheck);
@@ -72,19 +71,34 @@
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
     throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
   }
+  if (!zone.isLocalStorageEnabled() && diskOffering.getUseLocalStorage()) {
+    throw new InvalidParameterValueException("Zone is not configured to use local storage but volume's disk offering " + diskOffering.getName() + " uses it");
+  }
   List<StoragePoolVO> storagePools=_storagePoolDao.listByDataCenterId(zoneId);
-  boolean sharedPoolExists=false;
-  for (  StoragePoolVO storagePool : storagePools) {
-    if (storagePool.isShared()) {
-      sharedPoolExists=true;
+  boolean appropriatePoolExists=false;
+  if (!diskOffering.getUseLocalStorage()) {
+    for (    StoragePoolVO storagePool : storagePools) {
+      if (storagePool.isShared()) {
+        appropriatePoolExists=true;
+        break;
+      }
+    }
+  }
+ else {
+    for (    StoragePoolVO storagePool : storagePools) {
+      if (storagePool.isLocal()) {
+        appropriatePoolExists=true;
+        break;
+      }
     }
   }
   List<HostVO> hosts=_resourceMgr.listAllUpAndEnabledHostsInOneZoneByType(Host.Type.Routing,zoneId);
   if (hosts.isEmpty()) {
     throw new InvalidParameterValueException("There is no workable host in data center id " + zoneId + ", please check hosts' agent status and see if they are disabled");
   }
-  if (!sharedPoolExists) {
-    throw new InvalidParameterValueException("Please specify a zone that has at least one shared primary storage pool.");
+  if (!appropriatePoolExists) {
+    String storageType=diskOffering.getUseLocalStorage() ? ServiceOffering.StorageType.local.toString() : ServiceOffering.StorageType.shared.toString();
+    throw new InvalidParameterValueException("Volume's disk offering uses " + storageType + " storage, please specify a zone that has at least one "+ storageType+ " primary storage pool.");
   }
   String userSpecifiedName=cmd.getVolumeName();
   if (userSpecifiedName == null) {
@@ -104,8 +118,10 @@
   volume.setUpdated(new Date());
   volume.setDomainId((caller == null) ? Domain.ROOT_DOMAIN : caller.getDomainId());
   volume=_volsDao.persist(volume);
-  UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),diskOfferingId,null,size);
-  _usageEventDao.persist(usageEvent);
+  if (cmd.getSnapshotId() == null) {
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),diskOfferingId,null,size);
+    _usageEventDao.persist(usageEvent);
+  }
   UserContext.current().setEventDetails("Volume Id: " + volume.getId());
   _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.volume);
   txn.commit();

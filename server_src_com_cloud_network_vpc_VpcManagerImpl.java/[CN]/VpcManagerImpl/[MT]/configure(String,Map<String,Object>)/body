@@ -1,0 +1,40 @@
+{
+  _name=name;
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  if (_vpcOffDao.findByUniqueName(VpcOffering.defaultVPCOfferingName) == null) {
+    s_logger.debug("Creating default VPC offering " + VpcOffering.defaultVPCOfferingName);
+    Map<Service,Set<Provider>> svcProviderMap=new HashMap<Service,Set<Provider>>();
+    Set<Provider> defaultProviders=new HashSet<Provider>();
+    defaultProviders.add(Provider.VPCVirtualRouter);
+    for (    Service svc : getSupportedServices()) {
+      if (svc == Service.Lb) {
+        Set<Provider> lbProviders=new HashSet<Provider>();
+        lbProviders.add(Provider.VPCVirtualRouter);
+        svcProviderMap.put(svc,lbProviders);
+      }
+ else {
+        svcProviderMap.put(svc,defaultProviders);
+      }
+    }
+    createVpcOffering(VpcOffering.defaultVPCOfferingName,VpcOffering.defaultVPCOfferingName,svcProviderMap,true,State.Enabled);
+  }
+  txn.commit();
+  ComponentLocator locator=ComponentLocator.getCurrentLocator();
+  ConfigurationDao configDao=locator.getDao(ConfigurationDao.class);
+  Map<String,String> configs=configDao.getConfiguration(params);
+  String value=configs.get(Config.VpcCleanupInterval.key());
+  _cleanupInterval=NumbersUtil.parseInt(value,60 * 60);
+  String maxNtwks=configs.get(Config.VpcMaxNetworks.key());
+  _maxNetworks=NumbersUtil.parseInt(maxNtwks,3);
+  IpAddressSearch=_ipAddressDao.createSearchBuilder();
+  IpAddressSearch.and("accountId",IpAddressSearch.entity().getAllocatedToAccountId(),Op.EQ);
+  IpAddressSearch.and("dataCenterId",IpAddressSearch.entity().getDataCenterId(),Op.EQ);
+  IpAddressSearch.and("vpcId",IpAddressSearch.entity().getVpcId(),Op.EQ);
+  IpAddressSearch.and("associatedWithNetworkId",IpAddressSearch.entity().getAssociatedWithNetworkId(),Op.EQ);
+  SearchBuilder<VlanVO> virtualNetworkVlanSB=_vlanDao.createSearchBuilder();
+  virtualNetworkVlanSB.and("vlanType",virtualNetworkVlanSB.entity().getVlanType(),Op.EQ);
+  IpAddressSearch.join("virtualNetworkVlanSB",virtualNetworkVlanSB,IpAddressSearch.entity().getVlanId(),virtualNetworkVlanSB.entity().getId(),JoinBuilder.JoinType.INNER);
+  IpAddressSearch.done();
+  return true;
+}

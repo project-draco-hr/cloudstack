@@ -5,7 +5,6 @@
   int srcPortEnd=lb.getSourcePortEnd();
   long sourceIpId=lb.getSourceIpAddressId();
   IPAddressVO ipAddr=_ipAddressDao.findById(sourceIpId);
-  Long networkId=ipAddr.getSourceNetworkId();
   if (ipAddr == null || !ipAddr.readyToUse()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Unable to create load balancer rule, invalid IP address id specified");
     ex.addProxyObject(ipAddr,sourceIpId,"sourceIpId");
@@ -17,7 +16,7 @@
     throw ex;
   }
   _firewallMgr.validateFirewallRule(caller.getCaller(),ipAddr,srcPortStart,srcPortEnd,lb.getProtocol(),Purpose.LoadBalancing,FirewallRuleType.User);
-  networkId=ipAddr.getAssociatedWithNetworkId();
+  Long networkId=ipAddr.getAssociatedWithNetworkId();
   if (networkId == null) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Unable to create load balancer rule ; specified sourceip id is not associated with any network");
     ex.addProxyObject(ipAddr,sourceIpId,"sourceIpId");
@@ -35,11 +34,11 @@
   LoadBalancerVO newRule=new LoadBalancerVO(lb.getXid(),lb.getName(),lb.getDescription(),lb.getSourceIpAddressId(),lb.getSourcePortEnd(),lb.getDefaultPortStart(),lb.getAlgorithm(),network.getId(),ipAddr.getAllocatedToAccountId(),ipAddr.getAllocatedInDomainId());
   newRule=_lbDao.persist(newRule);
   if (openFirewall) {
-    _firewallMgr.createRuleForAllCidrs(sourceIpId,caller.getCaller(),lb.getSourcePortStart(),lb.getSourcePortEnd(),lb.getProtocol(),null,null,newRule.getId());
+    _firewallMgr.createRuleForAllCidrs(sourceIpId,caller.getCaller(),lb.getSourcePortStart(),lb.getSourcePortEnd(),lb.getProtocol(),null,null,newRule.getId(),networkId);
   }
   boolean success=true;
   try {
-    _firewallMgr.detectRulesConflict(newRule,ipAddr);
+    _firewallMgr.detectRulesConflict(newRule);
     if (!_firewallDao.setStateToAdd(newRule)) {
       throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
     }
@@ -61,7 +60,7 @@
     if (!success && newRule != null) {
       txn.start();
       _firewallMgr.revokeRelatedFirewallRule(newRule.getId(),false);
-      _lbDao.remove(newRule.getId());
+      removeLBRule(newRule);
       txn.commit();
     }
   }

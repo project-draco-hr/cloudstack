@@ -7,32 +7,30 @@ def createZones(self, zones):
         createzone.internaldns2 = zone.internaldns2
         createzone.name = zone.name
         createzone.securitygroupenabled = zone.securitygroupenabled
+        createzone.localstorageenabled = zone.localstorageenabled
         createzone.networktype = zone.networktype
         createzone.guestcidraddress = zone.guestcidraddress
         zoneresponse = self.apiClient.createZone(createzone)
         zoneId = zoneresponse.id
-        phynetwrk = self.createPhysicalNetwork((zone.name + '-pnet'), zoneId)
-        self.configureProviders(phynetwrk, zone)
-        self.updatePhysicalNetwork(phynetwrk.id, 'Enabled', vlan=zone.vlan)
+        for pnet in zone.physical_networks:
+            phynetwrk = self.createPhysicalNetwork(pnet, zoneId)
+            self.configureProviders(phynetwrk, pnet.providers)
+            self.updatePhysicalNetwork(phynetwrk.id, 'Enabled', vlan=zone.vlan)
         if (zone.networktype == 'Basic'):
-            self.addTrafficTypes(phynetwrk.id, ['Guest', 'Management'])
             listnetworkoffering = listNetworkOfferings.listNetworkOfferingsCmd()
-            if zone.securitygroupenabled:
-                listnetworkoffering.name = 'DefaultSharedNetworkOfferingWithSGService'
-            else:
-                listnetworkoffering.name = 'DefaultSharedNetworkOffering'
-                listnetworkoffering.displaytext = 'Offering for Shared networks'
+            listnetworkoffering.name = ('DefaultSharedNetscalerEIPandELBNetworkOffering' if (len(filter((lambda x: (x.typ == 'Public')), zone.physical_networks[0].traffictypes)) > 0) else 'DefaultSharedNetworkOfferingWithSGService')
             listnetworkofferingresponse = self.apiClient.listNetworkOfferings(listnetworkoffering)
             guestntwrk = configGenerator.network()
             guestntwrk.displaytext = 'guestNetworkForBasicZone'
             guestntwrk.name = 'guestNetworkForBasicZone'
             guestntwrk.zoneid = zoneId
             guestntwrk.networkofferingid = listnetworkofferingresponse[0].id
-            networkid = self.createnetworks([guestntwrk], zoneId, zone.networktype)
-            self.createpods(zone.pods, zone, zoneId, networkid)
+            networkid = self.createnetworks([guestntwrk], zoneId)
+            self.createpods(zone.pods, zoneId, networkid)
+            if self.isEipElbZone(zone):
+                self.createVlanIpRanges(zone.networktype, zone.ipranges, zoneId, forvirtualnetwork=True)
         if (zone.networktype == 'Advanced'):
-            self.createpods(zone.pods, zone, zoneId)
-            self.addTrafficTypes(phynetwrk.id, ['Guest', 'Public', 'Management'])
+            self.createpods(zone.pods, zoneId)
             self.createVlanIpRanges(zone.networktype, zone.ipranges, zoneId)
         self.createSecondaryStorages(zone.secondaryStorages, zoneId)
         self.enableZone(zoneId, 'Enabled')

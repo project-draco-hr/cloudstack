@@ -58,6 +58,7 @@
   DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
   removeInstanceFromInstanceGroup(cmd.getVmId());
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
+  _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.volume,_volsDao.findByInstance(cmd.getVmId()).size());
   VirtualMachineTemplate template=_templateDao.findById(vm.getTemplateId());
   if (!template.isPublicTemplate()) {
     Account templateOwner=_accountMgr.getAccount(template.getAccountId());
@@ -80,6 +81,10 @@
     _volsDao.persist(volume);
     _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume);
     _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize()));
+    List<SnapshotVO> snapshots=_snapshotDao.listByVolumeIdIncludingRemoved(volume.getId());
+    for (    SnapshotVO snapshot : snapshots) {
+      _snapshotDao.remove(snapshot.getId());
+    }
   }
   _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.user_vm);
   _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
@@ -177,16 +182,20 @@
         if (requiredOfferings.size() < 1) {
           throw new InvalidParameterValueException("Unable to find network offering with availability=" + Availability.Required + " to automatically create the network as a part of vm creation");
         }
-        PhysicalNetwork physicalNetwork=_networkMgr.translateZoneIdToPhysicalNetwork(zone.getId());
         if (requiredOfferings.get(0).getState() == NetworkOffering.State.Enabled) {
           List<NetworkVO> virtualNetworks=_networkMgr.listNetworksForAccount(newAccount.getId(),zone.getId(),Network.GuestType.Isolated);
           if (virtualNetworks.isEmpty()) {
+            long physicalNetworkId=_networkMgr.findPhysicalNetworkId(zone.getId(),requiredOfferings.get(0).getTags(),requiredOfferings.get(0).getTrafficType());
+            PhysicalNetwork physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+            if (physicalNetwork == null) {
+              throw new InvalidParameterValueException("Unable to find physical network with id: " + physicalNetworkId + " and tag: "+ requiredOfferings.get(0).getTags());
+            }
             s_logger.debug("Creating network for account " + newAccount + " from the network offering id="+ requiredOfferings.get(0).getId()+ " as a part of deployVM process");
-            Network newNetwork=_networkMgr.createGuestNetwork(requiredOfferings.get(0).getId(),newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,false,null,physicalNetwork,zone.getId(),ACLType.Account,null);
+            Network newNetwork=_networkMgr.createGuestNetwork(requiredOfferings.get(0).getId(),newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,null,physicalNetwork,zone.getId(),ACLType.Account,null,null);
             defaultNetwork=_networkDao.findById(newNetwork.getId());
           }
  else           if (virtualNetworks.size() > 1) {
-            throw new InvalidParameterValueException("More than 1 default Isolated networks are found for account " + newAccount + "; please specify networkIds");
+            throw new InvalidParameterValueException("More than 1 default Isolated networks are found " + "for account " + newAccount + "; please specify networkIds");
           }
  else {
             defaultNetwork=virtualNetworks.get(0);

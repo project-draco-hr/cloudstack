@@ -1,0 +1,80 @@
+{
+  String publicNeworkName=HypervisorHostHelper.getPublicNetworkNamePrefix(vlanId);
+  Pair<Integer,VirtualDevice> publicNicInfo=vmMo.getNicDeviceIndex(publicNeworkName);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Find public NIC index, public network name: " + publicNeworkName + ", index: "+ publicNicInfo.first());
+  }
+  boolean addVif=false;
+  boolean removeVif=false;
+  if (add && publicNicInfo.first().intValue() == -1) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Plug new NIC to associate" + privateIpAddress + " to "+ publicIpAddress);
+    }
+    addVif=true;
+  }
+ else   if (!add && firstIP) {
+    removeVif=true;
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Unplug NIC " + publicNicInfo.first());
+    }
+  }
+  if (addVif) {
+    plugPublicNic(vmMo,vlanId,vifMacAddress);
+    publicNicInfo=vmMo.getNicDeviceIndex(publicNeworkName);
+    if (publicNicInfo.first().intValue() >= 0) {
+      networkUsage(privateIpAddress,"addVif","eth" + publicNicInfo.first());
+    }
+  }
+  if (publicNicInfo.first().intValue() < 0) {
+    String msg="Failed to find DomR VIF to associate/disassociate IP with.";
+    s_logger.error(msg);
+    throw new InternalErrorException(msg);
+  }
+  String args=null;
+  if (add) {
+    args=" -A ";
+  }
+ else {
+    args=" -D ";
+  }
+  if (sourceNat) {
+    args+=" -s ";
+  }
+  if (firstIP) {
+    args+=" -f ";
+  }
+  String cidrSize=Long.toString(NetUtils.getCidrSize(vlanNetmask));
+  args+=" -l ";
+  args+=publicIpAddress + "/" + cidrSize;
+  args+=" -c ";
+  args+="eth" + publicNicInfo.first();
+  args+=" -g ";
+  args+=vlanGateway;
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Run command on domain router " + privateIpAddress + ", /opt/cloud/bin/ipassoc.sh "+ args);
+  }
+  VmwareManager mgr=getServiceContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+  Pair<Boolean,String> result=SshHelper.sshExecute(privateIpAddress,DEFAULT_DOMR_SSHPORT,"root",mgr.getSystemVMKeyFile(),null,"/opt/cloud/bin/ipassoc.sh " + args);
+  if (!result.first()) {
+    s_logger.error("ipassoc command on domain router " + privateIpAddress + " failed. message: "+ result.second());
+    throw new Exception("ipassoc failed due to " + result.second());
+  }
+  if (removeVif) {
+    String nicMasksStr=vmMo.getCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK);
+    int nicMasks=Integer.parseInt(nicMasksStr);
+    nicMasks&=~(1 << publicNicInfo.first().intValue());
+    vmMo.setCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK,String.valueOf(nicMasks));
+    HostMO hostMo=vmMo.getRunningHost();
+    List<NetworkDetails> networks=vmMo.getNetworksWithDetails();
+    for (    NetworkDetails netDetails : networks) {
+      if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {
+        if (netDetails.getVMMorsOnNetwork() == null || netDetails.getVMMorsOnNetwork().length == 1) {
+          cleanupNetwork(hostMo,netDetails);
+        }
+      }
+    }
+  }
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("ipassoc command on domain router " + privateIpAddress + " completed");
+  }
+}

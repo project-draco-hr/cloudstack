@@ -1,12 +1,41 @@
 {
-  MockSecStorageVO storage=_mockSecStorageDao.findByUrl(cmd.getSecUrl());
-  if (storage == null) {
-    return new Answer(cmd,false,"Failed to get secondary storage");
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockSecStorageVO storage=null;
+  try {
+    txn.start();
+    storage=_mockSecStorageDao.findByUrl(cmd.getSecUrl());
+    if (storage == null) {
+      return new Answer(cmd,false,"Failed to get secondary storage");
+    }
+    txn.commit();
   }
-  List<MockVolumeVO> templates=_mockVolumeDao.findByStorageIdAndType(storage.getId(),MockVolumeType.TEMPLATE);
-  Map<String,TemplateInfo> templateInfos=new HashMap<String,TemplateInfo>();
-  for (  MockVolumeVO template : templates) {
-    templateInfos.put(template.getName(),new TemplateInfo(template.getName(),template.getPath().replaceAll(storage.getMountPoint(),""),template.getSize(),template.getSize(),true,false));
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding sec storage " + cmd.getSecUrl(),ex);
   }
-  return new ListTemplateAnswer(cmd.getSecUrl(),templateInfos);
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    List<MockVolumeVO> templates=_mockVolumeDao.findByStorageIdAndType(storage.getId(),MockVolumeType.TEMPLATE);
+    Map<String,TemplateInfo> templateInfos=new HashMap<String,TemplateInfo>();
+    for (    MockVolumeVO template : templates) {
+      templateInfos.put(template.getName(),new TemplateInfo(template.getName(),template.getPath().replaceAll(storage.getMountPoint(),""),template.getSize(),template.getSize(),true,false));
+    }
+    txn.commit();
+    return new ListTemplateAnswer(cmd.getSecUrl(),templateInfos);
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding template on sec storage " + storage.getId(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
 }

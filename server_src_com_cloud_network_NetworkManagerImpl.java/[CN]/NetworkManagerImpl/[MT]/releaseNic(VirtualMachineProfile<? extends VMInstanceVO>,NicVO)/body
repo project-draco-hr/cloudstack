@@ -1,0 +1,32 @@
+{
+  NetworkVO network=_networksDao.findById(nic.getNetworkId());
+  if (nic.getState() == Nic.State.Reserved || nic.getState() == Nic.State.Reserving) {
+    Nic.State originalState=nic.getState();
+    if (nic.getReservationStrategy() == Nic.ReservationStrategy.Start) {
+      NetworkGuru guru=_networkGurus.get(network.getGuruName());
+      nic.setState(Nic.State.Releasing);
+      _nicDao.update(nic.getId(),nic);
+      NicProfile profile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),null,isSecurityGroupSupportedInNetwork(network),getNetworkTag(vmProfile.getHypervisorType(),network));
+      if (guru.release(profile,vmProfile,nic.getReservationId())) {
+        applyProfileToNicForRelease(nic,profile);
+        nic.setState(Nic.State.Allocated);
+        if (originalState == Nic.State.Reserved) {
+          updateNic(nic,network.getId(),-1);
+        }
+ else {
+          _nicDao.update(nic.getId(),nic);
+        }
+      }
+      for (      NetworkElement element : _networkElements) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Asking " + element.getName() + " to release "+ nic);
+        }
+        element.release(network,profile,vmProfile,null);
+      }
+    }
+ else {
+      nic.setState(Nic.State.Allocated);
+      updateNic(nic,network.getId(),-1);
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  Connect conn;
+  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+  String routerIP=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
+  IpAddressTO pubIP=cmd.getIpAddress();
+  try {
+    conn=LibvirtConnection.getConnection();
+    Domain vm=getDomain(conn,routerName);
+    Integer devNum=0;
+    String pubVlan=pubIP.getVlanId();
+    List<InterfaceDef> pluggedNics=getInterfaces(conn,routerName);
+    for (    InterfaceDef pluggedNic : pluggedNics) {
+      String pluggedVlanBr=pluggedNic.getBrName();
+      String pluggedVlanId=getVlanIdFromBridge(pluggedVlanBr);
+      if (pubVlan.equalsIgnoreCase(Vlan.UNTAGGED) && pluggedVlanBr.equalsIgnoreCase(_publicBridgeName)) {
+        break;
+      }
+ else       if (pluggedVlanBr.equalsIgnoreCase(_linkLocalBridgeName)) {
+      }
+ else       if (pluggedVlanId == null) {
+        return new SetSourceNatAnswer(cmd,false,"unable to find the vlan id for bridge " + pluggedVlanBr + " when attempting to set up"+ pubVlan+ " on router "+ routerName);
+      }
+ else       if (pluggedVlanId.equals(pubVlan)) {
+        break;
+      }
+      devNum++;
+    }
+    String dev="eth" + devNum;
+    String result=_virtRouterResource.assignSourceNat(routerIP,pubIP.getPublicIp(),dev);
+    if (result != null) {
+      return new SetSourceNatAnswer(cmd,false,"KVM plugin \"vpc_snat\" failed:" + result);
+    }
+    return new SetSourceNatAnswer(cmd,true,"success");
+  }
+ catch (  Exception e) {
+    String msg="Ip SNAT failure due to " + e.toString();
+    s_logger.error(msg,e);
+    return new SetSourceNatAnswer(cmd,false,msg);
+  }
+}

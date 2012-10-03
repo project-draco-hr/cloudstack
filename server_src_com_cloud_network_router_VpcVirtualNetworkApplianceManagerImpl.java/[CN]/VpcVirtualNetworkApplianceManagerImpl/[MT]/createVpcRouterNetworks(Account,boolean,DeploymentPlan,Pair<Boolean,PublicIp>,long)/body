@@ -1,0 +1,40 @@
+{
+  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(4);
+  TreeSet<String> publicVlans=new TreeSet<String>();
+  publicVlans.add(sourceNatIp.second().getVlanTag());
+  networks=super.createRouterNetworks(owner,isRedundant,plan,null,sourceNatIp);
+  VpcGateway privateGateway=_vpcMgr.getPrivateGatewayForVpc(vpcId);
+  if (privateGateway != null) {
+    NicProfile privateNic=createPrivateNicProfileForGateway(privateGateway);
+    Network privateNetwork=_networkMgr.getNetwork(privateGateway.getNetworkId());
+    networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)privateNetwork,privateNic));
+  }
+  List<? extends Network> guestNetworks=_vpcMgr.getVpcNetworks(vpcId);
+  for (  Network guestNetwork : guestNetworks) {
+    if (guestNetwork.getState() == Network.State.Implemented) {
+      NicProfile guestNic=createGuestNicProfileForVpcRouter(guestNetwork);
+      networks.add(new Pair<NetworkVO,NicProfile>((NetworkVO)guestNetwork,guestNic));
+    }
+  }
+  List<IPAddressVO> ips=_ipAddressDao.listByAssociatedVpc(vpcId,false);
+  for (  IPAddressVO ip : ips) {
+    PublicIp publicIp=new PublicIp(ip,_vlanDao.findById(ip.getVlanId()),NetUtils.createSequenceBasedMacAddress(ip.getMacAddress()));
+    if ((ip.getState() == IpAddress.State.Allocated || ip.getState() == IpAddress.State.Allocating) && _vpcMgr.ipUsedInVpc(ip) && !publicVlans.contains(publicIp.getVlanTag())) {
+      s_logger.debug("Allocating nic for router in vlan " + publicIp.getVlanTag());
+      NicProfile publicNic=new NicProfile();
+      publicNic.setDefaultNic(false);
+      publicNic.setIp4Address(publicIp.getAddress().addr());
+      publicNic.setGateway(publicIp.getGateway());
+      publicNic.setNetmask(publicIp.getNetmask());
+      publicNic.setMacAddress(publicIp.getMacAddress());
+      publicNic.setBroadcastType(BroadcastDomainType.Vlan);
+      publicNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(publicIp.getVlanTag()));
+      publicNic.setIsolationUri(IsolationType.Vlan.toUri(publicIp.getVlanTag()));
+      NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
+      List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false);
+      networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),publicNic));
+      publicVlans.add(publicIp.getVlanTag());
+    }
+  }
+  return networks;
+}

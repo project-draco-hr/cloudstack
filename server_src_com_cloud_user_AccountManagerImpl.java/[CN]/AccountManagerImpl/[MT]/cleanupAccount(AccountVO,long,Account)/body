@@ -92,13 +92,32 @@
         }
       }
     }
-    List<? extends IpAddress> ipsToRelease=_ipAddressDao.listByAccount(accountId);
-    for (    IpAddress ip : ipsToRelease) {
-      s_logger.debug("Releasing ip " + ip + " as a part of account id="+ accountId+ " cleanup");
-      if (!_networkMgr.releasePublicIpAddress(ip.getId(),callerUserId,caller)) {
-        s_logger.warn("Failed to release ip address " + ip + " as a part of account id="+ accountId+ " clenaup");
+    boolean vpcsDeleted=true;
+    s_logger.debug("Deleting vpcs for account " + account.getId());
+    List<? extends Vpc> vpcs=_vpcMgr.getVpcsForAccount(account.getId());
+    for (    Vpc vpc : vpcs) {
+      if (!_vpcMgr.destroyVpc(vpc)) {
+        s_logger.warn("Unable to destroy VPC " + vpc + " as a part of account id="+ accountId+ " cleanup.");
         accountCleanupNeeded=true;
+        vpcsDeleted=false;
       }
+ else {
+        s_logger.debug("VPC " + vpc.getId() + " successfully deleted as a part of account id="+ accountId+ " cleanup.");
+      }
+    }
+    if (vpcsDeleted) {
+      List<? extends IpAddress> ipsToRelease=_ipAddressDao.listByAccount(accountId);
+      for (      IpAddress ip : ipsToRelease) {
+        s_logger.debug("Releasing ip " + ip + " as a part of account id="+ accountId+ " cleanup");
+        if (!_networkMgr.disassociatePublicIpAddress(ip.getId(),callerUserId,caller)) {
+          s_logger.warn("Failed to release ip address " + ip + " as a part of account id="+ accountId+ " clenaup");
+          accountCleanupNeeded=true;
+        }
+      }
+    }
+    s_logger.debug("Deleting site-to-site VPN customer gateways for account " + accountId);
+    if (!_vpnMgr.deleteCustomerGatewayByAccount(accountId)) {
+      s_logger.warn("Fail to delete site-to-site VPN customer gateways for account " + accountId);
     }
     if (networksDeleted) {
       if (!_configMgr.deleteAccountSpecificVirtualRanges(accountId)) {

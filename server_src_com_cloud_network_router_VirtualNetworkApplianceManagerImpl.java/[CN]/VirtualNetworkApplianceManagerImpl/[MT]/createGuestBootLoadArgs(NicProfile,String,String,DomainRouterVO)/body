@@ -1,0 +1,49 @@
+{
+  long guestNetworkId=guestNic.getNetworkId();
+  NetworkVO guestNetwork=_networkDao.findById(guestNetworkId);
+  String dhcpRange=null;
+  DataCenterVO dc=_dcDao.findById(guestNetwork.getDataCenterId());
+  StringBuilder buf=new StringBuilder();
+  boolean isRedundant=router.getIsRedundantRouter();
+  if (isRedundant) {
+    buf.append(" redundant_router=1");
+    List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(guestNetwork.getId(),Role.VIRTUAL_ROUTER);
+    try {
+      int priority=getUpdatedPriority(guestNetwork,routers,router);
+      router.setPriority(priority);
+    }
+ catch (    InsufficientVirtualNetworkCapcityException e) {
+      s_logger.error("Failed to get update priority!",e);
+      throw new CloudRuntimeException("Failed to get update priority!");
+    }
+    Network net=_networkMgr.getNetwork(guestNic.getNetworkId());
+    buf.append(" guestgw=").append(net.getGateway());
+    String brd=NetUtils.long2Ip(NetUtils.ip2Long(guestNic.getIp4Address()) | ~NetUtils.ip2Long(guestNic.getNetmask()));
+    buf.append(" guestbrd=").append(brd);
+    buf.append(" guestcidrsize=").append(NetUtils.getCidrSize(guestNic.getNetmask()));
+    buf.append(" router_pr=").append(router.getPriority());
+  }
+  String domain=guestNetwork.getNetworkDomain();
+  if (domain != null) {
+    buf.append(" domain=" + domain);
+  }
+  if (dc.getNetworkType() == NetworkType.Basic) {
+    if (guestNic.isDefaultNic()) {
+      long cidrSize=NetUtils.getCidrSize(guestNic.getNetmask());
+      String cidr=NetUtils.getCidrSubNet(guestNic.getGateway(),cidrSize);
+      if (cidr != null) {
+        dhcpRange=NetUtils.getIpRangeStartIpFromCidr(cidr,cidrSize);
+      }
+    }
+  }
+ else   if (dc.getNetworkType() == NetworkType.Advanced) {
+    String cidr=guestNetwork.getCidr();
+    if (cidr != null) {
+      dhcpRange=NetUtils.getDhcpRange(cidr);
+    }
+  }
+  if (dhcpRange != null) {
+    buf.append(" dhcprange=" + dhcpRange);
+  }
+  return buf;
+}

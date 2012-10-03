@@ -1,0 +1,49 @@
+{
+  Domain dm=null;
+  try {
+    dm=getDomain(conn,vmName);
+    DomainInfo info=dm.getInfo();
+    VmStatsEntry stats=new VmStatsEntry();
+    stats.setNumCPUs(info.nrVirtCpu);
+    stats.setEntityType("vm");
+    vmStats oldStats=null;
+    Calendar now=Calendar.getInstance();
+    oldStats=_vmStats.get(vmName);
+    long elapsedTime=0;
+    if (oldStats != null) {
+      elapsedTime=now.getTimeInMillis() - oldStats._timestamp.getTimeInMillis();
+      double utilization=(info.cpuTime - oldStats._usedTime) / ((double)elapsedTime * 1000000);
+      NodeInfo node=conn.nodeInfo();
+      utilization=utilization / node.cpus;
+      if (utilization > 0) {
+        stats.setCPUUtilization(utilization * 100);
+      }
+    }
+    List<InterfaceDef> vifs=getInterfaces(conn,vmName);
+    long rx=0;
+    long tx=0;
+    for (    InterfaceDef vif : vifs) {
+      DomainInterfaceStats ifStats=dm.interfaceStats(vif.getDevName());
+      rx+=ifStats.rx_bytes;
+      tx+=ifStats.tx_bytes;
+    }
+    if (oldStats != null) {
+      long deltarx=rx - oldStats._rx;
+      if (deltarx > 0)       stats.setNetworkReadKBs(deltarx / 1000);
+      long deltatx=tx - oldStats._tx;
+      if (deltatx > 0)       stats.setNetworkWriteKBs(deltatx / 1000);
+    }
+    vmStats newStat=new vmStats();
+    newStat._usedTime=info.cpuTime;
+    newStat._rx=rx;
+    newStat._tx=tx;
+    newStat._timestamp=now;
+    _vmStats.put(vmName,newStat);
+    return stats;
+  }
+  finally {
+    if (dm != null) {
+      dm.free();
+    }
+  }
+}

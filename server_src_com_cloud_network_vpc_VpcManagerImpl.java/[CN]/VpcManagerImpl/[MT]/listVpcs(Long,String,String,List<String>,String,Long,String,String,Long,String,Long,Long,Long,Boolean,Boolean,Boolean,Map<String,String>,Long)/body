@@ -1,0 +1,101 @@
+{
+  Account caller=UserContext.current().getCaller();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(domainId,isRecursive,null);
+  _accountMgr.buildACLSearchParameters(caller,id,accountName,projectId,permittedAccounts,domainIdRecursiveListProject,listAll,false);
+  domainId=domainIdRecursiveListProject.first();
+  isRecursive=domainIdRecursiveListProject.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  Filter searchFilter=new Filter(VpcVO.class,"created",false,startIndex,pageSizeVal);
+  SearchBuilder<VpcVO> sb=_vpcDao.createSearchBuilder();
+  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("displayText",sb.entity().getDisplayText(),SearchCriteria.Op.LIKE);
+  sb.and("vpcOfferingId",sb.entity().getVpcOfferingId(),SearchCriteria.Op.EQ);
+  sb.and("zoneId",sb.entity().getZoneId(),SearchCriteria.Op.EQ);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  sb.and("restartRequired",sb.entity().isRestartRequired(),SearchCriteria.Op.EQ);
+  sb.and("cidr",sb.entity().getCidr(),SearchCriteria.Op.EQ);
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<VpcVO> sc=sb.create();
+  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  if (keyword != null) {
+    SearchCriteria<VpcVO> ssc=_vpcDao.createSearchCriteria();
+    ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (vpcName != null) {
+    sc.addAnd("name",SearchCriteria.Op.LIKE,"%" + vpcName + "%");
+  }
+  if (displayText != null) {
+    sc.addAnd("displayText",SearchCriteria.Op.LIKE,"%" + displayText + "%");
+  }
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.Vpc.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
+  if (id != null) {
+    sc.addAnd("id",SearchCriteria.Op.EQ,id);
+  }
+  if (vpcOffId != null) {
+    sc.addAnd("vpcOfferingId",SearchCriteria.Op.EQ,vpcOffId);
+  }
+  if (zoneId != null) {
+    sc.addAnd("zoneId",SearchCriteria.Op.EQ,zoneId);
+  }
+  if (state != null) {
+    sc.addAnd("state",SearchCriteria.Op.EQ,state);
+  }
+  if (cidr != null) {
+    sc.addAnd("cidr",SearchCriteria.Op.EQ,cidr);
+  }
+  if (restartRequired != null) {
+    sc.addAnd("restartRequired",SearchCriteria.Op.EQ,restartRequired);
+  }
+  List<VpcVO> vpcs=_vpcDao.search(sc,searchFilter);
+  boolean listBySupportedServices=(supportedServicesStr != null && !supportedServicesStr.isEmpty() && !vpcs.isEmpty());
+  if (listBySupportedServices) {
+    List<VpcVO> supportedVpcs=new ArrayList<VpcVO>();
+    Service[] supportedServices=null;
+    if (listBySupportedServices) {
+      supportedServices=new Service[supportedServicesStr.size()];
+      int i=0;
+      for (      String supportedServiceStr : supportedServicesStr) {
+        Service service=Service.getService(supportedServiceStr);
+        if (service == null) {
+          throw new InvalidParameterValueException("Invalid service specified " + supportedServiceStr);
+        }
+ else {
+          supportedServices[i]=service;
+        }
+        i++;
+      }
+    }
+    for (    VpcVO vpc : vpcs) {
+      if (areServicesSupportedByVpcOffering(vpc.getVpcOfferingId(),supportedServices)) {
+        supportedVpcs.add(vpc);
+      }
+    }
+    return supportedVpcs;
+  }
+ else {
+    return vpcs;
+  }
+}

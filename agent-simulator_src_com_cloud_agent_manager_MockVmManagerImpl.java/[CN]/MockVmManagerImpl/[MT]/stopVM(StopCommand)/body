@@ -1,12 +1,26 @@
 {
-  String vmName=cmd.getVmName();
-  MockVm vm=_mockVmDao.findByVmName(vmName);
-  if (vm != null) {
-    vm.setState(State.Stopped);
-    _mockVmDao.update(vm.getId(),(MockVMVO)vm);
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    String vmName=cmd.getVmName();
+    MockVm vm=_mockVmDao.findByVmName(vmName);
+    if (vm != null) {
+      vm.setState(State.Stopped);
+      _mockVmDao.update(vm.getId(),(MockVMVO)vm);
+    }
+    if (vmName.startsWith("s-")) {
+      _mockAgentMgr.handleSystemVMStop(vm.getId());
+    }
+    txn.commit();
+    return new StopAnswer(cmd,null,new Integer(0),true);
   }
-  if (vmName.startsWith("s-")) {
-    _mockAgentMgr.handleSystemVMStop(vm.getId());
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("unable to stop vm " + cmd.getVmName(),ex);
   }
-  return new StopAnswer(cmd,null,new Integer(0),new Long(100),new Long(200));
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
 }

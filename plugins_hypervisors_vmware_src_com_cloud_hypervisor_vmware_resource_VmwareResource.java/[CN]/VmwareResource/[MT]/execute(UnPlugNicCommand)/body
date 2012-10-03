@@ -1,0 +1,40 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource UnPlugNicCommand " + _gson.toJson(cmd));
+  }
+  VmwareContext context=getServiceContext();
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    String vmName=cmd.getInstanceName();
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null) {
+      if (hyperHost instanceof HostMO) {
+        ClusterMO clusterMo=new ClusterMO(hyperHost.getContext(),((HostMO)hyperHost).getParentMor());
+        vmMo=clusterMo.findVmOnHyperHost(vmName);
+      }
+    }
+    if (vmMo == null) {
+      String msg="VM " + vmName + " no longer exists to execute UnPlugNic command";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    VirtualDevice nic=findVirtualNicDevice(vmMo,cmd.getNic().getMac());
+    if (nic == null) {
+      return new UnPlugNicAnswer(cmd,true,"success");
+    }
+    VirtualMachineConfigSpec vmConfigSpec=new VirtualMachineConfigSpec();
+    VirtualDeviceConfigSpec[] deviceConfigSpecArray=new VirtualDeviceConfigSpec[1];
+    deviceConfigSpecArray[0]=new VirtualDeviceConfigSpec();
+    deviceConfigSpecArray[0].setDevice(nic);
+    deviceConfigSpecArray[0].setOperation(VirtualDeviceConfigSpecOperation.remove);
+    vmConfigSpec.setDeviceChange(deviceConfigSpecArray);
+    if (!vmMo.configureVm(vmConfigSpec)) {
+      throw new Exception("Failed to configure devices when running unplugNicCommand");
+    }
+    return new UnPlugNicAnswer(cmd,true,"success");
+  }
+ catch (  Exception e) {
+    s_logger.error("Unexpected exception: ",e);
+    return new UnPlugNicAnswer(cmd,false,"Unable to execute unPlugNicCommand due to " + e.toString());
+  }
+}

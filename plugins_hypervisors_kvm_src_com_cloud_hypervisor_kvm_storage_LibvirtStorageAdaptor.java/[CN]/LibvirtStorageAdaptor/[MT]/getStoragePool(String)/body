@@ -1,0 +1,45 @@
+{
+  StoragePool storage=null;
+  try {
+    Connect conn=LibvirtConnection.getConnection();
+    storage=conn.storagePoolLookupByUUIDString(uuid);
+    if (storage.getInfo().state != StoragePoolState.VIR_STORAGE_POOL_RUNNING) {
+      storage.create(0);
+    }
+    LibvirtStoragePoolDef spd=getStoragePoolDef(conn,storage);
+    StoragePoolType type=null;
+    if (spd.getPoolType() == LibvirtStoragePoolDef.poolType.NETFS || spd.getPoolType() == LibvirtStoragePoolDef.poolType.DIR) {
+      type=StoragePoolType.Filesystem;
+    }
+ else     if (spd.getPoolType() == LibvirtStoragePoolDef.poolType.RBD) {
+      type=StoragePoolType.RBD;
+    }
+ else     if (spd.getPoolType() == LibvirtStoragePoolDef.poolType.LOGICAL) {
+      type=StoragePoolType.CLVM;
+    }
+    LibvirtStoragePool pool=new LibvirtStoragePool(uuid,storage.getName(),type,this,storage);
+    if (pool.getType() != StoragePoolType.RBD) {
+      pool.setLocalPath(spd.getTargetPath());
+    }
+ else {
+      pool.setLocalPath("");
+      pool.setSourceHost(spd.getSourceHost());
+      pool.setSourcePort(spd.getSourcePort());
+      pool.setSourceDir(spd.getSourceDir());
+      String authUsername=spd.getAuthUserName();
+      if (authUsername != null) {
+        Secret secret=conn.secretLookupByUUIDString(spd.getSecretUUID());
+        String secretValue=new String(Base64.encodeBase64(secret.getByteValue()));
+        pool.setAuthUsername(authUsername);
+        pool.setAuthSecret(secretValue);
+      }
+    }
+    pool.refresh();
+    pool.setCapacity(storage.getInfo().capacity);
+    pool.setUsed(storage.getInfo().allocation);
+    return pool;
+  }
+ catch (  LibvirtException e) {
+    throw new CloudRuntimeException(e.toString());
+  }
+}

@@ -6,6 +6,7 @@
   String name=cmd.getVolumeName();
   String keyword=cmd.getKeyword();
   String type=cmd.getType();
+  Map<String,String> tags=cmd.getTags();
   Long zoneId=cmd.getZoneId();
   Long podId=null;
   if (_accountMgr.isAdmin(caller.getType())) {
@@ -33,6 +34,17 @@
   vmSearch.and("type",vmSearch.entity().getType(),SearchCriteria.Op.NIN);
   vmSearch.or("nulltype",vmSearch.entity().getType(),SearchCriteria.Op.NULL);
   sb.join("vmSearch",vmSearch,sb.entity().getInstanceId(),vmSearch.entity().getId(),JoinBuilder.JoinType.LEFTOUTER);
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
   SearchCriteria<VolumeVO> sc=sb.create();
   _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   if (keyword != null) {
@@ -45,6 +57,15 @@
     sc.setParameters("name","%" + name + "%");
   }
   sc.setJoinParameters("diskOfferingSearch","systemUse",1);
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.Volume.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
   if (id != null) {
     sc.setParameters("id",id);
   }

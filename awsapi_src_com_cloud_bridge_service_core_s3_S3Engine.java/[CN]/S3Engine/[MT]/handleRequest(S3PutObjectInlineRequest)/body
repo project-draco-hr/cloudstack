@@ -5,26 +5,27 @@
   long contentLength=request.getContentLength();
   S3MetaDataEntry[] meta=request.getMetaEntries();
   S3AccessControlList acl=request.getAcl();
-  SBucketDao bucketDao=new SBucketDao();
-  SBucket bucket=bucketDao.getByName(bucketName);
+  SBucketVO bucket=bucketDao.getByName(bucketName);
   if (bucket == null)   throw new NoSuchObjectException("Bucket " + bucketName + " does not exist");
-  OrderedPair<SObject,SObjectItem> object_objectitem_pair=allocObjectItem(bucket,key,meta,acl,request.getCannedAccess());
-  OrderedPair<SHost,String> host_storagelocation_pair=getBucketStorageHost(bucket);
+  OrderedPair<SObjectVO,SObjectItemVO> object_objectitem_pair=allocObjectItem(bucket,key,meta,acl,request.getCannedAccess());
+  OrderedPair<SHostVO,String> host_storagelocation_pair=getBucketStorageHost(bucket);
   S3BucketAdapter bucketAdapter=getStorageHostBucketAdapter(host_storagelocation_pair.getFirst());
   String itemFileName=object_objectitem_pair.getSecond().getStoredPath();
   InputStream is=null;
+  Transaction txn=null;
   try {
-    PersistContext.commitTransaction();
+    txn=Transaction.open(Transaction.AWSAPI_DB);
+    txn.start();
     is=request.getDataInputStream();
     String md5Checksum=bucketAdapter.saveObject(is,host_storagelocation_pair.getSecond(),bucket.getName(),itemFileName);
     response.setETag(md5Checksum);
     response.setLastModified(DateHelper.toCalendar(object_objectitem_pair.getSecond().getLastModifiedTime()));
     response.setVersion(object_objectitem_pair.getSecond().getVersion());
-    SObjectItemDao itemDao=new SObjectItemDao();
-    SObjectItem item=itemDao.get(object_objectitem_pair.getSecond().getId());
+    SObjectItemVO item=itemDao.findById(object_objectitem_pair.getSecond().getId());
     item.setMd5(md5Checksum);
     item.setStoredSize(contentLength);
-    PersistContext.getSession().save(item);
+    itemDao.update(item.getId(),item);
+    txn.commit();
   }
  catch (  IOException e) {
     logger.error("PutObjectInline failed due to " + e.getMessage(),e);
@@ -41,6 +42,7 @@ catch (  OutOfStorageException e) {
         logger.error("PutObjectInline unable to close stream from data handler.",e);
       }
     }
+    txn.close();
   }
   return response;
 }

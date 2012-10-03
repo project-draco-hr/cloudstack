@@ -1,0 +1,34 @@
+{
+  LoadBalancerTO[] lbs=new LoadBalancerTO[rules.size()];
+  int i=0;
+  for (  LoadBalancingRule rule : rules) {
+    boolean revoked=(rule.getState().equals(FirewallRule.State.Revoke));
+    String protocol=rule.getProtocol();
+    String algorithm=rule.getAlgorithm();
+    String srcIp=_networkMgr.getIp(rule.getSourceIpAddressId()).getAddress().addr();
+    int srcPort=rule.getSourcePortStart();
+    List<LbDestination> destinations=rule.getDestinations();
+    List<LbStickinessPolicy> stickinessPolicies=rule.getStickinessPolicies();
+    LoadBalancerTO lb=new LoadBalancerTO(srcIp,srcPort,protocol,algorithm,revoked,false,destinations,stickinessPolicies);
+    lbs[i++]=lb;
+  }
+  String routerPublicIp=null;
+  if (router instanceof DomainRouterVO) {
+    DomainRouterVO domr=_routerDao.findById(router.getId());
+    routerPublicIp=domr.getPublicIpAddress();
+  }
+  Network guestNetwork=_networkMgr.getNetwork(guestNetworkId);
+  Nic nic=_nicDao.findByInstanceIdAndNetworkId(guestNetwork.getId(),router.getId());
+  NicProfile nicProfile=new NicProfile(nic,guestNetwork,nic.getBroadcastUri(),nic.getIsolationUri(),_networkMgr.getNetworkRate(guestNetwork.getId(),router.getId()),_networkMgr.isSecurityGroupSupportedInNetwork(guestNetwork),_networkMgr.getNetworkTag(router.getHypervisorType(),guestNetwork));
+  LoadBalancerConfigCommand cmd=new LoadBalancerConfigCommand(lbs,routerPublicIp,getRouterIpInNetwork(guestNetworkId,router.getId()),router.getPrivateIpAddress(),_itMgr.toNicTO(nicProfile,router.getHypervisorType()),router.getVpcId());
+  cmd.lbStatsVisibility=_configDao.getValue(Config.NetworkLBHaproxyStatsVisbility.key());
+  cmd.lbStatsUri=_configDao.getValue(Config.NetworkLBHaproxyStatsUri.key());
+  cmd.lbStatsAuth=_configDao.getValue(Config.NetworkLBHaproxyStatsAuth.key());
+  cmd.lbStatsPort=_configDao.getValue(Config.NetworkLBHaproxyStatsPort.key());
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,getRouterIpInNetwork(guestNetworkId,router.getId()));
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+  DataCenterVO dcVo=_dcDao.findById(router.getDataCenterIdToDeployIn());
+  cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+  cmds.addCommand(cmd);
+}

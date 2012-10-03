@@ -3,9 +3,24 @@
   if (template == null) {
     return new PrimaryStorageDownloadAnswer("Can't find primary storage");
   }
-  MockStoragePoolVO primaryStorage=_mockStoragePoolDao.findByUuid(cmd.getPoolUuid());
-  if (primaryStorage == null) {
-    return new PrimaryStorageDownloadAnswer("Can't find primary storage");
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockStoragePoolVO primaryStorage=null;
+  try {
+    txn.start();
+    primaryStorage=_mockStoragePoolDao.findByUuid(cmd.getPoolUuid());
+    txn.commit();
+    if (primaryStorage == null) {
+      return new PrimaryStorageDownloadAnswer("Can't find primary storage");
+    }
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding primary storagee " + cmd.getPoolUuid(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   String volumeName=UUID.randomUUID().toString();
   MockVolumeVO newVolume=new MockVolumeVO();
@@ -14,6 +29,20 @@
   newVolume.setPoolId(primaryStorage.getId());
   newVolume.setSize(template.getSize());
   newVolume.setType(MockVolumeType.VOLUME);
-  _mockVolumeDao.persist(newVolume);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    _mockVolumeDao.persist(newVolume);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when saving volume " + newVolume,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new PrimaryStorageDownloadAnswer(newVolume.getPath(),newVolume.getSize());
 }

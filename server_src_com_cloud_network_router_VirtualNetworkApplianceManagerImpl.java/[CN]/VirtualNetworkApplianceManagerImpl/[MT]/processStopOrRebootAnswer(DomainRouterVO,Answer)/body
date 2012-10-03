@@ -2,48 +2,27 @@
   final Transaction txn=Transaction.currentTxn();
   try {
     txn.start();
-    final UserStatisticsVO userStats=_userStatsDao.lock(router.getAccountId(),router.getDataCenterIdToDeployIn(),router.getNetworkId(),null,router.getId(),router.getType().toString());
-    if (userStats != null) {
-      final RebootAnswer sa=(RebootAnswer)answer;
-      final Long received=sa.getBytesReceived();
-      long netBytes=0;
-      if (received != null) {
-        if (received.longValue() >= userStats.getCurrentBytesReceived()) {
-          netBytes=received.longValue();
-        }
- else {
-          netBytes=userStats.getCurrentBytesReceived() + received;
-        }
+    List<Long> routerGuestNtwkIds=_routerDao.getRouterNetworks(router.getId());
+    for (    Long guestNtwkId : routerGuestNtwkIds) {
+      final UserStatisticsVO userStats=_userStatsDao.lock(router.getAccountId(),router.getDataCenterIdToDeployIn(),guestNtwkId,null,router.getId(),router.getType().toString());
+      if (userStats != null) {
+        final long currentBytesRcvd=userStats.getCurrentBytesReceived();
+        userStats.setCurrentBytesReceived(0);
+        userStats.setNetBytesReceived(userStats.getNetBytesReceived() + currentBytesRcvd);
+        final long currentBytesSent=userStats.getCurrentBytesSent();
+        userStats.setCurrentBytesSent(0);
+        userStats.setNetBytesSent(userStats.getNetBytesSent() + currentBytesSent);
+        _userStatsDao.update(userStats.getId(),userStats);
+        s_logger.debug("Successfully updated user statistics as a part of domR " + router + " reboot/stop");
       }
  else {
-        netBytes=userStats.getCurrentBytesReceived();
+        s_logger.warn("User stats were not created for account " + router.getAccountId() + " and dc "+ router.getDataCenterIdToDeployIn());
       }
-      userStats.setCurrentBytesReceived(0);
-      userStats.setNetBytesReceived(userStats.getNetBytesReceived() + netBytes);
-      final Long sent=sa.getBytesSent();
-      if (sent != null) {
-        if (sent.longValue() >= userStats.getCurrentBytesSent()) {
-          netBytes=sent.longValue();
-        }
- else {
-          netBytes=userStats.getCurrentBytesSent() + sent;
-        }
-      }
- else {
-        netBytes=userStats.getCurrentBytesSent();
-      }
-      userStats.setNetBytesSent(userStats.getNetBytesSent() + netBytes);
-      userStats.setCurrentBytesSent(0);
-      _userStatsDao.update(userStats.getId(),userStats);
-      s_logger.debug("Successfully updated user statistics as a part of domR " + router + " reboot/stop");
-    }
- else {
-      s_logger.warn("User stats were not created for account " + router.getAccountId() + " and dc "+ router.getDataCenterIdToDeployIn());
     }
     txn.commit();
   }
  catch (  final Exception e) {
     txn.rollback();
-    throw new CloudRuntimeException("Problem getting stats after reboot/stop ",e);
+    throw new CloudRuntimeException("Problem updating stats after reboot/stop ",e);
   }
 }

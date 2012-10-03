@@ -1,0 +1,49 @@
+{
+  final String vmName=cmd.getVmName();
+  State state=null;
+synchronized (_vms) {
+    state=_vms.get(vmName);
+    _vms.put(vmName,State.Stopping);
+  }
+  try {
+    Connect conn=LibvirtConnection.getConnection();
+    List<DiskDef> disks=getDisks(conn,vmName);
+    destroy_network_rules_for_vm(conn,vmName);
+    String result=stopVM(conn,vmName,defineOps.UNDEFINE_VM);
+    if (result == null) {
+      for (      DiskDef disk : disks) {
+        if (disk.getDeviceType() == DiskDef.deviceType.CDROM && disk.getDiskPath() != null) {
+          cleanupDisk(conn,disk);
+        }
+ else         if (disk.getDiskPath() != null && disk.getDiskPath().contains(vmName + "-patchdisk") && vmName.matches("^[rsv]-\\d+-VM$")) {
+          if (!_storagePoolMgr.deleteVbdByPath(disk.getDiskPath())) {
+            s_logger.warn("failed to delete patch disk " + disk.getDiskPath());
+          }
+        }
+      }
+    }
+    List<InterfaceDef> ifaces=getInterfaces(conn,vmName);
+    for (    InterfaceDef iface : ifaces) {
+      _vifDriver.unplug(iface);
+    }
+    final String result2=cleanupVnet(conn,cmd.getVnet());
+    if (result != null && result2 != null) {
+      result=result2 + result;
+    }
+    state=State.Stopped;
+    return new StopAnswer(cmd,result,0,true);
+  }
+ catch (  LibvirtException e) {
+    return new StopAnswer(cmd,e.getMessage(),false);
+  }
+ finally {
+synchronized (_vms) {
+      if (state != null) {
+        _vms.put(vmName,state);
+      }
+ else {
+        _vms.remove(vmName);
+      }
+    }
+  }
+}

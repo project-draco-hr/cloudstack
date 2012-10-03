@@ -1,0 +1,34 @@
+{
+  boolean success=true;
+  List<StaticRouteProfile> staticRouteProfiles=new ArrayList<StaticRouteProfile>(routes.size());
+  Map<Long,VpcGateway> gatewayMap=new HashMap<Long,VpcGateway>();
+  for (  StaticRoute route : routes) {
+    VpcGateway gateway=gatewayMap.get(route.getVpcGatewayId());
+    if (gateway == null) {
+      gateway=_vpcGatewayDao.findById(route.getVpcGatewayId());
+      gatewayMap.put(gateway.getId(),gateway);
+    }
+    staticRouteProfiles.add(new StaticRouteProfile(route,gateway));
+  }
+  if (!applyStaticRoutes(staticRouteProfiles)) {
+    s_logger.warn("Routes are not completely applied");
+    return false;
+  }
+ else {
+    if (updateRoutesInDB) {
+      for (      StaticRoute route : routes) {
+        if (route.getState() == StaticRoute.State.Revoke) {
+          _staticRouteDao.remove(route.getId());
+          s_logger.debug("Removed route " + route + " from the DB");
+        }
+ else         if (route.getState() == StaticRoute.State.Add) {
+          StaticRouteVO ruleVO=_staticRouteDao.findById(route.getId());
+          ruleVO.setState(StaticRoute.State.Active);
+          _staticRouteDao.update(ruleVO.getId(),ruleVO);
+          s_logger.debug("Marked route " + route + " with state "+ StaticRoute.State.Active);
+        }
+      }
+    }
+  }
+  return success;
+}

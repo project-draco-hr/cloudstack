@@ -1,41 +1,16 @@
 {
-  List<StaticNat> staticNats=new ArrayList<StaticNat>();
   IpAddress sourceIp=_ipAddressDao.findById(sourceIpId);
-  if (!sourceIp.isOneToOneNat()) {
-    s_logger.debug("Source ip id=" + sourceIpId + " is not one to one nat");
-    return true;
-  }
-  Long networkId=sourceIp.getAssociatedWithNetworkId();
-  if (networkId == null) {
-    throw new CloudRuntimeException("Ip address is not associated with any network");
-  }
-  UserVmVO vm=_vmDao.findById(sourceIp.getAssociatedWithVmId());
-  Network network=_networkMgr.getNetwork(networkId);
-  if (network == null) {
-    CloudRuntimeException ex=new CloudRuntimeException("Unable to find an ip address to map to specified vm id");
-    ex.addProxyObject(vm,vm.getId(),"vmId");
-    throw ex;
-  }
-  if (caller != null) {
-    _accountMgr.checkAccess(caller,null,true,sourceIp);
-  }
-  String dstIp;
-  if (forRevoke) {
-    dstIp=_networkMgr.getIpInNetworkIncludingRemoved(sourceIp.getAssociatedWithVmId(),networkId);
-  }
- else {
-    dstIp=_networkMgr.getIpInNetwork(sourceIp.getAssociatedWithVmId(),networkId);
-  }
-  StaticNatImpl staticNat=new StaticNatImpl(sourceIp.getAllocatedToAccountId(),sourceIp.getAllocatedInDomainId(),networkId,sourceIpId,dstIp,forRevoke);
-  staticNats.add(staticNat);
-  try {
-    if (!_networkMgr.applyStaticNats(staticNats,continueOnError)) {
+  List<StaticNat> staticNats=createStaticNatForIp(sourceIp,caller,forRevoke);
+  if (staticNats != null && !staticNats.isEmpty()) {
+    try {
+      if (!_networkMgr.applyStaticNats(staticNats,continueOnError)) {
+        return false;
+      }
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to create static nat rule due to ",ex);
       return false;
     }
-  }
- catch (  ResourceUnavailableException ex) {
-    s_logger.warn("Failed to create static nat rule due to ",ex);
-    return false;
   }
   return true;
 }

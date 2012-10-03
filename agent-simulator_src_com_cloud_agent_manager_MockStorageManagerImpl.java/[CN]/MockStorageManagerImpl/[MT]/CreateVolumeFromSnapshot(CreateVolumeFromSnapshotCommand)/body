@@ -1,11 +1,27 @@
 {
-  MockVolumeVO backSnapshot=_mockVolumeDao.findByName(cmd.getSnapshotUuid());
-  if (backSnapshot == null) {
-    return new CreateVolumeFromSnapshotAnswer(cmd,false,"can't find the backupsnapshot: " + cmd.getSnapshotUuid(),null);
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockVolumeVO backSnapshot=null;
+  MockStoragePoolVO primary=null;
+  try {
+    txn.start();
+    backSnapshot=_mockVolumeDao.findByName(cmd.getSnapshotUuid());
+    if (backSnapshot == null) {
+      return new CreateVolumeFromSnapshotAnswer(cmd,false,"can't find the backupsnapshot: " + cmd.getSnapshotUuid(),null);
+    }
+    primary=_mockStoragePoolDao.findByUuid(cmd.getPrimaryStoragePoolNameLabel());
+    if (primary == null) {
+      return new CreateVolumeFromSnapshotAnswer(cmd,false,"can't find the primary storage: " + cmd.getPrimaryStoragePoolNameLabel(),null);
+    }
+    txn.commit();
   }
-  MockStoragePoolVO primary=_mockStoragePoolDao.findByUuid(cmd.getPrimaryStoragePoolNameLabel());
-  if (primary == null) {
-    return new CreateVolumeFromSnapshotAnswer(cmd,false,"can't find the primary storage: " + cmd.getPrimaryStoragePoolNameLabel(),null);
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when creating volume from snapshot",ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   String uuid=UUID.randomUUID().toString();
   MockVolumeVO volume=new MockVolumeVO();
@@ -15,6 +31,20 @@
   volume.setSize(backSnapshot.getSize());
   volume.setStatus(Status.DOWNLOADED);
   volume.setType(MockVolumeType.VOLUME);
-  _mockVolumeDao.persist(volume);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    _mockVolumeDao.persist(volume);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when creating volume from snapshot " + volume,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new CreateVolumeFromSnapshotAnswer(cmd,true,null,volume.getPath());
 }

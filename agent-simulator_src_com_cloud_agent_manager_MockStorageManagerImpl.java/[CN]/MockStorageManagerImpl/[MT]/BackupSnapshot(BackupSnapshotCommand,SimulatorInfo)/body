@@ -1,17 +1,34 @@
 {
-  MockVolumeVO volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
-  if (volume == null) {
-    return new BackupSnapshotAnswer(cmd,false,"Can't find base volume: " + cmd.getVolumePath(),null,true);
+  MockVolumeVO volume=null;
+  MockVolumeVO snapshot=null;
+  MockSecStorageVO secStorage=null;
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    volume=_mockVolumeDao.findByStoragePathAndType(cmd.getVolumePath());
+    if (volume == null) {
+      return new BackupSnapshotAnswer(cmd,false,"Can't find base volume: " + cmd.getVolumePath(),null,true);
+    }
+    String snapshotPath=cmd.getSnapshotUuid();
+    snapshot=_mockVolumeDao.findByStoragePathAndType(snapshotPath);
+    if (snapshot == null) {
+      return new BackupSnapshotAnswer(cmd,false,"can't find snapshot" + snapshotPath,null,true);
+    }
+    String secStorageUrl=cmd.getSecondaryStorageUrl();
+    secStorage=_mockSecStorageDao.findByUrl(secStorageUrl);
+    if (secStorage == null) {
+      return new BackupSnapshotAnswer(cmd,false,"can't find sec storage" + snapshotPath,null,true);
+    }
+    txn.commit();
   }
-  String snapshotPath=cmd.getSnapshotUuid();
-  MockVolumeVO snapshot=_mockVolumeDao.findByStoragePathAndType(snapshotPath);
-  if (snapshot == null) {
-    return new BackupSnapshotAnswer(cmd,false,"can't find snapshot" + snapshotPath,null,true);
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when backing up snapshot");
   }
-  String secStorageUrl=cmd.getSecondaryStorageUrl();
-  MockSecStorageVO secStorage=_mockSecStorageDao.findByUrl(secStorageUrl);
-  if (secStorage == null) {
-    return new BackupSnapshotAnswer(cmd,false,"can't find sec storage" + snapshotPath,null,true);
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
   }
   MockVolumeVO newsnapshot=new MockVolumeVO();
   String name=UUID.randomUUID().toString();
@@ -21,6 +38,20 @@
   newsnapshot.setSize(snapshot.getSize());
   newsnapshot.setStatus(Status.DOWNLOADED);
   newsnapshot.setType(MockVolumeType.SNAPSHOT);
-  newsnapshot=_mockVolumeDao.persist(newsnapshot);
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    snapshot=_mockVolumeDao.persist(snapshot);
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when backing up snapshot " + newsnapshot,ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
   return new BackupSnapshotAnswer(cmd,true,null,newsnapshot.getName(),true);
 }

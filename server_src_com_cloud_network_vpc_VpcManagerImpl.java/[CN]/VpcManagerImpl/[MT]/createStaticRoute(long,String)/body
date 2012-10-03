@@ -1,0 +1,36 @@
+{
+  Account caller=UserContext.current().getCaller();
+  VpcGateway gateway=_vpcGatewayDao.findById(gatewayId);
+  if (gateway == null) {
+    throw new InvalidParameterValueException("Invalid gateway id is given");
+  }
+  if (gateway.getState() != VpcGateway.State.Ready) {
+    throw new InvalidParameterValueException("Gateway is not in the " + VpcGateway.State.Ready + " state: "+ gateway.getState());
+  }
+  Vpc vpc=getActiveVpc(gateway.getVpcId());
+  if (vpc == null) {
+    throw new InvalidParameterValueException("Can't add static route to VPC that is being deleted");
+  }
+  _accountMgr.checkAccess(caller,null,false,vpc);
+  if (!NetUtils.isValidCIDR(cidr)) {
+    throw new InvalidParameterValueException("Invalid format for cidr " + cidr);
+  }
+  if (NetUtils.isNetworksOverlap(vpc.getCidr(),cidr)) {
+    throw new InvalidParameterValueException("CIDR should be outside of VPC cidr " + vpc.getCidr());
+  }
+  if (NetUtils.isNetworksOverlap(vpc.getCidr(),NetUtils.getLinkLocalCIDR())) {
+    throw new InvalidParameterValueException("CIDR should be outside of link local cidr " + NetUtils.getLinkLocalCIDR());
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  StaticRouteVO newRoute=new StaticRouteVO(gateway.getId(),cidr,vpc.getId(),vpc.getAccountId(),vpc.getDomainId());
+  s_logger.debug("Adding static route " + newRoute);
+  newRoute=_staticRouteDao.persist(newRoute);
+  detectRoutesConflict(newRoute);
+  if (!_staticRouteDao.setStateToAdd(newRoute)) {
+    throw new CloudRuntimeException("Unable to update the state to add for " + newRoute);
+  }
+  UserContext.current().setEventDetails("Static route Id: " + newRoute.getId());
+  txn.commit();
+  return newRoute;
+}
