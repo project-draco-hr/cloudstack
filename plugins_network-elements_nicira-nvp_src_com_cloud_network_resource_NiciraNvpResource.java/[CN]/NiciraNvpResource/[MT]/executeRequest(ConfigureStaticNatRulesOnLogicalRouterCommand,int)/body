@@ -3,12 +3,111 @@
     LogicalRouterConfig lrc=_niciraNvpApi.findOneLogicalRouterByUuid(cmd.getLogicalRouterUuid());
     NiciraNvpList<NatRule> existingRules=_niciraNvpApi.findNatRulesByLogicalRouterUuid(cmd.getLogicalRouterUuid());
     for (    StaticNatRuleTO rule : cmd.getRules()) {
+      boolean found=false;
+      String insideIp=rule.getDstIp();
+      String insideCidr=rule.getDstIp() + "/32";
+      String outsideIp=rule.getSrcIp();
+      String outsideCidr=rule.getSrcIp() + "/32";
+      NatRule incoming=null;
+      NatRule outgoing=null;
       for (      NatRule storedRule : existingRules.getResults()) {
+        if (s_logger.isDebugEnabled()) {
+          StringBuilder natRuleStr=new StringBuilder();
+          natRuleStr.append("Rule ");
+          natRuleStr.append(storedRule.getUuid());
+          natRuleStr.append(" (");
+          natRuleStr.append(storedRule.getType());
+          natRuleStr.append(") :");
+          Match m=storedRule.getMatch();
+          natRuleStr.append("match (");
+          natRuleStr.append(m.getProtocol());
+          natRuleStr.append(" ");
+          natRuleStr.append(m.getSourceIpAddresses());
+          natRuleStr.append(" [");
+          natRuleStr.append(m.getSource_port_min());
+          natRuleStr.append("-");
+          natRuleStr.append(m.getSourcePortMax());
+          natRuleStr.append(" ] -> ");
+          natRuleStr.append(m.getDestinationIpAddresses());
+          natRuleStr.append(" [");
+          natRuleStr.append(m.getDestinationPortMin());
+          natRuleStr.append("-");
+          natRuleStr.append(m.getDestinationPortMax());
+          natRuleStr.append(" ]) -->");
+          if ("SourceNatRule".equals(storedRule.getType())) {
+            natRuleStr.append(storedRule.getToSourceIpAddressMin());
+            natRuleStr.append("-");
+            natRuleStr.append(storedRule.getToSourceIpAddressMax());
+            natRuleStr.append(" [");
+            natRuleStr.append(storedRule.getToSourcePortMin());
+            natRuleStr.append("-");
+            natRuleStr.append(storedRule.getToSourcePortMax());
+            natRuleStr.append(" ])");
+          }
+ else {
+            natRuleStr.append(storedRule.getToDestinationIpAddressMin());
+            natRuleStr.append("-");
+            natRuleStr.append(storedRule.getToDestinationIpAddressMax());
+            natRuleStr.append(" [");
+            natRuleStr.append(storedRule.getToDestinationPort());
+            natRuleStr.append(" ])");
+          }
+          s_logger.debug(natRuleStr.toString());
+        }
         if ("SourceNatRule".equals(storedRule.getType())) {
+          if (outsideIp.equals(storedRule.getToSourceIpAddressMin()) && outsideIp.equals(storedRule.getToSourceIpAddressMax()) && storedRule.getToSourcePortMin() == null) {
+            outgoing=storedRule;
+          }
+        }
+        if ("DestinationNatRule".equals(storedRule.getType()) && storedRule.getToDestinationPort() != null) {
           continue;
         }
-        String insideCidr=rule.getDstIp() + "/32";
-        String outsideCidr=rule.getSrcIp() + "/32";
+        if (outsideIp.equals(storedRule.getMatch().getDestinationIpAddresses())) {
+          incoming=storedRule;
+        }
+      }
+      if (incoming != null && outgoing != null) {
+        if (insideIp.equals(incoming.getToDestinationIpAddressMin())) {
+          if (rule.revoked()) {
+            s_logger.debug("Deleting incoming rule " + incoming.getUuid());
+            _niciraNvpApi.deleteLogicalRouterNatRule(cmd.getLogicalRouterUuid(),incoming.getUuid());
+            s_logger.debug("Deleting outgoing rule " + outgoing.getUuid());
+            _niciraNvpApi.deleteLogicalRouterNatRule(cmd.getLogicalRouterUuid(),outgoing.getUuid());
+          }
+        }
+ else {
+          s_logger.debug("Updating outgoing rule " + outgoing.getUuid());
+          outgoing.setToDestinationIpAddressMin(insideIp);
+          outgoing.setToDestinationIpAddressMax(insideIp);
+          _niciraNvpApi.modifyLogicalRouterNatRule(cmd.getLogicalRouterUuid(),outgoing);
+          s_logger.debug("Updating incoming rule " + outgoing.getUuid());
+          incoming.setToSourceIpAddressMin(insideIp);
+          incoming.setToSourceIpAddressMax(insideIp);
+          _niciraNvpApi.modifyLogicalRouterNatRule(cmd.getLogicalRouterUuid(),incoming);
+          break;
+        }
+      }
+ else {
+        if (rule.revoked()) {
+          s_logger.warn("Tried deleting a rule that does not exist, " + rule.getSrcIp() + " -> "+ rule.getDstIp());
+          break;
+        }
+        Match m=new Match();
+        m.setDestinationIpAddresses(outsideCidr);
+        DestinationNatRule newDnatRule=new DestinationNatRule();
+        newDnatRule.setMatch(m);
+        newDnatRule.setToDestinationIpAddressMin(insideIp);
+        newDnatRule.setToDestinationIpAddressMax(insideIp);
+        newDnatRule=(DestinationNatRule)_niciraNvpApi.createLogicalRouterNatRule(cmd.getLogicalRouterUuid(),newDnatRule);
+        s_logger.debug("Created " + newDnatRule.getType() + " rule "+ newDnatRule.getUuid()+ ", "+ newDnatRule.getMatch().getDestinationIpAddresses()+ " -> "+ newDnatRule.getToDestinationIpAddressMin());
+        m=new Match();
+        m.setSourceIpAddresses(insideIp + "/32");
+        SourceNatRule newSnatRule=new SourceNatRule();
+        newSnatRule.setMatch(m);
+        newSnatRule.setToSourceIpAddressMin(outsideIp);
+        newSnatRule.setToSourceIpAddressMax(outsideIp);
+        newSnatRule=(SourceNatRule)_niciraNvpApi.createLogicalRouterNatRule(cmd.getLogicalRouterUuid(),newSnatRule);
+        s_logger.debug("Created " + newSnatRule.getType() + " rule "+ newSnatRule.getUuid()+ ", "+ newSnatRule.getMatch().getSourceIpAddresses()+ " -> "+ newSnatRule.getToSourceIpAddressMin());
       }
     }
     return new ConfigureStaticNatRulesOnLogicalRouterAnswer(cmd,true,cmd.getRules().size() + " StaticNat rules applied");
