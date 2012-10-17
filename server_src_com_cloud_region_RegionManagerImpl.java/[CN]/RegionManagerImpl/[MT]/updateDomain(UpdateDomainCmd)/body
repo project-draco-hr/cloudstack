@@ -5,25 +5,22 @@
     throw new InvalidParameterValueException("The specified domain doesn't exist in the system");
   }
   String domainUUID=domain.getUuid();
-  StringBuffer params=new StringBuffer("/api?command=updateDomain");
-  params.append("&" + ApiConstants.ID + "="+ domainUUID);
-  if (cmd.getDomainName() != null) {
-    params.append("&" + ApiConstants.NAME + "="+ cmd.getDomainName());
-  }
-  if (cmd.getNetworkDomain() != null) {
-    params.append("&" + ApiConstants.NETWORK_DOMAIN + "="+ cmd.getNetworkDomain());
-  }
-  long regionId=domain.getRegionId();
+  String command="updateDomain";
+  List<NameValuePair> params=new ArrayList<NameValuePair>();
+  params.add(new NameValuePair(ApiConstants.ID,domainUUID));
+  params.add(new NameValuePair(ApiConstants.NAME,cmd.getDomainName()));
+  params.add(new NameValuePair(ApiConstants.NETWORK_DOMAIN,cmd.getNetworkDomain()));
+  int regionId=domain.getRegionId();
   if (getId() == regionId) {
-    Domain updatedDomain=_mgmtSrvr.updateDomain(cmd);
+    Domain updatedDomain=_domainMgr.updateDomain(cmd);
     if (updatedDomain != null) {
       List<RegionVO> regions=_regionDao.listAll();
       for (      Region region : regions) {
         if (region.getId() == getId()) {
           continue;
         }
-        String url=region.getEndPoint() + params + "&"+ ApiConstants.IS_PROPAGATE+ "=true";
-        if (makeAPICall(url)) {
+        params.add(new NameValuePair(ApiConstants.IS_PROPAGATE,"true"));
+        if (RegionsApiUtil.makeAPICall(region,command,params)) {
           s_logger.debug("Successfully updated updatedDomain :" + domainUUID + " in Region: "+ region.getId());
         }
  else {
@@ -35,14 +32,15 @@
   }
  else {
     Region region=_regionDao.findById(regionId);
-    String url=region.getEndPoint() + params;
-    if (makeAPICall(url)) {
+    RegionDomain updatedDomain=RegionsApiUtil.makeDomainAPICall(region,command,params);
+    if (updatedDomain != null) {
+      Long parentId=_identityDao.getIdentityId("domain",updatedDomain.getParentUuid());
+      updatedDomain.setParent(parentId);
       s_logger.debug("Successfully updated user :" + domainUUID + " in source Region: "+ region.getId());
-      return null;
+      return (DomainVO)updatedDomain;
     }
  else {
-      s_logger.error("Error while updating user :" + domainUUID + " in source Region: "+ region.getId());
-      return null;
+      throw new CloudRuntimeException("Error while updating user :" + domainUUID + " in source Region: "+ region.getId());
     }
   }
 }
