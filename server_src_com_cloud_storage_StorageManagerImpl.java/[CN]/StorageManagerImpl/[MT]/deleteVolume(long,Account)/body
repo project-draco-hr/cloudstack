@@ -1,0 +1,32 @@
+{
+  VolumeVO volume=_volsDao.findById(volumeId);
+  if (volume == null) {
+    throw new InvalidParameterValueException("Unable to aquire volume with ID: " + volumeId);
+  }
+  if (!_snapshotMgr.canOperateOnVolume(volume)) {
+    throw new InvalidParameterValueException("There are snapshot creating on it, Unable to delete the volume");
+  }
+  _accountMgr.checkAccess(caller,null,true,volume);
+  if (volume.getInstanceId() != null) {
+    throw new InvalidParameterValueException("Please specify a volume that is not attached to any VM.");
+  }
+  if (volume.getState() == Volume.State.UploadOp) {
+    VolumeHostVO volumeHost=_volumeHostDao.findByVolumeId(volume.getId());
+    if (volumeHost.getDownloadState() == VMTemplateStorageResourceAssoc.Status.DOWNLOAD_IN_PROGRESS) {
+      throw new InvalidParameterValueException("Please specify a volume that is not uploading");
+    }
+  }
+  if (volume.getState() != Volume.State.Destroy) {
+    if (!destroyVolume(volume)) {
+      return false;
+    }
+  }
+  try {
+    expungeVolume(volume,false);
+  }
+ catch (  Exception e) {
+    s_logger.warn("Failed to expunge volume:",e);
+    return false;
+  }
+  return true;
+}
