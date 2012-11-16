@@ -1,11 +1,42 @@
-def make_request(self, command, requests={}):
-    conn = cloudConnection(self.host, port=int(self.port), apiKey=self.apikey, securityKey=self.secretkey, logging=logging.getLogger('cloudConnection'))
+def make_request(self, command, requests={}, isAsync=False):
+    conn = cloudConnection(self.host, port=int(self.port), apiKey=self.apikey, securityKey=self.secretkey, asyncTimeout=self.timeout, logging=logger)
+    response = None
     try:
-        response = conn.make_request(command, requests)
-        return response
+        response = conn.make_request_with_auth(command, requests)
     except cloudstackAPIException as e:
         self.print_shell('API Error:', e)
     except HTTPError as e:
         self.print_shell(e)
     except URLError as e:
         self.print_shell('Connection Error:', e)
+
+    def process_json(response):
+        try:
+            response = json.loads(str(response))
+        except ValueError as e:
+            pass
+        if (response is None):
+            return {'error': 'Error: json error', }
+        return response
+    response = process_json(response)
+    isAsync = (isAsync and (self.asyncblock == 'true'))
+    if (isAsync and ('jobid' in response[response.keys()[0]])):
+        jobId = response[response.keys()[0]]['jobid']
+        command = 'queryAsyncJobResult'
+        requests = {'jobid': jobId, }
+        timeout = int(self.timeout)
+        while (timeout > 0):
+            response = process_json(conn.make_request_with_auth(command, requests))
+            result = response[response.keys()[0]]
+            jobstatus = result['jobstatus']
+            if (jobstatus == 2):
+                jobresult = result['jobresult']
+                self.print_shell('Async query failed for jobid=', jobId, '\nError', jobresult['errorcode'], jobresult['errortext'])
+                return
+            elif (jobstatus == 1):
+                return response
+            time.sleep(4)
+            timeout = (timeout - 4)
+            logger.debug(('job: %s to timeout in %ds' % (jobId, timeout)))
+        self.print_shell('Error:', 'Async query timeout for jobid=', jobId)
+    return response
