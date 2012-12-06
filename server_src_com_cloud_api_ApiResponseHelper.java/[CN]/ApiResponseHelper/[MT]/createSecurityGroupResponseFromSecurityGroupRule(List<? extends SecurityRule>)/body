@@ -4,22 +4,23 @@
   Map<Long,SecurityGroup> allowedSecurityGroups=new HashMap<Long,SecurityGroup>();
   Map<Long,Account> allowedSecuriytGroupAccounts=new HashMap<Long,Account>();
   if ((securityRules != null) && !securityRules.isEmpty()) {
-    SecurityGroup securityGroup=ApiDBUtils.findSecurityGroupById(securityRules.get(0).getSecurityGroupId());
-    response.setId(securityGroup.getId());
+    SecurityGroupJoinVO securityGroup=ApiDBUtils.findSecurityGroupViewById(securityRules.get(0).getSecurityGroupId()).get(0);
+    response.setId(securityGroup.getUuid());
     response.setName(securityGroup.getName());
     response.setDescription(securityGroup.getDescription());
     Account account=securiytGroupAccounts.get(securityGroup.getAccountId());
-    if (account == null) {
-      account=ApiDBUtils.findAccountById(securityGroup.getAccountId());
-      securiytGroupAccounts.put(securityGroup.getAccountId(),account);
+    if (securityGroup.getAccountType() == Account.ACCOUNT_TYPE_PROJECT) {
+      response.setProjectId(securityGroup.getProjectUuid());
+      response.setProjectName(securityGroup.getProjectName());
     }
-    populateAccount(response,account.getId());
-    populateDomain(response,account.getDomainId());
-    List<SecurityGroupRuleResponse> egressResponses=new ArrayList<SecurityGroupRuleResponse>();
-    List<SecurityGroupRuleResponse> ingressResponses=new ArrayList<SecurityGroupRuleResponse>();
+ else {
+      response.setAccountName(securityGroup.getAccountName());
+    }
+    response.setDomainId(securityGroup.getDomainUuid());
+    response.setDomainName(securityGroup.getDomainName());
     for (    SecurityRule securityRule : securityRules) {
       SecurityGroupRuleResponse securityGroupData=new SecurityGroupRuleResponse();
-      securityGroupData.setRuleId(securityRule.getId());
+      securityGroupData.setRuleId(securityRule.getUuid());
       securityGroupData.setProtocol(securityRule.getProtocol());
       if ("icmp".equalsIgnoreCase(securityRule.getProtocol())) {
         securityGroupData.setIcmpType(securityRule.getStartPort());
@@ -31,33 +32,25 @@
       }
       Long allowedSecurityGroupId=securityRule.getAllowedNetworkId();
       if (allowedSecurityGroupId != null) {
-        SecurityGroup allowedSecurityGroup=allowedSecurityGroups.get(allowedSecurityGroupId);
-        if (allowedSecurityGroup == null) {
-          allowedSecurityGroup=ApiDBUtils.findSecurityGroupById(allowedSecurityGroupId);
-          allowedSecurityGroups.put(allowedSecurityGroupId,allowedSecurityGroup);
+        List<SecurityGroupJoinVO> sgs=ApiDBUtils.findSecurityGroupViewById(allowedSecurityGroupId);
+        if (sgs != null && sgs.size() > 0) {
+          SecurityGroupJoinVO sg=sgs.get(0);
+          securityGroupData.setSecurityGroupName(sg.getName());
+          securityGroupData.setAccountName(sg.getAccountName());
         }
-        securityGroupData.setSecurityGroupName(allowedSecurityGroup.getName());
-        Account allowedAccount=allowedSecuriytGroupAccounts.get(allowedSecurityGroup.getAccountId());
-        if (allowedAccount == null) {
-          allowedAccount=ApiDBUtils.findAccountById(allowedSecurityGroup.getAccountId());
-          allowedSecuriytGroupAccounts.put(allowedAccount.getId(),allowedAccount);
-        }
-        securityGroupData.setAccountName(allowedAccount.getAccountName());
       }
  else {
         securityGroupData.setCidr(securityRule.getAllowedSourceIpCidr());
       }
       if (securityRule.getRuleType() == SecurityRuleType.IngressRule) {
         securityGroupData.setObjectName("ingressrule");
-        ingressResponses.add(securityGroupData);
+        response.addSecurityGroupIngressRule(securityGroupData);
       }
  else {
         securityGroupData.setObjectName("egressrule");
-        egressResponses.add(securityGroupData);
+        response.addSecurityGroupEgressRule(securityGroupData);
       }
     }
-    response.setSecurityGroupIngressRules(ingressResponses);
-    response.setSecurityGroupEgressRules(egressResponses);
     response.setObjectName("securitygroup");
   }
   return response;
