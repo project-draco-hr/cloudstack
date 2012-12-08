@@ -14,26 +14,9 @@
   Long domainId=domainIdRecursiveListProject.first();
   Boolean isRecursive=domainIdRecursiveListProject.second();
   ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
-  Filter searchFilter=new Filter(EventVO.class,"createDate",false,cmd.getStartIndex(),cmd.getPageSizeVal());
-  SearchBuilder<EventVO> sb=_eventDao.createSearchBuilder();
-  sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
-  sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
-  if (((permittedAccounts.isEmpty()) && (domainId != null) && isRecursive)) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-  }
-  if (listProjectResourcesCriteria != null) {
-    SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
-    if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.ListProjectResourcesOnly) {
-      accountSearch.and("accountType",accountSearch.entity().getType(),SearchCriteria.Op.EQ);
-      sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-    }
- else     if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.SkipProjectResources) {
-      accountSearch.and("accountType",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
-      sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
-    }
-  }
+  Filter searchFilter=new Filter(EventJoinVO.class,"createDate",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<EventJoinVO> sb=_eventJoinDao.createSearchBuilder();
+  _accountMgr.buildACLViewSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
   sb.and("levelL",sb.entity().getLevel(),SearchCriteria.Op.LIKE);
   sb.and("levelEQ",sb.entity().getLevel(),SearchCriteria.Op.EQ);
@@ -44,27 +27,13 @@
   sb.and("state",sb.entity().getState(),SearchCriteria.Op.NEQ);
   sb.and("startId",sb.entity().getStartId(),SearchCriteria.Op.EQ);
   sb.and("createDate",sb.entity().getCreateDate(),SearchCriteria.Op.BETWEEN);
-  SearchCriteria<EventVO> sc=sb.create();
-  if (listProjectResourcesCriteria != null) {
-    sc.setJoinParameters("accountSearch","accountType",Account.ACCOUNT_TYPE_PROJECT);
-  }
-  if (!permittedAccounts.isEmpty()) {
-    sc.setParameters("accountIdIN",permittedAccounts.toArray());
-  }
- else   if (domainId != null) {
-    DomainVO domain=_domainDao.findById(domainId);
-    if (isRecursive) {
-      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
-    }
- else {
-      sc.setParameters("domainId",domainId);
-    }
-  }
+  SearchCriteria<EventJoinVO> sc=sb.create();
+  _accountMgr.buildACLViewSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   if (id != null) {
     sc.setParameters("id",id);
   }
   if (keyword != null) {
-    SearchCriteria<EventVO> ssc=_eventDao.createSearchCriteria();
+    SearchCriteria<EventJoinVO> ssc=_eventJoinDao.createSearchCriteria();
     ssc.addOr("type",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("level",SearchCriteria.Op.LIKE,"%" + keyword + "%");
@@ -85,30 +54,11 @@
  else   if (endDate != null) {
     sc.setParameters("createDateL",endDate);
   }
+  Pair<List<EventJoinVO>,Integer> eventPair=null;
   if ((entryTime != null) && (duration != null)) {
-    if (entryTime <= duration) {
-      throw new InvalidParameterValueException("Entry time must be greater than duration");
-    }
-    Calendar calMin=Calendar.getInstance();
-    Calendar calMax=Calendar.getInstance();
-    calMin.add(Calendar.SECOND,-entryTime);
-    calMax.add(Calendar.SECOND,-duration);
-    Date minTime=calMin.getTime();
-    Date maxTime=calMax.getTime();
-    sc.setParameters("state",com.cloud.event.Event.State.Completed);
-    sc.setParameters("startId",0);
-    sc.setParameters("createDate",minTime,maxTime);
-    List<EventVO> startedEvents=_eventDao.searchAllEvents(sc,searchFilter);
-    List<EventVO> pendingEvents=new ArrayList<EventVO>();
-    for (    EventVO event : startedEvents) {
-      EventVO completedEvent=_eventDao.findCompletedEvent(event.getId());
-      if (completedEvent == null) {
-        pendingEvents.add(event);
-      }
-    }
-    return pendingEvents;
   }
  else {
-    return _eventDao.searchAllEvents(sc,searchFilter);
+    eventPair=_eventJoinDao.searchAndCount(sc,searchFilter);
   }
+  return eventPair;
 }
