@@ -2,8 +2,9 @@
   Account caller=UserContext.current().getCaller();
   Long accountId=null;
   String path=null;
-  Filter searchFilter=new Filter(ProjectVO.class,"id",false,startIndex,pageSize);
-  SearchBuilder<ProjectVO> sb=_projectDao.createSearchBuilder();
+  Filter searchFilter=new Filter(ProjectJoinVO.class,"id",false,startIndex,pageSize);
+  SearchBuilder<ProjectJoinVO> sb=_projectJoinDao.createSearchBuilder();
+  sb.select(null,Func.DISTINCT,sb.entity().getId());
   if (_accountMgr.isAdmin(caller.getType())) {
     if (domainId != null) {
       DomainVO domain=_domainDao.findById(domainId);
@@ -42,27 +43,19 @@
     path=domain.getPath();
   }
   if (path != null) {
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+    sb.and("domainPath",sb.entity().getDomainPath(),SearchCriteria.Op.LIKE);
   }
   if (accountId != null) {
-    SearchBuilder<ProjectAccountVO> projectAccountSearch=_projectAccountDao.createSearchBuilder();
-    projectAccountSearch.and("accountId",projectAccountSearch.entity().getAccountId(),SearchCriteria.Op.EQ);
-    sb.join("projectAccountSearch",projectAccountSearch,sb.entity().getId(),projectAccountSearch.entity().getProjectId(),JoinBuilder.JoinType.INNER);
+    sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
   }
   if (tags != null && !tags.isEmpty()) {
-    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
     for (int count=0; count < tags.size(); count++) {
-      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
-      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
-      tagSearch.cp();
+      sb.or().op("key" + String.valueOf(count),sb.entity().getTagKey(),SearchCriteria.Op.EQ);
+      sb.and("value" + String.valueOf(count),sb.entity().getTagValue(),SearchCriteria.Op.EQ);
+      sb.cp();
     }
-    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
-    sb.groupBy(sb.entity().getId());
-    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
   }
-  SearchCriteria<ProjectVO> sc=sb.create();
+  SearchCriteria<ProjectJoinVO> sc=sb.create();
   if (id != null) {
     sc.addAnd("id",Op.EQ,id);
   }
@@ -76,29 +69,39 @@
     sc.addAnd("displayText",Op.EQ,displayText);
   }
   if (accountId != null) {
-    sc.setJoinParameters("projectAccountSearch","accountId",accountId);
+    sc.setParameters("accountId",accountId);
   }
   if (state != null) {
     sc.addAnd("state",Op.EQ,state);
   }
   if (keyword != null) {
-    SearchCriteria<ProjectVO> ssc=_projectDao.createSearchCriteria();
+    SearchCriteria<ProjectJoinVO> ssc=_projectJoinDao.createSearchCriteria();
     ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     sc.addAnd("name",SearchCriteria.Op.SC,ssc);
   }
   if (path != null) {
-    sc.setJoinParameters("domainSearch","path",path);
+    sc.setParameters("domainPath",path);
   }
   if (tags != null && !tags.isEmpty()) {
     int count=0;
-    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.Project.toString());
     for (    String key : tags.keySet()) {
-      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
-      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      sc.setParameters("key" + String.valueOf(count),key);
+      sc.setParameters("value" + String.valueOf(count),tags.get(key));
       count++;
     }
   }
-  Pair<List<ProjectVO>,Integer> result=_projectDao.searchAndCount(sc,searchFilter);
-  return new Pair<List<? extends Project>,Integer>(result.first(),result.second());
+  Pair<List<ProjectJoinVO>,Integer> uniquePrjPair=_projectJoinDao.searchAndCount(sc,searchFilter);
+  Integer count=uniquePrjPair.second();
+  if (count.intValue() == 0) {
+    return uniquePrjPair;
+  }
+  List<ProjectJoinVO> uniquePrjs=uniquePrjPair.first();
+  Long[] prjIds=new Long[uniquePrjs.size()];
+  int i=0;
+  for (  ProjectJoinVO v : uniquePrjs) {
+    prjIds[i++]=v.getId();
+  }
+  List<ProjectJoinVO> prjs=_projectJoinDao.searchByIds(prjIds);
+  return new Pair<List<ProjectJoinVO>,Integer>(prjs,count);
 }
