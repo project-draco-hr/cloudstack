@@ -3,6 +3,7 @@
   Connection conn=hypervisorResource.getConnection();
   SR poolsr=null;
   VDI vdi=null;
+  boolean result=false;
   try {
     Set<SR> srs=SR.getByNameLabel(conn,primaryStoreUuid);
     if (srs.size() != 1) {
@@ -13,7 +14,7 @@
     vdir.nameLabel="Base-Image-" + UUID.randomUUID().toString();
     vdir.SR=poolsr;
     vdir.type=Types.VdiType.USER;
-    vdir.virtualSize=template.getSize();
+    vdir.virtualSize=getTemplateSize(template.getPath());
     vdi=VDI.create(conn,vdir);
     vdir=vdi.getRecord(conn);
     String vdiLocation=vdir.location;
@@ -22,22 +23,43 @@
       throw new CloudRuntimeException("Don't how to handle multiple pbds:" + pbds.size() + " for sr: "+ poolsr.getUuid(conn));
     }
     PBD pbd=pbds.iterator().next();
-    PBD.Record pbdRec=pbd.getRecord(conn);
     Map<String,String> deviceCfg=pbd.getDeviceConfig(conn);
     String pbdLocation=deviceCfg.get("location");
     if (pbdLocation == null) {
       throw new CloudRuntimeException("Can't get pbd: " + pbd.getUuid(conn) + " location");
     }
-    String vdiPath=pbdLocation + "/" + vdiLocation;
+    String vdiPath=pbdLocation + "/" + vdiLocation+ ".vhd";
+    hypervisorResource.callHostPlugin(conn,"vmopsStorage","downloadTemplateFromUrl","destPath",vdiPath,"srcUrl",template.getPath());
+    result=true;
+    return new CopyTemplateToPrimaryStorageAnswer(cmd,vdi.getUuid(conn));
   }
  catch (  BadServerResponse e) {
-    e.printStackTrace();
+    s_logger.debug("Failed to download template",e);
   }
 catch (  XenAPIException e) {
-    e.printStackTrace();
+    s_logger.debug("Failed to download template",e);
   }
 catch (  XmlRpcException e) {
-    e.printStackTrace();
+    s_logger.debug("Failed to download template",e);
   }
-  return null;
+catch (  Exception e) {
+    s_logger.debug("Failed to download template",e);
+  }
+ finally {
+    if (!result && vdi != null) {
+      try {
+        vdi.destroy(conn);
+      }
+ catch (      BadServerResponse e) {
+        s_logger.debug("Failed to cleanup newly created vdi");
+      }
+catch (      XenAPIException e) {
+        s_logger.debug("Failed to cleanup newly created vdi");
+      }
+catch (      XmlRpcException e) {
+        s_logger.debug("Failed to cleanup newly created vdi");
+      }
+    }
+  }
+  return new Answer(cmd,false,"Failed to download template");
 }
