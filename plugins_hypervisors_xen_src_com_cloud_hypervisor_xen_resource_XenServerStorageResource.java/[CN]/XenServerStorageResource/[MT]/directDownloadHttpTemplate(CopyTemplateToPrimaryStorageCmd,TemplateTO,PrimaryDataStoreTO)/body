@@ -5,11 +5,11 @@
   VDI vdi=null;
   boolean result=false;
   try {
-    SR sr=SR.getByUuid(conn,primaryStoreUuid);
-    if (sr == null) {
+    Set<SR> srs=SR.getByNameLabel(conn,primaryStoreUuid);
+    if (srs.size() != 1) {
       throw new CloudRuntimeException("storage uuid: " + primaryStoreUuid + " is not unique");
     }
-    poolsr=sr;
+    poolsr=srs.iterator().next();
     VDI.Record vdir=new VDI.Record();
     vdir.nameLabel="Base-Image-" + UUID.randomUUID().toString();
     vdir.SR=poolsr;
@@ -18,15 +18,21 @@
     vdi=VDI.create(conn,vdir);
     vdir=vdi.getRecord(conn);
     String vdiLocation=vdir.location;
-    Set<PBD> pbds=poolsr.getPBDs(conn);
-    if (pbds.size() != 1) {
-      throw new CloudRuntimeException("Don't how to handle multiple pbds:" + pbds.size() + " for sr: "+ poolsr.getUuid(conn));
+    String pbdLocation=null;
+    if (primarDataStore.getType().equalsIgnoreCase(DataStoreProtocol.NFS.toString())) {
+      pbdLocation="/run/sr-mount/" + poolsr.getUuid(conn);
     }
-    PBD pbd=pbds.iterator().next();
-    Map<String,String> deviceCfg=pbd.getDeviceConfig(conn);
-    String pbdLocation=deviceCfg.get("location");
+ else {
+      Set<PBD> pbds=poolsr.getPBDs(conn);
+      if (pbds.size() != 1) {
+        throw new CloudRuntimeException("Don't how to handle multiple pbds:" + pbds.size() + " for sr: "+ poolsr.getUuid(conn));
+      }
+      PBD pbd=pbds.iterator().next();
+      Map<String,String> deviceCfg=pbd.getDeviceConfig(conn);
+      pbdLocation=deviceCfg.get("location");
+    }
     if (pbdLocation == null) {
-      throw new CloudRuntimeException("Can't get pbd: " + pbd.getUuid(conn) + " location");
+      throw new CloudRuntimeException("Can't get pbd location");
     }
     String vdiPath=pbdLocation + "/" + vdiLocation+ ".vhd";
     hypervisorResource.callHostPlugin(conn,"storagePlugin","downloadTemplateFromUrl","destPath",vdiPath,"srcUrl",template.getPath());
