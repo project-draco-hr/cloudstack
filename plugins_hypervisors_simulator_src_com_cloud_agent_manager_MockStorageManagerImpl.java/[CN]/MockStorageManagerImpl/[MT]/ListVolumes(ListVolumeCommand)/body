@@ -1,0 +1,41 @@
+{
+  Transaction txn=Transaction.open(Transaction.SIMULATOR_DB);
+  MockSecStorageVO storage=null;
+  try {
+    txn.start();
+    storage=_mockSecStorageDao.findByUrl(cmd.getSecUrl());
+    if (storage == null) {
+      return new Answer(cmd,false,"Failed to get secondary storage");
+    }
+    txn.commit();
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding sec storage " + cmd.getSecUrl(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
+  txn=Transaction.open(Transaction.SIMULATOR_DB);
+  try {
+    txn.start();
+    List<MockVolumeVO> volumes=_mockVolumeDao.findByStorageIdAndType(storage.getId(),MockVolumeType.VOLUME);
+    Map<String,TemplateInfo> templateInfos=new HashMap<String,TemplateInfo>();
+    for (    MockVolumeVO volume : volumes) {
+      templateInfos.put(volume.getName(),new TemplateInfo(volume.getName(),volume.getPath().replaceAll(storage.getMountPoint(),""),volume.getSize(),volume.getSize(),true,false));
+    }
+    txn.commit();
+    return new ListTemplateAnswer(cmd.getSecUrl(),templateInfos);
+  }
+ catch (  Exception ex) {
+    txn.rollback();
+    throw new CloudRuntimeException("Error when finding template on sec storage " + storage.getId(),ex);
+  }
+ finally {
+    txn.close();
+    txn=Transaction.open(Transaction.CLOUD_DB);
+    txn.close();
+  }
+}
