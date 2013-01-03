@@ -6,39 +6,33 @@
   Long domainId=domainIdRecursiveListProject.first();
   Boolean isRecursive=domainIdRecursiveListProject.second();
   ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
-  Filter searchFilter=new Filter(AsyncJobVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
-  SearchBuilder<AsyncJobVO> sb=_jobDao.createSearchBuilder();
+  Filter searchFilter=new Filter(AsyncJobJoinVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<AsyncJobJoinVO> sb=_jobJoinDao.createSearchBuilder();
   sb.and("accountIdIN",sb.entity().getAccountId(),SearchCriteria.Op.IN);
   SearchBuilder<AccountVO> accountSearch=null;
   boolean accountJoinIsDone=false;
   if (permittedAccounts.isEmpty() && domainId != null) {
-    accountSearch=_accountDao.createSearchBuilder();
-    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
-    domainSearch.and("domainId",domainSearch.entity().getId(),SearchCriteria.Op.EQ);
-    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
-    sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+    sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+    sb.and("path",sb.entity().getDomainPath(),SearchCriteria.Op.LIKE);
     accountJoinIsDone=true;
-    accountSearch.join("domainSearch",domainSearch,accountSearch.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
   if (listProjectResourcesCriteria != null) {
-    if (accountSearch == null) {
-      accountSearch=_accountDao.createSearchBuilder();
-    }
     if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.ListProjectResourcesOnly) {
-      accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.EQ);
+      sb.and("type",sb.entity().getAccountType(),SearchCriteria.Op.EQ);
     }
  else     if (listProjectResourcesCriteria == Project.ListProjectResourcesCriteria.SkipProjectResources) {
-      accountSearch.and("type",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
+      sb.and("type",sb.entity().getAccountType(),SearchCriteria.Op.NEQ);
     }
     if (!accountJoinIsDone) {
-      sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+      sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+      sb.and("path",sb.entity().getDomainPath(),SearchCriteria.Op.LIKE);
     }
   }
   Object keyword=cmd.getKeyword();
   Object startDate=cmd.getStartDate();
-  SearchCriteria<AsyncJobVO> sc=sb.create();
+  SearchCriteria<AsyncJobJoinVO> sc=sb.create();
   if (listProjectResourcesCriteria != null) {
-    sc.setJoinParameters("accountSearch","type",Account.ACCOUNT_TYPE_PROJECT);
+    sc.setParameters("type",Account.ACCOUNT_TYPE_PROJECT);
   }
   if (!permittedAccounts.isEmpty()) {
     sc.setParameters("accountIdIN",permittedAccounts.toArray());
@@ -46,10 +40,10 @@
  else   if (domainId != null) {
     DomainVO domain=_domainDao.findById(domainId);
     if (isRecursive) {
-      sc.setJoinParameters("domainSearch","path",domain.getPath() + "%");
+      sc.setParameters("path",domain.getPath() + "%");
     }
  else {
-      sc.setJoinParameters("domainSearch","domainId",domainId);
+      sc.setParameters("domainId",domainId);
     }
   }
   if (keyword != null) {
@@ -58,6 +52,5 @@
   if (startDate != null) {
     sc.addAnd("created",SearchCriteria.Op.GTEQ,startDate);
   }
-  Pair<List<AsyncJobVO>,Integer> result=_jobDao.searchAndCount(sc,searchFilter);
-  return new Pair<List<? extends AsyncJob>,Integer>(result.first(),result.second());
+  return _jobJoinDao.searchAndCount(sc,searchFilter);
 }
