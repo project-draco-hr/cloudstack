@@ -1,0 +1,73 @@
+{
+  PhysicalNetworkVO network=_physicalNetworkDao.findById(physicalNetworkId);
+  if (network == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Physical Network with specified id doesn't exist in the system");
+    ex.addProxyObject(network,physicalNetworkId,"physicalNetworkId");
+    throw ex;
+  }
+  if (destinationPhysicalNetworkId != null) {
+    PhysicalNetworkVO destNetwork=_physicalNetworkDao.findById(destinationPhysicalNetworkId);
+    if (destNetwork == null) {
+      InvalidParameterValueException ex=new InvalidParameterValueException("Destination Physical Network with specified id doesn't exist in the system");
+      ex.addProxyObject(destNetwork,destinationPhysicalNetworkId,"destinationPhysicalNetworkId");
+      throw ex;
+    }
+  }
+  if (providerName != null) {
+    Provider provider=Network.Provider.getProvider(providerName);
+    if (provider == null) {
+      throw new InvalidParameterValueException("Invalid Network Service Provider=" + providerName);
+    }
+  }
+  if (_pNSPDao.findByServiceProvider(physicalNetworkId,providerName) != null) {
+    throw new CloudRuntimeException("The '" + providerName + "' provider already exists on physical network : "+ physicalNetworkId);
+  }
+  NetworkElement element=_networkMgr.getElementImplementingProvider(providerName);
+  if (element == null) {
+    throw new InvalidParameterValueException("Unable to find the Network Element implementing the Service Provider '" + providerName + "'");
+  }
+  List<Service> services=new ArrayList<Service>();
+  if (enabledServices != null) {
+    if (!element.canEnableIndividualServices()) {
+      if (enabledServices.size() != element.getCapabilities().keySet().size()) {
+        throw new InvalidParameterValueException("Cannot enable subset of Services, Please specify the complete list of Services for this Service Provider '" + providerName + "'");
+      }
+    }
+    boolean addGatewayService=false;
+    for (    String serviceName : enabledServices) {
+      Network.Service service=Network.Service.getService(serviceName);
+      if (service == null || service == Service.Gateway) {
+        throw new InvalidParameterValueException("Invalid Network Service specified=" + serviceName);
+      }
+ else       if (service == Service.SourceNat) {
+        addGatewayService=true;
+      }
+      if (!element.getCapabilities().containsKey(service)) {
+        throw new InvalidParameterValueException(providerName + " Provider cannot provide this Service specified=" + serviceName);
+      }
+      services.add(service);
+    }
+    if (addGatewayService) {
+      services.add(Service.Gateway);
+    }
+  }
+ else {
+    services=new ArrayList<Service>(element.getCapabilities().keySet());
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    PhysicalNetworkServiceProviderVO nsp=new PhysicalNetworkServiceProviderVO(physicalNetworkId,providerName);
+    nsp.setEnabledServices(services);
+    if (destinationPhysicalNetworkId != null) {
+      nsp.setDestinationPhysicalNetworkId(destinationPhysicalNetworkId);
+    }
+    nsp=_pNSPDao.persist(nsp);
+    txn.commit();
+    return nsp;
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Exception: ",ex);
+    throw new CloudRuntimeException("Fail to add a provider to physical network");
+  }
+}
