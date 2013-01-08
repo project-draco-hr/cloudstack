@@ -16,34 +16,20 @@
   HostVO niciraNvpHost=_hostDao.findById(niciraNvpDevice.getHostId());
   _hostDao.loadDetails(niciraNvpHost);
   Account owner=context.getAccount();
-  Network lock=_networkDao.acquireInLockTable(network.getId(),_networkManager.getNetworkLockTimeout());
-  if (lock == null) {
-    throw new ConcurrentOperationException("Unable to lock network " + network.getId());
-  }
-  try {
-    if (_networkManager.isProviderSupportServiceInNetwork(network.getId(),Service.SourceNat,Provider.NiciraNvp)) {
-      s_logger.debug("Apparently we are supposed to provide SourceNat on this network");
-      PublicIp sourceNatIp=_networkManager.assignSourceNatIpAddressToGuestNetwork(owner,network);
-      String publicCidr=sourceNatIp.getAddress().addr() + "/" + NetUtils.getCidrSize(sourceNatIp.getVlanNetmask());
-      String internalCidr=network.getGateway() + "/" + network.getCidr().split("/")[1];
-      long vlanid=(Vlan.UNTAGGED.equals(sourceNatIp.getVlanTag())) ? 0 : Long.parseLong(sourceNatIp.getVlanTag());
-      CreateLogicalRouterCommand cmd=new CreateLogicalRouterCommand(niciraNvpHost.getDetail("l3gatewayserviceuuid"),vlanid,network.getBroadcastUri().getSchemeSpecificPart(),"router-" + network.getDisplayText(),publicCidr,sourceNatIp.getGateway(),internalCidr,context.getDomain().getName() + "-" + context.getAccount().getAccountName());
-      CreateLogicalRouterAnswer answer=(CreateLogicalRouterAnswer)_agentMgr.easySend(niciraNvpHost.getId(),cmd);
-      if (answer.getResult() == false) {
-        s_logger.error("Failed to create Logical Router for network " + network.getDisplayText());
-        return false;
-      }
-      NiciraNvpRouterMappingVO routermapping=new NiciraNvpRouterMappingVO(answer.getLogicalRouterUuid(),network.getId());
-      _niciraNvpRouterMappingDao.persist(routermapping);
+  if (_networkModel.isProviderSupportServiceInNetwork(network.getId(),Service.SourceNat,Provider.NiciraNvp)) {
+    s_logger.debug("Apparently we are supposed to provide SourceNat on this network");
+    PublicIp sourceNatIp=_networkManager.assignSourceNatIpAddressToGuestNetwork(owner,network);
+    String publicCidr=sourceNatIp.getAddress().addr() + "/" + NetUtils.getCidrSize(sourceNatIp.getVlanNetmask());
+    String internalCidr=network.getGateway() + "/" + network.getCidr().split("/")[1];
+    long vlanid=(Vlan.UNTAGGED.equals(sourceNatIp.getVlanTag())) ? 0 : Long.parseLong(sourceNatIp.getVlanTag());
+    CreateLogicalRouterCommand cmd=new CreateLogicalRouterCommand(niciraNvpHost.getDetail("l3gatewayserviceuuid"),vlanid,network.getBroadcastUri().getSchemeSpecificPart(),"router-" + network.getDisplayText(),publicCidr,sourceNatIp.getGateway(),internalCidr,context.getDomain().getName() + "-" + context.getAccount().getAccountName());
+    CreateLogicalRouterAnswer answer=(CreateLogicalRouterAnswer)_agentMgr.easySend(niciraNvpHost.getId(),cmd);
+    if (answer.getResult() == false) {
+      s_logger.error("Failed to create Logical Router for network " + network.getDisplayText());
+      return false;
     }
-  }
-  finally {
-    if (lock != null) {
-      _networkDao.releaseFromLockTable(lock.getId());
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Lock is released for network id " + lock.getId() + " as a part of router startup in "+ dest);
-      }
-    }
+    NiciraNvpRouterMappingVO routermapping=new NiciraNvpRouterMappingVO(answer.getLogicalRouterUuid(),network.getId());
+    _niciraNvpRouterMappingDao.persist(routermapping);
   }
   return true;
 }
