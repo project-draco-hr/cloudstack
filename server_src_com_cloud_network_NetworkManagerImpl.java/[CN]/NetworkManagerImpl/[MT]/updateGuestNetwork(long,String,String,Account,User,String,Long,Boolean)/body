@@ -47,8 +47,11 @@
       throw new InvalidParameterValueException("Can't update as the new offering is " + errMsg);
     }
     if (networkOfferingId != oldNetworkOfferingId) {
-      if (networkOfferingIsConfiguredForExternalNetworking(networkOfferingId) != networkOfferingIsConfiguredForExternalNetworking(oldNetworkOfferingId) && !changeCidr) {
-        throw new InvalidParameterValueException("Can't guarantee guest network CIDR is unchanged after updating network!");
+      NetworkOffering oldNtwkOff=_networkOfferingDao.findByIdIncludingRemoved(oldNetworkOfferingId);
+      Collection<String> newProviders=finalizeServicesAndProvidersForNetwork(networkOffering,network.getPhysicalNetworkId()).values();
+      Collection<String> oldProviders=finalizeServicesAndProvidersForNetwork(oldNtwkOff,network.getPhysicalNetworkId()).values();
+      if (providersConfiguredForExternalNetworking(newProviders) != providersConfiguredForExternalNetworking(oldProviders) && !changeCidr) {
+        throw new InvalidParameterValueException("Updating network failed since guest CIDR needs to be changed!");
       }
       if (changeCidr) {
         if (!checkForNonStoppedVmInNetwork(network.getId())) {
@@ -128,6 +131,9 @@
       _networksDao.update(networkId,network,newSvcProviders);
       List<NicVO> nics=_nicDao.listByNetworkId(networkId);
       for (      NicVO nic : nics) {
+        if (nic.getReservationStrategy() == Nic.ReservationStrategy.PlaceHolder) {
+          continue;
+        }
         long vmId=nic.getInstanceId();
         VMInstanceVO vm=_vmDao.findById(vmId);
         if (vm == null) {

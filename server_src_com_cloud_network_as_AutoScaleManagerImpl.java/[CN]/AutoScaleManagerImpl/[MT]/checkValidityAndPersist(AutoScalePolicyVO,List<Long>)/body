@@ -1,0 +1,41 @@
+{
+  int duration=autoScalePolicyVO.getDuration();
+  int quietTime=autoScalePolicyVO.getQuietTime();
+  if (duration < 0) {
+    throw new InvalidParameterValueException("duration is an invalid value: " + duration);
+  }
+  if (quietTime < 0) {
+    throw new InvalidParameterValueException("quiettime is an invalid value: " + quietTime);
+  }
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  autoScalePolicyVO=_autoScalePolicyDao.persist(autoScalePolicyVO);
+  if (conditionIds != null) {
+    SearchBuilder<ConditionVO> conditionsSearch=_conditionDao.createSearchBuilder();
+    conditionsSearch.and("ids",conditionsSearch.entity().getId(),Op.IN);
+    conditionsSearch.done();
+    SearchCriteria<ConditionVO> sc=conditionsSearch.create();
+    sc.setParameters("ids",conditionIds.toArray(new Object[0]));
+    List<ConditionVO> conditions=_conditionDao.search(sc,null);
+    ControlledEntity[] sameOwnerEntities=conditions.toArray(new ControlledEntity[conditions.size() + 1]);
+    sameOwnerEntities[sameOwnerEntities.length - 1]=autoScalePolicyVO;
+    _accountMgr.checkAccess(UserContext.current().getCaller(),null,true,sameOwnerEntities);
+    if (conditionIds.size() != conditions.size()) {
+      throw new InvalidParameterValueException("Unable to find the condition specified");
+    }
+    ArrayList<Long> counterIds=new ArrayList<Long>();
+    for (    ConditionVO condition : conditions) {
+      if (counterIds.contains(condition.getCounterid())) {
+        throw new InvalidParameterValueException("atleast two conditions in the conditionids have the same counter. It is not right to apply two different conditions for the same counter");
+      }
+      counterIds.add(condition.getCounterid());
+    }
+    _autoScalePolicyConditionMapDao.removeByAutoScalePolicyId(autoScalePolicyVO.getId());
+    for (    Long conditionId : conditionIds) {
+      AutoScalePolicyConditionMapVO policyConditionMapVO=new AutoScalePolicyConditionMapVO(autoScalePolicyVO.getId(),conditionId);
+      _autoScalePolicyConditionMapDao.persist(policyConditionMapVO);
+    }
+  }
+  txn.commit();
+  return autoScalePolicyVO;
+}

@@ -1,0 +1,66 @@
+{
+  try {
+    NiciraNvpList<NatRule> existingRules=_niciraNvpApi.findNatRulesByLogicalRouterUuid(cmd.getLogicalRouterUuid());
+    for (    PortForwardingRuleTO rule : cmd.getRules()) {
+      if (rule.isAlreadyAdded() && !rule.revoked()) {
+        continue;
+      }
+      if (rule.getDstPortRange()[0] != rule.getDstPortRange()[1]) {
+        return new ConfigurePortForwardingRulesOnLogicalRouterAnswer(cmd,false,"Nicira NVP doesn't support port ranges for port forwarding");
+      }
+      NatRule[] rulepair=generatePortForwardingRulePair(rule.getDstIp(),rule.getDstPortRange(),rule.getSrcIp(),rule.getSrcPortRange(),rule.getProtocol());
+      NatRule incoming=null;
+      NatRule outgoing=null;
+      for (      NatRule storedRule : existingRules.getResults()) {
+        if (storedRule.equalsIgnoreUuid(rulepair[1])) {
+          outgoing=storedRule;
+          s_logger.debug("Found matching outgoing rule " + outgoing.getUuid());
+          if (incoming != null) {
+            break;
+          }
+        }
+ else         if (storedRule.equalsIgnoreUuid(rulepair[0])) {
+          incoming=storedRule;
+          s_logger.debug("Found matching incoming rule " + incoming.getUuid());
+          if (outgoing != null) {
+            break;
+          }
+        }
+      }
+      if (incoming != null && outgoing != null) {
+        if (rule.revoked()) {
+          s_logger.debug("Deleting incoming rule " + incoming.getUuid());
+          _niciraNvpApi.deleteLogicalRouterNatRule(cmd.getLogicalRouterUuid(),incoming.getUuid());
+          s_logger.debug("Deleting outgoing rule " + outgoing.getUuid());
+          _niciraNvpApi.deleteLogicalRouterNatRule(cmd.getLogicalRouterUuid(),outgoing.getUuid());
+        }
+      }
+ else {
+        if (rule.revoked()) {
+          s_logger.warn("Tried deleting a rule that does not exist, " + rule.getSrcIp() + " -> "+ rule.getDstIp());
+          break;
+        }
+        rulepair[0]=_niciraNvpApi.createLogicalRouterNatRule(cmd.getLogicalRouterUuid(),rulepair[0]);
+        s_logger.debug("Created " + natRuleToString(rulepair[0]));
+        try {
+          rulepair[1]=_niciraNvpApi.createLogicalRouterNatRule(cmd.getLogicalRouterUuid(),rulepair[1]);
+          s_logger.debug("Created " + natRuleToString(rulepair[1]));
+        }
+ catch (        NiciraNvpApiException ex) {
+          s_logger.warn("NiciraNvpApiException during create call, rolling back previous create");
+          _niciraNvpApi.deleteLogicalRouterNatRule(cmd.getLogicalRouterUuid(),rulepair[0].getUuid());
+          throw ex;
+        }
+      }
+    }
+    return new ConfigurePortForwardingRulesOnLogicalRouterAnswer(cmd,true,cmd.getRules().size() + " PortForwarding rules applied");
+  }
+ catch (  NiciraNvpApiException e) {
+    if (numRetries > 0) {
+      return retry(cmd,--numRetries);
+    }
+ else {
+      return new ConfigurePortForwardingRulesOnLogicalRouterAnswer(cmd,e);
+    }
+  }
+}

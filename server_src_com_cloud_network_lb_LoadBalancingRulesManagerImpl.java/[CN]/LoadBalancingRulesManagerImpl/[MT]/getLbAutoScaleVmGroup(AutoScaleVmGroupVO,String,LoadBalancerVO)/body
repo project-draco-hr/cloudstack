@@ -1,0 +1,51 @@
+{
+  long lbNetworkId=lb.getNetworkId();
+  String lbName=lb.getName();
+  List<AutoScaleVmGroupPolicyMapVO> vmGroupPolicyMapList=_autoScaleVmGroupPolicyMapDao.listByVmGroupId(vmGroup.getId());
+  List<LbAutoScalePolicy> autoScalePolicies=new ArrayList<LbAutoScalePolicy>();
+  for (  AutoScaleVmGroupPolicyMapVO vmGroupPolicyMap : vmGroupPolicyMapList) {
+    AutoScalePolicy autoScalePolicy=_autoScalePolicyDao.findById(vmGroupPolicyMap.getPolicyId());
+    List<AutoScalePolicyConditionMapVO> autoScalePolicyConditionMapList=_autoScalePolicyConditionMapDao.listByAll(autoScalePolicy.getId(),null);
+    List<LbCondition> lbConditions=new ArrayList<LbCondition>();
+    for (    AutoScalePolicyConditionMapVO autoScalePolicyConditionMap : autoScalePolicyConditionMapList) {
+      Condition condition=_conditionDao.findById(autoScalePolicyConditionMap.getConditionId());
+      Counter counter=_counterDao.findById(condition.getCounterid());
+      lbConditions.add(new LbCondition(counter,condition));
+    }
+    autoScalePolicies.add(new LbAutoScalePolicy(autoScalePolicy,lbConditions));
+  }
+  AutoScaleVmProfile autoScaleVmProfile=_autoScaleVmProfileDao.findById(vmGroup.getProfileId());
+  Long autoscaleUserId=autoScaleVmProfile.getAutoScaleUserId();
+  User user=_userDao.findByIdIncludingRemoved(autoscaleUserId);
+  String apiKey=user.getApiKey();
+  String secretKey=user.getSecretKey();
+  String csUrl=_configDao.getValue(Config.EndpointeUrl.key());
+  String zoneId=_dcDao.findById(autoScaleVmProfile.getZoneId()).getUuid();
+  String domainId=_domainDao.findById(autoScaleVmProfile.getDomainId()).getUuid();
+  String serviceOfferingId=_offeringsDao.findById(autoScaleVmProfile.getServiceOfferingId()).getUuid();
+  String templateId=_templateDao.findById(autoScaleVmProfile.getTemplateId()).getUuid();
+  String vmName="AutoScale-LB-" + lbName;
+  String lbNetworkUuid=null;
+  DataCenter zone=_configMgr.getZone(vmGroup.getZoneId());
+  if (zone == null) {
+    s_logger.warn("Unable to find zone while packaging AutoScale Vm Group, zoneid: " + vmGroup.getZoneId());
+    throw new InvalidParameterValueException("Unable to find zone");
+  }
+ else {
+    if (zone.getNetworkType() == NetworkType.Advanced) {
+      NetworkVO lbNetwork=_networkDao.findById(lbNetworkId);
+      lbNetworkUuid=lbNetwork.getUuid();
+    }
+  }
+  if (apiKey == null) {
+    throw new InvalidParameterValueException("apiKey for user: " + user.getUsername() + " is empty. Please generate it");
+  }
+  if (secretKey == null) {
+    throw new InvalidParameterValueException("secretKey for user: " + user.getUsername() + " is empty. Please generate it");
+  }
+  if (csUrl == null || csUrl.contains("localhost")) {
+    throw new InvalidParameterValueException("Global setting endpointe.url has to be set to the Management Server's API end point");
+  }
+  LbAutoScaleVmProfile lbAutoScaleVmProfile=new LbAutoScaleVmProfile(autoScaleVmProfile,apiKey,secretKey,csUrl,zoneId,domainId,serviceOfferingId,templateId,vmName,lbNetworkUuid);
+  return new LbAutoScaleVmGroup(vmGroup,autoScalePolicies,lbAutoScaleVmProfile,currentState);
+}

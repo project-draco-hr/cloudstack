@@ -1,0 +1,98 @@
+{
+  try {
+    SAXParserFactory spfactory=SAXParserFactory.newInstance();
+    SAXParser saxParser=spfactory.newSAXParser();
+    _daoMap=new LinkedHashMap<String,ComponentInfo<GenericDao<?,? extends Serializable>>>();
+    _managerMap=new LinkedHashMap<String,ComponentInfo<Manager>>();
+    _checkerMap=new LinkedHashMap<String,ComponentInfo<SystemIntegrityChecker>>();
+    _adapterMap=new HashMap<String,Adapters<? extends Adapter>>();
+    _factories=new HashMap<Class<?>,Class<?>>();
+    _pluginsMap=new LinkedHashMap<String,ComponentInfo<PluggableService>>();
+    File file=PropertiesUtil.findConfigFile(filename);
+    if (file == null) {
+      s_logger.info("Unable to find " + filename);
+      return null;
+    }
+    s_logger.info("Config file found at " + file.getAbsolutePath() + ".  Configuring "+ _serverName);
+    XmlHandler handler=new XmlHandler(_serverName);
+    saxParser.parse(file,handler);
+    HashMap<String,List<ComponentInfo<Adapter>>> adapters=new HashMap<String,List<ComponentInfo<Adapter>>>();
+    if (handler.parent != null) {
+      String[] tokens=handler.parent.split(":");
+      String parentFile=filename;
+      String parentName=handler.parent;
+      if (tokens.length > 1) {
+        parentFile=tokens[0];
+        parentName=tokens[1];
+      }
+      ComponentLocator parentLocator=new ComponentLocator(parentName);
+      adapters.putAll(parentLocator.parse2(parentFile).second());
+      _daoMap.putAll(parentLocator._daoMap);
+      _managerMap.putAll(parentLocator._managerMap);
+      _factories.putAll(parentLocator._factories);
+      _pluginsMap.putAll(parentLocator._pluginsMap);
+    }
+    ComponentLibrary library=null;
+    if (handler.library != null) {
+      Class<?> clazz=Class.forName(handler.library);
+      library=(ComponentLibrary)clazz.newInstance();
+      _daoMap.putAll(library.getDaos());
+      _managerMap.putAll(library.getManagers());
+      _factories.putAll(library.getFactories());
+      _pluginsMap.putAll(library.getPluggableServices());
+      for (      Entry<String,List<ComponentInfo<Adapter>>> e : library.getAdapters().entrySet()) {
+        if (adapters.containsKey(e.getKey())) {
+          s_logger.debug("Merge needed for " + e.getKey());
+          adapters.get(e.getKey()).addAll(e.getValue());
+        }
+ else {
+          adapters.put(e.getKey(),e.getValue());
+        }
+      }
+      for (      Entry<String,List<ComponentInfo<Adapter>>> e : handler.adapters.entrySet()) {
+        if (adapters.containsKey(e.getKey())) {
+          s_logger.debug("Merge needed for " + e.getKey());
+          adapters.get(e.getKey()).addAll(e.getValue());
+        }
+ else {
+          adapters.put(e.getKey(),e.getValue());
+        }
+      }
+    }
+    _daoMap.putAll(handler.daos);
+    _managerMap.putAll(handler.managers);
+    _checkerMap.putAll(handler.checkers);
+    _pluginsMap.putAll(handler.pluggableServices);
+    for (    Entry<String,List<ComponentInfo<Adapter>>> e : handler.adapters.entrySet()) {
+      if (adapters.containsKey(e.getKey())) {
+        s_logger.debug("Merge needed for " + e.getKey());
+        adapters.get(e.getKey()).addAll(e.getValue());
+      }
+ else {
+        adapters.put(e.getKey(),e.getValue());
+      }
+    }
+    return new Pair<XmlHandler,HashMap<String,List<ComponentInfo<Adapter>>>>(handler,adapters);
+  }
+ catch (  ParserConfigurationException e) {
+    s_logger.error("Unable to load " + _serverName + " due to errors while parsing "+ filename,e);
+    System.exit(1);
+  }
+catch (  SAXException e) {
+    s_logger.error("Unable to load " + _serverName + " due to errors while parsing "+ filename,e);
+    System.exit(1);
+  }
+catch (  IOException e) {
+    s_logger.error("Unable to load " + _serverName + " due to errors while reading from "+ filename,e);
+    System.exit(1);
+  }
+catch (  CloudRuntimeException e) {
+    s_logger.error("Unable to load configuration for " + _serverName + " from "+ filename,e);
+    System.exit(1);
+  }
+catch (  Exception e) {
+    s_logger.error("Unable to load configuration for " + _serverName + " from "+ filename,e);
+    System.exit(1);
+  }
+  return null;
+}

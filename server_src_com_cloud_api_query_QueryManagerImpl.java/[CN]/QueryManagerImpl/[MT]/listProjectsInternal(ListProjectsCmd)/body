@@ -1,0 +1,119 @@
+{
+  Long id=cmd.getId();
+  String name=cmd.getName();
+  String displayText=cmd.getDisplayText();
+  String state=cmd.getState();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  String keyword=cmd.getKeyword();
+  Long startIndex=cmd.getStartIndex();
+  Long pageSize=cmd.getPageSizeVal();
+  boolean listAll=cmd.listAll();
+  boolean isRecursive=cmd.isRecursive();
+  Map<String,String> tags=cmd.getTags();
+  Account caller=UserContext.current().getCaller();
+  Long accountId=null;
+  String path=null;
+  Filter searchFilter=new Filter(ProjectJoinVO.class,"id",false,startIndex,pageSize);
+  SearchBuilder<ProjectJoinVO> sb=_projectJoinDao.createSearchBuilder();
+  sb.select(null,Func.DISTINCT,sb.entity().getId());
+  if (_accountMgr.isAdmin(caller.getType())) {
+    if (domainId != null) {
+      DomainVO domain=_domainDao.findById(domainId);
+      if (domain == null) {
+        throw new InvalidParameterValueException("Domain id=" + domainId + " doesn't exist in the system");
+      }
+      _accountMgr.checkAccess(caller,domain);
+      if (accountName != null) {
+        Account owner=_accountMgr.getActiveAccountByName(accountName,domainId);
+        if (owner == null) {
+          throw new InvalidParameterValueException("Unable to find account " + accountName + " in domain "+ domainId);
+        }
+        accountId=owner.getId();
+      }
+    }
+ else {
+      if (accountName != null) {
+        throw new InvalidParameterValueException("could not find account " + accountName + " because domain is not specified");
+      }
+    }
+  }
+ else {
+    if (accountName != null && !accountName.equals(caller.getAccountName())) {
+      throw new PermissionDeniedException("Can't list account " + accountName + " projects; unauthorized");
+    }
+    if (domainId != null && domainId.equals(caller.getDomainId())) {
+      throw new PermissionDeniedException("Can't list domain id= " + domainId + " projects; unauthorized");
+    }
+    accountId=caller.getId();
+  }
+  if (domainId == null && accountId == null && (caller.getType() == Account.ACCOUNT_TYPE_NORMAL || !listAll)) {
+    accountId=caller.getId();
+  }
+ else   if (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || (isRecursive && !listAll)) {
+    DomainVO domain=_domainDao.findById(caller.getDomainId());
+    path=domain.getPath();
+  }
+  if (path != null) {
+    sb.and("domainPath",sb.entity().getDomainPath(),SearchCriteria.Op.LIKE);
+  }
+  if (accountId != null) {
+    sb.and("accountId",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    for (int count=0; count < tags.size(); count++) {
+      sb.or().op("key" + String.valueOf(count),sb.entity().getTagKey(),SearchCriteria.Op.EQ);
+      sb.and("value" + String.valueOf(count),sb.entity().getTagValue(),SearchCriteria.Op.EQ);
+      sb.cp();
+    }
+  }
+  SearchCriteria<ProjectJoinVO> sc=sb.create();
+  if (id != null) {
+    sc.addAnd("id",Op.EQ,id);
+  }
+  if (domainId != null && !isRecursive) {
+    sc.addAnd("domainId",Op.EQ,domainId);
+  }
+  if (name != null) {
+    sc.addAnd("name",Op.EQ,name);
+  }
+  if (displayText != null) {
+    sc.addAnd("displayText",Op.EQ,displayText);
+  }
+  if (accountId != null) {
+    sc.setParameters("accountId",accountId);
+  }
+  if (state != null) {
+    sc.addAnd("state",Op.EQ,state);
+  }
+  if (keyword != null) {
+    SearchCriteria<ProjectJoinVO> ssc=_projectJoinDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (path != null) {
+    sc.setParameters("domainPath",path);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    for (    String key : tags.keySet()) {
+      sc.setParameters("key" + String.valueOf(count),key);
+      sc.setParameters("value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
+  Pair<List<ProjectJoinVO>,Integer> uniquePrjPair=_projectJoinDao.searchAndCount(sc,searchFilter);
+  Integer count=uniquePrjPair.second();
+  if (count.intValue() == 0) {
+    return uniquePrjPair;
+  }
+  List<ProjectJoinVO> uniquePrjs=uniquePrjPair.first();
+  Long[] prjIds=new Long[uniquePrjs.size()];
+  int i=0;
+  for (  ProjectJoinVO v : uniquePrjs) {
+    prjIds[i++]=v.getId();
+  }
+  List<ProjectJoinVO> prjs=_projectJoinDao.searchByIds(prjIds);
+  return new Pair<List<ProjectJoinVO>,Integer>(prjs,count);
+}

@@ -1,14 +1,13 @@
 {
   BaseCmd.setComponents(new ApiResponseHelper());
   BaseListCmd.configure();
-  processConfigFiles(apiConfig,false);
-  String[] pluggableServicesApiConfigs=getPluggableServicesApiConfigs();
-  processConfigFiles(pluggableServicesApiConfigs,true);
   _systemAccount=_accountMgr.getSystemAccount();
   _systemUser=_accountMgr.getSystemUser();
   _dispatcher=ApiDispatcher.getInstance();
   Integer apiPort=null;
-  SearchCriteria<ConfigurationVO> sc=_configDao.createSearchCriteria();
+  ComponentLocator locator=ComponentLocator.getLocator(ManagementServer.Name);
+  ConfigurationDao configDao=locator.getDao(ConfigurationDao.class);
+  SearchCriteria<ConfigurationVO> sc=configDao.createSearchCriteria();
   sc.addAnd("name",SearchCriteria.Op.EQ,"integration.api.port");
   List<ConfigurationVO> values=_configDao.search(sc,null);
   if ((values != null) && (values.size() > 0)) {
@@ -17,8 +16,19 @@
       apiPort=Integer.parseInt(apiPortConfig.getValue());
     }
   }
-  encodeApiResponse=Boolean.valueOf(_configDao.getValue(Config.EncodeApiResponse.key()));
-  String jsonType=_configDao.getValue(Config.JavaScriptDefaultContentType.key());
+  Reflections reflections=new Reflections("org.apache.cloudstack.api");
+  Set<Class<?>> cmdClasses=reflections.getTypesAnnotatedWith(APICommand.class);
+  reflections=new Reflections("com.cloud.api");
+  cmdClasses.addAll(reflections.getTypesAnnotatedWith(APICommand.class));
+  for (  Class<?> cmdClass : cmdClasses) {
+    String apiName=cmdClass.getAnnotation(APICommand.class).name();
+    if (_apiNameCmdClassMap.containsKey(apiName)) {
+      s_logger.error("API Cmd class " + cmdClass.getName() + " has non-unique apiname"+ apiName);
+    }
+    _apiNameCmdClassMap.put(apiName,cmdClass);
+  }
+  encodeApiResponse=Boolean.valueOf(configDao.getValue(Config.EncodeApiResponse.key()));
+  String jsonType=configDao.getValue(Config.JavaScriptDefaultContentType.key());
   if (jsonType != null) {
     jsonContentType=jsonType;
   }
