@@ -1,0 +1,38 @@
+{
+  BaseCmd.setComponents(new ApiResponseHelper());
+  BaseListCmd.configure();
+  _systemAccount=_accountMgr.getSystemAccount();
+  _systemUser=_accountMgr.getSystemUser();
+  _dispatcher=ApiDispatcher.getInstance();
+  Integer apiPort=null;
+  ComponentLocator locator=ComponentLocator.getLocator(ManagementServer.Name);
+  ConfigurationDao configDao=locator.getDao(ConfigurationDao.class);
+  SearchCriteria<ConfigurationVO> sc=configDao.createSearchCriteria();
+  sc.addAnd("name",SearchCriteria.Op.EQ,"integration.api.port");
+  List<ConfigurationVO> values=configDao.search(sc,null);
+  if ((values != null) && (values.size() > 0)) {
+    ConfigurationVO apiPortConfig=values.get(0);
+    if (apiPortConfig.getValue() != null) {
+      apiPort=Integer.parseInt(apiPortConfig.getValue());
+    }
+  }
+  Set<Class<?>> cmdClasses=ReflectUtil.getClassesWithAnnotation(APICommand.class,new String[]{"org.apache.cloudstack.api","com.cloud.api"});
+  for (  Class<?> cmdClass : cmdClasses) {
+    String apiName=cmdClass.getAnnotation(APICommand.class).name();
+    if (_apiNameCmdClassMap.containsKey(apiName)) {
+      s_logger.error("API Cmd class " + cmdClass.getName() + " has non-unique apiname"+ apiName);
+      continue;
+    }
+    _apiNameCmdClassMap.put(apiName,cmdClass);
+  }
+  encodeApiResponse=Boolean.valueOf(configDao.getValue(Config.EncodeApiResponse.key()));
+  String jsonType=configDao.getValue(Config.JavaScriptDefaultContentType.key());
+  if (jsonType != null) {
+    jsonContentType=jsonType;
+  }
+  apiThrottlingEnabled=Boolean.valueOf(configDao.getValue(Config.ApiLimitEnabled.key()));
+  if (apiPort != null) {
+    ListenerThread listenerThread=new ListenerThread(this,apiPort);
+    listenerThread.start();
+  }
+}
