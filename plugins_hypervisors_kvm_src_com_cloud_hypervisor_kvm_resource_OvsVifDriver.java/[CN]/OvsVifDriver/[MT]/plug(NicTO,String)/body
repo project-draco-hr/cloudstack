@@ -1,15 +1,15 @@
 {
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("nic=" + nic);
-  }
+  s_logger.debug("plugging nic=" + nic);
   LibvirtVMDef.InterfaceDef intf=new LibvirtVMDef.InterfaceDef();
+  intf.setVirtualPortType("openvswitch");
   String vlanId=null;
+  String logicalSwitchUuid=null;
   if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan) {
     URI broadcastUri=nic.getBroadcastUri();
     vlanId=broadcastUri.getHost();
   }
  else   if (nic.getBroadcastType() == Networks.BroadcastDomainType.Lswitch) {
-    throw new InternalErrorException("Nicira NVP Logicalswitches are not supported by the BridgeVifDriver");
+    logicalSwitchUuid=nic.getBroadcastUri().getSchemeSpecificPart();
   }
   String trafficLabel=nic.getName();
   if (nic.getType() == Networks.TrafficType.Guest) {
@@ -24,12 +24,18 @@
         intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType));
       }
     }
+ else     if (nic.getBroadcastType() == Networks.BroadcastDomainType.Lswitch) {
+      s_logger.debug("nic " + nic + " needs to be connected to LogicalSwitch "+ logicalSwitchUuid);
+      intf.setVirtualPortInterfaceId(nic.getUuid());
+      String brName=(trafficLabel != null && !trafficLabel.isEmpty()) ? _pifs.get(trafficLabel) : _pifs.get("private");
+      intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType));
+    }
  else {
       intf.defBridgeNet(_bridges.get("guest"),null,nic.getMac(),getGuestNicModel(guestOsType));
     }
   }
  else   if (nic.getType() == Networks.TrafficType.Control) {
-    createControlNetwork();
+    createControlNetwork(_bridges.get("linklocal"));
     intf.defBridgeNet(_bridges.get("linklocal"),null,nic.getMac(),getGuestNicModel(guestOsType));
   }
  else   if (nic.getType() == Networks.TrafficType.Public) {
