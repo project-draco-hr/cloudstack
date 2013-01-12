@@ -10,6 +10,20 @@
       return false;
     }
     String commandName=command[0];
+    if (userId != null) {
+      User user=ApiDBUtils.findUserById(userId);
+      if (!isCommandAvailable(user,commandName)) {
+        s_logger.debug("The given command:" + commandName + " does not exist or it is not available for user with id:"+ userId);
+        throw new ServerApiException(BaseCmd.UNSUPPORTED_ACTION_ERROR,"The given command does not exist or it is not available for user");
+      }
+      return true;
+    }
+ else {
+      if (!_apiNameCmdClassMap.containsKey(commandName) && !commandName.equals("login") && !commandName.equals("logout")) {
+        s_logger.debug("The given command:" + commandName + " does not exist or it is not available for user with id:"+ userId);
+        throw new ServerApiException(BaseCmd.UNSUPPORTED_ACTION_ERROR,"The given command does not exist or it is not available for user");
+      }
+    }
     List<String> parameterNames=new ArrayList<String>();
     for (    Object paramNameObj : requestParameters.keySet()) {
       parameterNames.add((String)paramNameObj);
@@ -41,15 +55,13 @@
       }
     }
     if ((signature == null) || (apiKey == null)) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.info("expired session, missing signature, or missing apiKey -- ignoring request...sig: " + signature + ", apiKey: "+ apiKey);
-      }
+      s_logger.debug("Expired session, missing signature, or missing apiKey -- ignoring request. Signature: " + signature + ", apiKey: "+ apiKey);
       return false;
     }
     Date expiresTS=null;
     if ("3".equals(signatureVersion)) {
       if (expires == null) {
-        s_logger.info("missing Expires parameter -- ignoring request...sig: " + signature + ", apiKey: "+ apiKey);
+        s_logger.debug("Missing Expires parameter -- ignoring request. Signature: " + signature + ", apiKey: "+ apiKey);
         return false;
       }
 synchronized (_dateFormat) {
@@ -57,13 +69,13 @@ synchronized (_dateFormat) {
           expiresTS=_dateFormat.parse(expires);
         }
  catch (        ParseException pe) {
-          s_logger.info("Incorrect date format for Expires parameter",pe);
+          s_logger.debug("Incorrect date format for Expires parameter",pe);
           return false;
         }
       }
       Date now=new Date(System.currentTimeMillis());
       if (expiresTS.before(now)) {
-        s_logger.info("Request expired -- ignoring ...sig: " + signature + ", apiKey: "+ apiKey);
+        s_logger.debug("Request expired -- ignoring ...sig: " + signature + ", apiKey: "+ apiKey);
         return false;
       }
     }
@@ -72,7 +84,7 @@ synchronized (_dateFormat) {
     User user=null;
     Pair<User,Account> userAcctPair=_accountMgr.findUserByApiKey(apiKey);
     if (userAcctPair == null) {
-      s_logger.info("apiKey does not map to a valid user -- ignoring request, apiKey: " + apiKey);
+      s_logger.debug("apiKey does not map to a valid user -- ignoring request, apiKey: " + apiKey);
       return false;
     }
     user=userAcctPair.first();
@@ -83,8 +95,8 @@ synchronized (_dateFormat) {
     }
     UserContext.updateContext(user.getId(),account,null);
     if (!isCommandAvailable(user,commandName)) {
-      s_logger.warn("The given command:" + commandName + " does not exist or it is not available for user");
-      throw new ServerApiException(BaseCmd.UNSUPPORTED_ACTION_ERROR,"The given command:" + commandName + " does not exist or it is not available for user");
+      s_logger.debug("The given command:" + commandName + " does not exist or it is not available for user");
+      throw new ServerApiException(BaseCmd.UNSUPPORTED_ACTION_ERROR,"The given command:" + commandName + " does not exist or it is not available for user with id:"+ userId);
     }
     secretKey=user.getSecretKey();
     if (secretKey == null) {
@@ -108,7 +120,7 @@ synchronized (_dateFormat) {
     if (ex instanceof ServerApiException && ((ServerApiException)ex).getErrorCode() == BaseCmd.UNSUPPORTED_ACTION_ERROR) {
       throw (ServerApiException)ex;
     }
-    s_logger.error("unable to verifty request signature",ex);
+    s_logger.error("unable to verify request signature",ex);
   }
   return false;
 }
