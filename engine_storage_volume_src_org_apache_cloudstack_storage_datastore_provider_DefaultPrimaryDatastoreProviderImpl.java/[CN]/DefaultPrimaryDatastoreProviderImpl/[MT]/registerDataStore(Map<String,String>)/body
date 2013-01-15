@@ -1,0 +1,49 @@
+{
+  String url=dsInfos.get("url");
+  URI uri=null;
+  try {
+    uri=new URI(url);
+  }
+ catch (  URISyntaxException e) {
+    throw new CloudRuntimeException("invalid url: " + e.toString());
+  }
+  String protocol=uri.getScheme();
+  Long cluster=null;
+  try {
+    cluster=Long.parseLong(dsInfos.get("clusterId"));
+  }
+ catch (  NumberFormatException e) {
+    throw new CloudRuntimeException("Failed to get clusterId");
+  }
+  ClusterVO clusterVO=clusterDao.findById(cluster);
+  if (clusterVO == null) {
+    throw new CloudRuntimeException("Can't find cluster: " + cluster);
+  }
+  HypervisorType hypervisor=clusterVO.getHypervisorType();
+  String key=generateKey(hypervisor,protocol);
+  PrimaryDataStoreConfigurator configurator=configuratorMaps.get(key);
+  if (configurator == null) {
+    throw new CloudRuntimeException("can't find configurator from key: " + key);
+  }
+  StorageProtocolTransformer validator=configurator.getProtocolTransformer();
+  validator.normalizeUserInput(dsInfos);
+  PrimaryDataStoreVO dataStoreVO=dataStoreDao.findPoolByUUID(dsInfos.get("uuid"));
+  if (dataStoreVO != null) {
+    throw new CloudRuntimeException("duplicate uuid: " + dsInfos.get("uuid"));
+  }
+  dataStoreVO=new PrimaryDataStoreVO();
+  dataStoreVO.setStorageProviderId(this.getId());
+  dataStoreVO.setHostAddress(dsInfos.get("server"));
+  dataStoreVO.setPath(dsInfos.get("path"));
+  dataStoreVO.setPoolType(protocol);
+  dataStoreVO.setPort(Integer.parseInt(dsInfos.get("port")));
+  dataStoreVO.setKey(key);
+  dataStoreVO.setName(dsInfos.get("name"));
+  dataStoreVO.setUuid(dsInfos.get("uuid"));
+  dataStoreVO=dataStoreDao.persist(dataStoreVO);
+  DefaultPrimaryDataStore dataStore=(DefaultPrimaryDataStore)configurator.getDataStore(dataStoreVO.getId());
+  dataStore.setProvider(this);
+  PrimaryDataStoreLifeCycle lifeCycle=dataStore.getLifeCycle();
+  lifeCycle.initialize(dsInfos);
+  return getDataStore(dataStore.getId());
+}
