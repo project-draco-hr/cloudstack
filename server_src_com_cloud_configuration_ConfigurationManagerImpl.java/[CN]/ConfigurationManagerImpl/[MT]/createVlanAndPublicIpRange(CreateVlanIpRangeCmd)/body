@@ -14,6 +14,9 @@
   Long projectId=cmd.getProjectId();
   Long domainId=cmd.getDomainId();
   Account vlanOwner=null;
+  if (endIP == null && startIP != null) {
+    endIP=startIP;
+  }
   if (projectId != null) {
     if (accountName != null) {
       throw new InvalidParameterValueException("Account and projectId are mutually exclusive");
@@ -109,6 +112,7 @@
           throw new InvalidParameterValueException("Nework id is required for Direct vlan creation ");
         }
         networkId=network.getId();
+        zoneId=network.getDataCenterId();
       }
     }
  else     if (network.getGuestType() == null || network.getGuestType() == Network.GuestType.Isolated) {
@@ -121,27 +125,30 @@
   if (endIP == null && startIP != null) {
     endIP=startIP;
   }
-  if (forVirtualNetwork || zone.getNetworkType() == DataCenter.NetworkType.Basic || zone.isSecurityGroupEnabled()) {
-    if (vlanGateway == null || vlanNetmask == null || zoneId == null) {
-      throw new InvalidParameterValueException("Gateway, netmask and zoneId have to be passed in for virtual and direct untagged networks");
-    }
-  }
- else {
-    String networkCidr=network.getCidr();
-    String networkGateway=network.getGateway();
-    Long networkZoneId=network.getDataCenterId();
-    String networkNetmask=NetUtils.getCidrNetmask(networkCidr);
-    if (!NetUtils.sameSubnet(startIP,networkGateway,networkNetmask)) {
-      throw new InvalidParameterValueException("Start ip is not in network cidr: " + networkCidr);
-    }
-    if (endIP != null) {
-      if (!NetUtils.sameSubnet(endIP,networkGateway,networkNetmask)) {
-        throw new InvalidParameterValueException("End ip is not in network cidr: " + networkCidr);
+  if (zone.getNetworkType() == DataCenter.NetworkType.Advanced) {
+    if (network.getTrafficType() == TrafficType.Guest) {
+      if (network.getGuestType() != GuestType.Shared) {
+        throw new InvalidParameterValueException("Can execute createVLANIpRanges on shared guest network, but type of this guest network " + network.getId() + " is "+ network.getGuestType());
+      }
+      List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(network.getId());
+      if (vlans != null && vlans.size() > 0) {
+        VlanVO vlan=vlans.get(0);
+        if (vlanId == null) {
+          vlanId=vlan.getVlanTag();
+        }
+ else         if (vlan.getVlanTag() != vlanId) {
+          throw new InvalidParameterValueException("there is already one vlan " + vlan.getVlanTag() + " on network :"+ +network.getId()+ ", only one vlan is allowed on guest network");
+        }
+        vlanGateway=vlan.getVlanGateway();
+        vlanNetmask=vlan.getVlanNetmask();
       }
     }
-    vlanGateway=networkGateway;
-    vlanNetmask=networkNetmask;
-    zoneId=networkZoneId;
+ else     if (network.getTrafficType() == TrafficType.Management) {
+      throw new InvalidParameterValueException("Cannot execute createVLANIpRanges on management network");
+    }
+  }
+  if (vlanGateway == null || vlanNetmask == null || zoneId == null) {
+    throw new InvalidParameterValueException("Gateway, netmask and zoneId have to be passed in for virtual and direct untagged networks");
   }
   boolean associateIpRangeToAccount=false;
   if (forVirtualNetwork) {

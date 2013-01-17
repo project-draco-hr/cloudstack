@@ -1,0 +1,103 @@
+{
+  Account caller=UserContext.current().getCaller();
+  VolumeResponse volResponse=new VolumeResponse();
+  volResponse.setId(volume.getUuid());
+  if (volume.getName() != null) {
+    volResponse.setName(volume.getName());
+  }
+ else {
+    volResponse.setName("");
+  }
+  volResponse.setZoneId(volume.getDataCenterUuid());
+  volResponse.setZoneName(volume.getDataCenterName());
+  volResponse.setVolumeType(volume.getVolumeType().toString());
+  volResponse.setDeviceId(volume.getDeviceId());
+  long instanceId=volume.getVmId();
+  if (instanceId > 0 && volume.getState() != Volume.State.Destroy) {
+    volResponse.setVirtualMachineId(volume.getVmUuid());
+    volResponse.setVirtualMachineName(volume.getVmName());
+    volResponse.setVirtualMachineState(volume.getVmState().toString());
+    volResponse.setVirtualMachineDisplayName(volume.getVmDisplayName());
+  }
+  volResponse.setSize(volume.getSize());
+  volResponse.setCreated(volume.getCreated());
+  volResponse.setState(volume.getState().toString());
+  if (volume.getState() == Volume.State.UploadOp) {
+    volResponse.setSize(volume.getVolumeHostSize());
+    volResponse.setCreated(volume.getVolumeHostCreated());
+    if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN)     volResponse.setHypervisor(ApiDBUtils.getHypervisorTypeFromFormat(volume.getFormat()).toString());
+    if (volume.getDownloadState() != Status.DOWNLOADED) {
+      String volumeStatus="Processing";
+      if (volume.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+        if (volume.getDownloadPercent() == 100) {
+          volumeStatus="Checking Volume";
+        }
+ else {
+          volumeStatus=volume.getDownloadPercent() + "% Uploaded";
+        }
+        volResponse.setState("Uploading");
+      }
+ else {
+        volumeStatus=volume.getErrorString();
+        if (volume.getDownloadState() == VMTemplateHostVO.Status.NOT_DOWNLOADED) {
+          volResponse.setState("UploadNotStarted");
+        }
+ else {
+          volResponse.setState("UploadError");
+        }
+      }
+      volResponse.setStatus(volumeStatus);
+    }
+ else     if (volume.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+      volResponse.setStatus("Upload Complete");
+      volResponse.setState("Uploaded");
+    }
+ else {
+      volResponse.setStatus("Successfully Installed");
+    }
+  }
+  ApiResponseHelper.populateOwner(volResponse,volume);
+  if (volume.getDiskOfferingId() > 0) {
+    if (volume.getVolumeType().equals(Volume.Type.ROOT)) {
+      volResponse.setServiceOfferingId(volume.getDiskOfferingUuid());
+    }
+ else {
+      volResponse.setDiskOfferingId(volume.getDiskOfferingUuid());
+    }
+    if (volume.getVolumeType().equals(Volume.Type.ROOT)) {
+      volResponse.setServiceOfferingName(volume.getDiskOfferingName());
+      volResponse.setServiceOfferingDisplayText(volume.getDiskOfferingDisplayText());
+    }
+ else {
+      volResponse.setDiskOfferingName(volume.getDiskOfferingName());
+      volResponse.setDiskOfferingDisplayText(volume.getDiskOfferingDisplayText());
+    }
+    volResponse.setStorageType(volume.isUseLocalStorage() ? ServiceOffering.StorageType.local.toString() : ServiceOffering.StorageType.shared.toString());
+  }
+  Long poolId=volume.getPoolId();
+  String poolName=(poolId == null) ? "none" : volume.getPoolName();
+  volResponse.setStoragePoolName(poolName);
+  if ((caller.getType() == Account.ACCOUNT_TYPE_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) && volume.getState() != Volume.State.UploadOp && volume.getHypervisorType() != null) {
+    volResponse.setHypervisor(volume.getHypervisorType().toString());
+  }
+  volResponse.setAttached(volume.getAttached());
+  volResponse.setDestroyed(volume.getState() == Volume.State.Destroy);
+  boolean isExtractable=true;
+  if (volume.getVolumeType() != Volume.Type.DATADISK) {
+    if (volume.getTemplateId() > 0) {
+      isExtractable=volume.isExtractable() && volume.getTemplateType() != Storage.TemplateType.SYSTEM;
+    }
+  }
+  long tag_id=volume.getTagId();
+  if (tag_id > 0) {
+    ResourceTagJoinVO vtag=ApiDBUtils.findResourceTagViewById(tag_id);
+    if (vtag != null) {
+      volResponse.addTag(ApiDBUtils.newResourceTagResponse(vtag,false));
+    }
+  }
+  volResponse.setExtractable(isExtractable);
+  volResponse.setJobId(volume.getJobUuid());
+  volResponse.setJobStatus(volume.getJobStatus());
+  volResponse.setObjectName("volume");
+  return volResponse;
+}

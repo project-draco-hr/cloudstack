@@ -2,28 +2,21 @@
   long zoneId=network.getDataCenterId();
   DataCenterVO zone=_dcDao.findById(zoneId);
   ExternalFirewallDeviceVO fwDeviceVO=getExternalFirewallForNetwork(network);
+  if (fwDeviceVO == null) {
+    return true;
+  }
   HostVO externalFirewall=_hostDao.findById(fwDeviceVO.getHostId());
   assert(externalFirewall != null);
   if (network.getState() == Network.State.Allocated) {
     s_logger.debug("External firewall was asked to apply firewall rules for network with ID " + network.getId() + "; this network is not implemented. Skipping backend commands.");
     return true;
   }
-  List<StaticNatRuleTO> staticNatRules=new ArrayList<StaticNatRuleTO>();
-  List<PortForwardingRuleTO> portForwardingRules=new ArrayList<PortForwardingRuleTO>();
+  List<FirewallRuleTO> rulesTO=new ArrayList<FirewallRuleTO>();
   for (  FirewallRule rule : rules) {
     IpAddress sourceIp=_networkMgr.getIp(rule.getSourceIpAddressId());
-    Vlan vlan=_vlanDao.findById(sourceIp.getVlanId());
-    if (rule.getPurpose() == Purpose.StaticNat) {
-      StaticNatRule staticNatRule=(StaticNatRule)rule;
-      StaticNatRuleTO ruleTO=new StaticNatRuleTO(staticNatRule,vlan.getVlanTag(),sourceIp.getAddress().addr(),staticNatRule.getDestIpAddress());
-      staticNatRules.add(ruleTO);
-    }
- else     if (rule.getPurpose() == Purpose.PortForwarding) {
-      PortForwardingRuleTO ruleTO=new PortForwardingRuleTO((PortForwardingRule)rule,vlan.getVlanTag(),sourceIp.getAddress().addr());
-      portForwardingRules.add(ruleTO);
-    }
+    FirewallRuleTO ruleTO=new FirewallRuleTO(rule,null,sourceIp.getAddress().addr());
+    rulesTO.add(ruleTO);
   }
-  applyStaticNatRules(staticNatRules,zone,externalFirewall.getId());
-  applyPortForwardingRules(portForwardingRules,zone,externalFirewall.getId());
+  sendFirewallRules(rulesTO,zone,externalFirewall.getId());
   return true;
 }
