@@ -9,7 +9,7 @@
     s_logger.debug("Adding nic for Virtual Router in Guest network " + guestNetwork);
     String defaultNetworkStartIp=null;
     if (guestNetwork.getCidr() != null && !setupPublicNetwork) {
-      String startIp=_networkMgr.getStartIpAddress(guestNetwork.getId());
+      String startIp=_networkModel.getStartIpAddress(guestNetwork.getId());
       if (startIp != null && _ipAddressDao.findByIpAndSourceNetworkId(guestNetwork.getId(),startIp).getAllocatedTime() == null) {
         defaultNetworkStartIp=startIp;
       }
@@ -39,8 +39,8 @@
     hasGuestNetwork=true;
   }
   s_logger.debug("Adding nic for Virtual Router in Control network ");
-  List<NetworkOfferingVO> offerings=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork);
-  NetworkOfferingVO controlOffering=offerings.get(0);
+  List<? extends NetworkOffering> offerings=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemControlNetwork);
+  NetworkOffering controlOffering=offerings.get(0);
   NetworkVO controlConfig=_networkMgr.setupNetwork(_systemAcct,controlOffering,plan,null,null,false).get(0);
   networks.add(new Pair<NetworkVO,NicProfile>(controlConfig,null));
   if (setupPublicNetwork) {
@@ -58,8 +58,14 @@
     if (hasGuestNetwork) {
       defaultNic.setDeviceId(2);
     }
-    NetworkOfferingVO publicOffering=_networkMgr.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemPublicNetwork).get(0);
+    NetworkOffering publicOffering=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemPublicNetwork).get(0);
     List<NetworkVO> publicNetworks=_networkMgr.setupNetwork(_systemAcct,publicOffering,plan,null,null,false);
+    String publicIp=defaultNic.getIp4Address();
+    NicVO peerNic=_nicDao.findByIp4AddressAndNetworkId(publicIp,publicNetworks.get(0).getId());
+    if (peerNic != null) {
+      s_logger.info("Use same MAC as previous RvR, the MAC is " + peerNic.getMacAddress());
+      defaultNic.setMacAddress(peerNic.getMacAddress());
+    }
     networks.add(new Pair<NetworkVO,NicProfile>(publicNetworks.get(0),defaultNic));
   }
   return networks;
