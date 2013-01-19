@@ -1,24 +1,47 @@
 {
-  List<String> dbPropFiles=new ArrayList<String>();
+  String dbPropsFile="";
   List<String> sqlFiles=new ArrayList<String>();
   List<String> upgradeClasses=new ArrayList<String>();
+  String[] databases=new String[]{};
+  String rootPassword="";
+  boolean verbosity=false;
+  boolean dryRun=false;
   for (  String arg : args) {
-    if (arg.endsWith(".sql")) {
+    if (arg.equals("--help") || arg.equals("-h")) {
+      printHelp("DatabaseCreator");
+      System.exit(0);
+    }
+ else     if (arg.equals("--verbose") || arg.equals("-v")) {
+      verbosity=true;
+    }
+ else     if (arg.equals("--dry") || arg.equals("-d")) {
+      dryRun=true;
+    }
+ else     if (arg.startsWith("--rootpassword=")) {
+      rootPassword=arg.substring(arg.lastIndexOf("=") + 1,arg.length());
+    }
+ else     if (arg.startsWith("--database=")) {
+      databases=arg.substring(arg.lastIndexOf("=") + 1,arg.length()).split(",");
+    }
+ else     if (arg.endsWith(".sql")) {
       sqlFiles.add(arg);
     }
- else     if (arg.endsWith(".properties") || arg.endsWith("properties.override")) {
-      dbPropFiles.add(arg);
+ else     if (arg.endsWith(".properties")) {
+      if (!dbPropsFile.endsWith("properties.override") && fileExists(arg))       dbPropsFile=arg;
+    }
+ else     if (arg.endsWith("properties.override")) {
+      if (fileExists(arg))       dbPropsFile=arg;
     }
  else {
       upgradeClasses.add(arg);
     }
   }
-  if ((dbPropFiles.size() == 0) || (sqlFiles.size() == 0) && upgradeClasses.size() == 0) {
+  if ((dbPropsFile.isEmpty()) || (sqlFiles.size() == 0) && upgradeClasses.size() == 0) {
     printHelp("DatabaseCreator");
     System.exit(1);
   }
-  for (  String dbPropFile : dbPropFiles) {
-  }
+  Transaction.initDataSource(dbPropsFile);
+  initDB(dbPropsFile,rootPassword,databases,dryRun);
   for (  String sqlFile : sqlFiles) {
     File sqlScript=PropertiesUtil.findConfigFile(sqlFile);
     if (sqlScript == null) {
@@ -26,10 +49,9 @@
       printHelp("DatabaseCreator");
       System.exit(1);
     }
-    System.out.println("=============> Processing SQL file at " + sqlScript.getAbsolutePath());
+    System.out.println("========> Processing SQL file at " + sqlScript.getAbsolutePath());
     Connection conn=Transaction.getStandaloneConnection();
     try {
-      ScriptRunner runner=new ScriptRunner(conn,false,true);
       FileReader reader=null;
       try {
         reader=new FileReader(sqlScript);
@@ -38,17 +60,7 @@
         System.err.println("Unable to read " + sqlFile + ": "+ e.getMessage());
         System.exit(1);
       }
-      try {
-        runner.runScript(reader);
-      }
- catch (      IOException e) {
-        System.err.println("Unable to read " + sqlFile + ": "+ e.getMessage());
-        System.exit(1);
-      }
-catch (      SQLException e) {
-        System.err.println("Unable to execute " + sqlFile + ": "+ e.getMessage());
-        System.exit(1);
-      }
+      if (!dryRun)       runScript(conn,reader,sqlFile,verbosity);
     }
   finally {
       try {
@@ -60,7 +72,7 @@ catch (      SQLException e) {
     }
   }
   for (  String upgradeClass : upgradeClasses) {
-    System.out.println("=============> Processing upgrade: " + upgradeClass);
+    System.out.println("========> Processing upgrade: " + upgradeClass);
     Class<?> clazz=null;
     try {
       clazz=Class.forName(upgradeClass);
