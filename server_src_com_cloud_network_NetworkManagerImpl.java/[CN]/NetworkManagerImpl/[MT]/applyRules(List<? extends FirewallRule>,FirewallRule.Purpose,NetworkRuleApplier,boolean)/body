@@ -1,0 +1,29 @@
+{
+  if (rules == null || rules.size() == 0) {
+    s_logger.debug("There are no rules to forward to the network elements");
+    return true;
+  }
+  boolean success=true;
+  Network network=_networksDao.findById(rules.get(0).getNetworkId());
+  List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
+  List<PublicIp> publicIps=new ArrayList<PublicIp>();
+  if (userIps != null && !userIps.isEmpty()) {
+    for (    IPAddressVO userIp : userIps) {
+      PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
+      publicIps.add(publicIp);
+    }
+  }
+  applyIpAssociations(network,false,continueOnError,publicIps);
+  try {
+    applier.applyRules(network,purpose,rules);
+  }
+ catch (  ResourceUnavailableException e) {
+    if (!continueOnError) {
+      throw e;
+    }
+    s_logger.warn("Problems with applying " + purpose + " rules but pushing on",e);
+    success=false;
+  }
+  applyIpAssociations(network,true,continueOnError,publicIps);
+  return success;
+}
