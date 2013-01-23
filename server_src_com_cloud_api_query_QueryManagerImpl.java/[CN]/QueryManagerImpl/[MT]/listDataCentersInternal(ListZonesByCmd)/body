@@ -1,0 +1,79 @@
+{
+  Account account=UserContext.current().getCaller();
+  Long domainId=cmd.getDomainId();
+  Long id=cmd.getId();
+  String keyword=cmd.getKeyword();
+  Filter searchFilter=new Filter(DataCenterJoinVO.class,null,false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchCriteria<DataCenterJoinVO> sc=_dcJoinDao.createSearchCriteria();
+  if (id != null) {
+    sc.addAnd("id",SearchCriteria.Op.EQ,id);
+  }
+ else {
+    if (keyword != null) {
+      SearchCriteria<DataCenterJoinVO> ssc=_dcJoinDao.createSearchCriteria();
+      ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+      ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+      sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+    }
+    if (domainId != null) {
+      sc.addAnd("domainId",SearchCriteria.Op.EQ,domainId);
+    }
+ else     if (account.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+      List<Long> domainIds=new ArrayList<Long>();
+      DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+      if (domainRecord == null) {
+        s_logger.error("Could not find the domainId for account:" + account.getAccountName());
+        throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+      }
+      domainIds.add(domainRecord.getId());
+      while (domainRecord.getParent() != null) {
+        domainRecord=_domainDao.findById(domainRecord.getParent());
+        domainIds.add(domainRecord.getId());
+      }
+      SearchCriteria<DataCenterJoinVO> sdc=_dcJoinDao.createSearchCriteria();
+      sdc.addOr("domainIdIn",SearchCriteria.Op.IN,domainIds);
+      sdc.addOr("domainId",SearchCriteria.Op.NULL);
+      sc.addAnd("domain",SearchCriteria.Op.SC,sdc);
+      sc.addAnd("allocationState",SearchCriteria.Op.NEQ,Grouping.AllocationState.Disabled);
+    }
+ else     if (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || account.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
+      List<Long> domainIds=new ArrayList<Long>();
+      DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+      if (domainRecord == null) {
+        s_logger.error("Could not find the domainId for account:" + account.getAccountName());
+        throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+      }
+      domainIds.add(domainRecord.getId());
+      List<DomainVO> allChildDomains=_domainDao.findAllChildren(domainRecord.getPath(),domainRecord.getId());
+      for (      DomainVO domain : allChildDomains) {
+        domainIds.add(domain.getId());
+      }
+      while (domainRecord.getParent() != null) {
+        domainRecord=_domainDao.findById(domainRecord.getParent());
+        domainIds.add(domainRecord.getId());
+      }
+      SearchCriteria<DataCenterJoinVO> sdc=_dcJoinDao.createSearchCriteria();
+      sdc.addOr("domainIdIn",SearchCriteria.Op.IN,domainIds);
+      sdc.addOr("domainId",SearchCriteria.Op.NULL);
+      sc.addAnd("domain",SearchCriteria.Op.SC,sdc);
+      sc.addAnd("allocationState",SearchCriteria.Op.NEQ,Grouping.AllocationState.Disabled);
+    }
+    Boolean available=cmd.isAvailable();
+    if (account != null) {
+      if ((available != null) && Boolean.FALSE.equals(available)) {
+        Set<Long> dcIds=new HashSet<Long>();
+        List<DomainRouterVO> routers=_routerDao.listBy(account.getId());
+        for (        DomainRouterVO router : routers) {
+          dcIds.add(router.getDataCenterIdToDeployIn());
+        }
+        if (dcIds.size() == 0) {
+          return new Pair<List<DataCenterJoinVO>,Integer>(new ArrayList<DataCenterJoinVO>(),0);
+        }
+ else {
+          sc.addAnd("idIn",SearchCriteria.Op.IN,dcIds);
+        }
+      }
+    }
+  }
+  return _dcJoinDao.searchAndCount(sc,searchFilter);
+}
