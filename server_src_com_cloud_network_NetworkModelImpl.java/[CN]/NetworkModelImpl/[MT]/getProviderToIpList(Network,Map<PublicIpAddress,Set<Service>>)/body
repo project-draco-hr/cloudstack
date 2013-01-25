@@ -1,0 +1,48 @@
+{
+  NetworkOffering offering=_networkOfferingDao.findById(network.getNetworkOfferingId());
+  if (!offering.isConserveMode()) {
+    for (    PublicIpAddress ip : ipToServices.keySet()) {
+      Set<Service> services=new HashSet<Service>();
+      services.addAll(ipToServices.get(ip));
+      if (services != null && services.contains(Service.Firewall)) {
+        services.remove(Service.Firewall);
+      }
+      if (services != null && services.size() > 1) {
+        throw new CloudRuntimeException("Ip " + ip.getAddress() + " is used by multiple services!");
+      }
+    }
+  }
+  Map<Service,Set<PublicIpAddress>> serviceToIps=new HashMap<Service,Set<PublicIpAddress>>();
+  for (  PublicIpAddress ip : ipToServices.keySet()) {
+    for (    Service service : ipToServices.get(ip)) {
+      Set<PublicIpAddress> ips=serviceToIps.get(service);
+      if (ips == null) {
+        ips=new HashSet<PublicIpAddress>();
+      }
+      ips.add(ip);
+      serviceToIps.put(service,ips);
+    }
+  }
+  Map<Provider,Set<Service>> providerToServices=getProviderServicesMap(network.getId());
+  Map<Provider,ArrayList<PublicIpAddress>> providerToIpList=new HashMap<Provider,ArrayList<PublicIpAddress>>();
+  for (  Provider provider : providerToServices.keySet()) {
+    Set<Service> services=providerToServices.get(provider);
+    ArrayList<PublicIpAddress> ipList=new ArrayList<PublicIpAddress>();
+    Set<PublicIpAddress> ipSet=new HashSet<PublicIpAddress>();
+    for (    Service service : services) {
+      Set<PublicIpAddress> serviceIps=serviceToIps.get(service);
+      if (serviceIps == null || serviceIps.isEmpty()) {
+        continue;
+      }
+      ipSet.addAll(serviceIps);
+    }
+    Set<PublicIpAddress> sourceNatIps=serviceToIps.get(Service.SourceNat);
+    if (sourceNatIps != null && !sourceNatIps.isEmpty()) {
+      ipList.addAll(0,sourceNatIps);
+      ipSet.removeAll(sourceNatIps);
+    }
+    ipList.addAll(ipSet);
+    providerToIpList.put(provider,ipList);
+  }
+  return providerToIpList;
+}

@@ -5,11 +5,11 @@
   boolean isVmWare=(template.getHypervisorType() == HypervisorType.VMware || (hypervisor != null && hypervisor == HypervisorType.VMware));
   _accountMgr.checkAccess(caller,null,true,owner);
   if (networkIdList == null || networkIdList.isEmpty()) {
-    NetworkVO networkWithSecurityGroup=_networkMgr.getNetworkWithSecurityGroupEnabled(zone.getId());
+    Network networkWithSecurityGroup=_networkModel.getNetworkWithSecurityGroupEnabled(zone.getId());
     if (networkWithSecurityGroup == null) {
       throw new InvalidParameterValueException("No network with security enabled is found in zone id=" + zone.getId());
     }
-    networkList.add(networkWithSecurityGroup);
+    networkList.add(_networkDao.findById(networkWithSecurityGroup.getId()));
     isSecurityGroupEnabledNetworkUsed=true;
   }
  else   if (securityGroupIdList != null && !securityGroupIdList.isEmpty()) {
@@ -23,7 +23,7 @@
     if (network == null) {
       throw new InvalidParameterValueException("Unable to find network by id " + networkIdList.get(0).longValue());
     }
-    if (!_networkMgr.isSecurityGroupSupportedInNetwork(network)) {
+    if (!_networkModel.isSecurityGroupSupportedInNetwork(network)) {
       throw new InvalidParameterValueException("Network is not security group enabled: " + network.getId());
     }
     networkList.add(network);
@@ -35,23 +35,23 @@
       if (network == null) {
         throw new InvalidParameterValueException("Unable to find network by id " + networkIdList.get(0).longValue());
       }
-      boolean isSecurityGroupEnabled=_networkMgr.isSecurityGroupSupportedInNetwork(network);
-      if (isSecurityGroupEnabled && networkIdList.size() > 1) {
-        throw new InvalidParameterValueException("Can't create a vm with multiple networks one of which is Security Group enabled");
-      }
-      if (network.getTrafficType() != TrafficType.Guest || network.getGuestType() != Network.GuestType.Shared || (network.getGuestType() == Network.GuestType.Shared && !isSecurityGroupEnabled)) {
-        throw new InvalidParameterValueException("Can specify only Direct Guest Account specific networks when deploy vm in Security Group enabled zone");
-      }
-      if (network.getGuestType() != Network.GuestType.Shared) {
-        List<NetworkVO> networkMap=_networkDao.listBy(owner.getId(),network.getId());
-        if (networkMap == null || networkMap.isEmpty()) {
-          throw new PermissionDeniedException("Unable to create a vm using network with id " + network.getId() + ", permission denied");
+      boolean isSecurityGroupEnabled=_networkModel.isSecurityGroupSupportedInNetwork(network);
+      if (isSecurityGroupEnabled) {
+        if (networkIdList.size() > 1) {
+          throw new InvalidParameterValueException("Can't create a vm with multiple networks one of" + " which is Security Group enabled");
         }
+        isSecurityGroupEnabledNetworkUsed=true;
+      }
+      if (!(network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Shared)) {
+        throw new InvalidParameterValueException("Can specify only Shared Guest networks when" + " deploy vm in Advance Security Group enabled zone");
+      }
+      if (network.getAclType() == ACLType.Account) {
+        _accountMgr.checkAccess(caller,AccessType.UseNetwork,false,network);
       }
       networkList.add(network);
     }
   }
-  if (isSecurityGroupEnabledNetworkUsed && !isVmWare && _networkMgr.canAddDefaultSecurityGroup()) {
+  if (isSecurityGroupEnabledNetworkUsed && !isVmWare && _networkModel.canAddDefaultSecurityGroup()) {
     if (securityGroupIdList == null || securityGroupIdList.isEmpty()) {
       if (securityGroupIdList == null) {
         securityGroupIdList=new ArrayList<Long>();

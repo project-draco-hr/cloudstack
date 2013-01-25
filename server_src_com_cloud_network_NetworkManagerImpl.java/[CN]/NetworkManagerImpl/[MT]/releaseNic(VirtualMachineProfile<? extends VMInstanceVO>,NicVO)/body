@@ -1,12 +1,18 @@
 {
-  NetworkVO network=_networksDao.findById(nic.getNetworkId());
-  if (nic.getState() == Nic.State.Reserved || nic.getState() == Nic.State.Reserving) {
-    Nic.State originalState=nic.getState();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  NicVO nic=_nicDao.lockRow(nicVO.getId(),true);
+  if (nic == null) {
+    throw new ConcurrentOperationException("Unable to acquire lock on nic " + nic);
+  }
+  Nic.State originalState=nic.getState();
+  NetworkVO network=_networksDao.findById(nicVO.getNetworkId());
+  if (originalState == Nic.State.Reserved || originalState == Nic.State.Reserving) {
     if (nic.getReservationStrategy() == Nic.ReservationStrategy.Start) {
       NetworkGuru guru=_networkGurus.get(network.getGuruName());
       nic.setState(Nic.State.Releasing);
       _nicDao.update(nic.getId(),nic);
-      NicProfile profile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),null,isSecurityGroupSupportedInNetwork(network),getNetworkTag(vmProfile.getHypervisorType(),network));
+      NicProfile profile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),null,_networkModel.isSecurityGroupSupportedInNetwork(network),_networkModel.getNetworkTag(vmProfile.getHypervisorType(),network));
       if (guru.release(profile,vmProfile,nic.getReservationId())) {
         applyProfileToNicForRelease(nic,profile);
         nic.setState(Nic.State.Allocated);
@@ -17,6 +23,7 @@
           _nicDao.update(nic.getId(),nic);
         }
       }
+      txn.commit();
       for (      NetworkElement element : _networkElements) {
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("Asking " + element.getName() + " to release "+ nic);
@@ -27,6 +34,7 @@
  else {
       nic.setState(Nic.State.Allocated);
       updateNic(nic,network.getId(),-1);
+      txn.commit();
     }
   }
 }

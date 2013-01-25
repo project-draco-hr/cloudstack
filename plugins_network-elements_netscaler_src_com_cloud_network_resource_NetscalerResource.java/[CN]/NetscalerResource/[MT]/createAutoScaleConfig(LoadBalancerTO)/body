@@ -1,0 +1,41 @@
+{
+  String srcIp=loadBalancerTO.getSrcIp();
+  int srcPort=loadBalancerTO.getSrcPort();
+  String lbProtocol=getNetScalerProtocol(loadBalancerTO);
+  String lbAlgorithm=loadBalancerTO.getAlgorithm();
+  String vmGroupIdentifier=generateAutoScaleVmGroupIdentifier(loadBalancerTO);
+  String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort);
+  AutoScaleVmGroupTO vmGroupTO=loadBalancerTO.getAutoScaleVmGroupTO();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Created load balancing virtual server " + nsVirtualServerName + " on the Netscaler device");
+  }
+  addLBVirtualServer(nsVirtualServerName,srcIp,srcPort,lbAlgorithm,lbProtocol,loadBalancerTO.getStickinessPolicies(),vmGroupTO);
+  String serviceGroupName=generateAutoScaleServiceGroupName(loadBalancerTO);
+  if (!nsServiceGroupExists(serviceGroupName)) {
+    int memberPort=vmGroupTO.getMemberPort();
+    try {
+      servicegroup serviceGroup=new servicegroup();
+      serviceGroup.set_servicegroupname(serviceGroupName);
+      serviceGroup.set_servicetype(lbProtocol);
+      serviceGroup.set_autoscale("POLICY");
+      serviceGroup.set_memberport(memberPort);
+      serviceGroup.add(_netscalerService,serviceGroup);
+    }
+ catch (    Exception e) {
+      throw e;
+    }
+  }
+  if (!isServiceGroupBoundToVirtualServer(nsVirtualServerName,serviceGroupName)) {
+    lbvserver_servicegroup_binding vserver_servicegroup_binding=new lbvserver_servicegroup_binding();
+    try {
+      vserver_servicegroup_binding.set_name(nsVirtualServerName);
+      vserver_servicegroup_binding.set_servicegroupname(serviceGroupName);
+      vserver_servicegroup_binding.add(_netscalerService,vserver_servicegroup_binding);
+    }
+ catch (    Exception e) {
+      throw e;
+    }
+  }
+  enableAutoScaleConfig(loadBalancerTO,false);
+  return true;
+}

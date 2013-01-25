@@ -1,0 +1,58 @@
+{
+  String srcIp=_networkModel.getIp(sourceIpId).getAddress().addr();
+  InlineLoadBalancerNicMapVO mapping=_inlineLoadBalancerNicMapDao.findByPublicIpAddress(srcIp);
+  NicVO loadBalancingIpNic=null;
+  MappingNic nic=new MappingNic();
+  nic.setState(MappingState.Unchanged);
+  if (!revoked) {
+    if (mapping == null) {
+      String loadBalancingIpAddress=existedGuestIp;
+      if (loadBalancingIpAddress == null) {
+        loadBalancingIpAddress=_networkMgr.acquireGuestIpAddress(network,null);
+      }
+      if (loadBalancingIpAddress == null) {
+        String msg="Ran out of guest IP addresses.";
+        s_logger.error(msg);
+        throw new ResourceUnavailableException(msg,DataCenter.class,network.getDataCenterId());
+      }
+      loadBalancingIpNic=_nicDao.findByIp4AddressAndNetworkId(loadBalancingIpAddress,network.getId());
+      if (loadBalancingIpNic == null) {
+        loadBalancingIpNic=savePlaceholderNic(network,loadBalancingIpAddress);
+      }
+      mapping=new InlineLoadBalancerNicMapVO(srcIp,loadBalancingIpNic.getId());
+      _inlineLoadBalancerNicMapDao.persist(mapping);
+      try {
+        applyStaticNatRuleForInlineLBRule(zone,network,revoked,srcIp,loadBalancingIpNic.getIp4Address());
+      }
+ catch (      ResourceUnavailableException ex) {
+        _inlineLoadBalancerNicMapDao.expunge(mapping.getId());
+        _nicDao.expunge(loadBalancingIpNic.getId());
+        throw ex;
+      }
+      s_logger.debug("Created static nat rule for inline load balancer");
+      nic.setState(MappingState.Create);
+    }
+ else {
+      loadBalancingIpNic=_nicDao.findById(mapping.getNicId());
+    }
+  }
+ else {
+    if (mapping != null) {
+      loadBalancingIpNic=_nicDao.findById(mapping.getNicId());
+      int count=_networkMgr.getRuleCountForIp(sourceIpId,Purpose.LoadBalancing,FirewallRule.State.Active);
+      if (count == 0) {
+        applyStaticNatRuleForInlineLBRule(zone,network,revoked,srcIp,loadBalancingIpNic.getIp4Address());
+        _inlineLoadBalancerNicMapDao.expunge(mapping.getId());
+        _nicDao.expunge(loadBalancingIpNic.getId());
+        s_logger.debug("Revoked static nat rule for inline load balancer");
+        nic.setState(MappingState.Remove);
+      }
+    }
+ else {
+      s_logger.debug("Revoking a rule for an inline load balancer that has not been programmed yet.");
+      return null;
+    }
+  }
+  nic.setNic(loadBalancingIpNic);
+  return nic;
+}

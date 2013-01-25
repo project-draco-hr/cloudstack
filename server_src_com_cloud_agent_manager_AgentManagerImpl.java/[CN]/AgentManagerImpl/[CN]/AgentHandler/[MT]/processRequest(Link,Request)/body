@@ -3,20 +3,13 @@
   final Command[] cmds=request.getCommands();
   Command cmd=cmds[0];
   boolean logD=true;
-  Response response=null;
   if (attache == null) {
-    request.logD("Processing the first command ");
     if (!(cmd instanceof StartupCommand)) {
       s_logger.warn("Throwing away a request because it came through as the first command on a connect: " + request);
-      return;
     }
-    StartupCommand[] startups=new StartupCommand[cmds.length];
-    for (int i=0; i < cmds.length; i++) {
-      startups[i]=(StartupCommand)cmds[i];
-    }
-    attache=handleConnectedAgent(link,startups,request);
-    if (attache == null) {
-      s_logger.warn("Unable to create attache for agent: " + request);
+ else {
+      request.logD("Scheduling the first command ");
+      connectAgent(link,cmds,request);
     }
     return;
   }
@@ -85,14 +78,19 @@
           if (cmd instanceof PingRoutingCommand) {
             boolean gatewayAccessible=((PingRoutingCommand)cmd).isGatewayAccessible();
             HostVO host=_hostDao.findById(Long.valueOf(cmdHostId));
-            if (!gatewayAccessible) {
-              DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
-              HostPodVO podVO=_podDao.findById(host.getPodId());
-              String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
-              _alertMgr.sendAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId(),"Host lost connection to gateway, " + hostDesc,"Host [" + hostDesc + "] lost connection to gateway (default route) and is possibly having network connection issues.");
+            if (host != null) {
+              if (!gatewayAccessible) {
+                DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+                HostPodVO podVO=_podDao.findById(host.getPodId());
+                String hostDesc="name: " + host.getName() + " (id:"+ host.getId()+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+                _alertMgr.sendAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId(),"Host lost connection to gateway, " + hostDesc,"Host [" + hostDesc + "] lost connection to gateway (default route) and is possibly having network connection issues.");
+              }
+ else {
+                _alertMgr.clearAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId());
+              }
             }
  else {
-              _alertMgr.clearAlert(AlertManager.ALERT_TYPE_ROUTING,host.getDataCenterId(),host.getPodId());
+              s_logger.debug("Not processing " + PingRoutingCommand.class.getSimpleName() + " for agent id="+ cmdHostId+ "; can't find the host in the DB");
             }
           }
           answer=new PingAnswer((PingCommand)cmd);
@@ -117,7 +115,7 @@
     }
     answers[i]=answer;
   }
-  response=new Response(request,answers,_nodeId,attache.getId());
+  Response response=new Response(request,answers,_nodeId,attache.getId());
   if (s_logger.isDebugEnabled()) {
     if (logD) {
       s_logger.debug("SeqA " + attache.getId() + "-"+ response.getSequence()+ ": Sending "+ response);

@@ -39,14 +39,14 @@
   boolean sharedSourceNat=offering.getSharedSourceNat();
   IPAddressVO sourceNatIp=null;
   if (!sharedSourceNat) {
-    List<IPAddressVO> sourceNatIps=_networkMgr.listPublicIpsAssignedToAccount(network.getAccountId(),zoneId,true);
+    List<? extends IpAddress> sourceNatIps=_networkMgr.listPublicIpsAssignedToAccount(network.getAccountId(),zoneId,true);
     if (sourceNatIps.size() != 1) {
       String errorMsg="External firewall was unable to find the source NAT IP address for account " + account.getAccountName();
       s_logger.error(errorMsg);
       return true;
     }
  else {
-      sourceNatIp=sourceNatIps.get(0);
+      sourceNatIp=_ipAddressDao.findById(sourceNatIps.get(0).getId());
     }
   }
   long guestVlanTag=Long.parseLong(network.getBroadcastUri().getHost());
@@ -68,14 +68,18 @@
   cmd.setAccessDetail(NetworkElementCommand.GUEST_NETWORK_CIDR,guestVlanCidr);
   cmd.setAccessDetail(NetworkElementCommand.GUEST_VLAN_TAG,String.valueOf(guestVlanTag));
   Answer answer=_agentMgr.easySend(externalFirewall.getId(),cmd);
+  List<String> reservedIpAddressesForGuestNetwork=_nicDao.listIpAddressInNetwork(network.getId());
   if (answer == null || !answer.getResult()) {
     String action=add ? "implement" : "shutdown";
     String answerDetails=(answer != null) ? answer.getDetails() : "answer was null";
     String msg="External firewall was unable to " + action + " the guest network on the external firewall in zone "+ zone.getName()+ " due to "+ answerDetails;
     s_logger.error(msg);
+    if (!add && (!reservedIpAddressesForGuestNetwork.contains(network.getGateway()))) {
+      s_logger.error("Skip the shutdown of guest network on SRX because it seems we didn't implement it as well");
+      return true;
+    }
     throw new ResourceUnavailableException(msg,DataCenter.class,zoneId);
   }
-  List<String> reservedIpAddressesForGuestNetwork=_nicDao.listIpAddressInNetwork(network.getId());
   if (add && (!reservedIpAddressesForGuestNetwork.contains(network.getGateway()))) {
     savePlaceholderNic(network,network.getGateway());
   }
@@ -86,6 +90,15 @@
       _nicDao.expunge(mapping.getNicId());
       _inlineLoadBalancerNicMapDao.expunge(mapping.getId());
     }
+  }
+  if (!add) {
+    List<NicVO> guestIps=_nicDao.listByNetworkId(network.getId());
+    for (    NicVO guestIp : guestIps) {
+      if (guestIp.getReservationStrategy().equals(ReservationStrategy.PlaceHolder) && guestIp.getIp4Address().equals(network.getGateway())) {
+        _nicDao.remove(guestIp.getId());
+      }
+    }
+    freeFirewallForNetwork(network);
   }
   String action=add ? "implemented" : "shut down";
   s_logger.debug("External firewall has " + action + " the guest network for account "+ account.getAccountName()+ "(id = "+ account.getAccountId()+ ") with VLAN tag "+ guestVlanTag);

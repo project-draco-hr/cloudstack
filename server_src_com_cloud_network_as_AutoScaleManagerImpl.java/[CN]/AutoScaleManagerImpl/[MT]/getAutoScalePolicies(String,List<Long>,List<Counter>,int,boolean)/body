@@ -1,0 +1,40 @@
+{
+  SearchBuilder<AutoScalePolicyVO> policySearch=_autoScalePolicyDao.createSearchBuilder();
+  policySearch.and("ids",policySearch.entity().getId(),Op.IN);
+  policySearch.done();
+  SearchCriteria<AutoScalePolicyVO> sc=policySearch.create();
+  sc.setParameters("ids",policyIds.toArray(new Object[0]));
+  List<AutoScalePolicyVO> policies=_autoScalePolicyDao.search(sc,null);
+  int prevQuietTime=0;
+  for (  AutoScalePolicyVO policy : policies) {
+    int quietTime=policy.getQuietTime();
+    if (prevQuietTime == 0) {
+      prevQuietTime=quietTime;
+    }
+    int duration=policy.getDuration();
+    if (duration < interval) {
+      throw new InvalidParameterValueException("duration : " + duration + " specified in a policy cannot be less than vm group's interval : "+ interval);
+    }
+    if (quietTime != prevQuietTime) {
+      throw new InvalidParameterValueException("quietTime should be same for all the policies specified in " + paramName);
+    }
+    if (scaleUpPolicies) {
+      if (!isAutoScaleScaleUpPolicy(policy)) {
+        throw new InvalidParameterValueException("Only scaleup policies can be specified in scaleuppolicyids");
+      }
+    }
+ else {
+      if (isAutoScaleScaleUpPolicy(policy)) {
+        throw new InvalidParameterValueException("Only scaledown policies can be specified in scaledownpolicyids");
+      }
+    }
+    List<AutoScalePolicyConditionMapVO> policyConditionMapVOs=_autoScalePolicyConditionMapDao.listByAll(policy.getId(),null);
+    for (    AutoScalePolicyConditionMapVO policyConditionMapVO : policyConditionMapVOs) {
+      long conditionid=policyConditionMapVO.getConditionId();
+      Condition condition=_conditionDao.findById(conditionid);
+      Counter counter=_counterDao.findById(condition.getCounterid());
+      counters.add(counter);
+    }
+  }
+  return policies;
+}

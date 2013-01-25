@@ -1,0 +1,59 @@
+{
+  int minMembers=vmGroup.getMinMembers();
+  int maxMembers=vmGroup.getMaxMembers();
+  int interval=vmGroup.getInterval();
+  List<Counter> counters=new ArrayList<Counter>();
+  List<AutoScalePolicyVO> policies=new ArrayList<AutoScalePolicyVO>();
+  List<Long> policyIds=new ArrayList<Long>();
+  List<Long> currentScaleUpPolicyIds=new ArrayList<Long>();
+  List<Long> currentScaleDownPolicyIds=new ArrayList<Long>();
+  if (vmGroup.getCreated() != null) {
+    ApiDBUtils.getAutoScaleVmGroupPolicyIds(vmGroup.getId(),currentScaleUpPolicyIds,currentScaleDownPolicyIds);
+  }
+  if (minMembers < 0) {
+    throw new InvalidParameterValueException(ApiConstants.MIN_MEMBERS + " is an invalid value: " + minMembers);
+  }
+  if (maxMembers < 0) {
+    throw new InvalidParameterValueException(ApiConstants.MAX_MEMBERS + " is an invalid value: " + maxMembers);
+  }
+  if (minMembers > maxMembers) {
+    throw new InvalidParameterValueException(ApiConstants.MIN_MEMBERS + " (" + minMembers+ ")cannot be greater than "+ ApiConstants.MAX_MEMBERS+ " ("+ maxMembers+ ")");
+  }
+  if (interval < 0) {
+    throw new InvalidParameterValueException("interval is an invalid value: " + interval);
+  }
+  if (passedScaleUpPolicyIds != null) {
+    policies.addAll(getAutoScalePolicies("scaleuppolicyid",passedScaleUpPolicyIds,counters,interval,true));
+    policyIds.addAll(passedScaleUpPolicyIds);
+  }
+ else {
+    getAutoScalePolicies("scaleuppolicyid",currentScaleUpPolicyIds,counters,interval,true);
+    policyIds.addAll(currentScaleUpPolicyIds);
+  }
+  if (passedScaleDownPolicyIds != null) {
+    policies.addAll(getAutoScalePolicies("scaledownpolicyid",passedScaleDownPolicyIds,counters,interval,false));
+    policyIds.addAll(passedScaleDownPolicyIds);
+  }
+ else {
+    getAutoScalePolicies("scaledownpolicyid",currentScaleDownPolicyIds,counters,interval,false);
+    policyIds.addAll(currentScaleDownPolicyIds);
+  }
+  AutoScaleVmProfileVO profileVO=getEntityInDatabase(UserContext.current().getCaller(),ApiConstants.VMPROFILE_ID,vmGroup.getProfileId(),_autoScaleVmProfileDao);
+  LoadBalancerVO loadBalancer=getEntityInDatabase(UserContext.current().getCaller(),ApiConstants.LBID,vmGroup.getLoadBalancerId(),_lbDao);
+  validateAutoScaleCounters(loadBalancer.getNetworkId(),counters,profileVO.getCounterParams());
+  ControlledEntity[] sameOwnerEntities=policies.toArray(new ControlledEntity[policies.size() + 2]);
+  sameOwnerEntities[sameOwnerEntities.length - 2]=loadBalancer;
+  sameOwnerEntities[sameOwnerEntities.length - 1]=profileVO;
+  _accountMgr.checkAccess(UserContext.current().getCaller(),null,true,sameOwnerEntities);
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  vmGroup=_autoScaleVmGroupDao.persist(vmGroup);
+  if (passedScaleUpPolicyIds != null || passedScaleDownPolicyIds != null) {
+    _autoScaleVmGroupPolicyMapDao.removeByGroupId(vmGroup.getId());
+    for (    Long policyId : policyIds) {
+      _autoScaleVmGroupPolicyMapDao.persist(new AutoScaleVmGroupPolicyMapVO(vmGroup.getId(),policyId));
+    }
+  }
+  txn.commit();
+  return vmGroup;
+}

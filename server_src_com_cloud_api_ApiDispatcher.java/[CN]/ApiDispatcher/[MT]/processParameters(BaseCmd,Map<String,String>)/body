@@ -1,0 +1,113 @@
+{
+  List<Object> entitiesToAccess=new ArrayList<Object>();
+  Map<String,Object> unpackedParams=cmd.unpackParams(params);
+  if (cmd instanceof BaseListCmd) {
+    Object pageSizeObj=unpackedParams.get(ApiConstants.PAGE_SIZE);
+    Long pageSize=null;
+    if (pageSizeObj != null) {
+      pageSize=Long.valueOf((String)pageSizeObj);
+    }
+    if ((unpackedParams.get(ApiConstants.PAGE) == null) && (pageSize != null && pageSize != BaseListCmd.PAGESIZE_UNLIMITED)) {
+      ServerApiException ex=new ServerApiException(ApiErrorCode.PARAM_ERROR,"\"page\" parameter is required when \"pagesize\" is specified");
+      ex.setCSErrorCode(CSExceptionErrorCode.getCSErrCode(ex.getClass().getName()));
+      throw ex;
+    }
+ else     if (pageSize == null && (unpackedParams.get(ApiConstants.PAGE) != null)) {
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"\"pagesize\" parameter is required when \"page\" is specified");
+    }
+  }
+  Field[] fields=ReflectUtil.getAllFieldsForClass(cmd.getClass(),new Class<?>[]{BaseCmd.class});
+  for (  Field field : fields) {
+    PlugService plugServiceAnnotation=field.getAnnotation(PlugService.class);
+    if (plugServiceAnnotation != null) {
+      plugService(field,cmd);
+    }
+    Parameter parameterAnnotation=field.getAnnotation(Parameter.class);
+    if ((parameterAnnotation == null) || !parameterAnnotation.expose()) {
+      continue;
+    }
+    Validate validateAnnotation=field.getAnnotation(Validate.class);
+    Object paramObj=unpackedParams.get(parameterAnnotation.name());
+    if (paramObj == null) {
+      if (parameterAnnotation.required()) {
+        throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to missing parameter "+ parameterAnnotation.name());
+      }
+      continue;
+    }
+    try {
+      setFieldValue(field,cmd,paramObj,parameterAnnotation);
+    }
+ catch (    IllegalArgumentException argEx) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to execute API command " + cmd.getCommandName() + " due to invalid value "+ paramObj+ " for parameter "+ parameterAnnotation.name());
+      }
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to invalid value "+ paramObj+ " for parameter "+ parameterAnnotation.name());
+    }
+catch (    ParseException parseEx) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Invalid date parameter " + paramObj + " passed to command "+ cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8));
+      }
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to parse date " + paramObj + " for command "+ cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8)+ ", please pass dates in the format mentioned in the api documentation");
+    }
+catch (    InvalidParameterValueException invEx) {
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to invalid value. "+ invEx.getMessage());
+    }
+catch (    CloudRuntimeException cloudEx) {
+      throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,"Internal error executing API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8));
+    }
+    try {
+      ACL checkAccess=field.getAnnotation(ACL.class);
+      CommandType fieldType=parameterAnnotation.type();
+      if (checkAccess != null) {
+        if (parameterAnnotation.entityType() != null) {
+          Class<?>[] entityList=parameterAnnotation.entityType()[0].getAnnotation(EntityReference.class).value();
+          for (          Class entity : entityList) {
+switch (fieldType) {
+case LIST:
+              CommandType listType=parameterAnnotation.collectionType();
+switch (listType) {
+case LONG:
+case UUID:
+              List<Long> listParam=(List<Long>)field.get(cmd);
+            for (            Long entityId : listParam) {
+              Object entityObj=s_instance._entityMgr.findById(entity,entityId);
+              entitiesToAccess.add(entityObj);
+            }
+          break;
+default :
+        break;
+    }
+  break;
+case LONG:
+case UUID:
+Object entityObj=s_instance._entityMgr.findById(entity,(Long)field.get(cmd));
+entitiesToAccess.add(entityObj);
+break;
+default :
+break;
+}
+if (ControlledEntity.class.isAssignableFrom(entity)) {
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("ControlledEntity name is:" + entity.getName());
+}
+}
+if (InfrastructureEntity.class.isAssignableFrom(entity)) {
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("InfrastructureEntity name is:" + entity.getName());
+}
+}
+}
+}
+}
+}
+ catch (IllegalArgumentException e) {
+s_logger.error("Error initializing command " + cmd.getCommandName() + ", field "+ field.getName()+ " is not accessible.");
+throw new CloudRuntimeException("Internal error initializing parameters for command " + cmd.getCommandName() + " [field "+ field.getName()+ " is not accessible]");
+}
+catch (IllegalAccessException e) {
+s_logger.error("Error initializing command " + cmd.getCommandName() + ", field "+ field.getName()+ " is not accessible.");
+throw new CloudRuntimeException("Internal error initializing parameters for command " + cmd.getCommandName() + " [field "+ field.getName()+ " is not accessible]");
+}
+}
+s_instance.doAccessChecks(cmd,entitiesToAccess);
+}

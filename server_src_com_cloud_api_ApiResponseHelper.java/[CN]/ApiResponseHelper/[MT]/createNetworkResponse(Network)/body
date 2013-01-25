@@ -1,7 +1,7 @@
 {
   NetworkProfile profile=ApiDBUtils.getNetworkProfile(network.getId());
   NetworkResponse response=new NetworkResponse();
-  response.setId(network.getId());
+  response.setId(network.getUuid());
   response.setName(network.getName());
   response.setDisplaytext(network.getDisplayText());
   if (network.getBroadcastDomainType() != null) {
@@ -18,7 +18,7 @@
   if (network.getCidr() != null) {
     response.setNetmask(NetUtils.cidr2Netmask(network.getCidr()));
   }
-  if (network.getBroadcastUri() != null) {
+  if (network.getBroadcastUri() != null && UserContext.current().getCaller().getType() == Account.ACCOUNT_TYPE_ADMIN) {
     String broadcastUri=network.getBroadcastUri().toString();
     response.setBroadcastUri(broadcastUri);
     String vlan="N/A";
@@ -28,12 +28,17 @@
     response.setVlan(vlan);
   }
   DataCenter zone=ApiDBUtils.findZoneById(network.getDataCenterId());
-  response.setZoneId(network.getDataCenterId());
-  response.setZoneName(zone.getName());
-  response.setPhysicalNetworkId(network.getPhysicalNetworkId());
-  NetworkOffering networkOffering=ApiDBUtils.findNetworkOfferingById(network.getNetworkOfferingId());
+  if (zone != null) {
+    response.setZoneId(zone.getUuid());
+    response.setZoneName(zone.getName());
+  }
+  if (network.getPhysicalNetworkId() != null) {
+    PhysicalNetworkVO pnet=ApiDBUtils.findPhysicalNetworkById(network.getPhysicalNetworkId());
+    response.setPhysicalNetworkId(pnet.getUuid());
+  }
+  NetworkOffering networkOffering=(NetworkOffering)ApiDBUtils.findNetworkOfferingById(network.getNetworkOfferingId());
   if (networkOffering != null) {
-    response.setNetworkOfferingId(networkOffering.getId());
+    response.setNetworkOfferingId(networkOffering.getUuid());
     response.setNetworkOfferingName(networkOffering.getName());
     response.setNetworkOfferingDisplayText(networkOffering.getDisplayText());
     response.setIsSystem(networkOffering.isSystemOnly());
@@ -44,7 +49,10 @@
   }
   response.setState(network.getState().toString());
   response.setRestartRequired(network.isRestartRequired());
-  response.setRelated(network.getRelated());
+  NetworkVO nw=ApiDBUtils.findNetworkById(network.getRelated());
+  if (nw != null) {
+    response.setRelated(nw.getUuid());
+  }
   response.setNetworkDomain(network.getNetworkDomain());
   response.setDns1(profile.getDns1());
   response.setDns2(profile.getDns2());
@@ -80,17 +88,29 @@
   }
  else {
     Pair<Long,Boolean> domainNetworkDetails=ApiDBUtils.getDomainNetworkDetails(network.getId());
-    response.setDomainId(domainNetworkDetails.first());
+    if (domainNetworkDetails.first() != null) {
+      Domain domain=ApiDBUtils.findDomainById(domainNetworkDetails.first());
+      if (domain != null) {
+        response.setDomainId(domain.getUuid());
+      }
+    }
     response.setSubdomainAccess(domainNetworkDetails.second());
   }
   Long dedicatedDomainId=ApiDBUtils.getDedicatedNetworkDomain(network.getId());
   if (dedicatedDomainId != null) {
     Domain domain=ApiDBUtils.findDomainById(dedicatedDomainId);
-    response.setDomainId(dedicatedDomainId);
+    if (domain != null) {
+      response.setDomainId(domain.getUuid());
+    }
     response.setDomainName(domain.getName());
   }
   response.setSpecifyIpRanges(network.getSpecifyIpRanges());
-  response.setVpcId(network.getVpcId());
+  if (network.getVpcId() != null) {
+    Vpc vpc=ApiDBUtils.findVpcById(network.getVpcId());
+    if (vpc != null) {
+      response.setVpcId(vpc.getUuid());
+    }
+  }
   response.setCanUseForDeploy(ApiDBUtils.canUseForDeploy(network));
   List<? extends ResourceTag> tags=ApiDBUtils.listByResourceTypeAndId(TaggedResourceType.Network,network.getId());
   List<ResourceTagResponse> tagResponses=new ArrayList<ResourceTagResponse>();

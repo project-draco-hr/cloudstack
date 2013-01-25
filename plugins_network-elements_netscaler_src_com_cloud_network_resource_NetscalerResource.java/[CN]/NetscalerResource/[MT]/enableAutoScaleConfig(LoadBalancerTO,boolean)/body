@@ -1,0 +1,236 @@
+{
+  String vmGroupIdentifier=generateAutoScaleVmGroupIdentifier(loadBalancerTO);
+  String srcIp=loadBalancerTO.getSrcIp();
+  int srcPort=loadBalancerTO.getSrcPort();
+  String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort);
+  String serviceGroupName=generateAutoScaleServiceGroupName(loadBalancerTO);
+  String profileName=generateAutoScaleProfileName(vmGroupIdentifier);
+  String timerName=generateAutoScaleTimerName(vmGroupIdentifier);
+  String scaleDownActionName=generateAutoScaleScaleDownActionName(vmGroupIdentifier);
+  String scaleUpActionName=generateAutoScaleScaleUpActionName(vmGroupIdentifier);
+  String mtName=generateSnmpMetricTableName(vmGroupIdentifier);
+  String monitorName=generateSnmpMonitorName(vmGroupIdentifier);
+  AutoScaleVmGroupTO vmGroupTO=loadBalancerTO.getAutoScaleVmGroupTO();
+  AutoScaleVmProfileTO profileTO=vmGroupTO.getProfile();
+  List<AutoScalePolicyTO> policies=vmGroupTO.getPolicies();
+  int interval=vmGroupTO.getInterval();
+  List<Pair<String,String>> counterParams=profileTO.getCounterParamList();
+  String snmpCommunity=null;
+  int snmpPort=DEFAULT_SNMP_PORT;
+  long cur_prirotiy=1;
+  List<Pair<String,String>> paramsList=profileTO.getCounterParamList();
+  for (  Pair<String,String> param : paramsList) {
+    if ("snmpcommunity".equalsIgnoreCase(param.first())) {
+      snmpCommunity=param.second();
+    }
+ else     if ("snmpport".equalsIgnoreCase(param.first())) {
+      snmpPort=Integer.parseInt(param.second());
+    }
+  }
+  try {
+    int minAutoScaleMembers=vmGroupTO.getMinMembers();
+    int maxAutoScaleMembers=vmGroupTO.getMaxMembers();
+    lbvserver vserver=new lbvserver();
+    try {
+      vserver.set_name(nsVirtualServerName);
+      vserver.set_minautoscalemembers(minAutoScaleMembers);
+      vserver.set_maxautoscalemembers(maxAutoScaleMembers);
+      vserver.update(_netscalerService,vserver);
+    }
+ catch (    Exception e) {
+      if (!isCleanUp)       throw e;
+    }
+    String apiKey=profileTO.getAutoScaleUserApiKey();
+    String secretKey=profileTO.getAutoScaleUserSecretKey();
+    String url=profileTO.getCloudStackApiUrl();
+    autoscaleprofile autoscaleProfile=new autoscaleprofile();
+    try {
+      autoscaleProfile.set_name(profileName);
+      autoscaleProfile.set_type("CLOUDSTACK");
+      autoscaleProfile.set_apikey(apiKey);
+      autoscaleProfile.set_sharedsecret(secretKey);
+      autoscaleProfile.set_url(url);
+      autoscaleProfile.add(_netscalerService,autoscaleProfile);
+    }
+ catch (    Exception e) {
+      if (!isCleanUp)       throw e;
+    }
+    nstimer timer=new nstimer();
+    try {
+      timer.set_name(timerName);
+      timer.set_interval(interval);
+      timer.add(_netscalerService,timer);
+    }
+ catch (    Exception e) {
+      if (!isCleanUp)       throw e;
+    }
+    Integer scaleUpQuietTime=null;
+    Integer scaleDownQuietTime=null;
+    for (    AutoScalePolicyTO autoScalePolicyTO : policies) {
+      if (scaleUpQuietTime == null) {
+        if (isScaleUpPolicy(autoScalePolicyTO)) {
+          scaleUpQuietTime=autoScalePolicyTO.getQuietTime();
+          if (scaleDownQuietTime != null) {
+            break;
+          }
+        }
+      }
+      if (scaleDownQuietTime == null) {
+        if (isScaleDownPolicy(autoScalePolicyTO)) {
+          scaleDownQuietTime=autoScalePolicyTO.getQuietTime();
+          if (scaleUpQuietTime != null) {
+            break;
+          }
+        }
+      }
+    }
+    com.citrix.netscaler.nitro.resource.config.autoscale.autoscaleaction scaleUpAction=new com.citrix.netscaler.nitro.resource.config.autoscale.autoscaleaction();
+    try {
+      scaleUpAction.set_name(scaleUpActionName);
+      scaleUpAction.set_type("SCALE_UP");
+      scaleUpAction.set_vserver(nsVirtualServerName);
+      scaleUpAction.set_profilename(profileName);
+      scaleUpAction.set_quiettime(scaleUpQuietTime);
+      String scaleUpParameters="command=deployVirtualMachine" + "&" + ApiConstants.ZONE_ID + "="+ profileTO.getZoneId()+ "&"+ ApiConstants.SERVICE_OFFERING_ID+ "="+ profileTO.getServiceOfferingId()+ "&"+ ApiConstants.TEMPLATE_ID+ "="+ profileTO.getTemplateId()+ "&"+ ApiConstants.DISPLAY_NAME+ "="+ profileTO.getVmName()+ "&"+ ((profileTO.getNetworkId() == null) ? "" : (ApiConstants.NETWORK_IDS + "=" + profileTO.getNetworkId()+ "&"))+ ((profileTO.getOtherDeployParams() == null) ? "" : (profileTO.getOtherDeployParams() + "&"))+ "lbruleid="+ loadBalancerTO.getUuid();
+      scaleUpAction.set_parameters(scaleUpParameters);
+      scaleUpAction.add(_netscalerService,scaleUpAction);
+    }
+ catch (    Exception e) {
+      if (!isCleanUp)       throw e;
+    }
+    com.citrix.netscaler.nitro.resource.config.autoscale.autoscaleaction scaleDownAction=new com.citrix.netscaler.nitro.resource.config.autoscale.autoscaleaction();
+    Integer destroyVmGracePeriod=profileTO.getDestroyVmGraceperiod();
+    try {
+      scaleDownAction.set_name(scaleDownActionName);
+      scaleDownAction.set_type("SCALE_DOWN");
+      scaleDownAction.set_vserver(nsVirtualServerName);
+      scaleDownAction.set_profilename(profileName);
+      scaleDownAction.set_quiettime(scaleDownQuietTime);
+      String scaleDownParameters="command=destroyVirtualMachine" + "&" + "lbruleid="+ loadBalancerTO.getUuid();
+      scaleDownAction.set_parameters(scaleDownParameters);
+      scaleDownAction.set_vmdestroygraceperiod(destroyVmGracePeriod);
+      scaleDownAction.add(_netscalerService,scaleDownAction);
+    }
+ catch (    Exception e) {
+      if (!isCleanUp)       throw e;
+    }
+    String minMemberPolicyName=generateAutoScaleMinPolicyName(vmGroupIdentifier);
+    String minMemberPolicyExp="SYS.VSERVER(\"" + nsVirtualServerName + "\").ACTIVESERVICES.LT(SYS.VSERVER(\""+ nsVirtualServerName+ "\").MINAUTOSCALEMEMBERS)";
+    addAutoScalePolicy(timerName,minMemberPolicyName,cur_prirotiy++,minMemberPolicyExp,scaleUpActionName,interval,interval,isCleanUp);
+    String maxMemberPolicyName=generateAutoScaleMaxPolicyName(vmGroupIdentifier);
+    String maxMemberPolicyExp="SYS.VSERVER(\"" + nsVirtualServerName + "\").ACTIVESERVICES.GT(SYS.VSERVER(\""+ nsVirtualServerName+ "\").MAXAUTOSCALEMEMBERS)";
+    addAutoScalePolicy(timerName,maxMemberPolicyName,cur_prirotiy++,maxMemberPolicyExp,scaleDownActionName,interval,interval,isCleanUp);
+    HashMap<String,Integer> snmpMetrics=new HashMap<String,Integer>();
+    for (    AutoScalePolicyTO autoScalePolicyTO : policies) {
+      List<ConditionTO> conditions=autoScalePolicyTO.getConditions();
+      String policyExpression="";
+      int snmpCounterNumber=0;
+      for (      ConditionTO conditionTO : conditions) {
+        CounterTO counterTO=conditionTO.getCounter();
+        String counterName=counterTO.getName();
+        String operator=conditionTO.getRelationalOperator();
+        long threshold=conditionTO.getThreshold();
+        StringBuilder conditionExpression=new StringBuilder();
+        Formatter formatter=new Formatter(conditionExpression,Locale.US);
+        if (counterTO.getSource().equals("snmp")) {
+          counterName=generateSnmpMetricName(counterName);
+          if (snmpMetrics.size() == 0) {
+            lbmetrictable metricTable=new lbmetrictable();
+            try {
+              metricTable.set_metrictable(mtName);
+              metricTable.add(_netscalerService,metricTable);
+            }
+ catch (            Exception e) {
+              if (!isCleanUp)               throw e;
+            }
+            lbmonitor monitor=new lbmonitor();
+            try {
+              monitor.set_monitorname(monitorName);
+              monitor.set_type("LOAD");
+              monitor.set_destport(snmpPort);
+              monitor.set_snmpcommunity(snmpCommunity);
+              monitor.set_metrictable(mtName);
+              monitor.set_interval((int)(interval * 0.8));
+              monitor.add(_netscalerService,monitor);
+            }
+ catch (            Exception e) {
+              if (!isCleanUp)               throw e;
+            }
+            servicegroup_lbmonitor_binding servicegroup_monitor_binding=new servicegroup_lbmonitor_binding();
+            try {
+              servicegroup_monitor_binding.set_servicegroupname(serviceGroupName);
+              servicegroup_monitor_binding.set_monitor_name(monitorName);
+              servicegroup_monitor_binding.set_passive(true);
+              servicegroup_lbmonitor_binding.add(_netscalerService,servicegroup_monitor_binding);
+            }
+ catch (            Exception e) {
+              if (!isCleanUp)               throw e;
+            }
+          }
+          boolean newMetric=!snmpMetrics.containsKey(counterName);
+          if (newMetric) {
+            snmpMetrics.put(counterName,snmpCounterNumber++);
+          }
+          if (newMetric) {
+            String counterOid=counterTO.getValue();
+            lbmetrictable_metric_binding metrictable_metric_binding=new lbmetrictable_metric_binding();
+            try {
+              metrictable_metric_binding.set_metrictable(mtName);
+              metrictable_metric_binding.set_metric(counterName);
+              metrictable_metric_binding.set_Snmpoid(counterOid);
+              metrictable_metric_binding.add(_netscalerService,metrictable_metric_binding);
+            }
+ catch (            Exception e) {
+              if (!isCleanUp)               throw e;
+            }
+            lbmonitor_metric_binding monitor_metric_binding=new lbmonitor_metric_binding();
+            ;
+            try {
+              monitor_metric_binding.set_monitorname(monitorName);
+              monitor_metric_binding.set_metric(counterName);
+              monitor_metric_binding.set_metricthreshold(Integer.MAX_VALUE);
+              monitor_metric_binding.add(_netscalerService,monitor_metric_binding);
+            }
+ catch (            Exception e) {
+              if (!isCleanUp)               throw e;
+            }
+          }
+          int counterIndex=snmpMetrics.get(counterName);
+          formatter.format("SYS.VSERVER(\"%s\").SNMP_TABLE(%d).AVERAGE_VALUE.%s(%d)",nsVirtualServerName,counterIndex,operator,threshold);
+        }
+ else         if (counterTO.getSource().equals("netscaler")) {
+          formatter.format("SYS.VSERVER(\"%s\").%s.%s(%d)",nsVirtualServerName,counterTO.getValue(),operator,threshold);
+        }
+        if (policyExpression.length() != 0) {
+          policyExpression+=" && ";
+        }
+        policyExpression+=conditionExpression;
+      }
+      policyExpression="(" + policyExpression + ")";
+      String policyId=Long.toString(autoScalePolicyTO.getId());
+      String policyName=generateAutoScalePolicyName(vmGroupIdentifier,policyId);
+      String action=null;
+      if (isScaleUpPolicy(autoScalePolicyTO)) {
+        action=scaleUpActionName;
+        String scaleUpCondition="SYS.VSERVER(\"" + nsVirtualServerName + "\").ACTIVESERVICES.LT(SYS.VSERVER(\""+ nsVirtualServerName+ "\").MAXAUTOSCALEMEMBERS)";
+        policyExpression=scaleUpCondition + " && " + policyExpression;
+      }
+ else {
+        action=scaleDownActionName;
+        String scaleDownCondition="SYS.VSERVER(\"" + nsVirtualServerName + "\").ACTIVESERVICES.GT(SYS.VSERVER(\""+ nsVirtualServerName+ "\").MINAUTOSCALEMEMBERS)";
+        policyExpression=scaleDownCondition + " && " + policyExpression;
+      }
+      addAutoScalePolicy(timerName,policyName,cur_prirotiy++,policyExpression,action,autoScalePolicyTO.getDuration(),interval,isCleanUp);
+    }
+  }
+ catch (  Exception ex) {
+    if (!isCleanUp) {
+      disableAutoScaleConfig(loadBalancerTO,true);
+      throw ex;
+    }
+ else {
+      throw ex;
+    }
+  }
+  return true;
+}

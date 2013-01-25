@@ -1,0 +1,27 @@
+{
+  if (!canHandle(network,Service.PortForwarding)) {
+    return false;
+  }
+  List<NiciraNvpDeviceVO> devices=_niciraNvpDao.listByPhysicalNetwork(network.getPhysicalNetworkId());
+  if (devices.isEmpty()) {
+    s_logger.error("No NiciraNvp Controller on physical network " + network.getPhysicalNetworkId());
+    return false;
+  }
+  NiciraNvpDeviceVO niciraNvpDevice=devices.get(0);
+  HostVO niciraNvpHost=_hostDao.findById(niciraNvpDevice.getHostId());
+  NiciraNvpRouterMappingVO routermapping=_niciraNvpRouterMappingDao.findByNetworkId(network.getId());
+  if (routermapping == null) {
+    s_logger.error("No logical router uuid found for network " + network.getDisplayText());
+    return false;
+  }
+  List<PortForwardingRuleTO> portForwardingRules=new ArrayList<PortForwardingRuleTO>();
+  for (  PortForwardingRule rule : rules) {
+    IpAddress sourceIp=_networkModel.getIp(rule.getSourceIpAddressId());
+    Vlan vlan=_vlanDao.findById(sourceIp.getVlanId());
+    PortForwardingRuleTO ruleTO=new PortForwardingRuleTO((PortForwardingRule)rule,vlan.getVlanTag(),sourceIp.getAddress().addr());
+    portForwardingRules.add(ruleTO);
+  }
+  ConfigurePortForwardingRulesOnLogicalRouterCommand cmd=new ConfigurePortForwardingRulesOnLogicalRouterCommand(routermapping.getLogicalRouterUuid(),portForwardingRules);
+  ConfigurePortForwardingRulesOnLogicalRouterAnswer answer=(ConfigurePortForwardingRulesOnLogicalRouterAnswer)_agentMgr.easySend(niciraNvpHost.getId(),cmd);
+  return answer.getResult();
+}

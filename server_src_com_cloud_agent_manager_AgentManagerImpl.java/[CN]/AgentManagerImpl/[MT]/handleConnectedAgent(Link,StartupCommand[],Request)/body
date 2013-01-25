@@ -1,91 +1,35 @@
 {
   AgentAttache attache=null;
-  StartupAnswer[] answers=new StartupAnswer[startup.length];
+  ReadyCommand ready=null;
   try {
     HostVO host=_resourceMgr.createHostVOForConnectedAgent(startup);
     if (host != null) {
+      ready=new ReadyCommand(host.getDataCenterId(),host.getId());
       attache=createAttacheForConnect(host,link);
-    }
-    Command cmd;
-    for (int i=0; i < startup.length; i++) {
-      cmd=startup[i];
-      if ((cmd instanceof StartupRoutingCommand) || (cmd instanceof StartupProxyCommand) || (cmd instanceof StartupSecondaryStorageCommand)|| (cmd instanceof StartupStorageCommand)) {
-        answers[i]=new StartupAnswer(startup[i],attache.getId(),getPingInterval());
-        break;
-      }
+      attache=notifyMonitorsOfConnection(attache,startup,false);
     }
   }
- catch (  ConnectionException e) {
-    Command cmd;
-    for (int i=0; i < startup.length; i++) {
-      cmd=startup[i];
-      if ((cmd instanceof StartupRoutingCommand) || (cmd instanceof StartupProxyCommand) || (cmd instanceof StartupSecondaryStorageCommand)|| (cmd instanceof StartupStorageCommand)) {
-        answers[i]=new StartupAnswer(startup[i],e.toString());
-        break;
-      }
+ catch (  Exception e) {
+    s_logger.debug("Failed to handle host connection: " + e.toString());
+    ready=new ReadyCommand(null);
+    ready.setDetails(e.toString());
+  }
+ finally {
+    if (ready == null) {
+      ready=new ReadyCommand(null);
     }
   }
-catch (  IllegalArgumentException e) {
-    Command cmd;
-    for (int i=0; i < startup.length; i++) {
-      cmd=startup[i];
-      if ((cmd instanceof StartupRoutingCommand) || (cmd instanceof StartupProxyCommand) || (cmd instanceof StartupSecondaryStorageCommand)|| (cmd instanceof StartupStorageCommand)) {
-        answers[i]=new StartupAnswer(startup[i],e.toString());
-        break;
-      }
+  try {
+    if (attache == null) {
+      final Request readyRequest=new Request(-1,-1,ready,false);
+      link.send(readyRequest.getBytes());
     }
-  }
-catch (  CloudRuntimeException e) {
-    Command cmd;
-    for (int i=0; i < startup.length; i++) {
-      cmd=startup[i];
-      if ((cmd instanceof StartupRoutingCommand) || (cmd instanceof StartupProxyCommand) || (cmd instanceof StartupSecondaryStorageCommand)|| (cmd instanceof StartupStorageCommand)) {
-        answers[i]=new StartupAnswer(startup[i],e.toString());
-        break;
-      }
-    }
-  }
-  Response response=null;
-  if (attache != null) {
-    response=new Response(request,answers[0],_nodeId,attache.getId());
-  }
  else {
-    response=new Response(request,answers[0],_nodeId,-1);
-  }
-  try {
-    link.send(response.toBytes());
-  }
- catch (  ClosedChannelException e) {
-    s_logger.debug("Failed to send startupanswer: " + e.toString());
-    return null;
-  }
-  if (attache == null) {
-    return null;
-  }
-  try {
-    attache=notifyMonitorsOfConnection(attache,startup,false);
-    return attache;
-  }
- catch (  ConnectionException e) {
-    ReadyCommand ready=new ReadyCommand(null);
-    ready.setDetails(e.toString());
-    try {
       easySend(attache.getId(),ready);
     }
- catch (    Exception e1) {
-      s_logger.debug("Failed to send readycommand, due to " + e.toString());
-    }
-    return null;
   }
-catch (  CloudRuntimeException e) {
-    ReadyCommand ready=new ReadyCommand(null);
-    ready.setDetails(e.toString());
-    try {
-      easySend(attache.getId(),ready);
-    }
- catch (    Exception e1) {
-      s_logger.debug("Failed to send readycommand, due to " + e.toString());
-    }
-    return null;
+ catch (  Exception e) {
+    s_logger.debug("Failed to send ready command:" + e.toString());
   }
+  return attache;
 }

@@ -1,0 +1,40 @@
+{
+  final S3TO s3=cmd.getS3();
+  final String secondaryStorageUrl=cmd.getSecondaryStorageUrl();
+  final Long accountId=cmd.getAccountId();
+  final Long volumeId=cmd.getVolumeId();
+  try {
+    executeWithNoWaitLock(determineSnapshotLockId(accountId,volumeId),new Callable<Void>(){
+      @Override public Void call() throws Exception {
+        final String directoryName=determineSnapshotLocalDirectory(secondaryStorageUrl,accountId,volumeId);
+        String result=createLocalDir(directoryName);
+        if (result != null) {
+          throw new InternalErrorException(format("Failed to create directory %1$s during S3 snapshot download.",directoryName));
+        }
+        final String snapshotFileName=determineSnapshotBackupFilename(cmd.getSnapshotUuid());
+        final String key=determineSnapshotS3Key(accountId,volumeId,snapshotFileName);
+        final File targetFile=S3Utils.getFile(s3,s3.getBucketName(),key,_storage.getFile(directoryName),new FileNamingStrategy(){
+          @Override public String determineFileName(          String key){
+            return snapshotFileName;
+          }
+        }
+);
+        if (cmd.getParent() != null) {
+          final String parentPath=join(File.pathSeparator,directoryName,determineSnapshotBackupFilename(cmd.getParent()));
+          result=setVhdParent(targetFile.getAbsolutePath(),parentPath);
+          if (result != null) {
+            throw new InternalErrorException(format("Failed to set the parent for backup %1$s to %2$s due to %3$s.",targetFile.getAbsolutePath(),parentPath,result));
+          }
+        }
+        return null;
+      }
+    }
+);
+    return new Answer(cmd,true,format("Succesfully retrieved volume id %1$s for account id %2$s to %3$s from S3.",volumeId,accountId,secondaryStorageUrl));
+  }
+ catch (  Exception e) {
+    final String errMsg=format("Failed to retrieve volume id %1$s for account id %2$s to %3$s from S3 due to exception %4$s",volumeId,accountId,secondaryStorageUrl,e.getMessage());
+    s_logger.error(errMsg);
+    return new Answer(cmd,false,errMsg);
+  }
+}

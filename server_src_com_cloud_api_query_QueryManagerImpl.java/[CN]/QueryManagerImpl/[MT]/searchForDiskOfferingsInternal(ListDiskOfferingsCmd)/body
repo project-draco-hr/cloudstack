@@ -1,0 +1,66 @@
+{
+  Boolean isAscending=Boolean.parseBoolean(_configDao.getValue("sortkey.algorithm"));
+  isAscending=(isAscending == null ? true : isAscending);
+  Filter searchFilter=new Filter(DiskOfferingJoinVO.class,"sortKey",isAscending,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<DiskOfferingJoinVO> sb=_diskOfferingJoinDao.createSearchBuilder();
+  Account account=UserContext.current().getCaller();
+  Object name=cmd.getDiskOfferingName();
+  Object id=cmd.getId();
+  Object keyword=cmd.getKeyword();
+  Long domainId=cmd.getDomainId();
+  if (domainId != null) {
+    if (account.getType() == Account.ACCOUNT_TYPE_ADMIN || isPermissible(account.getDomainId(),domainId)) {
+      sb.and("domainId",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+      SearchCriteria<DiskOfferingJoinVO> sc=sb.create();
+      sc.setParameters("domainId",domainId);
+      return _diskOfferingJoinDao.searchAndCount(sc,searchFilter);
+    }
+ else {
+      throw new PermissionDeniedException("The account:" + account.getAccountName() + " does not fall in the same domain hierarchy as the disk offering");
+    }
+  }
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.LIKE);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  boolean includePublicOfferings=false;
+  List<Long> domainIds=null;
+  if ((account.getType() == Account.ACCOUNT_TYPE_NORMAL || account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) || account.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
+    domainIds=new ArrayList<Long>();
+    DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+    if (domainRecord == null) {
+      s_logger.error("Could not find the domainId for account:" + account.getAccountName());
+      throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+    }
+    domainIds.add(domainRecord.getId());
+    while (domainRecord.getParent() != null) {
+      domainRecord=_domainDao.findById(domainRecord.getParent());
+      domainIds.add(domainRecord.getId());
+    }
+    sb.and("domainIdIn",sb.entity().getDomainId(),SearchCriteria.Op.IN);
+    if (keyword == null && name == null && id == null) {
+      includePublicOfferings=true;
+    }
+  }
+  SearchCriteria<DiskOfferingJoinVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<DiskOfferingJoinVO> ssc=_diskOfferingJoinDao.createSearchCriteria();
+    ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (name != null) {
+    sc.setParameters("name","%" + name + "%");
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (domainIds != null) {
+    sc.setParameters("domainIdIn",domainIds);
+  }
+  if (includePublicOfferings) {
+    SearchCriteria<DiskOfferingJoinVO> spc=_diskOfferingJoinDao.createSearchCriteria();
+    spc.addAnd("domainId",SearchCriteria.Op.NULL);
+    spc.addAnd("systemUse",SearchCriteria.Op.EQ,false);
+    sc.addOr("systemUse",SearchCriteria.Op.SC,spc);
+  }
+  return _diskOfferingJoinDao.searchAndCount(sc,searchFilter);
+}

@@ -1,0 +1,74 @@
+{
+  String routerName=cmd.getName();
+  String gatewayServiceUuid=cmd.getGatewayServiceUuid();
+  String logicalSwitchUuid=cmd.getLogicalSwitchUuid();
+  List<NiciraNvpTag> tags=new ArrayList<NiciraNvpTag>();
+  tags.add(new NiciraNvpTag("cs_account",cmd.getOwnerName()));
+  String publicNetworkNextHopIp=cmd.getPublicNextHop();
+  String publicNetworkIpAddress=cmd.getPublicIpCidr();
+  String internalNetworkAddress=cmd.getInternalIpCidr();
+  s_logger.debug("Creating a logical router with external ip " + publicNetworkIpAddress + " and internal ip "+ internalNetworkAddress+ "on gateway service "+ gatewayServiceUuid);
+  try {
+    LogicalRouterConfig lrc=new LogicalRouterConfig();
+    lrc.setDisplayName(truncate(routerName,40));
+    lrc.setTags(tags);
+    lrc.setRoutingConfig(new SingleDefaultRouteImplictRoutingConfig(new RouterNextHop(publicNetworkNextHopIp)));
+    lrc=_niciraNvpApi.createLogicalRouter(lrc);
+    LogicalSwitchPort lsp=null;
+    try {
+      LogicalRouterPort lrpo=new LogicalRouterPort();
+      lrpo.setAdminStatusEnabled(true);
+      lrpo.setDisplayName(truncate(routerName + "-outside-port",40));
+      lrpo.setTags(tags);
+      List<String> outsideIpAddresses=new ArrayList<String>();
+      outsideIpAddresses.add(publicNetworkIpAddress);
+      lrpo.setIpAddresses(outsideIpAddresses);
+      lrpo=_niciraNvpApi.createLogicalRouterPort(lrc.getUuid(),lrpo);
+      L3GatewayAttachment attachment=new L3GatewayAttachment(gatewayServiceUuid);
+      if (cmd.getVlanId() != 0) {
+        attachment.setVlanId(cmd.getVlanId());
+      }
+      _niciraNvpApi.modifyLogicalRouterPortAttachment(lrc.getUuid(),lrpo.getUuid(),attachment);
+      LogicalRouterPort lrpi=new LogicalRouterPort();
+      lrpi.setAdminStatusEnabled(true);
+      lrpi.setDisplayName(truncate(routerName + "-inside-port",40));
+      lrpi.setTags(tags);
+      List<String> insideIpAddresses=new ArrayList<String>();
+      insideIpAddresses.add(internalNetworkAddress);
+      lrpi.setIpAddresses(insideIpAddresses);
+      lrpi=_niciraNvpApi.createLogicalRouterPort(lrc.getUuid(),lrpi);
+      lsp=new LogicalSwitchPort(truncate(routerName + "-inside-port",40),tags,true);
+      lsp=_niciraNvpApi.createLogicalSwitchPort(logicalSwitchUuid,lsp);
+      _niciraNvpApi.modifyLogicalRouterPortAttachment(lrc.getUuid(),lrpi.getUuid(),new PatchAttachment(lsp.getUuid()));
+      _niciraNvpApi.modifyLogicalSwitchPortAttachment(logicalSwitchUuid,lsp.getUuid(),new PatchAttachment(lrpi.getUuid()));
+      NatRule snr=new NatRule();
+      snr.setType("SourceNatRule");
+      snr.setToSourceIpAddressMin(publicNetworkIpAddress.split("/")[0]);
+      snr.setToSourceIpAddressMax(publicNetworkIpAddress.split("/")[0]);
+      Match match=new Match();
+      match.setSourceIpAddresses(internalNetworkAddress);
+      snr.setMatch(match);
+      _niciraNvpApi.createLogicalRouterNatRule(lrc.getUuid(),snr);
+    }
+ catch (    NiciraNvpApiException e) {
+      try {
+        _niciraNvpApi.deleteLogicalRouter(lrc.getUuid());
+        if (lsp != null) {
+          _niciraNvpApi.deleteLogicalSwitchPort(logicalSwitchUuid,lsp.getUuid());
+        }
+      }
+ catch (      NiciraNvpApiException ex) {
+      }
+      throw e;
+    }
+    return new CreateLogicalRouterAnswer(cmd,true,"Logical Router created (uuid " + lrc.getUuid() + ")",lrc.getUuid());
+  }
+ catch (  NiciraNvpApiException e) {
+    if (numRetries > 0) {
+      return retry(cmd,--numRetries);
+    }
+ else {
+      return new CreateLogicalRouterAnswer(cmd,e);
+    }
+  }
+}
