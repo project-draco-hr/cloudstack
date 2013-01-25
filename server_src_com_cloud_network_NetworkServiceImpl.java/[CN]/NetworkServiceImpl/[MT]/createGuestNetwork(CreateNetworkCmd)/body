@@ -16,6 +16,11 @@
   boolean isDomainSpecific=false;
   Boolean subdomainAccess=cmd.getSubdomainAccess();
   Long vpcId=cmd.getVpcId();
+  String startIPv6=cmd.getStartIpv6();
+  String endIPv6=cmd.getEndIpv6();
+  String ip6Gateway=cmd.getIp6Gateway();
+  String ip6Cidr=cmd.getIp6Cidr();
+  Boolean dualStack=cmd.isDualStack();
   NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(networkOfferingId);
   if (ntwkOff == null || ntwkOff.isSystemOnly()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find network offering by specified id");
@@ -114,31 +119,72 @@
     owner=caller;
   }
   UserContext.current().setAccountId(owner.getAccountId());
-  if (startIP != null) {
-    if (!NetUtils.isValidIp(startIP)) {
-      throw new InvalidParameterValueException("Invalid format for the startIp parameter");
-    }
-    if (endIP == null) {
-      endIP=startIP;
-    }
- else     if (!NetUtils.isValidIp(endIP)) {
-      throw new InvalidParameterValueException("Invalid format for the endIp parameter");
-    }
+  if (startIPv6 != null && startIP != null && (dualStack == null || dualStack == false)) {
+    throw new InvalidParameterValueException("Cannot specify both IPv4 and IPv6 address without set dualStack = true!");
   }
-  if (startIP != null && endIP != null) {
-    if (!(gateway != null && netmask != null)) {
-      throw new InvalidParameterValueException("gateway and netmask should be defined when startIP/endIP are passed in");
-    }
+  boolean ipv4=false, ipv6=false;
+  if (startIP != null) {
+    ipv4=true;
+  }
+  if (startIPv6 != null) {
+    ipv6=true;
   }
   String cidr=null;
-  if (gateway != null && netmask != null) {
-    if (!NetUtils.isValidIp(gateway)) {
-      throw new InvalidParameterValueException("Invalid gateway");
+  if (ipv4) {
+    if (startIP != null) {
+      if (!NetUtils.isValidIp(startIP)) {
+        throw new InvalidParameterValueException("Invalid format for the startIp parameter");
+      }
+      if (endIP == null) {
+        endIP=startIP;
+      }
+ else       if (!NetUtils.isValidIp(endIP)) {
+        throw new InvalidParameterValueException("Invalid format for the endIp parameter");
+      }
     }
-    if (!NetUtils.isValidNetmask(netmask)) {
-      throw new InvalidParameterValueException("Invalid netmask");
+    if (startIP != null && endIP != null) {
+      if (!(gateway != null && netmask != null)) {
+        throw new InvalidParameterValueException("gateway and netmask should be defined when startIP/endIP are passed in");
+      }
     }
-    cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
+    if (gateway != null && netmask != null) {
+      if (!NetUtils.isValidIp(gateway)) {
+        throw new InvalidParameterValueException("Invalid gateway");
+      }
+      if (!NetUtils.isValidNetmask(netmask)) {
+        throw new InvalidParameterValueException("Invalid netmask");
+      }
+      cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
+    }
+  }
+  if (ipv6) {
+    if (!NetUtils.isValidIPv6(startIPv6)) {
+      throw new InvalidParameterValueException("Invalid format for the startIPv6 parameter");
+    }
+    if (endIPv6 == null) {
+      endIPv6=startIPv6;
+    }
+ else     if (!NetUtils.isValidIPv6(endIPv6)) {
+      throw new InvalidParameterValueException("Invalid format for the endIPv6 parameter");
+    }
+    if (!(ip6Gateway != null && ip6Cidr != null)) {
+      throw new InvalidParameterValueException("ip6Gateway and ip6Cidr should be defined when startIPv6/endIPv6 are passed in");
+    }
+    if (!NetUtils.isValidIPv6(ip6Gateway)) {
+      throw new InvalidParameterValueException("Invalid ip6Gateway");
+    }
+    if (!NetUtils.isValidIp6Cidr(ip6Cidr)) {
+      throw new InvalidParameterValueException("Invalid ip6cidr");
+    }
+    int cidrSize=NetUtils.getIp6CidrSize(ip6Cidr);
+    if (cidrSize < 64) {
+      throw new InvalidParameterValueException("The cidr size of IPv6 must be bigger than 64 bits!");
+    }
+  }
+  if (ipv6) {
+    if (zone.getNetworkType() != NetworkType.Advanced || ntwkOff.getGuestType() != Network.GuestType.Shared) {
+      throw new InvalidParameterValueException("Can only support create IPv6 network with advance shared network!");
+    }
   }
   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (ntwkOff.getTrafficType() != TrafficType.Guest || ntwkOff.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))) {
     throw new InvalidParameterValueException("Regular user can create a network only from the network" + " offering having traffic type " + TrafficType.Guest + " and network type "+ Network.GuestType.Isolated+ " with a service "+ Service.SourceNat.getName()+ " enabled");
@@ -146,14 +192,19 @@
   if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (ntwkOff.getSpecifyVlan() || vlanId != null)) {
     throw new InvalidParameterValueException("Regular user is not allowed to specify vlanId");
   }
-  if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && cidr != null) {
-    String[] cidrPair=cidr.split("\\/");
-    int cidrSize=Integer.valueOf(cidrPair[1]);
-    if (cidrSize < _cidrLimit) {
-      throw new InvalidParameterValueException("Cidr size can't be less than " + _cidrLimit);
+  if (ipv4) {
+    if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && cidr != null) {
+      String[] cidrPair=cidr.split("\\/");
+      int cidrSize=Integer.valueOf(cidrPair[1]);
+      if (cidrSize < _cidrLimit) {
+        throw new InvalidParameterValueException("Cidr size can't be less than " + _cidrLimit);
+      }
     }
   }
   Collection<String> ntwkProviders=_networkMgr.finalizeServicesAndProvidersForNetwork(ntwkOff,physicalNetworkId).values();
+  if (ipv6 && providersConfiguredForExternalNetworking(ntwkProviders)) {
+    throw new InvalidParameterValueException("Cannot support IPv6 on network offering with external devices!");
+  }
   if (cidr != null && providersConfiguredForExternalNetworking(ntwkProviders)) {
     if (ntwkOff.getGuestType() == GuestType.Shared && (zone.getNetworkType() == NetworkType.Advanced) && isSharedNetworkOfferingWithServices(networkOfferingId)) {
       checkSharedNetworkCidrOverlap(zoneId,pNtwk.getId(),cidr);
@@ -163,6 +214,11 @@
     }
   }
   boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((ntwkOff.getGuestType() == Network.GuestType.Shared) || (ntwkOff.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))));
+  if (!createVlan) {
+    if (ipv6) {
+      createVlan=true;
+    }
+  }
   if (createVlan && !ntwkOff.getSpecifyIpRanges()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Network offering with specified id doesn't support adding multiple ip ranges");
     ex.addProxyObject(ntwkOff,ntwkOff.getId(),"networkOfferingId");
@@ -201,10 +257,10 @@
     if (_configMgr.isOfferingForVpc(ntwkOff)) {
       throw new InvalidParameterValueException("Network offering can be used for VPC networks only");
     }
-    network=_networkMgr.createGuestNetwork(networkOfferingId,name,displayText,gateway,cidr,vlanId,networkDomain,owner,sharedDomainId,pNtwk,zoneId,aclType,subdomainAccess,vpcId);
+    network=_networkMgr.createGuestNetwork(networkOfferingId,name,displayText,gateway,cidr,vlanId,networkDomain,owner,sharedDomainId,pNtwk,zoneId,aclType,subdomainAccess,vpcId,ip6Gateway,ip6Cidr);
   }
   if (caller.getType() == Account.ACCOUNT_TYPE_ADMIN && createVlan) {
-    _configMgr.createVlanAndPublicIpRange(pNtwk.getDataCenterId(),network.getId(),physicalNetworkId,false,null,startIP,endIP,gateway,netmask,vlanId,null);
+    _configMgr.createVlanAndPublicIpRange(pNtwk.getDataCenterId(),network.getId(),physicalNetworkId,false,null,startIP,endIP,gateway,netmask,vlanId,null,startIPv6,endIPv6,ip6Gateway,ip6Cidr);
   }
   txn.commit();
   return network;
