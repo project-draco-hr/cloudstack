@@ -1,0 +1,92 @@
+{
+  if (zoneId == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  if (Grouping.AllocationState.Enabled == zone.getAllocationState()) {
+    throw new PermissionDeniedException("Cannot create PhysicalNetwork since the Zone is currently enabled, zone Id: " + zoneId);
+  }
+  NetworkType zoneType=zone.getNetworkType();
+  if (zoneType == NetworkType.Basic) {
+    if (!_physicalNetworkDao.listByZone(zoneId).isEmpty()) {
+      throw new CloudRuntimeException("Cannot add the physical network to basic zone id: " + zoneId + ", there is a physical network already existing in this basic Zone");
+    }
+  }
+  if (tags != null && tags.size() > 1) {
+    throw new InvalidParameterException("Only one tag can be specified for a physical network at this time");
+  }
+  if (isolationMethods != null && isolationMethods.size() > 1) {
+    throw new InvalidParameterException("Only one isolationMethod can be specified for a physical network at this time");
+  }
+  int vnetStart=0;
+  int vnetEnd=0;
+  if (vnetRange != null) {
+    if (zoneType == NetworkType.Basic || (zoneType == NetworkType.Advanced && zone.isSecurityGroupEnabled())) {
+      throw new InvalidParameterValueException("Can't add vnet range to the physical network in the zone that supports " + zoneType + " network, Security Group enabled: "+ zone.isSecurityGroupEnabled());
+    }
+    String[] tokens=vnetRange.split("-");
+    try {
+      vnetStart=Integer.parseInt(tokens[0]);
+      if (tokens.length == 1) {
+        vnetEnd=vnetStart;
+      }
+ else {
+        vnetEnd=Integer.parseInt(tokens[1]);
+      }
+    }
+ catch (    NumberFormatException e) {
+      throw new InvalidParameterValueException("Please specify valid integers for the vlan range.");
+    }
+    if ((vnetStart > vnetEnd) || (vnetStart < 0) || (vnetEnd > 4096)) {
+      s_logger.warn("Invalid vnet range: start range:" + vnetStart + " end range:"+ vnetEnd);
+      throw new InvalidParameterValueException("Vnet range should be between 0-4096 and start range should be lesser than or equal to end range");
+    }
+  }
+  BroadcastDomainRange broadcastDomainRange=null;
+  if (broadcastDomainRangeStr != null && !broadcastDomainRangeStr.isEmpty()) {
+    try {
+      broadcastDomainRange=PhysicalNetwork.BroadcastDomainRange.valueOf(broadcastDomainRangeStr.toUpperCase());
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve broadcastDomainRange '" + broadcastDomainRangeStr + "' to a supported value {Pod or Zone}");
+    }
+    if (zoneType == NetworkType.Basic && broadcastDomainRange != null && broadcastDomainRange != BroadcastDomainRange.POD) {
+      throw new InvalidParameterValueException("Basic zone can have broadcast domain type of value " + BroadcastDomainRange.POD + " only");
+    }
+ else     if (zoneType == NetworkType.Advanced && broadcastDomainRange != null && broadcastDomainRange != BroadcastDomainRange.ZONE) {
+      throw new InvalidParameterValueException("Advance zone can have broadcast domain type of value " + BroadcastDomainRange.ZONE + " only");
+    }
+  }
+  if (broadcastDomainRange == null) {
+    if (zoneType == NetworkType.Basic) {
+      broadcastDomainRange=PhysicalNetwork.BroadcastDomainRange.POD;
+    }
+ else {
+      broadcastDomainRange=PhysicalNetwork.BroadcastDomainRange.ZONE;
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    long id=_physicalNetworkDao.getNextInSequence(Long.class,"id");
+    PhysicalNetworkVO pNetwork=new PhysicalNetworkVO(id,zoneId,vnetRange,networkSpeed,domainId,broadcastDomainRange,name);
+    pNetwork.setTags(tags);
+    pNetwork.setIsolationMethods(isolationMethods);
+    pNetwork=_physicalNetworkDao.persist(pNetwork);
+    if (vnetRange != null) {
+      _dcDao.addVnet(zone.getId(),pNetwork.getId(),vnetStart,vnetEnd);
+    }
+    addDefaultVirtualRouterToPhysicalNetwork(pNetwork.getId());
+    addDefaultSecurityGroupProviderToPhysicalNetwork(pNetwork.getId());
+    addDefaultVpcVirtualRouterToPhysicalNetwork(pNetwork.getId());
+    txn.commit();
+    return pNetwork;
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Exception: ",ex);
+    throw new CloudRuntimeException("Fail to create a physical network");
+  }
+}

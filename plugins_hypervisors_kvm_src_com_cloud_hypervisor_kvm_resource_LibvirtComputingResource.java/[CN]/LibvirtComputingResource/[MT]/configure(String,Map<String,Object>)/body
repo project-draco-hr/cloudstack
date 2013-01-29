@@ -27,6 +27,13 @@
   if (storageScriptsDir == null) {
     storageScriptsDir=getDefaultStorageScriptsDir();
   }
+  String bridgeType=(String)params.get("network.bridge.type");
+  if (bridgeType == null) {
+    _bridgeType=BridgeType.NATIVE;
+  }
+ else {
+    _bridgeType=BridgeType.valueOf(bridgeType.toUpperCase());
+  }
   params.put("domr.scripts.dir",domrScriptsDir);
   _virtRouterResource=new VirtualRoutingResource();
   success=_virtRouterResource.configure(name,params);
@@ -69,6 +76,10 @@
   _manageSnapshotPath=Script.findScript(storageScriptsDir,"managesnapshot.sh");
   if (_manageSnapshotPath == null) {
     throw new ConfigurationException("Unable to find the managesnapshot.sh");
+  }
+  _resizeVolumePath=Script.findScript(storageScriptsDir,"resizevolume.sh");
+  if (_resizeVolumePath == null) {
+    throw new ConfigurationException("Unable to find the resizevolume.sh");
   }
   _createTmplPath=Script.findScript(storageScriptsDir,"createtmplt.sh");
   if (_createTmplPath == null) {
@@ -162,6 +173,11 @@
   Connect conn=null;
   try {
     conn=LibvirtConnection.getConnection();
+    if (_bridgeType == BridgeType.OPENVSWITCH) {
+      if (conn.getLibVirVersion() < (9 * 1000 + 11)) {
+        throw new ConfigurationException("LibVirt version 0.9.11 required for openvswitch support, but version " + conn.getLibVirVersion() + " detected");
+      }
+    }
   }
  catch (  LibvirtException e) {
     throw new CloudRuntimeException(e.getMessage());
@@ -194,69 +210,83 @@
       s_logger.debug("Can't find system vm ISO");
     }
   }
-  getPifs();
-  if (_pifs.get("private") == null) {
-    s_logger.debug("Failed to get private nic name");
-    throw new ConfigurationException("Failed to get private nic name");
-  }
-  if (_pifs.get("public") == null) {
-    s_logger.debug("Failed to get public nic name");
-    throw new ConfigurationException("Failed to get public nic name");
-  }
-  s_logger.debug("Found pif: " + _pifs.get("private") + " on "+ _privBridgeName+ ", pif: "+ _pifs.get("public")+ " on "+ _publicBridgeName);
-  _can_bridge_firewall=can_bridge_firewall(_pifs.get("public"));
-  _localGateway=Script.runSimpleBashScript("ip route |grep default|awk '{print $3}'");
-  if (_localGateway == null) {
-    s_logger.debug("Failed to found the local gateway");
-  }
-  _mountPoint=(String)params.get("mount.path");
-  if (_mountPoint == null) {
-    _mountPoint="/mnt";
-  }
-  value=(String)params.get("vm.migrate.speed");
-  _migrateSpeed=NumbersUtil.parseInt(value,-1);
-  if (_migrateSpeed == -1) {
-    _migrateSpeed=0;
-    String speed=Script.runSimpleBashScript("ethtool " + _pifs.get("public") + " |grep Speed | cut -d \\  -f 2");
-    if (speed != null) {
-      String[] tokens=speed.split("M");
-      if (tokens.length == 2) {
-        try {
-          _migrateSpeed=Integer.parseInt(tokens[0]);
-        }
- catch (        Exception e) {
-        }
-        s_logger.debug("device " + _pifs.get("public") + " has speed: "+ String.valueOf(_migrateSpeed));
-      }
-    }
-    params.put("vm.migrate.speed",String.valueOf(_migrateSpeed));
-  }
-  Map<String,String> bridges=new HashMap<String,String>();
-  bridges.put("linklocal",_linkLocalBridgeName);
-  bridges.put("public",_publicBridgeName);
-  bridges.put("private",_privBridgeName);
-  bridges.put("guest",_guestBridgeName);
-  params.put("libvirt.host.bridges",(Object)bridges);
-  params.put("libvirt.host.pifs",(Object)_pifs);
-  String vifDriverName=(String)params.get("libvirt.vif.driver");
-  if (vifDriverName == null) {
-    s_logger.info("No libvirt.vif.driver specififed. Defaults to BridgeVifDriver.");
-    vifDriverName="com.cloud.hypervisor.kvm.resource.BridgeVifDriver";
-  }
-  params.put("libvirt.computing.resource",(Object)this);
-  try {
-    Class<?> clazz=Class.forName(vifDriverName);
-    _vifDriver=(VifDriver)clazz.newInstance();
-    _vifDriver.configure(params);
-  }
- catch (  ClassNotFoundException e) {
-    throw new ConfigurationException("Unable to find class for libvirt.vif.driver " + e);
-  }
-catch (  InstantiationException e) {
-    throw new ConfigurationException("Unable to instantiate class for libvirt.vif.driver " + e);
-  }
-catch (  Exception e) {
-    throw new ConfigurationException("Failed to initialize libvirt.vif.driver " + e);
-  }
-  return true;
+switch (_bridgeType) {
+case OPENVSWITCH:
+    getOvsPifs();
+  break;
+case NATIVE:
+default :
+getPifs();
+break;
+}
+if (_pifs.get("private") == null) {
+s_logger.debug("Failed to get private nic name");
+throw new ConfigurationException("Failed to get private nic name");
+}
+if (_pifs.get("public") == null) {
+s_logger.debug("Failed to get public nic name");
+throw new ConfigurationException("Failed to get public nic name");
+}
+s_logger.debug("Found pif: " + _pifs.get("private") + " on "+ _privBridgeName+ ", pif: "+ _pifs.get("public")+ " on "+ _publicBridgeName);
+_can_bridge_firewall=can_bridge_firewall(_pifs.get("public"));
+_localGateway=Script.runSimpleBashScript("ip route |grep default|awk '{print $3}'");
+if (_localGateway == null) {
+s_logger.debug("Failed to found the local gateway");
+}
+_mountPoint=(String)params.get("mount.path");
+if (_mountPoint == null) {
+_mountPoint="/mnt";
+}
+value=(String)params.get("vm.migrate.speed");
+_migrateSpeed=NumbersUtil.parseInt(value,-1);
+if (_migrateSpeed == -1) {
+_migrateSpeed=0;
+String speed=Script.runSimpleBashScript("ethtool " + _pifs.get("public") + " |grep Speed | cut -d \\  -f 2");
+if (speed != null) {
+String[] tokens=speed.split("M");
+if (tokens.length == 2) {
+try {
+  _migrateSpeed=Integer.parseInt(tokens[0]);
+}
+ catch (Exception e) {
+}
+s_logger.debug("device " + _pifs.get("public") + " has speed: "+ String.valueOf(_migrateSpeed));
+}
+}
+params.put("vm.migrate.speed",String.valueOf(_migrateSpeed));
+}
+Map<String,String> bridges=new HashMap<String,String>();
+bridges.put("linklocal",_linkLocalBridgeName);
+bridges.put("public",_publicBridgeName);
+bridges.put("private",_privBridgeName);
+bridges.put("guest",_guestBridgeName);
+params.put("libvirt.host.bridges",(Object)bridges);
+params.put("libvirt.host.pifs",(Object)_pifs);
+String vifDriverName=(String)params.get("libvirt.vif.driver");
+if (vifDriverName == null) {
+if (_bridgeType == BridgeType.OPENVSWITCH) {
+s_logger.info("No libvirt.vif.driver specififed. Defaults to OvsVifDriver.");
+vifDriverName="com.cloud.hypervisor.kvm.resource.OvsVifDriver";
+}
+ else {
+s_logger.info("No libvirt.vif.driver specififed. Defaults to BridgeVifDriver.");
+vifDriverName="com.cloud.hypervisor.kvm.resource.BridgeVifDriver";
+}
+}
+params.put("libvirt.computing.resource",(Object)this);
+try {
+Class<?> clazz=Class.forName(vifDriverName);
+_vifDriver=(VifDriver)clazz.newInstance();
+_vifDriver.configure(params);
+}
+ catch (ClassNotFoundException e) {
+throw new ConfigurationException("Unable to find class for libvirt.vif.driver " + e);
+}
+catch (InstantiationException e) {
+throw new ConfigurationException("Unable to instantiate class for libvirt.vif.driver " + e);
+}
+catch (Exception e) {
+throw new ConfigurationException("Failed to initialize libvirt.vif.driver " + e);
+}
+return true;
 }
