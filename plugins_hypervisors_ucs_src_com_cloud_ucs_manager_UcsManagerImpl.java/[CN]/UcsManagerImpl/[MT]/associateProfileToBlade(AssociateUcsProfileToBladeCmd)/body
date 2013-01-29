@@ -1,2 +1,36 @@
 {
+  SearchCriteriaService<UcsBladeVO,UcsBladeVO> q=SearchCriteria2.create(UcsBladeVO.class);
+  q.addAnd(q.getEntity().getUcsManagerId(),Op.EQ,cmd.getUcsManagerId());
+  q.addAnd(q.getEntity().getId(),Op.EQ,cmd.getBladeId());
+  UcsBladeVO bvo=q.find();
+  if (bvo == null) {
+    throw new IllegalArgumentException(String.format("cannot find UCS blade[id:%s, ucs manager id:%s]",cmd.getBladeId(),cmd.getUcsManagerId()));
+  }
+  if (bvo.getHostId() != null) {
+    throw new CloudRuntimeException(String.format("blade[id:%s,  dn:%s] has been associated with host[id:%s]",bvo.getId(),bvo.getDn(),bvo.getHostId()));
+  }
+  UcsManagerVO mgrvo=ucsDao.findById(cmd.getUcsManagerId());
+  String cookie=getCookie(cmd.getUcsManagerId());
+  String pdn=cloneProfile(mgrvo.getId(),cmd.getProfileDn(),"profile-for-blade-" + bvo.getId());
+  String ucscmd=UcsCommands.associateProfileToBlade(cookie,pdn,bvo.getDn());
+  UcsHttpClient client=new UcsHttpClient(mgrvo.getUrl());
+  String res=client.call(ucscmd);
+  int count=0;
+  int timeout=600;
+  while (count < timeout) {
+    if (isProfileAssociated(mgrvo.getId(),bvo.getDn())) {
+      break;
+    }
+    try {
+      TimeUnit.SECONDS.sleep(2);
+    }
+ catch (    InterruptedException e) {
+      throw new CloudRuntimeException(e);
+    }
+    count+=2;
+  }
+  if (count >= timeout) {
+    throw new CloudRuntimeException(String.format("associating profile[%s] to balde[%s] timeout after 600 seconds",pdn,bvo.getDn()));
+  }
+  s_logger.debug(String.format("successfully associated profile[%s] to blade[%s]",pdn,bvo.getDn()));
 }
