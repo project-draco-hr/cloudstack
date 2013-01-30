@@ -1,0 +1,40 @@
+{
+  VirtualMachineTO vm=cmd.getVirtualMachine();
+  State state=State.Stopped;
+  try {
+    changeVmState(vm.getName(),State.Starting);
+    OutputInterpreter.AllLinesParser interpreter=new OutputInterpreter.AllLinesParser();
+    if (!doScript(_getStatusCommand,interpreter)) {
+      return new StartAnswer(cmd,"Cannot get current power status of " + _name);
+    }
+    if (isPowerOn(interpreter.getLines())) {
+      if (!doScript(_rebootCommand)) {
+        return new StartAnswer(cmd,"IPMI reboot failed");
+      }
+    }
+ else {
+      if (!doScript(_powerOnCommand)) {
+        return new StartAnswer(cmd,"IPMI power on failed");
+      }
+    }
+    if (_isEchoScAgent) {
+      SecurityGroupHttpClient hc=new SecurityGroupHttpClient();
+      boolean echoRet=hc.echo(vm.getNics()[0].getIp(),TimeUnit.MINUTES.toMillis(30),TimeUnit.MINUTES.toMillis(1));
+      if (!echoRet) {
+        return new StartAnswer(cmd,String.format("Call security group agent on vm[%s] timeout",vm.getNics()[0].getIp()));
+      }
+    }
+    s_logger.debug("Start bare metal vm " + vm.getName() + "successfully");
+    state=State.Running;
+    _vmName=vm.getName();
+    return new StartAnswer(cmd);
+  }
+  finally {
+    if (state != State.Stopped) {
+      changeVmState(vm.getName(),state);
+    }
+ else {
+      removeVmState(vm.getName());
+    }
+  }
+}

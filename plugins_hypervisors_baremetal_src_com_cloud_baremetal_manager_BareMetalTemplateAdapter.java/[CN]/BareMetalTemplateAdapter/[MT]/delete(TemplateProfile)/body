@@ -1,0 +1,68 @@
+{
+  VMTemplateVO template=profile.getTemplate();
+  Long templateId=template.getId();
+  boolean success=true;
+  String zoneName;
+  boolean isAllZone;
+  if (!template.isCrossZones() && profile.getZoneId() != null) {
+    isAllZone=false;
+    zoneName=profile.getZoneId().toString();
+  }
+ else {
+    zoneName="all zones";
+    isAllZone=true;
+  }
+  s_logger.debug("Attempting to mark template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
+  Account account=_accountDao.findByIdIncludingRemoved(template.getAccountId());
+  String eventType=EventTypes.EVENT_TEMPLATE_DELETE;
+  List<VMTemplateHostVO> templateHostVOs=_tmpltHostDao.listByTemplateId(templateId);
+  for (  VMTemplateHostVO vo : templateHostVOs) {
+    VMTemplateHostVO lock=null;
+    try {
+      HostVO pxeServer=_hostDao.findById(vo.getHostId());
+      if (!isAllZone && pxeServer.getDataCenterId() != profile.getZoneId()) {
+        continue;
+      }
+      lock=_tmpltHostDao.acquireInLockTable(vo.getId());
+      if (lock == null) {
+        s_logger.debug("Failed to acquire lock when deleting templateHostVO with ID: " + vo.getId());
+        success=false;
+        break;
+      }
+      vo.setDestroyed(true);
+      _tmpltHostDao.update(vo.getId(),vo);
+      VMTemplateZoneVO templateZone=_tmpltZoneDao.findByZoneTemplate(pxeServer.getDataCenterId(),templateId);
+      if (templateZone != null) {
+        _tmpltZoneDao.remove(templateZone.getId());
+      }
+      UsageEventVO usageEvent=new UsageEventVO(eventType,account.getId(),pxeServer.getDataCenterId(),templateId,null);
+      _usageEventDao.persist(usageEvent);
+    }
+  finally {
+      if (lock != null) {
+        _tmpltHostDao.releaseFromLockTable(lock.getId());
+      }
+    }
+  }
+  s_logger.debug("Successfully marked template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
+  if (success && (_tmpltHostDao.listByTemplateId(templateId).size() == 0)) {
+    long accountId=template.getAccountId();
+    VMTemplateVO lock=_tmpltDao.acquireInLockTable(templateId);
+    try {
+      if (lock == null) {
+        s_logger.debug("Failed to acquire lock when deleting template with ID: " + templateId);
+        success=false;
+      }
+ else       if (_tmpltDao.remove(templateId)) {
+        _resourceLimitMgr.decrementResourceCount(accountId,ResourceType.template);
+      }
+    }
+  finally {
+      if (lock != null) {
+        _tmpltDao.releaseFromLockTable(lock.getId());
+      }
+    }
+    s_logger.debug("Removed template: " + template.getName() + " because all of its template host refs were marked as destroyed.");
+  }
+  return success;
+}
