@@ -1,78 +1,51 @@
 {
-  @SuppressWarnings("rawtype") Collection<GenericDao> daos=ComponentContext.getApplicationContext().getBeansOfType(GenericDao.class).values();
-  Collection<Manager> mgrs=ComponentContext.getApplicationContext().getBeansOfType(Manager.class).values();
-  Collection<Adapter> adapters=ComponentContext.getApplicationContext().getBeansOfType(Adapter.class).values();
-  Map<String,Object> params=new HashMap<String,Object>();
-  for (  GenericDao dao : daos) {
-    try {
-      s_logger.info("Configuring DAO: " + ComponentContext.getTargetClass(dao).getName());
-      dao.configure(dao.getClass().getSimpleName(),params);
-    }
- catch (    ConfigurationException e) {
-      s_logger.error("Unable to configure DAO: " + dao.getClass().getSimpleName(),e);
-      System.exit(1);
-    }
+  Map<String,ComponentLifecycle> lifecyleComponents=getApplicationContext().getBeansOfType(ComponentLifecycle.class);
+  Map[] classifiedComponents=new Map[ComponentLifecycle.MAX_RUN_LEVELS];
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    classifiedComponents[i]=new HashMap<String,ComponentLifecycle>();
   }
-  List<String> avoidMap=new ArrayList<String>();
-  for (  Manager manager : mgrs) {
-    if (avoidMap.contains(manager.getName())) {
-      s_logger.info("Skip manager: " + ComponentContext.getTargetClass(manager).getName() + " as it is already started");
-      continue;
-    }
-    try {
-      s_logger.info("Configuring manager: " + ComponentContext.getTargetClass(manager).getName() + "...");
-      manager.configure(manager.getClass().getSimpleName(),params);
-      avoidMap.add(manager.getName());
-    }
- catch (    Exception e) {
-      s_logger.error("Problems to start manager:" + ComponentContext.getTargetClass(manager).getName(),e);
-      System.exit(1);
-    }
+  for (  Map.Entry<String,ComponentLifecycle> entry : lifecyleComponents.entrySet()) {
+    classifiedComponents[entry.getValue().getRunLevel()].put(entry.getKey(),entry.getValue());
   }
-  for (  Adapter adapter : adapters) {
-    if (avoidMap.contains(adapter.getName())) {
-      s_logger.info("Skip adapter: " + ComponentContext.getTargetClass(adapter).getName() + " as it is already started");
-      continue;
-    }
-    try {
-      s_logger.info("Configuring adapter: " + ComponentContext.getTargetClass(adapter).getName() + "...");
-      adapter.configure(adapter.getName(),params);
-      avoidMap.add(adapter.getName());
-    }
- catch (    Exception e) {
-      s_logger.error("Problems to start adapter:" + ComponentContext.getTargetClass(adapter).getName(),e);
-      System.exit(1);
+  Map<String,String> avoidMap=new HashMap<String,String>();
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    for (    Map.Entry<String,ComponentLifecycle> entry : ((Map<String,ComponentLifecycle>)classifiedComponents[i]).entrySet()) {
+      ComponentLifecycle component=entry.getValue();
+      String implClassName=ComponentContext.getTargetClass(component).getName();
+      s_logger.info("Configuring " + implClassName);
+      if (avoidMap.containsKey(implClassName)) {
+        s_logger.info("Skip configuration of " + implClassName + " as it is already configured");
+        continue;
+      }
+      try {
+        component.configure(component.getName(),component.getConfigParams());
+      }
+ catch (      ConfigurationException e) {
+        s_logger.error("Unhandled exception",e);
+        throw new RuntimeException("Unable to configure " + implClassName,e);
+      }
+      avoidMap.put(implClassName,implClassName);
     }
   }
   avoidMap.clear();
-  for (  Manager manager : mgrs) {
-    if (avoidMap.contains(manager.getName())) {
-      s_logger.info("Skip start on manager: " + ComponentContext.getTargetClass(manager).getName() + " as it is already started");
-      continue;
-    }
-    try {
-      s_logger.info("Starting manager: " + ComponentContext.getTargetClass(manager).getName() + "...");
-      manager.start();
-      avoidMap.add(manager.getName());
-    }
- catch (    Exception e) {
-      s_logger.error("Problems to start manager:" + ComponentContext.getTargetClass(manager).getName(),e);
-      System.exit(1);
-    }
-  }
-  for (  Adapter adapter : adapters) {
-    if (avoidMap.contains(adapter.getName())) {
-      s_logger.info("Skip start on adapter: " + ComponentContext.getTargetClass(adapter).getName() + " as it is already started");
-      continue;
-    }
-    try {
-      s_logger.info("Startinging adapter: " + ComponentContext.getTargetClass(adapter).getName() + "...");
-      adapter.start();
-      avoidMap.add(adapter.getName());
-    }
- catch (    Exception e) {
-      s_logger.error("Problems to start adapter:" + ComponentContext.getTargetClass(adapter).getName(),e);
-      System.exit(1);
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    for (    Map.Entry<String,ComponentLifecycle> entry : ((Map<String,ComponentLifecycle>)classifiedComponents[i]).entrySet()) {
+      ComponentLifecycle component=entry.getValue();
+      String implClassName=ComponentContext.getTargetClass(component).getName();
+      s_logger.info("Starting " + implClassName);
+      if (avoidMap.containsKey(implClassName)) {
+        s_logger.info("Skip configuration of " + implClassName + " as it is already configured");
+        continue;
+      }
+      try {
+        component.start();
+        if (getTargetObject(component) instanceof ManagementBean)         registerMBean((ManagementBean)getTargetObject(component));
+      }
+ catch (      Exception e) {
+        s_logger.error("Unhandled exception",e);
+        throw new RuntimeException("Unable to start " + implClassName,e);
+      }
+      avoidMap.put(implClassName,implClassName);
     }
   }
 }
