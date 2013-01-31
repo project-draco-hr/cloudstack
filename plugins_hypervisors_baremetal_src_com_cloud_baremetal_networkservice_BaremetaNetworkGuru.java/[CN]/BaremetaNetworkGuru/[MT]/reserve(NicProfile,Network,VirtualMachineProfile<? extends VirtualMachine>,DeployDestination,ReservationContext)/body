@@ -1,0 +1,40 @@
+{
+  if (dest.getHost().getHypervisorType() != HypervisorType.BareMetal) {
+    super.reserve(nic,network,vm,dest,context);
+    return;
+  }
+  HostVO host=_hostDao.findById(dest.getHost().getId());
+  _hostDao.loadDetails(host);
+  String intentIp=host.getDetail(ApiConstants.IP_ADDRESS);
+  if (intentIp == null) {
+    super.reserve(nic,network,vm,dest,context);
+    return;
+  }
+  String oldIp=nic.getIp4Address();
+  boolean getNewIp=false;
+  if (oldIp == null) {
+    getNewIp=true;
+  }
+ else {
+    IPAddressVO ipVO=_ipAddressDao.findByIpAndSourceNetworkId(network.getId(),oldIp);
+    if (ipVO != null) {
+      PodVlanMapVO mapVO=_podVlanDao.listPodVlanMapsByVlan(ipVO.getVlanId());
+      if (mapVO.getPodId() != dest.getPod().getId()) {
+        Transaction txn=Transaction.currentTxn();
+        txn.start();
+        _networkMgr.markIpAsUnavailable(ipVO.getId());
+        _ipAddressDao.unassignIpAddress(ipVO.getId());
+        txn.commit();
+        nic.setIp4Address(null);
+        getNewIp=true;
+      }
+    }
+  }
+  if (getNewIp) {
+    getBaremetalIp(nic,dest.getPod(),vm,network,intentIp);
+  }
+  DataCenter dc=_dcDao.findById(network.getDataCenterId());
+  nic.setDns1(dc.getDns1());
+  nic.setDns2(dc.getDns2());
+  s_logger.debug("Allocated a nic " + nic + " for "+ vm);
+}

@@ -1,0 +1,38 @@
+def setUp(self):
+    self.cleanup = []
+    self.cleaning_up = 0
+
+    def signal_handler(signal, frame):
+        self.tearDown()
+        sys.exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+    try:
+        self.apiclient = self.testClient.getApiClient()
+        self.dbclient = self.testClient.getDbConnection()
+        self.services = Services().services
+        domain = get_domain(self.apiclient, self.services)
+        zone = get_zone(self.apiclient, self.services)
+        self.services['mode'] = zone.networktype
+        if (self.services['mode'] != 'Advanced'):
+            self.debug('Cannot run this test with a basic zone, please use advanced!')
+            return
+        if (zone.localstorageenabled == True):
+            self.services['service_offerings']['tiny']['storagetype'] = 'local'
+        template = get_template(self.apiclient, zone.id, self.services['ostype'])
+        self.services['small']['zoneid'] = zone.id
+        self.services['small']['template'] = template.id
+        self.services['iso']['zoneid'] = zone.id
+        self.services['network']['zoneid'] = zone.id
+        self.account = Account.create(self.apiclient, self.services['account'], domainid=domain.id)
+        self.cleanup.insert(0, self.account)
+        self.service_offering = ServiceOffering.create(self.apiclient, self.services['service_offerings']['tiny'])
+        self.cleanup.insert(0, self.service_offering)
+        self.network_offering = NetworkOffering.create(self.apiclient, self.services['network_offering'])
+        self.cleanup.insert(0, self.network_offering)
+        self.network_offering.update(self.apiclient, state='Enabled')
+        self.services['network']['networkoffering'] = self.network_offering.id
+        self.test_network = Network.create(self.apiclient, self.services['network'], self.account.account.name, self.account.account.domainid)
+        self.cleanup.insert(0, self.test_network)
+    except Exception as ex:
+        self.debug(('Exception during NIC test SETUP!: ' + str(ex)))
+        self.assertEqual(True, False, ('Exception during NIC test SETUP!: ' + str(ex)))

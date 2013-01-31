@@ -1,0 +1,46 @@
+{
+  Long vmId=cmd.getVmId();
+  Long nicId=cmd.getNicId();
+  Account caller=UserContext.current().getCaller();
+  UserVmVO vmInstance=_vmDao.findById(vmId);
+  if (vmInstance == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+  }
+  NicVO nic=_nicDao.findById(nicId);
+  if (nic == null) {
+    throw new InvalidParameterValueException("unable to find a nic with id " + nicId);
+  }
+  NetworkVO network=_networkDao.findById(nic.getNetworkId());
+  if (network == null) {
+    throw new InvalidParameterValueException("unable to find a network with id " + nic.getNetworkId());
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  DataCenterVO dc=_dcDao.findById(vmInstance.getDataCenterId());
+  if (dc.getNetworkType() == DataCenter.NetworkType.Basic) {
+    throw new CloudRuntimeException("Zone " + vmInstance.getDataCenterId() + ", has a NetworkType of Basic. Can't remove a NIC from a VM on a Basic Network");
+  }
+  if (nic.getInstanceId() != vmId) {
+    throw new InvalidParameterValueException(nic + " is not a nic on  " + vmInstance);
+  }
+  if (network.getGuestType() != Network.GuestType.Shared) {
+    List<NetworkVO> networkMap=_networkDao.listBy(caller.getId(),network.getId());
+    if ((networkMap == null || networkMap.isEmpty()) && caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      throw new PermissionDeniedException("Unable to modify a vm using network with id " + network.getId() + ", permission denied");
+    }
+  }
+  boolean nicremoved=false;
+  try {
+    nicremoved=_itMgr.removeNicFromVm(vmInstance,nic);
+  }
+ catch (  ResourceUnavailableException e) {
+    throw new CloudRuntimeException("Unable to remove " + network + " from "+ vmInstance+ ": "+ e);
+  }
+catch (  ConcurrentOperationException e) {
+    throw new CloudRuntimeException("Concurrent operations on removing " + network + " from "+ vmInstance+ ": "+ e);
+  }
+  if (!nicremoved) {
+    throw new CloudRuntimeException("Unable to remove " + network + " from "+ vmInstance);
+  }
+  s_logger.debug("Successful removal of " + network + " from "+ vmInstance);
+  return _vmDao.findById(vmInstance.getId());
+}
