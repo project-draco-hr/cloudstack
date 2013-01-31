@@ -23,8 +23,7 @@
     }
     NetworkOfferingVO offering=_networkOfferingDao.findById(network.getNetworkOfferingId());
     network.setReservationId(context.getReservationId());
-    network.setState(Network.State.Implementing);
-    _networksDao.update(networkId,network);
+    stateTransitTo(network,Event.ImplementNetwork);
     Network result=guru.implement(network,offering,dest,context);
     network.setCidr(result.getCidr());
     network.setBroadcastUri(result.getBroadcastUri());
@@ -33,17 +32,25 @@
     network.setPhysicalNetworkId(result.getPhysicalNetworkId());
     _networksDao.update(networkId,network);
     implementNetworkElementsAndResources(dest,context,network,offering);
-    network.setState(Network.State.Implemented);
+    stateTransitTo(network,Event.OperationSucceeded);
     network.setRestartRequired(false);
     _networksDao.update(network.getId(),network);
     implemented.set(guru,network);
     return implemented;
   }
-  finally {
+ catch (  NoTransitionException e) {
+    s_logger.error(e.getMessage());
+    return null;
+  }
+ finally {
     if (implemented.first() == null) {
       s_logger.debug("Cleaning up because we're unable to implement the network " + network);
-      network.setState(Network.State.Shutdown);
-      _networksDao.update(networkId,network);
+      try {
+        stateTransitTo(network,Event.OperationFailed);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.error(e.getMessage());
+      }
       shutdownNetwork(networkId,context,false);
     }
     _networksDao.releaseFromLockTable(networkId);

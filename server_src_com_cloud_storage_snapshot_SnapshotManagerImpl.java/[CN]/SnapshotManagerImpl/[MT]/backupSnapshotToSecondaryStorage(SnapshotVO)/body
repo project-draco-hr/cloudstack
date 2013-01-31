@@ -5,8 +5,12 @@
     throw new CloudRuntimeException("Can not acquire lock for snapshot: " + ss);
   }
   try {
-    snapshot.setStatus(Snapshot.Status.BackingUp);
-    _snapshotDao.update(snapshot.getId(),snapshot);
+    try {
+      stateTransitTo(snapshot,Snapshot.Event.BackupToSecondary);
+    }
+ catch (    NoTransitionException nte) {
+      s_logger.debug("Failed to update the state of snapshot while backing up snapshot");
+    }
     long volumeId=snapshot.getVolumeId();
     VolumeVO volume=_volsDao.lockRow(volumeId,true);
     Long dcId=volume.getDataCenterId();
@@ -74,10 +78,20 @@
       if (answer.isFull()) {
         snapshot.setPrevSnapshotId(0);
       }
-      snapshot.setStatus(Snapshot.Status.BackedUp);
-      _snapshotDao.update(snapshotId,snapshot);
+      try {
+        stateTransitTo(snapshot,Snapshot.Event.OperationSucceeded);
+      }
+ catch (      NoTransitionException nte) {
+        s_logger.debug("Failed to update the state of snapshot while backing up snapshot");
+      }
     }
  else {
+      try {
+        stateTransitTo(snapshot,Snapshot.Event.OperationFailed);
+      }
+ catch (      NoTransitionException nte) {
+        s_logger.debug("Failed to update the state of snapshot while backing up snapshot");
+      }
       s_logger.warn("Failed to back up snapshot on secondary storage, deleting the record from the DB");
       _snapshotDao.remove(snapshotId);
     }
