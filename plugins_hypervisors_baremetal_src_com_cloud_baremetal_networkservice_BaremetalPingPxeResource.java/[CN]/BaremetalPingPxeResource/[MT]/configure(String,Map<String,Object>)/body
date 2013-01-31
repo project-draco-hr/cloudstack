@@ -1,0 +1,67 @@
+{
+  super.configure(name,params);
+  _storageServer=(String)params.get(BaremetalPxeService.PXE_PARAM_PING_STORAGE_SERVER_IP);
+  _pingDir=(String)params.get(BaremetalPxeService.PXE_PARAM_PING_ROOT_DIR);
+  _tftpDir=(String)params.get(BaremetalPxeService.PXE_PARAM_TFTP_DIR);
+  _cifsUserName=(String)params.get(BaremetalPxeService.PXE_PARAM_PING_STORAGE_SERVER_USERNAME);
+  _cifsPassword=(String)params.get(BaremetalPxeService.PXE_PARAM_PING_STORAGE_SERVER_PASSWORD);
+  if (_podId == null) {
+    throw new ConfigurationException("No Pod specified");
+  }
+  if (_storageServer == null) {
+    throw new ConfigurationException("No stroage server specified");
+  }
+  if (_tftpDir == null) {
+    throw new ConfigurationException("No tftp directory specified");
+  }
+  if (_pingDir == null) {
+    throw new ConfigurationException("No PING directory specified");
+  }
+  if (_cifsUserName == null || _cifsUserName.equalsIgnoreCase("")) {
+    _cifsUserName="xxx";
+  }
+  if (_cifsPassword == null || _cifsPassword.equalsIgnoreCase("")) {
+    _cifsPassword="xxx";
+  }
+  String pingDirs[]=_pingDir.split("/");
+  if (pingDirs.length != 2) {
+    throw new ConfigurationException("PING dir should have format like myshare/direcotry, eg: windows/64bit");
+  }
+  _share=pingDirs[0];
+  _dir=pingDirs[1];
+  com.trilead.ssh2.Connection sshConnection=new com.trilead.ssh2.Connection(_ip,22);
+  s_logger.debug(String.format("Trying to connect to PING PXE server(IP=%1$s, username=%2$s, password=%3$s",_ip,_username,"******"));
+  try {
+    sshConnection.connect(null,60000,60000);
+    if (!sshConnection.authenticateWithPassword(_username,_password)) {
+      s_logger.debug("SSH Failed to authenticate");
+      throw new ConfigurationException(String.format("Cannot connect to PING PXE server(IP=%1$s, username=%2$s, password=%3$s",_ip,_username,"******"));
+    }
+    String cmd=String.format("[ -f /%1$s/pxelinux.0 ] && [ -f /%2$s/kernel ] && [ -f /%3$s/initrd.gz ] ",_tftpDir,_tftpDir,_tftpDir);
+    if (!SSHCmdHelper.sshExecuteCmd(sshConnection,cmd)) {
+      throw new ConfigurationException("Miss files in TFTP directory at " + _tftpDir + " check if pxelinux.0, kernel initrd.gz are here");
+    }
+    SCPClient scp=new SCPClient(sshConnection);
+    String prepareScript="scripts/network/ping/prepare_tftp_bootfile.py";
+    String prepareScriptPath=Script.findScript("",prepareScript);
+    if (prepareScriptPath == null) {
+      throw new ConfigurationException("Can not find prepare_tftp_bootfile.py at " + prepareScriptPath);
+    }
+    scp.put(prepareScriptPath,"/usr/bin/","0755");
+    String userDataScript="scripts/network/ping/baremetal_user_data.py";
+    String userDataScriptPath=Script.findScript("",userDataScript);
+    if (userDataScriptPath == null) {
+      throw new ConfigurationException("Can not find baremetal_user_data.py at " + userDataScriptPath);
+    }
+    scp.put(userDataScriptPath,"/usr/bin/","0755");
+    return true;
+  }
+ catch (  Exception e) {
+    throw new ConfigurationException(e.getMessage());
+  }
+ finally {
+    if (sshConnection != null) {
+      sshConnection.close();
+    }
+  }
+}

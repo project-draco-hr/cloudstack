@@ -1,0 +1,48 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=_accountMgr.finalizeOwner(caller,cmd.getAccountName(),cmd.getDomainId(),cmd.getProjectId());
+  Long vmId=cmd.getId();
+  UserVmVO userVm=_vmDao.findById(cmd.getId());
+  _vmDao.loadDetails(userVm);
+  VMTemplateVO template=_templateDao.findByIdIncludingRemoved(userVm.getTemplateId());
+  if (userVm == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine by id" + cmd.getId());
+  }
+  if (userVm.getState() == State.Error || userVm.getState() == State.Expunging) {
+    s_logger.error("vm is not in the right state: " + vmId);
+    throw new InvalidParameterValueException("Vm with specified id is not in the right state");
+  }
+  if (userVm.getState() != State.Stopped) {
+    s_logger.error("vm is not in the right state: " + vmId);
+    throw new InvalidParameterValueException("Vm " + userVm + " should be stopped to do SSH Key reset");
+  }
+  SSHKeyPairVO s=_sshKeyPairDao.findByName(owner.getAccountId(),owner.getDomainId(),cmd.getName());
+  if (s == null) {
+    throw new InvalidParameterValueException("A key pair with name '" + cmd.getName() + "' does not exist for account "+ owner.getAccountName()+ " in specified domain id");
+  }
+  _accountMgr.checkAccess(caller,null,true,userVm);
+  String password=null;
+  String sshPublicKey=s.getPublicKey();
+  if (template != null && template.getEnablePassword()) {
+    password=generateRandomPassword();
+  }
+  boolean result=resetVMSSHKeyInternal(vmId,sshPublicKey,password);
+  if (result) {
+    userVm.setDetail("SSH.PublicKey",sshPublicKey);
+    if (template != null && template.getEnablePassword()) {
+      userVm.setPassword(password);
+      if (sshPublicKey != null && !sshPublicKey.equals("") && password != null && !password.equals("saved_password")) {
+        String encryptedPasswd=RSAHelper.encryptWithSSHPublicKey(sshPublicKey,password);
+        if (encryptedPasswd == null) {
+          throw new CloudRuntimeException("Error encrypting password");
+        }
+        userVm.setDetail("Encrypted.Password",encryptedPasswd);
+      }
+    }
+    _vmDao.saveDetails(userVm);
+  }
+ else {
+    throw new CloudRuntimeException("Failed to reset SSH Key for the virtual machine ");
+  }
+  return userVm;
+}
