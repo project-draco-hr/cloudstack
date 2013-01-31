@@ -1,0 +1,73 @@
+{
+  Long vmId=cmd.getVmId();
+  Long nicId=cmd.getNicId();
+  Account caller=UserContext.current().getCaller();
+  UserVmVO vmInstance=_vmDao.findById(vmId);
+  if (vmInstance == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+  }
+  NicVO nic=_nicDao.findById(nicId);
+  if (nic == null) {
+    throw new InvalidParameterValueException("unable to find a nic with id " + nicId);
+  }
+  NetworkVO network=_networkDao.findById(nic.getNetworkId());
+  if (network == null) {
+    throw new InvalidParameterValueException("unable to find a network with id " + nic.getNetworkId());
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  DataCenterVO dc=_dcDao.findById(vmInstance.getDataCenterIdToDeployIn());
+  if (dc.getNetworkType() == DataCenter.NetworkType.Basic) {
+    throw new CloudRuntimeException("Zone " + vmInstance.getDataCenterIdToDeployIn() + ", has a NetworkType of Basic. Can't change default NIC on a Basic Network");
+  }
+  Network existingdefaultnet=_networkModel.getDefaultNetworkForVm(vmId);
+  if (nic.getInstanceId() != vmId) {
+    throw new InvalidParameterValueException(nic + " is not a nic on  " + vmInstance);
+  }
+  if (nic.isDefaultNic()) {
+    throw new CloudRuntimeException("refusing to set default nic because chosen nic is already the default");
+  }
+  if ((vmInstance.getState() != State.Running) && (vmInstance.getState() != State.Stopped)) {
+    throw new CloudRuntimeException("refusing to set default " + vmInstance + " is not Running or Stopped");
+  }
+  NicProfile existing=null;
+  List<NicProfile> nicProfiles=_networkMgr.getNicProfiles(vmInstance);
+  for (  NicProfile nicProfile : nicProfiles) {
+    if (nicProfile.isDefaultNic() && nicProfile.getNetworkId() == existingdefaultnet.getId()) {
+      existing=nicProfile;
+      continue;
+    }
+  }
+  if (existing == null) {
+    s_logger.warn("Failed to update default nic, no nic profile found for existing default network");
+    throw new CloudRuntimeException("Failed to find a nic profile for the existing default network. This is bad and probably means some sort of configuration corruption");
+  }
+  NicVO existingVO=_nicDao.findById(existing.id);
+  Integer chosenID=nic.getDeviceId();
+  Integer existingID=existing.getDeviceId();
+  nic.setDefaultNic(true);
+  nic.setDeviceId(existingID);
+  existingVO.setDefaultNic(false);
+  existingVO.setDeviceId(chosenID);
+  nic=_nicDao.persist(nic);
+  existingVO=_nicDao.persist(existingVO);
+  Network newdefault=null;
+  newdefault=_networkModel.getDefaultNetworkForVm(vmId);
+  if (newdefault == null) {
+    nic.setDefaultNic(false);
+    nic.setDeviceId(chosenID);
+    existingVO.setDefaultNic(true);
+    existingVO.setDeviceId(existingID);
+    nic=_nicDao.persist(nic);
+    existingVO=_nicDao.persist(existingVO);
+    newdefault=_networkModel.getDefaultNetworkForVm(vmId);
+    if (newdefault.getId() == existingdefaultnet.getId()) {
+      throw new CloudRuntimeException("Setting a default nic failed, and we had no default nic, but we were able to set it back to the original");
+    }
+    throw new CloudRuntimeException("Failed to change default nic to " + nic + " and now we have no default");
+  }
+ else   if (newdefault.getId() == nic.getNetworkId()) {
+    s_logger.debug("successfully set default network to " + network + " for "+ vmInstance);
+    return _vmDao.findById(vmInstance.getId());
+  }
+  throw new CloudRuntimeException("something strange happened, new default network(" + newdefault.getId() + ") is not null, and is not equal to the network("+ nic.getNetworkId()+ ") of the chosen nic");
+}
