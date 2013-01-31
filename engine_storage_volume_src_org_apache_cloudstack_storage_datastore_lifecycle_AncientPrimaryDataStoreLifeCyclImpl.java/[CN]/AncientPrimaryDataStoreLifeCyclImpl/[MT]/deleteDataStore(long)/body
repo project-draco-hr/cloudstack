@@ -1,0 +1,50 @@
+{
+  List<StoragePoolHostVO> hostPoolRecords=this._storagePoolHostDao.listByPoolId(storeId);
+  StoragePoolVO poolVO=this.primaryDataStoreDao.findById(storeId);
+  StoragePool pool=(StoragePool)this.dataStoreMgr.getDataStore(storeId,DataStoreRole.Primary);
+  boolean deleteFlag=false;
+  Transaction txn=Transaction.currentTxn();
+  try {
+    if (hostPoolRecords.size() == 0) {
+      txn.start();
+      poolVO.setUuid(null);
+      this.primaryDataStoreDao.update(poolVO.getId(),poolVO);
+      primaryDataStoreDao.remove(poolVO.getId());
+      deletePoolStats(poolVO.getId());
+      txn.commit();
+      deleteFlag=true;
+      return true;
+    }
+ else {
+      for (      StoragePoolHostVO host : hostPoolRecords) {
+        DeleteStoragePoolCommand deleteCmd=new DeleteStoragePoolCommand(pool);
+        final Answer answer=agentMgr.easySend(host.getHostId(),deleteCmd);
+        if (answer != null && answer.getResult()) {
+          deleteFlag=true;
+          break;
+        }
+      }
+    }
+  }
+  finally {
+    if (deleteFlag) {
+      txn.start();
+      for (      StoragePoolHostVO host : hostPoolRecords) {
+        _storagePoolHostDao.deleteStoragePoolHostDetails(host.getHostId(),host.getPoolId());
+      }
+      poolVO.setUuid(null);
+      this.primaryDataStoreDao.update(poolVO.getId(),poolVO);
+      primaryDataStoreDao.remove(poolVO.getId());
+      deletePoolStats(poolVO.getId());
+      this._capacityDao.removeBy(Capacity.CAPACITY_TYPE_STORAGE_ALLOCATED,null,null,null,poolVO.getId());
+      txn.commit();
+      s_logger.debug("Storage pool id=" + poolVO.getId() + " is removed successfully");
+      return true;
+    }
+ else {
+      s_logger.warn("Failed to Delete storage pool id: " + poolVO.getId());
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_STORAGE_DELETE,poolVO.getDataCenterId(),poolVO.getPodId(),"Unable to delete storage pool id= " + poolVO.getId(),"Delete storage pool command failed.  Please check logs.");
+    }
+  }
+  return false;
+}

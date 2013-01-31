@@ -1,0 +1,115 @@
+{
+  ManagementServerExt _mgrExt=(ManagementServerExt)_mgr;
+  List<UsageVO> usageRecords=_mgrExt.getUsageRecords(this);
+  IdentityDao identityDao=new IdentityDaoImpl();
+  ListResponse<UsageRecordResponse> response=new ListResponse<UsageRecordResponse>();
+  List<UsageRecordResponse> usageResponses=new ArrayList<UsageRecordResponse>();
+  for (  Object usageRecordGeneric : usageRecords) {
+    UsageRecordResponse usageRecResponse=new UsageRecordResponse();
+    if (usageRecordGeneric instanceof UsageVO) {
+      UsageVO usageRecord=(UsageVO)usageRecordGeneric;
+      Account account=ApiDBUtils.findAccountByIdIncludingRemoved(usageRecord.getAccountId());
+      if (account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+        Project project=ApiDBUtils.findProjectByProjectAccountId(account.getId());
+        usageRecResponse.setProjectId(project.getUuid());
+        usageRecResponse.setProjectName(project.getName());
+      }
+ else {
+        usageRecResponse.setAccountId(account.getUuid());
+        usageRecResponse.setAccountName(account.getAccountName());
+      }
+      Domain domain=ApiDBUtils.findDomainById(usageRecord.getDomainId());
+      if (domain != null) {
+        usageRecResponse.setDomainId(domain.getUuid());
+      }
+      if (usageRecord.getZoneId() != null) {
+        DataCenter zone=ApiDBUtils.findZoneById(usageRecord.getZoneId());
+        if (zone != null) {
+          usageRecResponse.setZoneId(zone.getUuid());
+        }
+      }
+      usageRecResponse.setDescription(usageRecord.getDescription());
+      usageRecResponse.setUsage(usageRecord.getUsageDisplay());
+      usageRecResponse.setUsageType(usageRecord.getUsageType());
+      if (usageRecord.getVmInstanceId() != null) {
+        VMInstanceVO vm=ApiDBUtils.findVMInstanceById(usageRecord.getVmInstanceId());
+        if (vm != null) {
+          usageRecResponse.setVirtualMachineId(vm.getUuid());
+        }
+      }
+      usageRecResponse.setVmName(usageRecord.getVmName());
+      if (usageRecord.getTemplateId() != null) {
+        VMTemplateVO template=ApiDBUtils.findTemplateById(usageRecord.getTemplateId());
+        if (template != null) {
+          usageRecResponse.setTemplateId(template.getUuid());
+        }
+      }
+      if (usageRecord.getUsageType() == UsageTypes.RUNNING_VM || usageRecord.getUsageType() == UsageTypes.ALLOCATED_VM) {
+        usageRecResponse.setOfferingId(identityDao.getIdentityUuid("disk_offering",usageRecord.getOfferingId().toString()));
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("vm_instance",usageRecord.getUsageId().toString()));
+        usageRecResponse.setType(usageRecord.getType());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.IP_ADDRESS) {
+        usageRecResponse.setSourceNat((usageRecord.getType().equals("SourceNat")) ? true : false);
+        usageRecResponse.setSystem((usageRecord.getSize() == 1) ? true : false);
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("user_ip_address",usageRecord.getUsageId().toString()));
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.NETWORK_BYTES_SENT || usageRecord.getUsageType() == UsageTypes.NETWORK_BYTES_RECEIVED) {
+        usageRecResponse.setType(usageRecord.getType());
+        if (usageRecord.getType().equals("DomainRouter")) {
+          usageRecResponse.setUsageId(identityDao.getIdentityUuid("vm_instance",usageRecord.getUsageId().toString()));
+        }
+ else {
+          usageRecResponse.setUsageId(identityDao.getIdentityUuid("host",usageRecord.getUsageId().toString()));
+        }
+        usageRecResponse.setNetworkId(identityDao.getIdentityUuid("networks",usageRecord.getNetworkId().toString()));
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.VOLUME) {
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("volumes",usageRecord.getUsageId().toString()));
+        usageRecResponse.setSize(usageRecord.getSize());
+        if (usageRecord.getOfferingId() != null) {
+          usageRecResponse.setOfferingId(identityDao.getIdentityUuid("disk_offering",usageRecord.getOfferingId().toString()));
+        }
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.TEMPLATE || usageRecord.getUsageType() == UsageTypes.ISO) {
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("vm_template",usageRecord.getUsageId().toString()));
+        usageRecResponse.setSize(usageRecord.getSize());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.SNAPSHOT) {
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("snapshots",usageRecord.getUsageId().toString()));
+        usageRecResponse.setSize(usageRecord.getSize());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.LOAD_BALANCER_POLICY) {
+        usageRecResponse.setUsageId(usageRecord.getUsageId().toString());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.PORT_FORWARDING_RULE) {
+        usageRecResponse.setUsageId(usageRecord.getUsageId().toString());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.NETWORK_OFFERING) {
+        usageRecResponse.setOfferingId(identityDao.getIdentityUuid("network_offerings",usageRecord.getOfferingId().toString()));
+        usageRecResponse.setDefault((usageRecord.getUsageId() == 1) ? true : false);
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.VPN_USERS) {
+        usageRecResponse.setUsageId(usageRecord.getUsageId().toString());
+      }
+ else       if (usageRecord.getUsageType() == UsageTypes.SECURITY_GROUP) {
+        usageRecResponse.setUsageId(identityDao.getIdentityUuid("security_group",usageRecord.getUsageId().toString()));
+      }
+      if (usageRecord.getRawUsage() != null) {
+        DecimalFormat decimalFormat=new DecimalFormat("###########.######");
+        usageRecResponse.setRawUsage(decimalFormat.format(usageRecord.getRawUsage()));
+      }
+      if (usageRecord.getStartDate() != null) {
+        usageRecResponse.setStartDate(getDateStringInternal(usageRecord.getStartDate()));
+      }
+      if (usageRecord.getEndDate() != null) {
+        usageRecResponse.setEndDate(getDateStringInternal(usageRecord.getEndDate()));
+      }
+    }
+    usageRecResponse.setObjectName("usagerecord");
+    usageResponses.add(usageRecResponse);
+  }
+  response.setResponses(usageResponses);
+  response.setResponseName(getCommandName());
+  this.setResponseObject(response);
+}

@@ -1,0 +1,36 @@
+{
+  Account account=_accountDao.findById(volume.getAccountId());
+  final HashSet<StoragePool> poolsToAvoid=new HashSet<StoragePool>();
+  StoragePool pool=null;
+  Set<Long> podsToAvoid=new HashSet<Long>();
+  Pair<HostPodVO,Long> pod=null;
+  DiskOfferingVO diskOffering=_diskOfferingDao.findByIdIncludingRemoved(volume.getDiskOfferingId());
+  DataCenterVO dc=_dcDao.findById(volume.getDataCenterId());
+  DiskProfile dskCh=new DiskProfile(volume,diskOffering,snapshot.getHypervisorType());
+  while ((pod=_resourceMgr.findPod(null,null,dc,account.getId(),podsToAvoid)) != null) {
+    podsToAvoid.add(pod.first().getId());
+    while ((pool=storageMgr.findStoragePool(dskCh,dc,pod.first(),null,null,null,poolsToAvoid)) != null) {
+      break;
+    }
+  }
+  VolumeInfo vol=this.volFactory.getVolume(volume.getId());
+  DataStore store=this.dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
+  SnapshotInfo snapInfo=this.snapshotFactory.getSnapshot(snapshot.getId());
+  AsyncCallFuture<VolumeApiResult> future=this.volService.createVolumeFromSnapshot(vol,store,snapInfo);
+  try {
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      s_logger.debug("Failed to create volume from snapshot:" + result.getResult());
+      throw new CloudRuntimeException("Failed to create volume from snapshot:" + result.getResult());
+    }
+    return result.getVolume();
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("Failed to create volume from snapshot",e);
+    throw new CloudRuntimeException("Failed to create volume from snapshot",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("Failed to create volume from snapshot",e);
+    throw new CloudRuntimeException("Failed to create volume from snapshot",e);
+  }
+}

@@ -1,0 +1,42 @@
+{
+  String errorMsg="Failed to attach volume: " + volume.getName() + " to VM: "+ vm.getHostName();
+  boolean sendCommand=(vm.getState() == State.Running);
+  AttachVolumeAnswer answer=null;
+  Long hostId=vm.getHostId();
+  if (hostId == null) {
+    hostId=vm.getLastHostId();
+    HostVO host=_hostDao.findById(hostId);
+    if (host != null && host.getHypervisorType() == HypervisorType.VMware) {
+      sendCommand=true;
+    }
+  }
+  if (sendCommand) {
+    StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
+    AttachVolumeCommand cmd=new AttachVolumeCommand(true,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),deviceId,volume.getChainInfo());
+    cmd.setPoolUuid(volumePool.getUuid());
+    try {
+      answer=(AttachVolumeAnswer)_agentMgr.send(hostId,cmd);
+    }
+ catch (    Exception e) {
+      throw new CloudRuntimeException(errorMsg + " due to: " + e.getMessage());
+    }
+  }
+  if (!sendCommand || (answer != null && answer.getResult())) {
+    if (sendCommand) {
+      _volsDao.attachVolume(volume.getId(),vm.getId(),answer.getDeviceId());
+    }
+ else {
+      _volsDao.attachVolume(volume.getId(),vm.getId(),deviceId);
+    }
+    return _volsDao.findById(volume.getId());
+  }
+ else {
+    if (answer != null) {
+      String details=answer.getDetails();
+      if (details != null && !details.isEmpty()) {
+        errorMsg+="; " + details;
+      }
+    }
+    throw new CloudRuntimeException(errorMsg);
+  }
+}

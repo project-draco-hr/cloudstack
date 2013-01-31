@@ -1,0 +1,37 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Cleaning storage for vm: " + vmId);
+  }
+  List<VolumeVO> volumesForVm=_volsDao.findByInstance(vmId);
+  List<VolumeVO> toBeExpunged=new ArrayList<VolumeVO>();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  for (  VolumeVO vol : volumesForVm) {
+    if (vol.getVolumeType().equals(Type.ROOT)) {
+      if (!vol.getState().equals(Volume.State.Destroy)) {
+        this.volService.destroyVolume(vol.getId());
+      }
+      toBeExpunged.add(vol);
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Detaching " + vol);
+      }
+      _volsDao.detachVolume(vol.getId());
+    }
+  }
+  txn.commit();
+  AsyncCallFuture<VolumeApiResult> future=null;
+  for (  VolumeVO expunge : toBeExpunged) {
+    future=this.volService.expungeVolumeAsync(this.volFactory.getVolume(expunge.getId()));
+    try {
+      future.get();
+    }
+ catch (    InterruptedException e) {
+      s_logger.debug("failed expunge volume" + expunge.getId(),e);
+    }
+catch (    ExecutionException e) {
+      s_logger.debug("failed expunge volume" + expunge.getId(),e);
+    }
+  }
+}
