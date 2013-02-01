@@ -28,8 +28,9 @@
   }
   boolean networkOfferingChanged=false;
   long oldNetworkOfferingId=network.getNetworkOfferingId();
+  NetworkOffering oldNtwkOff=_networkOfferingDao.findByIdIncludingRemoved(oldNetworkOfferingId);
+  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
   if (networkOfferingId != null) {
-    NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
     if (networkOffering == null || networkOffering.isSystemOnly()) {
       InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find network offering with specified id");
       ex.addProxyObject(networkOffering,networkOfferingId,"networkOfferingId");
@@ -47,7 +48,6 @@
       throw new InvalidParameterValueException("Can't update as the new offering is " + errMsg);
     }
     if (networkOfferingId != oldNetworkOfferingId) {
-      NetworkOffering oldNtwkOff=_networkOfferingDao.findByIdIncludingRemoved(oldNetworkOfferingId);
       Collection<String> newProviders=_networkMgr.finalizeServicesAndProvidersForNetwork(networkOffering,network.getPhysicalNetworkId()).values();
       Collection<String> oldProviders=_networkMgr.finalizeServicesAndProvidersForNetwork(oldNtwkOff,network.getPhysicalNetworkId()).values();
       if (providersConfiguredForExternalNetworking(newProviders) != providersConfiguredForExternalNetworking(oldProviders) && !changeCidr) {
@@ -166,6 +166,20 @@
  catch (      Exception ex) {
         s_logger.warn("Failed to implement network " + network + " elements and resources as a part of network update due to ",ex);
         CloudRuntimeException e=new CloudRuntimeException("Failed to implement network (with specified id) elements and resources as a part of network update");
+        e.addProxyObject(network,networkId,"networkId");
+        throw e;
+      }
+    }
+  }
+  if (!oldNtwkOff.getIsPersistent() && networkOffering.getIsPersistent()) {
+    if (network.getState() == Network.State.Allocated) {
+      try {
+        DeployDestination dest=new DeployDestination(_dcDao.findById(network.getDataCenterId()),null,null,null);
+        _networkMgr.implementNetwork(network.getId(),dest,context);
+      }
+ catch (      Exception ex) {
+        s_logger.warn("Failed to implement network " + network + " elements and resources as a part o"+ "f network update due to ",ex);
+        CloudRuntimeException e=new CloudRuntimeException("Failed to implement network (with specified" + " id) elements and resources as a part of network update");
         e.addProxyObject(network,networkId,"networkId");
         throw e;
       }

@@ -268,5 +268,29 @@
     _configMgr.createVlanAndPublicIpRange(pNtwk.getDataCenterId(),network.getId(),physicalNetworkId,false,null,startIP,endIP,gateway,netmask,vlanId,null,startIPv6,endIPv6,ip6Gateway,ip6Cidr);
   }
   txn.commit();
+  if (ntwkOff.getIsPersistent()) {
+    try {
+      if (network.getState() == Network.State.Setup) {
+        s_logger.debug("Network id=" + network.getId() + " is already provisioned");
+        return network;
+      }
+      DeployDestination dest=new DeployDestination(zone,null,null,null);
+      UserVO callerUser=_userDao.findById(UserContext.current().getCallerUserId());
+      Journal journal=new Journal.LogJournal("Implementing " + network,s_logger);
+      ReservationContext context=new ReservationContextImpl(UUID.randomUUID().toString(),journal,callerUser,caller);
+      s_logger.debug("Implementing network " + network + " as a part of network provision for persistent network");
+      Pair<NetworkGuru,NetworkVO> implementedNetwork=_networkMgr.implementNetwork(network.getId(),dest,context);
+      if (implementedNetwork.first() == null) {
+        s_logger.warn("Failed to provision the network " + network);
+      }
+      network=implementedNetwork.second();
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to implement persistent guest network " + network + "due to ",ex);
+      CloudRuntimeException e=new CloudRuntimeException("Failed to implement persistent guest network");
+      e.addProxyObject(network,network.getId(),"networkId");
+      throw e;
+    }
+  }
   return network;
 }
