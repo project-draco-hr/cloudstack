@@ -1,0 +1,89 @@
+{
+  String dbPropsFile="";
+  List<String> sqlFiles=new ArrayList<String>();
+  List<String> upgradeClasses=new ArrayList<String>();
+  String[] databases=new String[]{};
+  String rootPassword="";
+  boolean verbosity=false;
+  boolean dryRun=false;
+  for (  String arg : args) {
+    if (arg.equals("--help") || arg.equals("-h")) {
+      printHelp("DatabaseCreator");
+      System.exit(0);
+    }
+ else     if (arg.equals("--verbose") || arg.equals("-v")) {
+      verbosity=true;
+    }
+ else     if (arg.equals("--dry") || arg.equals("-d")) {
+      dryRun=true;
+    }
+ else     if (arg.startsWith("--rootpassword=")) {
+      rootPassword=arg.substring(arg.lastIndexOf("=") + 1,arg.length());
+    }
+ else     if (arg.startsWith("--database=")) {
+      databases=arg.substring(arg.lastIndexOf("=") + 1,arg.length()).split(",");
+    }
+ else     if (arg.endsWith(".sql")) {
+      sqlFiles.add(arg);
+    }
+ else     if (arg.endsWith(".properties")) {
+      if (!dbPropsFile.endsWith("properties.override") && fileExists(arg))       dbPropsFile=arg;
+    }
+ else     if (arg.endsWith("properties.override")) {
+      if (fileExists(arg))       dbPropsFile=arg;
+    }
+ else {
+      upgradeClasses.add(arg);
+    }
+  }
+  if ((dbPropsFile.isEmpty()) || (sqlFiles.size() == 0) && upgradeClasses.size() == 0) {
+    printHelp("DatabaseCreator");
+    System.exit(1);
+  }
+  Transaction.initDataSource(dbPropsFile);
+  initDB(dbPropsFile,rootPassword,databases,dryRun);
+  for (  String sqlFile : sqlFiles) {
+    File sqlScript=PropertiesUtil.findConfigFile(sqlFile);
+    if (sqlScript == null) {
+      System.err.println("Unable to find " + sqlFile);
+      printHelp("DatabaseCreator");
+      System.exit(1);
+    }
+    System.out.println("========> Processing SQL file at " + sqlScript.getAbsolutePath());
+    Connection conn=Transaction.getStandaloneConnection();
+    try {
+      FileReader reader=null;
+      try {
+        reader=new FileReader(sqlScript);
+      }
+ catch (      FileNotFoundException e) {
+        System.err.println("Unable to read " + sqlFile + ": "+ e.getMessage());
+        System.exit(1);
+      }
+      if (!dryRun)       runScript(conn,reader,sqlFile,verbosity);
+    }
+  finally {
+      try {
+        conn.close();
+      }
+ catch (      SQLException e) {
+        System.err.println("Unable to close DB connection: " + e.getMessage());
+      }
+    }
+  }
+  for (  String upgradeClass : upgradeClasses) {
+    System.out.println("========> Processing upgrade: " + upgradeClass);
+    Class<?> clazz=null;
+    try {
+      clazz=Class.forName(upgradeClass);
+      if (!SystemIntegrityChecker.class.isAssignableFrom(clazz)) {
+        System.err.println("The class must be of SystemIntegrityChecker: " + clazz.getName());
+        System.exit(1);
+      }
+    }
+ catch (    ClassNotFoundException e) {
+      System.err.println("Unable to find " + upgradeClass + ": "+ e.getMessage());
+      System.exit(1);
+    }
+  }
+}

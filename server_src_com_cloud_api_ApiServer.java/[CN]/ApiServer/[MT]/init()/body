@@ -1,19 +1,25 @@
 {
-  BaseCmd.setComponents(new ApiResponseHelper());
-  BaseListCmd.configure();
   _systemAccount=_accountMgr.getSystemAccount();
   _systemUser=_accountMgr.getSystemUser();
-  _dispatcher=ApiDispatcher.getInstance();
   Integer apiPort=null;
-  ComponentLocator locator=ComponentLocator.getLocator(ManagementServer.Name);
-  ConfigurationDao configDao=locator.getDao(ConfigurationDao.class);
-  SearchCriteria<ConfigurationVO> sc=configDao.createSearchCriteria();
+  SearchCriteria<ConfigurationVO> sc=_configDao.createSearchCriteria();
   sc.addAnd("name",SearchCriteria.Op.EQ,"integration.api.port");
-  List<ConfigurationVO> values=configDao.search(sc,null);
+  List<ConfigurationVO> values=_configDao.search(sc,null);
   if ((values != null) && (values.size() > 0)) {
     ConfigurationVO apiPortConfig=values.get(0);
     if (apiPortConfig.getValue() != null) {
       apiPort=Integer.parseInt(apiPortConfig.getValue());
+    }
+  }
+  Map<String,String> configs=_configDao.getConfiguration();
+  String strSnapshotLimit=configs.get(Config.ConcurrentSnapshotsThresholdPerHost.key());
+  if (strSnapshotLimit != null) {
+    Long snapshotLimit=NumbersUtil.parseLong(strSnapshotLimit,1L);
+    if (snapshotLimit <= 0) {
+      s_logger.debug("Global config parameter " + Config.ConcurrentSnapshotsThresholdPerHost.toString() + " is less or equal 0; defaulting to unlimited");
+    }
+ else {
+      _dispatcher.setCreateSnapshotQueueSizeLimit(snapshotLimit);
     }
   }
   Set<Class<?>> cmdClasses=ReflectUtil.getClassesWithAnnotation(APICommand.class,new String[]{"org.apache.cloudstack.api","com.cloud.api"});
@@ -25,8 +31,8 @@
     }
     _apiNameCmdClassMap.put(apiName,cmdClass);
   }
-  encodeApiResponse=Boolean.valueOf(configDao.getValue(Config.EncodeApiResponse.key()));
-  String jsonType=configDao.getValue(Config.JavaScriptDefaultContentType.key());
+  encodeApiResponse=Boolean.valueOf(_configDao.getValue(Config.EncodeApiResponse.key()));
+  String jsonType=_configDao.getValue(Config.JavaScriptDefaultContentType.key());
   if (jsonType != null) {
     jsonContentType=jsonType;
   }
