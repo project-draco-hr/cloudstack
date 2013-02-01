@@ -1,14 +1,43 @@
 {
   Transaction txn=Transaction.currentTxn();
   txn.start();
+  resetHosts(managementServerId,lastPingSecondsAfter);
+  txn.commit();
+  List<Long> clusters=findClustersOwnedByManagementServer(managementServerId);
+  List<Long> allClusters=listAllClusters();
   SearchCriteria<HostVO> sc=UnmanagedDirectConnectSearch.create();
   sc.setParameters("lastPinged",lastPingSecondsAfter);
   sc.setJoinParameters("ClusterManagedSearch","managed",Managed.ManagedState.Managed);
-  List<HostVO> hosts=lockRows(sc,new Filter(HostVO.class,"clusterId",true,0L,limit),true);
-  for (  HostVO host : hosts) {
-    host.setManagementServerId(managementServerId);
-    update(host.getId(),host);
+  List<HostVO> assignedHosts=new ArrayList<HostVO>();
+  List<Long> remainingClusters=new ArrayList<Long>();
+  txn.start();
+  for (  Long clusterId : allClusters) {
+    if (clusters.contains(clusterId)) {
+      sc.setParameters("cluster",clusterId);
+      List<HostVO> unmanagedHosts=lockRows(sc,null,true);
+      for (      HostVO host : unmanagedHosts) {
+        host.setManagementServerId(managementServerId);
+        update(host.getId(),host);
+        assignedHosts.add(host);
+      }
+    }
+ else {
+      remainingClusters.add(clusterId);
+    }
   }
   txn.commit();
-  return hosts;
+  for (  Long clusterId : remainingClusters) {
+    txn.start();
+    sc.setParameters("cluster",clusterId);
+    List<HostVO> unmanagedHosts=lockRows(sc,null,true);
+    if (canOwnCluster(clusterId)) {
+      for (      HostVO host : unmanagedHosts) {
+        host.setManagementServerId(managementServerId);
+        update(host.getId(),host);
+        assignedHosts.add(host);
+      }
+    }
+    txn.commit();
+  }
+  return assignedHosts;
 }

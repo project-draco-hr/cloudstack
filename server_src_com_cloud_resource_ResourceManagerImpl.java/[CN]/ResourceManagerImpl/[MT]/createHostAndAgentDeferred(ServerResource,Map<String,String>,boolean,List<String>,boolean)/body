@@ -1,0 +1,109 @@
+{
+  HostVO host=null;
+  AgentAttache attache=null;
+  StartupCommand[] cmds=null;
+  boolean hostExists=false;
+  boolean deferAgentCreation=true;
+  try {
+    cmds=resource.initialize();
+    if (cmds == null) {
+      s_logger.info("Unable to fully initialize the agent because no StartupCommands are returned");
+      return null;
+    }
+    if (this.getClass().getPackage().getImplementationVersion() == null) {
+      for (      StartupCommand cmd : cmds) {
+        if (cmd.getVersion() == null) {
+          cmd.setVersion(Long.toString(System.currentTimeMillis()));
+        }
+      }
+    }
+    if (s_logger.isDebugEnabled()) {
+      new Request(-1l,-1l,cmds,true,false).logD("Startup request from directly connected host: ",true);
+    }
+    if (old) {
+      StartupCommand firstCmd=cmds[0];
+      host=findHostByGuid(firstCmd.getGuid());
+      if (host == null) {
+        host=findHostByGuid(firstCmd.getGuidWithoutResource());
+      }
+      if (host != null && host.getRemoved() == null) {
+        s_logger.debug("Found the host " + host.getId() + " by guid: "+ firstCmd.getGuid()+ ", old host reconnected as new");
+        hostExists=true;
+        return null;
+      }
+    }
+    host=null;
+    GlobalLock addHostLock=GlobalLock.getInternLock("AddHostLock");
+    try {
+      if (addHostLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+        try {
+          host=createHostVO(cmds,resource,details,hostTags,ResourceStateAdapter.Event.CREATE_HOST_VO_FOR_DIRECT_CONNECT);
+          if (host != null) {
+            deferAgentCreation=!isFirstHostInCluster(host);
+          }
+        }
+  finally {
+          addHostLock.unlock();
+        }
+      }
+    }
+  finally {
+      addHostLock.releaseRef();
+    }
+    if (host != null) {
+      if (!deferAgentCreation) {
+        attache=_agentMgr.handleDirectConnectAgent(host,cmds,resource,forRebalance);
+        host=_hostDao.findById(host.getId());
+      }
+ else {
+        host=_hostDao.findById(host.getId());
+        _agentMgr.agentStatusTransitTo(host,Status.Event.AgentDisconnected,_nodeId);
+        host=_hostDao.findById(host.getId());
+        host.setLastPinged(0);
+        _hostDao.update(host.getId(),host);
+        if (_agentMgr instanceof ClusteredAgentManagerImpl) {
+          ClusteredAgentManagerImpl clusteredAgentMgr=(ClusteredAgentManagerImpl)_agentMgr;
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Scheduling a host scan task");
+          }
+          clusteredAgentMgr.scheduleHostScanTask();
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Notifying all peer MS to schedule host scan task");
+          }
+          clusteredAgentMgr.notifyNodesInClusterToScheduleHostScanTask();
+        }
+      }
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to connect due to ",e);
+  }
+ finally {
+    if (hostExists) {
+      if (cmds != null) {
+        resource.disconnected();
+      }
+    }
+ else {
+      if (!deferAgentCreation && attache == null) {
+        if (cmds != null) {
+          resource.disconnected();
+        }
+        HostVO tempHost=host;
+        if (tempHost == null) {
+          if (cmds != null) {
+            StartupCommand firstCmd=cmds[0];
+            tempHost=findHostByGuid(firstCmd.getGuid());
+            if (tempHost == null) {
+              tempHost=findHostByGuid(firstCmd.getGuidWithoutResource());
+            }
+          }
+        }
+        if (tempHost != null) {
+          _agentMgr.agentStatusTransitTo(tempHost,Status.Event.AgentDisconnected,_nodeId);
+        }
+      }
+    }
+  }
+  return host;
+}
