@@ -1,0 +1,47 @@
+{
+  Vlan vlan=_networkModel.getVlanForNetwork(networkId);
+  if (vlan == null) {
+    s_logger.debug("Cannot find related vlan or too many vlan attached to network " + networkId);
+    return null;
+  }
+  String ip=null;
+  if (requestedIp6 == null) {
+    int count=0;
+    while (ip == null || count >= 10) {
+      ip=NetUtils.getIp6FromRange(vlan.getIp6Range());
+      if (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) == null) {
+        break;
+      }
+ else {
+        ip=null;
+      }
+      count++;
+    }
+    if (ip == null) {
+      throw new CloudRuntimeException("Fail to get unique ipv6 address after 10 times trying!");
+    }
+  }
+ else {
+    if (!NetUtils.isIp6InRange(requestedIp6,vlan.getIp6Range())) {
+      throw new CloudRuntimeException("Requested IPv6 is not in the predefined range!");
+    }
+    ip=requestedIp6;
+    if (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) != null) {
+      throw new CloudRuntimeException("The requested IP is already taken!");
+    }
+  }
+  DataCenterVO dc=_dcDao.findById(dcId);
+  Long mac=dc.getMacAddress();
+  Long nextMac=mac + 1;
+  dc.setMacAddress(nextMac);
+  _dcDao.update(dc.getId(),dc);
+  String macAddress=NetUtils.long2Mac(NetUtils.createSequenceBasedMacAddress(mac));
+  UserIpv6AddressVO ipVO=new UserIpv6AddressVO(ip,dcId,macAddress,vlan.getId());
+  ipVO.setPhysicalNetworkId(vlan.getPhysicalNetworkId());
+  ipVO.setSourceNetworkId(vlan.getNetworkId());
+  ipVO.setState(UserIpv6Address.State.Allocated);
+  ipVO.setDomainId(owner.getDomainId());
+  ipVO.setAccountId(owner.getAccountId());
+  _ipv6Dao.persist(ipVO);
+  return ipVO;
+}

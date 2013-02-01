@@ -1,0 +1,47 @@
+{
+  if (subscriber == null || topic == null) {
+    throw new EventBusException("Invalid EventSubscriber/EventTopic object passed.");
+  }
+  UUID queueId=UUID.randomUUID();
+  String queueName=queueId.toString();
+  try {
+    String bindingKey=createBindingKey(topic);
+    _subscribers.put(queueName,new Ternary(bindingKey,null,subscriber));
+    Connection connection=getConnection();
+    Channel channel=createChannel(connection);
+    createExchange(channel,_amqpExchangeName);
+    channel.queueDeclare(queueName,false,false,false,null);
+    channel.queueBind(queueName,_amqpExchangeName,bindingKey);
+    channel.basicConsume(queueName,_autoAck,queueName,new DefaultConsumer(channel){
+      @Override public void handleDelivery(      String queueName,      Envelope envelope,      AMQP.BasicProperties properties,      byte[] body) throws IOException {
+        Ternary<String,Channel,EventSubscriber> queueDetails=_subscribers.get(queueName);
+        if (queueDetails != null) {
+          EventSubscriber subscriber=queueDetails.third();
+          String routingKey=envelope.getRoutingKey();
+          String eventSource=getEventSourceFromRoutingKey(routingKey);
+          String eventCategory=getEventCategoryFromRoutingKey(routingKey);
+          String eventType=getEventTypeFromRoutingKey(routingKey);
+          String resourceType=getResourceTypeFromRoutingKey(routingKey);
+          String resourceUUID=getResourceUUIDFromRoutingKey(routingKey);
+          Event event=new Event(eventSource,eventCategory,eventType,resourceType,resourceUUID);
+          event.setDescription(new String(body));
+          subscriber.onEvent(event);
+        }
+      }
+    }
+);
+    Ternary<String,Channel,EventSubscriber> queueDetails=_subscribers.get(queueName);
+    queueDetails.second(channel);
+    _subscribers.put(queueName,queueDetails);
+  }
+ catch (  AlreadyClosedException closedException) {
+    s_logger.warn("Connection to AMQP service is lost. Subscription:" + queueName + " will be active after reconnection");
+  }
+catch (  ConnectException connectException) {
+    s_logger.warn("Connection to AMQP service is lost. Subscription:" + queueName + " will be active after reconnection");
+  }
+catch (  Exception e) {
+    throw new EventBusException("Failed to subscribe to event due to " + e.getMessage());
+  }
+  return queueId;
+}
