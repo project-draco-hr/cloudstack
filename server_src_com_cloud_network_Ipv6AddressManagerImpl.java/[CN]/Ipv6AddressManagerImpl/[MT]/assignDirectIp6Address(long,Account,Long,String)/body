@@ -1,4 +1,8 @@
 {
+  Network network=_networkDao.findById(networkId);
+  if (network == null) {
+    return null;
+  }
   Vlan vlan=_networkModel.getVlanForNetwork(networkId);
   if (vlan == null) {
     s_logger.debug("Cannot find related vlan or too many vlan attached to network " + networkId);
@@ -6,19 +10,21 @@
   }
   String ip=null;
   if (requestedIp6 == null) {
+    if (!_networkModel.isIP6AddressAvailable(networkId)) {
+      throw new InsufficientAddressCapacityException("There is no more address available in the network " + network.getName(),DataCenter.class,network.getDataCenterId());
+    }
+    ip=NetUtils.getIp6FromRange(vlan.getIp6Range());
     int count=0;
-    while (ip == null || count >= 10) {
-      ip=NetUtils.getIp6FromRange(vlan.getIp6Range());
-      if (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) == null) {
+    while (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) != null) {
+      ip=NetUtils.getNextIp6InRange(ip,vlan.getIp6Range());
+      count++;
+      if (count > _ipv6RetryMax) {
+        ip=null;
         break;
       }
- else {
-        ip=null;
-      }
-      count++;
     }
     if (ip == null) {
-      throw new CloudRuntimeException("Fail to get unique ipv6 address after 10 times trying!");
+      throw new InsufficientAddressCapacityException("Cannot find a usable IP in the network " + network.getName() + " after network.ipv6.search.retry.max = "+ _ipv6RetryMax+ " times retry!",DataCenter.class,network.getDataCenterId());
     }
   }
  else {
