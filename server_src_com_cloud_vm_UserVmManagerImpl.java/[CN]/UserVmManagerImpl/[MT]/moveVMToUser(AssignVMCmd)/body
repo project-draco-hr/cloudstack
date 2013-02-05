@@ -55,7 +55,7 @@
       throw new InvalidParameterValueException("Remove the one to one nat rule for this VM for ip " + ip.toString());
     }
   }
-  DataCenterVO zone=_dcDao.findById(vm.getDataCenterIdToDeployIn());
+  DataCenterVO zone=_dcDao.findById(vm.getDataCenterId());
   removeInstanceFromInstanceGroup(cmd.getVmId());
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.user_vm);
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.volume,_volsDao.findByInstance(cmd.getVmId()).size());
@@ -68,26 +68,26 @@
   _accountMgr.checkAccess(newAccount,domain);
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
+  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
   _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.user_vm);
   vm.setAccountId(newAccount.getAccountId());
   vm.setDomainId(cmd.getDomainId());
   _vmDao.persist(vm);
   List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   for (  VolumeVO volume : volumes) {
-    _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName()));
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),Volume.class.getName(),volume.getUuid());
     _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume);
     volume.setAccountId(newAccount.getAccountId());
     _volsDao.persist(volume);
     _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume);
-    _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize()));
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
     List<SnapshotVO> snapshots=_snapshotDao.listByVolumeIdIncludingRemoved(volume.getId());
     for (    SnapshotVO snapshot : snapshots) {
       _snapshotDao.remove(snapshot.getId());
     }
   }
   _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.user_vm);
-  _usageEventDao.persist(new UsageEventVO(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterIdToDeployIn(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString()));
+  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
   txn.commit();
   VMInstanceVO vmoi=_itMgr.findByIdAndType(vm.getType(),vm.getId());
   VirtualMachineProfileImpl<VMInstanceVO> vmOldProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vmoi);
@@ -191,7 +191,27 @@
               throw new InvalidParameterValueException("Unable to find physical network with id: " + physicalNetworkId + " and tag: "+ requiredOfferings.get(0).getTags());
             }
             s_logger.debug("Creating network for account " + newAccount + " from the network offering id="+ requiredOfferings.get(0).getId()+ " as a part of deployVM process");
-            Network newNetwork=_networkMgr.createGuestNetwork(requiredOfferings.get(0).getId(),newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,null,physicalNetwork,zone.getId(),ACLType.Account,null,null);
+            Network newNetwork=_networkMgr.createGuestNetwork(requiredOfferings.get(0).getId(),newAccount.getAccountName() + "-network",newAccount.getAccountName() + "-network",null,null,null,null,newAccount,null,physicalNetwork,zone.getId(),ACLType.Account,null,null,null,null);
+            if (requiredOfferings.get(0).getIsPersistent()) {
+              DeployDestination dest=new DeployDestination(zone,null,null,null);
+              UserVO callerUser=_userDao.findById(UserContext.current().getCallerUserId());
+              Journal journal=new Journal.LogJournal("Implementing " + newNetwork,s_logger);
+              ReservationContext context=new ReservationContextImpl(UUID.randomUUID().toString(),journal,callerUser,caller);
+              s_logger.debug("Implementing the network for account" + newNetwork + " as a part of"+ " network provision for persistent networks");
+              try {
+                Pair<NetworkGuru,NetworkVO> implementedNetwork=_networkMgr.implementNetwork(newNetwork.getId(),dest,context);
+                if (implementedNetwork.first() == null) {
+                  s_logger.warn("Failed to implement the network " + newNetwork);
+                }
+                newNetwork=implementedNetwork.second();
+              }
+ catch (              Exception ex) {
+                s_logger.warn("Failed to implement network " + newNetwork + " elements and"+ " resources as a part of network provision for persistent network due to ",ex);
+                CloudRuntimeException e=new CloudRuntimeException("Failed to implement network" + " (with specified id) elements and resources as a part of network provision");
+                e.addProxyObject(newNetwork,newNetwork.getId(),"networkId");
+                throw e;
+              }
+            }
             defaultNetwork=_networkDao.findById(newNetwork.getId());
           }
  else           if (virtualNetworks.size() > 1) {

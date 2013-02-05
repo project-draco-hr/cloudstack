@@ -9,8 +9,13 @@
     s_logger.debug("Network is not implemented: " + network);
     return false;
   }
-  network.setState(Network.State.Shutdown);
-  _networksDao.update(network.getId(),network);
+  try {
+    stateTransitTo(network,Event.DestroyNetwork);
+  }
+ catch (  NoTransitionException e) {
+    network.setState(Network.State.Shutdown);
+    _networksDao.update(network.getId(),network);
+  }
   boolean success=shutdownNetworkElementsAndResources(context,cleanupElements,network);
   Transaction txn=Transaction.currentTxn();
   txn.start();
@@ -18,19 +23,29 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Network id=" + networkId + " is shutdown successfully, cleaning up corresponding resources now.");
     }
-    NetworkGuru guru=_networkGurus.get(network.getGuruName());
+    NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,network.getGuruName());
     NetworkProfile profile=convertNetworkToNetworkProfile(network.getId());
     guru.shutdown(profile,_networkOfferingDao.findById(network.getNetworkOfferingId()));
     applyProfileToNetwork(network,profile);
-    network.setState(Network.State.Allocated);
-    network.setRestartRequired(false);
+    try {
+      stateTransitTo(network,Event.OperationSucceeded);
+    }
+ catch (    NoTransitionException e) {
+      network.setState(Network.State.Allocated);
+      network.setRestartRequired(false);
+    }
     _networksDao.update(network.getId(),network);
     _networksDao.clearCheckForGc(networkId);
     result=true;
   }
  else {
-    network.setState(Network.State.Implemented);
-    _networksDao.update(network.getId(),network);
+    try {
+      stateTransitTo(network,Event.OperationFailed);
+    }
+ catch (    NoTransitionException e) {
+      network.setState(Network.State.Implemented);
+      _networksDao.update(network.getId(),network);
+    }
     result=false;
   }
   txn.commit();
