@@ -1,0 +1,56 @@
+{
+  ObjectInDataStoreVO obj=objectInDataStoreMgr.findObject(template.getId(),template.getType(),store.getId(),store.getRole());
+  TemplateInfo templateOnPrimaryStoreObj=null;
+  boolean freshNewTemplate=false;
+  if (obj == null) {
+    try {
+      freshNewTemplate=true;
+    }
+ catch (    Throwable e) {
+      obj=objectInDataStoreMgr.findObject(template.getId(),template.getType(),store.getId(),store.getRole());
+      if (obj == null) {
+        CreateBaseImageResult result=new CreateBaseImageResult(null);
+        result.setSucess(false);
+        result.setResult(e.toString());
+        callback.complete(result);
+        return null;
+      }
+    }
+  }
+  if (!freshNewTemplate && obj.getState() != ObjectInDataStoreStateMachine.State.Ready) {
+    try {
+      templateOnPrimaryStoreObj=waitingForTemplateDownload(template,store);
+    }
+ catch (    Exception e) {
+      CreateBaseImageResult result=new CreateBaseImageResult(null);
+      result.setSucess(false);
+      result.setResult(e.toString());
+      callback.complete(result);
+      return null;
+    }
+    CreateBaseImageResult result=new CreateBaseImageResult(templateOnPrimaryStoreObj);
+    callback.complete(result);
+    return null;
+  }
+  try {
+    objectInDataStoreMgr.update(templateOnPrimaryStoreObj,ObjectInDataStoreStateMachine.Event.CreateRequested);
+  }
+ catch (  NoTransitionException e) {
+    try {
+      objectInDataStoreMgr.update(templateOnPrimaryStoreObj,ObjectInDataStoreStateMachine.Event.OperationFailed);
+    }
+ catch (    NoTransitionException e1) {
+      s_logger.debug("state transation failed",e1);
+    }
+    CreateBaseImageResult result=new CreateBaseImageResult(null);
+    result.setSucess(false);
+    result.setResult(e.toString());
+    callback.complete(result);
+    return null;
+  }
+  InstallContext<CreateBaseImageResult> context=new InstallContext<CreateBaseImageResult>(callback,templateOnPrimaryStoreObj,template);
+  AsyncCallbackDispatcher<TemplateInstallStrategyImpl,CreateCmdResult> caller=AsyncCallbackDispatcher.create(this);
+  caller.setCallback(caller.getTarget().installTemplateCallback(null,null)).setContext(context);
+  store.getDriver().createAsync(templateOnPrimaryStoreObj,caller);
+  return null;
+}

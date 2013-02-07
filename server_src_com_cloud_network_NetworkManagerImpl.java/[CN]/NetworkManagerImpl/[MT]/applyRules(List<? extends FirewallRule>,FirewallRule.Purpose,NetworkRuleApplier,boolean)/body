@@ -5,15 +5,18 @@
   }
   boolean success=true;
   Network network=_networksDao.findById(rules.get(0).getNetworkId());
-  List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
+  FirewallRuleVO.TrafficType trafficType=rules.get(0).getTrafficType();
   List<PublicIp> publicIps=new ArrayList<PublicIp>();
-  if (userIps != null && !userIps.isEmpty()) {
-    for (    IPAddressVO userIp : userIps) {
-      PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
-      publicIps.add(publicIp);
+  if (!(rules.get(0).getPurpose() == FirewallRule.Purpose.Firewall && trafficType == FirewallRule.TrafficType.Egress)) {
+    List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
+    if (userIps != null && !userIps.isEmpty()) {
+      for (      IPAddressVO userIp : userIps) {
+        PublicIp publicIp=new PublicIp(userIp,_vlanDao.findById(userIp.getVlanId()),NetUtils.createSequenceBasedMacAddress(userIp.getMacAddress()));
+        publicIps.add(publicIp);
+      }
     }
+    applyIpAssociations(network,false,continueOnError,publicIps);
   }
-  applyIpAssociations(network,false,continueOnError,publicIps);
   try {
     applier.applyRules(network,purpose,rules);
   }
@@ -24,6 +27,8 @@
     s_logger.warn("Problems with applying " + purpose + " rules but pushing on",e);
     success=false;
   }
-  applyIpAssociations(network,true,continueOnError,publicIps);
+  if (!(rules.get(0).getPurpose() == FirewallRule.Purpose.Firewall && trafficType == FirewallRule.TrafficType.Egress)) {
+    applyIpAssociations(network,true,continueOnError,publicIps);
+  }
   return success;
 }

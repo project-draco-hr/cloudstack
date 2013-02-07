@@ -1,0 +1,113 @@
+{
+  String response=null;
+  String[] command=null;
+  try {
+    command=(String[])params.get("command");
+    if (command == null) {
+      s_logger.error("invalid request, no command sent");
+      if (s_logger.isTraceEnabled()) {
+        s_logger.trace("dumping request parameters");
+        for (        Object key : params.keySet()) {
+          String keyStr=(String)key;
+          String[] value=(String[])params.get(key);
+          s_logger.trace("   key: " + keyStr + ", value: "+ ((value == null) ? "'null'" : value[0]));
+        }
+      }
+      throw new ServerApiException(ApiErrorCode.UNSUPPORTED_ACTION_ERROR,"Invalid request, no command sent");
+    }
+ else {
+      Map<String,String> paramMap=new HashMap<String,String>();
+      Set keys=params.keySet();
+      Iterator keysIter=keys.iterator();
+      while (keysIter.hasNext()) {
+        String key=(String)keysIter.next();
+        if ("command".equalsIgnoreCase(key)) {
+          continue;
+        }
+        String[] value=(String[])params.get(key);
+        paramMap.put(key,value[0]);
+      }
+      Class<?> cmdClass=getCmdClass(command[0]);
+      if (cmdClass != null) {
+        BaseCmd cmdObj=(BaseCmd)cmdClass.newInstance();
+        cmdObj=ComponentContext.inject(cmdObj);
+        cmdObj.configure();
+        cmdObj.setFullUrlParams(paramMap);
+        cmdObj.setResponseType(responseType);
+        response=queueCommand(cmdObj,paramMap);
+        buildAuditTrail(auditTrailSb,command[0],response);
+      }
+ else {
+        if (!command[0].equalsIgnoreCase("login") && !command[0].equalsIgnoreCase("logout")) {
+          String errorString="Unknown API command: " + ((command == null) ? "null" : command[0]);
+          s_logger.warn(errorString);
+          auditTrailSb.append(" " + errorString);
+          throw new ServerApiException(ApiErrorCode.UNSUPPORTED_ACTION_ERROR,errorString);
+        }
+      }
+    }
+  }
+ catch (  InvalidParameterValueException ex) {
+    s_logger.info(ex.getMessage());
+    throw new ServerApiException(ApiErrorCode.PARAM_ERROR,ex.getMessage(),ex);
+  }
+catch (  IllegalArgumentException ex) {
+    s_logger.info(ex.getMessage());
+    throw new ServerApiException(ApiErrorCode.PARAM_ERROR,ex.getMessage(),ex);
+  }
+catch (  PermissionDeniedException ex) {
+    ArrayList<String> idList=ex.getIdProxyList();
+    if (idList != null) {
+      s_logger.info("PermissionDenied: " + ex.getMessage() + " on uuids: ["+ StringUtils.listToCsvTags(idList)+ "]");
+    }
+ else {
+      s_logger.info("PermissionDenied: " + ex.getMessage());
+    }
+    throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,ex.getMessage(),ex);
+  }
+catch (  AccountLimitException ex) {
+    s_logger.info(ex.getMessage());
+    throw new ServerApiException(ApiErrorCode.ACCOUNT_RESOURCE_LIMIT_ERROR,ex.getMessage(),ex);
+  }
+catch (  InsufficientCapacityException ex) {
+    s_logger.info(ex.getMessage());
+    String errorMsg=ex.getMessage();
+    if (UserContext.current().getCaller().getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      errorMsg=BaseCmd.USER_ERROR_MESSAGE;
+    }
+    throw new ServerApiException(ApiErrorCode.INSUFFICIENT_CAPACITY_ERROR,errorMsg,ex);
+  }
+catch (  ResourceAllocationException ex) {
+    s_logger.info(ex.getMessage());
+    String errorMsg=ex.getMessage();
+    if (UserContext.current().getCaller().getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      errorMsg=BaseCmd.USER_ERROR_MESSAGE;
+    }
+    throw new ServerApiException(ApiErrorCode.RESOURCE_ALLOCATION_ERROR,errorMsg,ex);
+  }
+catch (  ResourceUnavailableException ex) {
+    s_logger.info(ex.getMessage());
+    String errorMsg=ex.getMessage();
+    if (UserContext.current().getCaller().getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      errorMsg=BaseCmd.USER_ERROR_MESSAGE;
+    }
+    throw new ServerApiException(ApiErrorCode.RESOURCE_UNAVAILABLE_ERROR,errorMsg,ex);
+  }
+catch (  AsyncCommandQueued ex) {
+    s_logger.error("unhandled exception executing api command: " + ((command == null) ? "null" : command[0]),ex);
+    throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,"Internal server error, unable to execute request.");
+  }
+catch (  ServerApiException ex) {
+    s_logger.info(ex.getDescription());
+    throw ex;
+  }
+catch (  Exception ex) {
+    s_logger.error("unhandled exception executing api command: " + ((command == null) ? "null" : command[0]),ex);
+    String errorMsg=ex.getMessage();
+    if (UserContext.current().getCaller().getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      errorMsg=BaseCmd.USER_ERROR_MESSAGE;
+    }
+    throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,errorMsg,ex);
+  }
+  return response;
+}

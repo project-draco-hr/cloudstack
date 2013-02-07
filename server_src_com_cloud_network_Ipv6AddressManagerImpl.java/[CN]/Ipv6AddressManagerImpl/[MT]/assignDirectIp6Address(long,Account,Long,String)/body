@@ -1,0 +1,68 @@
+{
+  Network network=_networkDao.findById(networkId);
+  if (network == null) {
+    return null;
+  }
+  List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(networkId);
+  if (vlans == null) {
+    s_logger.debug("Cannot find related vlan or too many vlan attached to network " + networkId);
+    return null;
+  }
+  String ip=null;
+  Vlan ipVlan=null;
+  if (requestedIp6 == null) {
+    if (!_networkModel.isIP6AddressAvailableInNetwork(networkId)) {
+      throw new InsufficientAddressCapacityException("There is no more address available in the network " + network.getName(),DataCenter.class,network.getDataCenterId());
+    }
+    for (    Vlan vlan : vlans) {
+      if (!_networkModel.isIP6AddressAvailableInVlan(vlan.getId())) {
+        continue;
+      }
+      ip=NetUtils.getIp6FromRange(vlan.getIp6Range());
+      int count=0;
+      while (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) != null) {
+        ip=NetUtils.getNextIp6InRange(ip,vlan.getIp6Range());
+        count++;
+        if (count > _ipv6RetryMax) {
+          ip=null;
+          break;
+        }
+      }
+      if (ip != null) {
+        ipVlan=vlan;
+      }
+    }
+    if (ip == null) {
+      throw new InsufficientAddressCapacityException("Cannot find a usable IP in the network " + network.getName() + " after network.ipv6.search.retry.max = "+ _ipv6RetryMax+ " times retry!",DataCenter.class,network.getDataCenterId());
+    }
+  }
+ else {
+    for (    Vlan vlan : vlans) {
+      if (NetUtils.isIp6InRange(requestedIp6,vlan.getIp6Range())) {
+        ipVlan=vlan;
+        break;
+      }
+    }
+    if (ipVlan == null) {
+      throw new CloudRuntimeException("Requested IPv6 is not in the predefined range!");
+    }
+    ip=requestedIp6;
+    if (_ipv6Dao.findByNetworkIdAndIp(networkId,ip) != null) {
+      throw new CloudRuntimeException("The requested IP is already taken!");
+    }
+  }
+  DataCenterVO dc=_dcDao.findById(dcId);
+  Long mac=dc.getMacAddress();
+  Long nextMac=mac + 1;
+  dc.setMacAddress(nextMac);
+  _dcDao.update(dc.getId(),dc);
+  String macAddress=NetUtils.long2Mac(NetUtils.createSequenceBasedMacAddress(mac));
+  UserIpv6AddressVO ipVO=new UserIpv6AddressVO(ip,dcId,macAddress,ipVlan.getId());
+  ipVO.setPhysicalNetworkId(network.getPhysicalNetworkId());
+  ipVO.setSourceNetworkId(networkId);
+  ipVO.setState(UserIpv6Address.State.Allocated);
+  ipVO.setDomainId(owner.getDomainId());
+  ipVO.setAccountId(owner.getAccountId());
+  _ipv6Dao.persist(ipVO);
+  return ipVO;
+}

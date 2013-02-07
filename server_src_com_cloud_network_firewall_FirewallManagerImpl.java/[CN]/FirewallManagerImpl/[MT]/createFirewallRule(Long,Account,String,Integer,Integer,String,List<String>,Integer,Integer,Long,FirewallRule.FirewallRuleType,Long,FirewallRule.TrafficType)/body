@@ -1,0 +1,40 @@
+{
+  IPAddressVO ipAddress=null;
+  if (ipAddrId != null) {
+    ipAddress=_ipAddressDao.findById(ipAddrId);
+    if (ipAddress == null && type == FirewallRule.FirewallRuleType.User) {
+      throw new InvalidParameterValueException("Unable to create firewall rule; " + "couldn't locate IP address by id in the system");
+    }
+    _networkModel.checkIpForService(ipAddress,Service.Firewall,null);
+  }
+  validateFirewallRule(caller,ipAddress,portStart,portEnd,protocol,Purpose.Firewall,type,networkId,trafficType);
+  if (!protocol.equalsIgnoreCase(NetUtils.ICMP_PROTO) && (icmpCode != null || icmpType != null)) {
+    throw new InvalidParameterValueException("Can specify icmpCode and icmpType for ICMP protocol only");
+  }
+  if (protocol.equalsIgnoreCase(NetUtils.ICMP_PROTO) && (portStart != null || portEnd != null)) {
+    throw new InvalidParameterValueException("Can't specify start/end port when protocol is ICMP");
+  }
+  Long accountId=null;
+  Long domainId=null;
+  if (ipAddress != null) {
+    accountId=ipAddress.getAllocatedToAccountId();
+    domainId=ipAddress.getAllocatedInDomainId();
+  }
+ else   if (networkId != null) {
+    Network network=_networkModel.getNetwork(networkId);
+    accountId=network.getAccountId();
+    domainId=network.getDomainId();
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  FirewallRuleVO newRule=new FirewallRuleVO(xId,ipAddrId,portStart,portEnd,protocol.toLowerCase(),networkId,accountId,domainId,Purpose.Firewall,sourceCidrList,icmpCode,icmpType,relatedRuleId,trafficType);
+  newRule.setType(type);
+  newRule=_firewallDao.persist(newRule);
+  if (type == FirewallRuleType.User)   detectRulesConflict(newRule);
+  if (!_firewallDao.setStateToAdd(newRule)) {
+    throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+  }
+  UserContext.current().setEventDetails("Rule Id: " + newRule.getId());
+  txn.commit();
+  return newRule;
+}

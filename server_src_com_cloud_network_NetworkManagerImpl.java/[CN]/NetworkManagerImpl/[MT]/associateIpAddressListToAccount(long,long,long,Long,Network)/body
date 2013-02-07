@@ -18,11 +18,11 @@
       throw new InvalidParameterValueException("Error, more than 1 Guest Isolated Networks with SourceNAT " + "service enabled found for this account, cannot assosiate the IP range, please provide the network ID");
     }
   }
+  List<NetworkOfferingVO> requiredOfferings=_networkOfferingDao.listByAvailability(Availability.Required,false);
+  if (requiredOfferings.size() < 1) {
+    throw new CloudRuntimeException("Unable to find network offering with availability=" + Availability.Required + " to automatically create the network as part of createVlanIpRange");
+  }
   if (createNetwork) {
-    List<NetworkOfferingVO> requiredOfferings=_networkOfferingDao.listByAvailability(Availability.Required,false);
-    if (requiredOfferings.size() < 1) {
-      throw new CloudRuntimeException("Unable to find network offering with availability=" + Availability.Required + " to automatically create the network as part of createVlanIpRange");
-    }
     if (requiredOfferings.get(0).getState() == NetworkOffering.State.Enabled) {
       long physicalNetworkId=_networkModel.findPhysicalNetworkId(zoneId,requiredOfferings.get(0).getTags(),requiredOfferings.get(0).getTrafficType());
       PhysicalNetwork physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
@@ -30,7 +30,7 @@
         throw new InvalidParameterValueException("Unable to find physical network with id: " + physicalNetworkId + " and tag: "+ requiredOfferings.get(0).getTags());
       }
       s_logger.debug("Creating network for account " + owner + " from the network offering id="+ requiredOfferings.get(0).getId()+ " as a part of createVlanIpRange process");
-      guestNetwork=createGuestNetwork(requiredOfferings.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",null,null,null,null,owner,null,physicalNetwork,zoneId,ACLType.Account,null,null);
+      guestNetwork=createGuestNetwork(requiredOfferings.get(0).getId(),owner.getAccountName() + "-network",owner.getAccountName() + "-network",null,null,null,null,owner,null,physicalNetwork,zoneId,ACLType.Account,null,null,null,null);
       if (guestNetwork == null) {
         s_logger.warn("Failed to create default Virtual network for the account " + accountId + "in zone "+ zoneId);
         throw new CloudRuntimeException("Failed to create a Guest Isolated Networks with SourceNAT " + "service enabled as a part of createVlanIpRange, for the account " + accountId + "in zone "+ zoneId);
@@ -67,5 +67,27 @@
     }
   }
   txn.commit();
+  if (createNetwork && requiredOfferings.get(0).getIsPersistent()) {
+    DataCenter zone=_dcDao.findById(zoneId);
+    DeployDestination dest=new DeployDestination(zone,null,null,null);
+    Account callerAccount=UserContext.current().getCaller();
+    UserVO callerUser=_userDao.findById(UserContext.current().getCallerUserId());
+    Journal journal=new Journal.LogJournal("Implementing " + guestNetwork,s_logger);
+    ReservationContext context=new ReservationContextImpl(UUID.randomUUID().toString(),journal,callerUser,callerAccount);
+    s_logger.debug("Implementing network " + guestNetwork + " as a part of network provision for persistent network");
+    try {
+      Pair<NetworkGuru,NetworkVO> implementedNetwork=implementNetwork(guestNetwork.getId(),dest,context);
+      if (implementedNetwork.first() == null) {
+        s_logger.warn("Failed to implement the network " + guestNetwork);
+      }
+      guestNetwork=implementedNetwork.second();
+    }
+ catch (    Exception ex) {
+      s_logger.warn("Failed to implement network " + guestNetwork + " elements and resources as a part of"+ " network provision due to ",ex);
+      CloudRuntimeException e=new CloudRuntimeException("Failed to implement network (with specified id)" + " elements and resources as a part of network provision for persistent network");
+      e.addProxyObject(guestNetwork,guestNetwork.getId(),"networkId");
+      throw e;
+    }
+  }
   return true;
 }

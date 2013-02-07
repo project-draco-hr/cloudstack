@@ -1,0 +1,33 @@
+{
+  Long zoneId=profile.getVirtualMachine().getDataCenterId();
+  Long podId=profile.getVirtualMachine().getPodIdToDeployIn();
+  List<HostVO> hosts=_resourceMgr.listAllUpAndEnabledHosts(Type.BaremetalDhcp,null,podId,zoneId);
+  if (hosts.size() == 0) {
+    throw new CloudRuntimeException("No external Dhcp found in zone " + zoneId + " pod "+ podId);
+  }
+  if (hosts.size() > 1) {
+    throw new CloudRuntimeException("Something wrong, more than 1 external Dhcp found in zone " + zoneId + " pod "+ podId);
+  }
+  HostVO h=hosts.get(0);
+  String dns=nic.getDns1();
+  if (dns == null) {
+    dns=nic.getDns2();
+  }
+  DhcpEntryCommand dhcpCommand=new DhcpEntryCommand(nic.getMacAddress(),nic.getIp4Address(),profile.getVirtualMachine().getHostName(),null,dns,nic.getGateway(),null);
+  String errMsg=String.format("Set dhcp entry on external DHCP %1$s failed(ip=%2$s, mac=%3$s, vmname=%4$s)",h.getPrivateIpAddress(),nic.getIp4Address(),nic.getMacAddress(),profile.getVirtualMachine().getHostName());
+  try {
+    Answer ans=_agentMgr.send(h.getId(),dhcpCommand);
+    if (ans.getResult()) {
+      s_logger.debug(String.format("Set dhcp entry on external DHCP %1$s successfully(ip=%2$s, mac=%3$s, vmname=%4$s)",h.getPrivateIpAddress(),nic.getIp4Address(),nic.getMacAddress(),profile.getVirtualMachine().getHostName()));
+      return true;
+    }
+ else {
+      s_logger.debug(errMsg + " " + ans.getDetails());
+      throw new ResourceUnavailableException(errMsg,DataCenter.class,zoneId);
+    }
+  }
+ catch (  Exception e) {
+    s_logger.debug(errMsg,e);
+    throw new ResourceUnavailableException(errMsg + e.getMessage(),DataCenter.class,zoneId);
+  }
+}

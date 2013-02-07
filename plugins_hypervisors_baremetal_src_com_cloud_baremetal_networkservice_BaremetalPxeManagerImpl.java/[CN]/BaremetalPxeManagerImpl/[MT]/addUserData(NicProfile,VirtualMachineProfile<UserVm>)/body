@@ -1,0 +1,54 @@
+{
+  UserVmVO vm=(UserVmVO)profile.getVirtualMachine();
+  _vmDao.loadDetails(vm);
+  String serviceOffering=_serviceOfferingDao.findByIdIncludingRemoved(vm.getServiceOfferingId()).getDisplayText();
+  String zoneName=_dcDao.findById(vm.getDataCenterId()).getName();
+  NicVO nvo=_nicDao.findById(nic.getId());
+  VmDataCommand cmd=new VmDataCommand(nvo.getIp4Address(),vm.getInstanceName());
+  cmd.addVmData("userdata","user-data",vm.getUserData());
+  cmd.addVmData("metadata","service-offering",StringUtils.unicodeEscape(serviceOffering));
+  cmd.addVmData("metadata","availability-zone",StringUtils.unicodeEscape(zoneName));
+  cmd.addVmData("metadata","local-ipv4",nic.getIp4Address());
+  cmd.addVmData("metadata","local-hostname",StringUtils.unicodeEscape(vm.getInstanceName()));
+  cmd.addVmData("metadata","public-ipv4",nic.getIp4Address());
+  cmd.addVmData("metadata","public-hostname",StringUtils.unicodeEscape(vm.getInstanceName()));
+  cmd.addVmData("metadata","instance-id",String.valueOf(vm.getId()));
+  cmd.addVmData("metadata","vm-id",String.valueOf(vm.getInstanceName()));
+  cmd.addVmData("metadata","public-keys",null);
+  String cloudIdentifier=_configDao.getValue("cloud.identifier");
+  if (cloudIdentifier == null) {
+    cloudIdentifier="";
+  }
+ else {
+    cloudIdentifier="CloudStack-{" + cloudIdentifier + "}";
+  }
+  cmd.addVmData("metadata","cloud-identifier",cloudIdentifier);
+  List<PhysicalNetworkVO> phys=_phynwDao.listByZone(vm.getDataCenterId());
+  if (phys.isEmpty()) {
+    throw new CloudRuntimeException(String.format("Cannot find physical network in zone %s",vm.getDataCenterId()));
+  }
+  if (phys.size() > 1) {
+    throw new CloudRuntimeException(String.format("Baremetal only supports one physical network in zone, but zone %s has %s physical networks",vm.getDataCenterId(),phys.size()));
+  }
+  PhysicalNetworkVO phy=phys.get(0);
+  SearchCriteriaService<BaremetalPxeVO,BaremetalPxeVO> sc=SearchCriteria2.create(BaremetalPxeVO.class);
+  sc.addAnd(sc.getEntity().getPhysicalNetworkId(),Op.EQ,phy.getId());
+  BaremetalPxeVO pxeVo=sc.find();
+  if (pxeVo == null) {
+    throw new CloudRuntimeException("No PXE server found in pod: " + vm.getPodIdToDeployIn() + ", you need to add it before starting VM");
+  }
+  try {
+    Answer ans=_agentMgr.send(pxeVo.getHostId(),cmd);
+    if (!ans.getResult()) {
+      s_logger.debug(String.format("Add userdata to vm:%s failed because %s",vm.getInstanceName(),ans.getDetails()));
+      return false;
+    }
+ else {
+      return true;
+    }
+  }
+ catch (  Exception e) {
+    s_logger.debug(String.format("Add userdata to vm:%s failed",vm.getInstanceName()),e);
+    return false;
+  }
+}

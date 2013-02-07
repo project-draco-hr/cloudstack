@@ -1,0 +1,51 @@
+{
+  while (!connected) {
+    try {
+      Thread.sleep(_retryInterval);
+    }
+ catch (    InterruptedException ie) {
+    }
+    try {
+      try {
+        connection=createConnection();
+        connected=true;
+      }
+ catch (      IOException ie) {
+        continue;
+      }
+      for (      String subscriberId : _subscribers.keySet()) {
+        Ternary<String,Channel,EventSubscriber> subscriberDetails=_subscribers.get(subscriberId);
+        String bindingKey=subscriberDetails.first();
+        EventSubscriber subscriber=subscriberDetails.third();
+        Channel channel=createChannel(connection);
+        createExchange(channel,_amqpExchangeName);
+        channel.queueDeclare(subscriberId,false,false,false,null);
+        channel.queueBind(subscriberId,_amqpExchangeName,bindingKey);
+        channel.basicConsume(subscriberId,_autoAck,subscriberId,new DefaultConsumer(channel){
+          @Override public void handleDelivery(          String queueName,          Envelope envelope,          AMQP.BasicProperties properties,          byte[] body) throws IOException {
+            Ternary<String,Channel,EventSubscriber> subscriberDetails=_subscribers.get(queueName);
+            if (subscriberDetails != null) {
+              EventSubscriber subscriber=subscriberDetails.third();
+              String routingKey=envelope.getRoutingKey();
+              String eventSource=getEventSourceFromRoutingKey(routingKey);
+              String eventCategory=getEventCategoryFromRoutingKey(routingKey);
+              String eventType=getEventTypeFromRoutingKey(routingKey);
+              String resourceType=getResourceTypeFromRoutingKey(routingKey);
+              String resourceUUID=getResourceUUIDFromRoutingKey(routingKey);
+              Event event=new Event(eventSource,eventCategory,eventType,resourceType,resourceUUID);
+              event.setDescription(new String(body));
+              subscriber.onEvent(event);
+            }
+          }
+        }
+);
+        subscriberDetails.second(channel);
+        _subscribers.put(subscriberId,subscriberDetails);
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn("Failed to recreate queues and binding for the subscribers due to " + e.getMessage());
+    }
+  }
+  return;
+}

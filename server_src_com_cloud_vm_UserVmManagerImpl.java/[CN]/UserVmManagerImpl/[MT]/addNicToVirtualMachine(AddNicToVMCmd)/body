@@ -1,0 +1,59 @@
+{
+  Long vmId=cmd.getVmId();
+  Long networkId=cmd.getNetworkId();
+  String ipAddress=cmd.getIpAddress();
+  Account caller=UserContext.current().getCaller();
+  UserVmVO vmInstance=_vmDao.findById(vmId);
+  if (vmInstance == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+  }
+  NetworkVO network=_networkDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("unable to find a network with id " + networkId);
+  }
+  NicProfile profile=new NicProfile(null,null);
+  if (ipAddress != null) {
+    profile=new NicProfile(ipAddress,null);
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  DataCenterVO dc=_dcDao.findById(vmInstance.getDataCenterId());
+  if (dc.getNetworkType() == DataCenter.NetworkType.Basic) {
+    throw new CloudRuntimeException("Zone " + vmInstance.getDataCenterId() + ", has a NetworkType of Basic. Can't add a new NIC to a VM on a Basic Network");
+  }
+  if (network.getGuestType() != Network.GuestType.Shared) {
+    List<NetworkVO> networkMap=_networkDao.listBy(caller.getId(),network.getId());
+    if ((networkMap == null || networkMap.isEmpty()) && caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      throw new PermissionDeniedException("Unable to modify a vm using network with id " + network.getId() + ", permission denied");
+    }
+  }
+  if (network.getDataCenterId() != vmInstance.getDataCenterId()) {
+    throw new CloudRuntimeException(vmInstance + " is in zone:" + vmInstance.getDataCenterId()+ " but "+ network+ " is in zone:"+ network.getDataCenterId());
+  }
+  if (_networkModel.getNicInNetwork(vmInstance.getId(),network.getId()) != null) {
+    s_logger.debug(vmInstance + " already in " + network+ " going to add another NIC");
+  }
+ else {
+    List<String> hostNames=_vmInstanceDao.listDistinctHostNames(network.getId());
+    if (hostNames.contains(vmInstance.getHostName())) {
+      throw new CloudRuntimeException(network + " already has a vm with host name: '" + vmInstance.getHostName());
+    }
+  }
+  NicProfile guestNic=null;
+  try {
+    guestNic=_itMgr.addVmToNetwork(vmInstance,network,profile);
+  }
+ catch (  ResourceUnavailableException e) {
+    throw new CloudRuntimeException("Unable to add NIC to " + vmInstance + ": "+ e);
+  }
+catch (  InsufficientCapacityException e) {
+    throw new CloudRuntimeException("Insufficient capacity when adding NIC to " + vmInstance + ": "+ e);
+  }
+catch (  ConcurrentOperationException e) {
+    throw new CloudRuntimeException("Concurrent operations on adding NIC to " + vmInstance + ": "+ e);
+  }
+  if (guestNic == null) {
+    throw new CloudRuntimeException("Unable to add NIC to " + vmInstance);
+  }
+  s_logger.debug("Successful addition of " + network + " from "+ vmInstance);
+  return _vmDao.findById(vmInstance.getId());
+}

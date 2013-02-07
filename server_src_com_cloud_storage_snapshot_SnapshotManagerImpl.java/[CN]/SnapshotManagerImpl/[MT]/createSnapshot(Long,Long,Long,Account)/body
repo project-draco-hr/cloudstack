@@ -37,27 +37,23 @@
           throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volumeId + " is associated with vm:"+ userVm.getInstanceName()+ " is in "+ userVm.getState().toString()+ " state");
         }
         if (userVm.getHypervisorType() == HypervisorType.VMware || userVm.getHypervisorType() == HypervisorType.KVM) {
-          List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(volume.getInstanceId(),Snapshot.Status.Creating,Snapshot.Status.CreatedOnPrimary,Snapshot.Status.BackingUp);
+          List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(volume.getInstanceId(),Snapshot.State.Creating,Snapshot.State.CreatedOnPrimary,Snapshot.State.BackingUp);
           if (activeSnapshots.size() > 1)           throw new CloudRuntimeException("There is other active snapshot tasks on the instance to which the volume is attached, please try again later");
         }
       }
     }
     snapshot=createSnapshotOnPrimary(volume,policyId,snapshotId);
     if (snapshot != null) {
-      if (snapshot.getStatus() == Snapshot.Status.CreatedOnPrimary) {
+      if (snapshot.getState() == Snapshot.State.CreatedOnPrimary) {
         backedUp=backupSnapshotToSecondaryStorage(snapshot);
       }
- else       if (snapshot.getStatus() == Snapshot.Status.BackedUp) {
+ else       if (snapshot.getState() == Snapshot.State.BackedUp) {
         backedUp=true;
       }
  else {
-        snapshot.setStatus(Status.Error);
-        _snapshotDao.update(snapshot.getId(),snapshot);
         throw new CloudRuntimeException("Failed to create snapshot: " + snapshot + " on primary storage");
       }
       if (!backedUp) {
-        snapshot.setStatus(Status.Error);
-        _snapshotDao.update(snapshot.getId(),snapshot);
         throw new CloudRuntimeException("Created snapshot: " + snapshot + " on primary but failed to backup on secondary");
       }
     }
@@ -70,22 +66,12 @@
       postCreateSnapshot(volumeId,snapshot.getId(),policyId,backedUp);
       SnapshotVO freshSnapshot=_snapshotDao.findById(snapshot.getId());
       if ((freshSnapshot != null) && backedUp) {
-        UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,volume.getSize());
-        _usageEventDao.persist(usageEvent);
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,volume.getSize(),snapshot.getClass().getName(),snapshot.getUuid());
       }
       if (!backedUp) {
-        snapshot.setStatus(Status.Error);
-        _snapshotDao.update(snapshot.getId(),snapshot);
       }
  else {
         _resourceLimitMgr.incrementResourceCount(snapshotOwner.getId(),ResourceType.snapshot);
-      }
-    }
- else {
-      snapshot=_snapshotDao.findById(snapshotId);
-      if (snapshot != null) {
-        snapshot.setStatus(Status.Error);
-        _snapshotDao.update(snapshotId,snapshot);
       }
     }
   }

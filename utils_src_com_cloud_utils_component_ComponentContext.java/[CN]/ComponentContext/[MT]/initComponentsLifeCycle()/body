@@ -1,0 +1,56 @@
+{
+  Map<String,SystemIntegrityChecker> integrityCheckers=getApplicationContext().getBeansOfType(SystemIntegrityChecker.class);
+  for (  Entry<String,SystemIntegrityChecker> entry : integrityCheckers.entrySet()) {
+    s_logger.info("Running SystemIntegrityChecker " + entry.getKey());
+    entry.getValue().check();
+  }
+  Map<String,ComponentLifecycle> lifecyleComponents=getApplicationContext().getBeansOfType(ComponentLifecycle.class);
+  Map[] classifiedComponents=new Map[ComponentLifecycle.MAX_RUN_LEVELS];
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    classifiedComponents[i]=new HashMap<String,ComponentLifecycle>();
+  }
+  for (  Map.Entry<String,ComponentLifecycle> entry : lifecyleComponents.entrySet()) {
+    classifiedComponents[entry.getValue().getRunLevel()].put(entry.getKey(),entry.getValue());
+  }
+  Map<String,String> avoidMap=new HashMap<String,String>();
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    for (    Map.Entry<String,ComponentLifecycle> entry : ((Map<String,ComponentLifecycle>)classifiedComponents[i]).entrySet()) {
+      ComponentLifecycle component=entry.getValue();
+      String implClassName=ComponentContext.getTargetClass(component).getName();
+      s_logger.info("Configuring " + implClassName);
+      if (avoidMap.containsKey(implClassName)) {
+        s_logger.info("Skip configuration of " + implClassName + " as it is already configured");
+        continue;
+      }
+      try {
+        component.configure(component.getName(),component.getConfigParams());
+      }
+ catch (      ConfigurationException e) {
+        s_logger.error("Unhandled exception",e);
+        throw new RuntimeException("Unable to configure " + implClassName,e);
+      }
+      avoidMap.put(implClassName,implClassName);
+    }
+  }
+  avoidMap.clear();
+  for (int i=0; i < ComponentLifecycle.MAX_RUN_LEVELS; i++) {
+    for (    Map.Entry<String,ComponentLifecycle> entry : ((Map<String,ComponentLifecycle>)classifiedComponents[i]).entrySet()) {
+      ComponentLifecycle component=entry.getValue();
+      String implClassName=ComponentContext.getTargetClass(component).getName();
+      s_logger.info("Starting " + implClassName);
+      if (avoidMap.containsKey(implClassName)) {
+        s_logger.info("Skip configuration of " + implClassName + " as it is already configured");
+        continue;
+      }
+      try {
+        component.start();
+        if (getTargetObject(component) instanceof ManagementBean)         registerMBean((ManagementBean)getTargetObject(component));
+      }
+ catch (      Exception e) {
+        s_logger.error("Unhandled exception",e);
+        throw new RuntimeException("Unable to start " + implClassName,e);
+      }
+      avoidMap.put(implClassName,implClassName);
+    }
+  }
+}

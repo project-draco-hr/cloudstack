@@ -1,6 +1,8 @@
 def default(self, args):
     if self.pipe_runner(args):
         return
+    apiname = args.partition(' ')[0]
+    (verb, subject) = splitverbsubject(apiname)
     lexp = shlex.shlex(args.strip())
     lexp.whitespace = ' '
     lexp.whitespace_split = True
@@ -10,32 +12,21 @@ def default(self, args):
         next_val = lexp.next()
         if (next_val is None):
             break
-        args.append(next_val)
-    api_name = args[0]
+        args.append(next_val.replace('\x00', ''))
     args_dict = dict((map((lambda x: [x.partition('=')[0], x.partition('=')[2]]), args[1:])[x] for x in range((len(args) - 1))))
     field_filter = None
     if ('filter' in args_dict):
         field_filter = filter((lambda x: (x is not '')), map((lambda x: x.strip()), args_dict.pop('filter').split(',')))
-    api_cmd_str = ('%sCmd' % api_name)
-    api_mod = self.get_api_module(api_name, [api_cmd_str])
-    if (api_mod is None):
+    missing = []
+    if ((verb in self.apicache) and (subject in self.apicache[verb])):
+        missing = filter((lambda x: (x not in args_dict.keys())), self.apicache[verb][subject]['requiredparams'])
+    if (len(missing) > 0):
+        self.monkeyprint('Missing arguments: ', ' '.join(missing))
         return
-    try:
-        api_cmd = getattr(api_mod, api_cmd_str)
-    except AttributeError as e:
-        self.print_shell(('Error: API attribute %s not found!' % e))
-        return
-    for attribute in args_dict.keys():
-        setattr(api_cmd, attribute, args_dict[attribute])
-    command = api_cmd()
-    missing_args = filter((lambda x: (x not in args_dict.keys())), command.required)
-    if (len(missing_args) > 0):
-        self.print_shell('Missing arguments: ', ' '.join(missing_args))
-        return
-    isAsync = False
-    if ('isAsync' in dir(command)):
-        isAsync = (command.isAsync == 'true')
-    result = self.make_request(api_name, args_dict, isAsync)
+    isasync = False
+    if ('asyncapis' in self.apicache):
+        isasync = (apiname in self.apicache['asyncapis'])
+    result = self.make_request(apiname, args_dict, isasync)
     if (result is None):
         return
     try:
@@ -44,4 +35,4 @@ def default(self, args):
             self.print_result(result[responsekey], field_filter)
         print 
     except Exception as e:
-        self.print_shell('\xf0\x9f\x99\x88  Error on parsing and printing', e)
+        self.monkeyprint('\xf0\x9f\x99\x88  Error on parsing and printing', e)

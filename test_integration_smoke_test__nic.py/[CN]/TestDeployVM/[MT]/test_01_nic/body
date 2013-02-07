@@ -1,0 +1,49 @@
+@attr(tags=['devcloud', 'advanced', 'advancedns', 'smoke', 'basic', 'sg'])
+def test_01_nic(self):
+    if (self.services['mode'] != 'Advanced'):
+        self.debug('Cannot run this test with a basic zone, please use advanced!')
+        return
+    try:
+        self.virtual_machine = VirtualMachine.create(self.apiclient, self.services['small'], accountid=self.account.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, mode=self.services['mode'])
+        self.cleanup.insert(0, self.virtual_machine)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.virtual_machine.id)
+        self.debug(('Verify listVirtualMachines response for virtual machine: %s' % self.virtual_machine.id))
+        self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+        self.assertNotEqual(len(list_vm_response), 0, 'Check VM available in List Virtual Machines')
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.id, self.virtual_machine.id, 'Check virtual machine id in listVirtualMachines')
+        self.assertEqual(vm_response.name, self.virtual_machine.name, 'Check virtual machine name in listVirtualMachines')
+        self.assertEqual(len(vm_response.nic), 1, 'Verify we only start with one nic')
+        self.assertEqual(vm_response.nic[0].isdefault, True, 'Verify initial adapter is set to default')
+        existing_nic_ip = vm_response.nic[0].ipaddress
+        existing_nic_id = vm_response.nic[0].id
+        add_response = self.virtual_machine.add_nic(self.apiclient, self.test_network.id)
+        time.sleep(5)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.virtual_machine.id)
+        self.assertEqual(len(list_vm_response[0].nic), 2, "Verify we have 2 NIC's now")
+        new_nic_id = ''
+        for nc in list_vm_response[0].nic:
+            if (nc.ipaddress != existing_nic_ip):
+                new_nic_id = nc.id
+        self.virtual_machine.update_default_nic(self.apiclient, new_nic_id)
+        time.sleep(5)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.virtual_machine.id)
+        for nc in list_vm_response[0].nic:
+            if (nc.ipaddress == existing_nic_ip):
+                self.assertEqual(nc.isdefault, False, 'Verify initial adapter is NOT set to default')
+            else:
+                self.assertEqual(nc.isdefault, True, 'Verify second adapter is set to default')
+        sawException = False
+        try:
+            self.virtual_machine.remove_nic(self.apiclient, new_nic_id)
+        except Exception as ex:
+            sawException = True
+        self.assertEqual(sawException, True, 'Make sure we cannot delete the default NIC')
+        self.virtual_machine.remove_nic(self.apiclient, existing_nic_id)
+        time.sleep(5)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.virtual_machine.id)
+        self.assertEqual(len(list_vm_response[0].nic), 1, 'Verify we are back to a signle NIC')
+        return
+    except Exception as ex:
+        self.debug(('Exception during NIC test!: ' + str(ex)))
+        self.assertEqual(True, False, ('Exception during NIC test!: ' + str(ex)))
