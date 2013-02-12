@@ -1,0 +1,37 @@
+{
+  boolean bReportLoad=false;
+  while (true) {
+    cleanupLogging();
+    bReportLoad=false;
+    if (s_logger.isDebugEnabled())     s_logger.debug("connMap=" + connMap);
+    Enumeration<String> e=connMap.keys();
+    while (e.hasMoreElements()) {
+      String key;
+      ConsoleProxyClient client;
+synchronized (connMap) {
+        key=e.nextElement();
+        client=connMap.get(key);
+      }
+      long seconds_unused=(System.currentTimeMillis() - client.getClientLastFrontEndActivityTime()) / 1000;
+      if (seconds_unused < MAX_SESSION_IDLE_SECONDS) {
+        continue;
+      }
+synchronized (connMap) {
+        connMap.remove(key);
+        bReportLoad=true;
+      }
+      s_logger.info("Dropping " + client + " which has not been used for "+ seconds_unused+ " seconds");
+      client.closeClient();
+    }
+    if (bReportLoad) {
+      String loadInfo=new ConsoleProxyClientStatsCollector(connMap).getStatsReport();
+      ConsoleProxy.reportLoadInfo(loadInfo);
+      if (s_logger.isDebugEnabled())       s_logger.debug("Report load change : " + loadInfo);
+    }
+    try {
+      Thread.sleep(5000);
+    }
+ catch (    InterruptedException ex) {
+    }
+  }
+}

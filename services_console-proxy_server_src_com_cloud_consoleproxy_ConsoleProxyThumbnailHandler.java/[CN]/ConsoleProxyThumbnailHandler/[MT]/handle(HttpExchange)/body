@@ -1,0 +1,55 @@
+{
+  try {
+    Thread.currentThread().setName("JPG Thread " + Thread.currentThread().getId() + " "+ t.getRemoteAddress());
+    if (s_logger.isDebugEnabled())     s_logger.debug("ScreenHandler " + t.getRequestURI());
+    long startTick=System.currentTimeMillis();
+    doHandle(t);
+    if (s_logger.isDebugEnabled())     s_logger.debug(t.getRequestURI() + "Process time " + (System.currentTimeMillis() - startTick)+ " ms");
+  }
+ catch (  IllegalArgumentException e) {
+    String response="Bad query string";
+    s_logger.error(response + ", request URI : " + t.getRequestURI());
+    t.sendResponseHeaders(200,response.length());
+    OutputStream os=t.getResponseBody();
+    os.write(response.getBytes());
+    os.close();
+  }
+catch (  OutOfMemoryError e) {
+    s_logger.error("Unrecoverable OutOfMemory Error, exit and let it be re-launched");
+    System.exit(1);
+  }
+catch (  Throwable e) {
+    s_logger.error("Unexpected exception while handing thumbnail request, ",e);
+    String queries=t.getRequestURI().getQuery();
+    Map<String,String> queryMap=getQueryMap(queries);
+    int width=0;
+    int height=0;
+    String ws=queryMap.get("w");
+    String hs=queryMap.get("h");
+    try {
+      width=Integer.parseInt(ws);
+      height=Integer.parseInt(hs);
+    }
+ catch (    NumberFormatException ex) {
+    }
+    width=Math.min(width,800);
+    height=Math.min(height,600);
+    BufferedImage img=generateTextImage(width,height,"Cannot Connect");
+    ByteArrayOutputStream bos=new ByteArrayOutputStream(8196);
+    javax.imageio.ImageIO.write(img,"jpg",bos);
+    byte[] bs=bos.toByteArray();
+    Headers hds=t.getResponseHeaders();
+    hds.set("Content-Type","image/jpeg");
+    hds.set("Cache-Control","no-cache");
+    hds.set("Cache-Control","no-store");
+    t.sendResponseHeaders(200,bs.length);
+    OutputStream os=t.getResponseBody();
+    os.write(bs);
+    os.close();
+    s_logger.error("Cannot get console, sent error JPG response for " + t.getRequestURI());
+    return;
+  }
+ finally {
+    t.close();
+  }
+}

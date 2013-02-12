@@ -1,0 +1,96 @@
+{
+  String queries=t.getRequestURI().getQuery();
+  if (s_logger.isTraceEnabled())   s_logger.trace("Handle AJAX request: " + queries);
+  Map<String,String> queryMap=ConsoleProxyHttpHandlerHelper.getQueryMap(queries);
+  String host=queryMap.get("host");
+  String portStr=queryMap.get("port");
+  String sid=queryMap.get("sid");
+  String tag=queryMap.get("tag");
+  String ticket=queryMap.get("ticket");
+  String ajaxSessionIdStr=queryMap.get("sess");
+  String eventStr=queryMap.get("event");
+  String console_url=queryMap.get("consoleurl");
+  String console_host_session=queryMap.get("sessionref");
+  if (tag == null)   tag="";
+  long ajaxSessionId=0;
+  int event=0;
+  int port;
+  if (host == null || portStr == null || sid == null)   throw new IllegalArgumentException();
+  try {
+    port=Integer.parseInt(portStr);
+  }
+ catch (  NumberFormatException e) {
+    s_logger.warn("Invalid number parameter in query string: " + portStr);
+    throw new IllegalArgumentException(e);
+  }
+  if (ajaxSessionIdStr != null) {
+    try {
+      ajaxSessionId=Long.parseLong(ajaxSessionIdStr);
+    }
+ catch (    NumberFormatException e) {
+      s_logger.warn("Invalid number parameter in query string: " + ajaxSessionIdStr);
+      throw new IllegalArgumentException(e);
+    }
+  }
+  if (eventStr != null) {
+    try {
+      event=Integer.parseInt(eventStr);
+    }
+ catch (    NumberFormatException e) {
+      s_logger.warn("Invalid number parameter in query string: " + eventStr);
+      throw new IllegalArgumentException(e);
+    }
+  }
+  ConsoleProxyClient viewer=null;
+  try {
+    ConsoleProxyClientParam param=new ConsoleProxyClientParam();
+    param.setClientHostAddress(host);
+    param.setClientHostPort(port);
+    param.setClientHostPassword(sid);
+    param.setClientTag(tag);
+    param.setTicket(ticket);
+    param.setClientTunnelUrl(console_url);
+    param.setClientTunnelSession(console_host_session);
+    viewer=ConsoleProxy.getAjaxVncViewer(param,ajaxSessionIdStr);
+  }
+ catch (  Exception e) {
+    s_logger.warn("Failed to create viewer due to " + e.getMessage(),e);
+    String[] content=new String[]{"<html><head></head><body>","<div id=\"main_panel\" tabindex=\"1\">","<p>Access is denied for the console session. Please close the window and retry again</p>","</div></body></html>"};
+    StringBuffer sb=new StringBuffer();
+    for (int i=0; i < content.length; i++)     sb.append(content[i]);
+    sendResponse(t,"text/html",sb.toString());
+    return;
+  }
+  if (event != 0) {
+    if (ajaxSessionId != 0 && ajaxSessionId == viewer.getAjaxSessionId()) {
+      if (event == 7) {
+        InputStream is=t.getRequestBody();
+        handleClientEventBag(viewer,convertStreamToString(is,true));
+      }
+ else {
+        handleClientEvent(viewer,event,queryMap);
+      }
+      sendResponse(t,"text/html","OK");
+    }
+ else {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Ajax request comes from a different session, id in request: " + ajaxSessionId + ", id in viewer: "+ viewer.getAjaxSessionId());
+      sendResponse(t,"text/html","Invalid ajax client session id");
+    }
+  }
+ else {
+    if (ajaxSessionId != 0 && ajaxSessionId != viewer.getAjaxSessionId()) {
+      s_logger.info("Ajax request comes from a different session, id in request: " + ajaxSessionId + ", id in viewer: "+ viewer.getAjaxSessionId());
+      handleClientKickoff(t,viewer);
+    }
+ else     if (ajaxSessionId == 0) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Ajax request indicates a fresh client start");
+      String title=queryMap.get("t");
+      String guest=queryMap.get("guest");
+      handleClientStart(t,viewer,title != null ? title : "",guest);
+    }
+ else {
+      if (s_logger.isTraceEnabled())       s_logger.trace("Ajax request indicates client update");
+      handleClientUpdate(t,viewer);
+    }
+  }
+}
