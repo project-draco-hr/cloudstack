@@ -1,0 +1,60 @@
+{
+  VMSnapshotVO vmSnapshotVo=_vmSnapshotDao.findById(vmSnapshotId);
+  if (vmSnapshotVo == null) {
+    throw new InvalidParameterValueException("unable to find the vm snapshot with id " + vmSnapshotId);
+  }
+  Long vmId=vmSnapshotVo.getVmId();
+  UserVmVO userVm=_userVMDao.findById(vmId);
+  if (userVm == null) {
+    throw new InvalidParameterValueException("Revert vm to snapshot: " + vmSnapshotId + " failed due to vm: "+ vmId+ " is not found");
+  }
+  if (hasActiveVMSnapshotTasks(vmId)) {
+    throw new InvalidParameterValueException("There is other active vm snapshot tasks on the instance, please try again later");
+  }
+  Account caller=getCaller();
+  _accountMgr.checkAccess(caller,null,true,vmSnapshotVo);
+  if (userVm.getState() != VirtualMachine.State.Running && userVm.getState() != VirtualMachine.State.Stopped) {
+    throw new InvalidParameterValueException("VM Snapshot reverting failed due to vm is not in the state of Running or Stopped.");
+  }
+  if (vmSnapshotVo.getState() != VMSnapshot.State.Ready) {
+    throw new InvalidParameterValueException("VM Snapshot reverting failed due to vm snapshot is not in the state of Created.");
+  }
+  UserVO callerUser=_userDao.findById(UserContext.current().getCallerUserId());
+  UserVmVO vm=null;
+  Long hostId=null;
+  Account owner=_accountDao.findById(vmSnapshotVo.getAccountId());
+  if (userVm.getState() == VirtualMachine.State.Stopped && vmSnapshotVo.getType() == VMSnapshot.Type.DiskAndMemory) {
+    try {
+      vm=_itMgr.advanceStart(userVm,new HashMap<VirtualMachineProfile.Param,Object>(),callerUser,owner);
+      hostId=vm.getHostId();
+    }
+ catch (    Exception e) {
+      s_logger.error("Start VM " + userVm.getInstanceName() + " before reverting failed due to "+ e.getMessage());
+      throw new CloudRuntimeException(e.getMessage());
+    }
+  }
+ else {
+    if (userVm.getState() == VirtualMachine.State.Running && vmSnapshotVo.getType() == VMSnapshot.Type.Disk) {
+      try {
+        _itMgr.advanceStop(userVm,true,callerUser,owner);
+      }
+ catch (      Exception e) {
+        s_logger.error("Stop VM " + userVm.getInstanceName() + " before reverting failed due to "+ e.getMessage());
+        throw new CloudRuntimeException(e.getMessage());
+      }
+    }
+    hostId=pickRunningHost(userVm.getId());
+  }
+  if (hostId == null)   throw new CloudRuntimeException("Can not find any host to revert snapshot " + vmSnapshotVo.getName());
+  if (hasActiveVMSnapshotTasks(userVm.getId())) {
+    throw new InvalidParameterValueException("There is other active vm snapshot tasks on the instance, please try again later");
+  }
+  userVm=_userVMDao.findById(userVm.getId());
+  try {
+    vmSnapshotStateTransitTo(vmSnapshotVo,VMSnapshot.Event.RevertRequested);
+  }
+ catch (  NoTransitionException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+  return revertInternal(userVm,vmSnapshotVo,hostId);
+}

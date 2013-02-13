@@ -1,0 +1,53 @@
+{
+  String vmName=cmd.getVmName();
+  List<VolumeTO> listVolumeTo=cmd.getVolumeTOs();
+  VMSnapshot.Type vmSnapshotType=cmd.getTarget().getType();
+  Boolean snapshotMemory=vmSnapshotType == VMSnapshot.Type.DiskAndMemory;
+  Connection conn=getConnection();
+  VirtualMachine.State vmState=null;
+  VM vm=null;
+  try {
+    s_vms.remove(_cluster,_name,vmName);
+    Set<VM> vmSnapshots=VM.getByNameLabel(conn,cmd.getTarget().getSnapshotName());
+    if (vmSnapshots.size() == 0)     return new RevertToVMSnapshotAnswer(cmd,false,"Cannot find vmSnapshot with name: " + cmd.getTarget().getSnapshotName());
+    VM vmSnapshot=vmSnapshots.iterator().next();
+    try {
+      vm=getVM(conn,vmName);
+    }
+ catch (    Exception e) {
+      vm=createWorkingVM(conn,vmName,cmd.getGuestOSType(),listVolumeTo);
+    }
+    if (vm == null) {
+      return new RevertToVMSnapshotAnswer(cmd,false,"Revert to VM Snapshot Failed due to can not find vm: " + vmName);
+    }
+    revertToSnapshot(conn,vmSnapshot,vmName,vm.getUuid(conn),snapshotMemory,_host.uuid);
+    vm=getVM(conn,vmName);
+    Set<VBD> vbds=vm.getVBDs(conn);
+    Map<String,VDI> vdiMap=new HashMap<String,VDI>();
+    for (    VBD vbd : vbds) {
+      VBD.Record vbdr=vbd.getRecord(conn);
+      if (vbdr.type == Types.VbdType.DISK) {
+        VDI vdi=vbdr.VDI;
+        vdiMap.put(vbdr.userdevice,vdi);
+      }
+    }
+    if (!snapshotMemory) {
+      vm.destroy(conn);
+      vmState=VirtualMachine.State.Stopped;
+    }
+ else {
+      s_vms.put(_cluster,_name,vmName,State.Running);
+      vmState=VirtualMachine.State.Running;
+    }
+    for (    VolumeTO volumeTo : listVolumeTo) {
+      Long deviceId=volumeTo.getDeviceId();
+      VDI vdi=vdiMap.get(deviceId.toString());
+      volumeTo.setPath(vdi.getUuid(conn));
+    }
+    return new RevertToVMSnapshotAnswer(cmd,listVolumeTo,vmState);
+  }
+ catch (  Exception e) {
+    s_logger.error("revert vm " + vmName + " to snapshot "+ cmd.getTarget().getSnapshotName()+ " failed due to "+ e.getMessage());
+    return new RevertToVMSnapshotAnswer(cmd,false,e.getMessage());
+  }
+}

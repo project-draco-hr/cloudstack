@@ -1,0 +1,56 @@
+{
+  List<VolumeTO> listVolumeTo=cmd.getVolumeTOs();
+  VirtualMachineMO vmMo=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  Map<String,String> mapNewDisk=new HashMap<String,String>();
+  String vmName=cmd.getVmName();
+  String vmSnapshotName=cmd.getTarget().getSnapshotName();
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null)     vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="Unable to find VM for RevertToVMSnapshotCommand";
+      s_logger.debug(msg);
+      return new DeleteVMSnapshotAnswer(cmd,false,msg);
+    }
+ else {
+      if (vmMo.getSnapshotMor(vmSnapshotName) == null) {
+        s_logger.debug("can not find the snapshot " + vmSnapshotName + ", assume it is already removed");
+      }
+ else {
+        if (!vmMo.removeSnapshot(vmSnapshotName,false)) {
+          String msg="delete vm snapshot " + vmSnapshotName + " due to error occured in vmware";
+          s_logger.error(msg);
+          return new DeleteVMSnapshotAnswer(cmd,false,msg);
+        }
+      }
+      s_logger.debug("snapshot: " + vmSnapshotName + " is removed");
+      VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
+      for (int i=0; i < vdisks.length; i++) {
+        @SuppressWarnings("deprecation") List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
+        for (        Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
+          String vmdkName=fileItem.first().split(" ")[1];
+          if (vmdkName.endsWith(".vmdk")) {
+            vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
+          }
+          String[] s=vmdkName.split("-");
+          mapNewDisk.put(s[0],vmdkName);
+        }
+      }
+      for (      VolumeTO volumeTo : listVolumeTo) {
+        String key=null;
+        String parentUUID=volumeTo.getPath();
+        String[] s=parentUUID.split("-");
+        key=s[0];
+        volumeTo.setPath(mapNewDisk.get(key));
+      }
+      return new DeleteVMSnapshotAnswer(cmd,listVolumeTo);
+    }
+  }
+ catch (  Exception e) {
+    String msg=e.getMessage();
+    s_logger.error("failed to delete vm snapshot " + vmSnapshotName + " of vm "+ vmName+ " due to "+ msg);
+    return new DeleteVMSnapshotAnswer(cmd,false,msg);
+  }
+}

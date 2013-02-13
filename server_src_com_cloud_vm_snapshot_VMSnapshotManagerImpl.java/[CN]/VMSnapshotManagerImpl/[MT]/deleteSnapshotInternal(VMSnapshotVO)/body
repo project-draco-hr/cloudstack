@@ -1,0 +1,28 @@
+{
+  UserVmVO userVm=_userVMDao.findById(vmSnapshot.getVmId());
+  try {
+    vmSnapshotStateTransitTo(vmSnapshot,VMSnapshot.Event.ExpungeRequested);
+    Long hostId=pickRunningHost(vmSnapshot.getVmId());
+    List<VolumeTO> volumeTOs=getVolumeTOList(vmSnapshot.getVmId());
+    String vmInstanceName=userVm.getInstanceName();
+    VMSnapshotTO parent=getSnapshotWithParents(vmSnapshot).getParent();
+    VMSnapshotTO vmSnapshotTO=new VMSnapshotTO(vmSnapshot.getId(),vmSnapshot.getName(),vmSnapshot.getType(),vmSnapshot.getCreated().getTime(),vmSnapshot.getDescription(),vmSnapshot.getCurrent(),parent);
+    GuestOSVO guestOS=_guestOSDao.findById(userVm.getGuestOSId());
+    DeleteVMSnapshotCommand deleteSnapshotCommand=new DeleteVMSnapshotCommand(vmInstanceName,vmSnapshotTO,volumeTOs,guestOS.getDisplayName());
+    DeleteVMSnapshotAnswer answer=(DeleteVMSnapshotAnswer)sendToPool(hostId,deleteSnapshotCommand);
+    if (answer != null && answer.getResult()) {
+      processAnswer(vmSnapshot,userVm,answer,hostId);
+      s_logger.debug("Delete VM snapshot " + vmSnapshot.getName() + " succeeded for vm: "+ userVm.getInstanceName());
+      return true;
+    }
+ else {
+      s_logger.error("Delete vm snapshot " + vmSnapshot.getName() + " of vm "+ userVm.getInstanceName()+ " failed due to "+ answer.getDetails());
+      return false;
+    }
+  }
+ catch (  Exception e) {
+    String msg="Delete vm snapshot " + vmSnapshot.getName() + " of vm "+ userVm.getInstanceName()+ " failed due to "+ e.getMessage();
+    s_logger.error(msg,e);
+    throw new CloudRuntimeException(e.getMessage());
+  }
+}

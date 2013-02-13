@@ -1,0 +1,60 @@
+{
+  Account caller=getCaller();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  boolean listAll=cmd.listAll();
+  Long id=cmd.getId();
+  Long vmId=cmd.getVmId();
+  String state=cmd.getState();
+  String keyword=cmd.getKeyword();
+  String name=cmd.getVmSnapshotName();
+  String accountName=cmd.getAccountName();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
+  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,listAll,false);
+  Long domainId=domainIdRecursiveListProject.first();
+  Boolean isRecursive=domainIdRecursiveListProject.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  Filter searchFilter=new Filter(VMSnapshotVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<VMSnapshotVO> sb=_vmSnapshotDao.createSearchBuilder();
+  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  sb.and("vm_id",sb.entity().getVmId(),SearchCriteria.Op.EQ);
+  sb.and("domain_id",sb.entity().getDomainId(),SearchCriteria.Op.EQ);
+  sb.and("status",sb.entity().getState(),SearchCriteria.Op.IN);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("display_name",sb.entity().getDisplayName(),SearchCriteria.Op.EQ);
+  sb.and("account_id",sb.entity().getAccountId(),SearchCriteria.Op.EQ);
+  sb.done();
+  SearchCriteria<VMSnapshotVO> sc=sb.create();
+  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  if (accountName != null && cmd.getDomainId() != null) {
+    Account account=_accountMgr.getActiveAccountByName(accountName,cmd.getDomainId());
+    sc.setParameters("account_id",account.getId());
+  }
+  if (vmId != null) {
+    sc.setParameters("vm_id",vmId);
+  }
+  if (domainId != null) {
+    sc.setParameters("domain_id",domainId);
+  }
+  if (state == null) {
+    VMSnapshot.State[] status={VMSnapshot.State.Ready,VMSnapshot.State.Creating,VMSnapshot.State.Allocated,VMSnapshot.State.Error,VMSnapshot.State.Expunging,VMSnapshot.State.Reverting};
+    sc.setParameters("status",(Object[])status);
+  }
+ else {
+    sc.setParameters("state",state);
+  }
+  if (name != null) {
+    sc.setParameters("display_name",name);
+  }
+  if (keyword != null) {
+    SearchCriteria<VMSnapshotVO> ssc=_vmSnapshotDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("display_name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  return _vmSnapshotDao.search(sc,searchFilter);
+}
