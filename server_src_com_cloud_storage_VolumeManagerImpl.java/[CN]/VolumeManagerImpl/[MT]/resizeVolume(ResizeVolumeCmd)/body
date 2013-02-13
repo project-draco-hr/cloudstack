@@ -1,7 +1,6 @@
 {
   Long newSize=null;
   boolean shrinkOk=cmd.getShrinkOk();
-  boolean success=false;
   VolumeVO volume=_volsDao.findById(cmd.getEntityId());
   if (volume == null) {
     throw new InvalidParameterValueException("No such volume");
@@ -88,51 +87,27 @@
       throw new InvalidParameterValueException("VM must be stopped or disk detached in order to resize with the Xen HV");
     }
   }
+  ResizeVolumePayload payload=new ResizeVolumePayload(newSize,shrinkOk,instanceName,hosts);
   try {
-    try {
-      stateTransitTo(volume,Volume.Event.ResizeRequested);
+    VolumeInfo vol=this.volFactory.getVolume(volume.getId());
+    vol.addPayload(payload);
+    AsyncCallFuture<VolumeApiResult> future=this.volService.resize(vol);
+    future.get();
+    volume=_volsDao.findById(volume.getId());
+    if (newDiskOffering != null) {
+      volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
     }
- catch (    NoTransitionException etrans) {
-      throw new CloudRuntimeException("Unable to change volume state for resize: " + etrans.toString());
-    }
-    ResizeVolumeCommand resizeCmd=new ResizeVolumeCommand(volume.getPath(),new StorageFilerTO(pool),currentSize,newSize,shrinkOk,instanceName);
-    ResizeVolumeAnswer answer=(ResizeVolumeAnswer)this.storageMgr.sendToPool(pool,hosts,resizeCmd);
-    if (answer != null && answer.getResult()) {
-      long finalSize=answer.getNewSize();
-      s_logger.debug("Resize: volume started at size " + currentSize + " and ended at size "+ finalSize);
-      volume.setSize(finalSize);
-      if (newDiskOffering != null) {
-        volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
-      }
-      _volsDao.update(volume.getId(),volume);
-      success=true;
-      return volume;
-    }
- else     if (answer != null) {
-      s_logger.debug("Resize: returned '" + answer.getDetails() + "'");
-    }
+    _volsDao.update(volume.getId(),volume);
+    return volume;
   }
- catch (  StorageUnavailableException e) {
-    s_logger.debug("volume failed to resize: " + e);
-    return null;
+ catch (  InterruptedException e) {
+    s_logger.debug("failed get resize volume result",e);
   }
- finally {
-    if (success) {
-      try {
-        stateTransitTo(volume,Volume.Event.OperationSucceeded);
-      }
- catch (      NoTransitionException etrans) {
-        throw new CloudRuntimeException("Failed to change volume state: " + etrans.toString());
-      }
-    }
- else {
-      try {
-        stateTransitTo(volume,Volume.Event.OperationFailed);
-      }
- catch (      NoTransitionException etrans) {
-        throw new CloudRuntimeException("Failed to change volume state: " + etrans.toString());
-      }
-    }
+catch (  ExecutionException e) {
+    s_logger.debug("failed get resize volume result",e);
+  }
+catch (  Exception e) {
+    s_logger.debug("failed get resize volume result",e);
   }
   return null;
 }

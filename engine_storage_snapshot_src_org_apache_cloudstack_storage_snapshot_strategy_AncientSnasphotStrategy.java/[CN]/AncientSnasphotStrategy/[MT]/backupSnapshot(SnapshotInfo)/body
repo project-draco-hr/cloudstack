@@ -1,0 +1,38 @@
+{
+  SnapshotObject snapObj=(SnapshotObject)snapshot;
+  AsyncCallFuture<SnapshotResult> future=new AsyncCallFuture<SnapshotResult>();
+  SnapshotResult result=new SnapshotResult(snapshot);
+  try {
+    snapObj.processEvent(Snapshot.Event.BackupToSecondary);
+    ZoneScope scope=new ZoneScope(snapshot.getDataCenterId());
+    List<DataStore> stores=this.dataStoreMgr.getImageStores(scope);
+    if (stores.size() != 1) {
+      throw new CloudRuntimeException("find out more than one image stores");
+    }
+    DataStore imageStore=stores.get(0);
+    SnapshotInfo snapshotOnImageStore=(SnapshotInfo)imageStore.create(snapshot);
+    snapshotOnImageStore.processEvent(Event.CreateOnlyRequested);
+    CopySnapshotContext<CommandResult> context=new CopySnapshotContext<CommandResult>(null,snapshot,snapshotOnImageStore,future);
+    AsyncCallbackDispatcher<AncientSnasphotStrategy,CopyCommandResult> caller=AsyncCallbackDispatcher.create(this);
+    caller.setCallback(caller.getTarget().copySnapshotAsyncCallback(null,null)).setContext(context);
+    this.motionSrv.copyAsync(snapshot,snapshotOnImageStore,caller);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to copy snapshot",e);
+    result.setResult("Failed to copy snapshot:" + e.toString());
+    future.complete(result);
+  }
+  try {
+    SnapshotResult res=future.get();
+    SnapshotInfo destSnapshot=res.snashot;
+    return destSnapshot;
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("failed copy snapshot",e);
+    throw new CloudRuntimeException("Failed to copy snapshot",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("Failed to copy snapshot",e);
+    throw new CloudRuntimeException("Failed to copy snapshot",e);
+  }
+}
