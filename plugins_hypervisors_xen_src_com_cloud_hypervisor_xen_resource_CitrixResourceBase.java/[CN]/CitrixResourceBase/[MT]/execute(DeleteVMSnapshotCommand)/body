@@ -1,0 +1,30 @@
+{
+  String snapshotName=cmd.getTarget().getSnapshotName();
+  Connection conn=getConnection();
+  try {
+    List<VDI> vdiList=new ArrayList<VDI>();
+    Set<VM> snapshots=VM.getByNameLabel(conn,snapshotName);
+    if (snapshots.size() == 0) {
+      s_logger.warn("VM snapshot with name " + snapshotName + " does not exist, assume it is already deleted");
+      return new DeleteVMSnapshotAnswer(cmd,cmd.getVolumeTOs());
+    }
+    VM snapshot=snapshots.iterator().next();
+    Set<VBD> vbds=snapshot.getVBDs(conn);
+    for (    VBD vbd : vbds) {
+      if (vbd.getType(conn) == VbdType.DISK) {
+        VDI vdi=vbd.getVDI(conn);
+        vdiList.add(vdi);
+      }
+    }
+    if (cmd.getTarget().getType() == VMSnapshot.Type.DiskAndMemory)     vdiList.add(snapshot.getSuspendVDI(conn));
+    snapshot.destroy(conn);
+    for (    VDI vdi : vdiList) {
+      vdi.destroy(conn);
+    }
+    return new DeleteVMSnapshotAnswer(cmd,cmd.getVolumeTOs());
+  }
+ catch (  Exception e) {
+    s_logger.warn("Catch Exception: " + e.getClass().toString() + " due to "+ e.toString(),e);
+    return new DeleteVMSnapshotAnswer(cmd,false,e.getMessage());
+  }
+}

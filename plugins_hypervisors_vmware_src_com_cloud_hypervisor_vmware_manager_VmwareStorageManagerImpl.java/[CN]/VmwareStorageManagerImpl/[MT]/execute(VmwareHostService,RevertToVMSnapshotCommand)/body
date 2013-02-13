@@ -1,0 +1,73 @@
+{
+  String snapshotName=cmd.getTarget().getSnapshotName();
+  String vmName=cmd.getVmName();
+  Boolean snapshotMemory=cmd.getTarget().getType() == VMSnapshot.Type.DiskAndMemory;
+  List<VolumeTO> listVolumeTo=cmd.getVolumeTOs();
+  VirtualMachine.State vmState=VirtualMachine.State.Running;
+  VirtualMachineMO vmMo=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  Map<String,String> mapNewDisk=new HashMap<String,String>();
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    ManagedObjectReference taskmgr=context.getServiceContent().getTaskManager();
+    ManagedObjectReference[] tasks=(ManagedObjectReference[])context.getServiceUtil().getDynamicProperty(taskmgr,"recentTask");
+    for (    ManagedObjectReference taskMor : tasks) {
+      TaskInfo info=(TaskInfo)(context.getServiceUtil().getDynamicProperty(taskMor,"info"));
+      if (info.getEntityName().equals(cmd.getVmName()) && info.getName().equalsIgnoreCase("RevertToSnapshot_Task")) {
+        s_logger.debug("There is already a VM snapshot task running, wait for it");
+        context.getServiceUtil().waitForTask(taskMor);
+      }
+    }
+    HostMO hostMo=(HostMO)hyperHost;
+    vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null)     vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="Unable to find VM for RevertToVMSnapshotCommand";
+      s_logger.debug(msg);
+      return new RevertToVMSnapshotAnswer(cmd,false,msg);
+    }
+ else {
+      boolean result=false;
+      if (snapshotName != null) {
+        ManagedObjectReference morSnapshot=vmMo.getSnapshotMor(snapshotName);
+        result=hostMo.revertToSnapshot(morSnapshot);
+      }
+ else {
+        return new RevertToVMSnapshotAnswer(cmd,false,"Unable to find the snapshot by name " + snapshotName);
+      }
+      if (result) {
+        VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
+        for (int i=0; i < vdisks.length; i++) {
+          @SuppressWarnings("deprecation") List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
+          for (          Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
+            String vmdkName=fileItem.first().split(" ")[1];
+            if (vmdkName.endsWith(".vmdk")) {
+              vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
+            }
+            String[] s=vmdkName.split("-");
+            mapNewDisk.put(s[0],vmdkName);
+          }
+        }
+        String key=null;
+        for (        VolumeTO volumeTo : listVolumeTo) {
+          String parentUUID=volumeTo.getPath();
+          String[] s=parentUUID.split("-");
+          key=s[0];
+          volumeTo.setPath(mapNewDisk.get(key));
+        }
+        if (!snapshotMemory) {
+          vmState=VirtualMachine.State.Stopped;
+        }
+        return new RevertToVMSnapshotAnswer(cmd,listVolumeTo,vmState);
+      }
+ else {
+        return new RevertToVMSnapshotAnswer(cmd,false,"Error while reverting to snapshot due to execute in esxi");
+      }
+    }
+  }
+ catch (  Exception e) {
+    String msg="revert vm " + vmName + " to snapshot "+ snapshotName+ " failed due to "+ e.getMessage();
+    s_logger.error(msg);
+    return new RevertToVMSnapshotAnswer(cmd,false,msg);
+  }
+}

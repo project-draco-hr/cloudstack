@@ -1,0 +1,55 @@
+{
+  Account caller=getCaller();
+  UserVmVO userVmVo=_userVMDao.findById(vmId);
+  if (userVmVo == null) {
+    throw new InvalidParameterValueException("Creating VM snapshot failed due to VM:" + vmId + " is a system VM or does not exist");
+  }
+  if (vsDisplayName != null && vsDisplayName.length() > 255)   throw new InvalidParameterValueException("Creating VM snapshot failed due to length of VM snapshot vsDisplayName should not exceed 255");
+  if (vsDescription != null && vsDescription.length() > 255)   throw new InvalidParameterValueException("Creating VM snapshot failed due to length of VM snapshot vsDescription should not exceed 255");
+  String timeString=DateUtil.getDateDisplayString(DateUtil.GMT_TIMEZONE,new Date(),DateUtil.YYYYMMDD_FORMAT);
+  String vmSnapshotName=userVmVo.getInstanceName() + "_VS_" + timeString;
+  if (vsDisplayName == null) {
+    vsDisplayName=vmSnapshotName;
+  }
+  if (_vmSnapshotDao.findByName(vmId,vsDisplayName) != null) {
+    throw new InvalidParameterValueException("Creating VM snapshot failed due to VM snapshot with name" + vsDisplayName + "  already exists");
+  }
+  if (userVmVo.getState() != VirtualMachine.State.Running && userVmVo.getState() != VirtualMachine.State.Stopped) {
+    throw new InvalidParameterValueException("Creating vm snapshot failed due to VM:" + vmId + " is not in the running or Stopped state");
+  }
+  if (snapshotMemory && userVmVo.getState() == VirtualMachine.State.Stopped) {
+    throw new InvalidParameterValueException("Can not snapshot memory when VM is in stopped state");
+  }
+  if (userVmVo.getHypervisorType() == HypervisorType.KVM && userVmVo.getState() == State.Running && !snapshotMemory) {
+    throw new InvalidParameterValueException("KVM VM does not allow to take a disk-only snapshot when VM is in running state");
+  }
+  _accountMgr.checkAccess(caller,null,true,userVmVo);
+  if (_vmSnapshotDao.findByVm(vmId).size() >= _vmSnapshotMax) {
+    throw new CloudRuntimeException("Creating vm snapshot failed due to a VM can just have : " + _vmSnapshotMax + " VM snapshots. Please delete old ones");
+  }
+  List<VolumeVO> listVolumes=_volumeDao.findByInstance(vmId);
+  for (  VolumeVO volume : listVolumes) {
+    List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(volume.getInstanceId(),Snapshot.State.Creating,Snapshot.State.CreatedOnPrimary,Snapshot.State.BackingUp);
+    if (activeSnapshots.size() > 0) {
+      throw new CloudRuntimeException("There is other active volume snapshot tasks on the instance to which the volume is attached, please try again later.");
+    }
+  }
+  if (hasActiveVMSnapshotTasks(vmId)) {
+    throw new CloudRuntimeException("There is other active vm snapshot tasks on the instance, please try again later");
+  }
+  VMSnapshot.Type vmSnapshotType=VMSnapshot.Type.Disk;
+  if (snapshotMemory && userVmVo.getState() == VirtualMachine.State.Running)   vmSnapshotType=VMSnapshot.Type.DiskAndMemory;
+  try {
+    VMSnapshotVO vmSnapshotVo=new VMSnapshotVO(userVmVo.getAccountId(),userVmVo.getDomainId(),vmId,vsDescription,vmSnapshotName,vsDisplayName,userVmVo.getServiceOfferingId(),vmSnapshotType,null);
+    VMSnapshot vmSnapshot=_vmSnapshotDao.persist(vmSnapshotVo);
+    if (vmSnapshot == null) {
+      throw new CloudRuntimeException("Failed to create snapshot for vm: " + vmId);
+    }
+    return vmSnapshot;
+  }
+ catch (  Exception e) {
+    String msg=e.getMessage();
+    s_logger.error("Create vm snapshot record failed for vm: " + vmId + " due to: "+ msg);
+  }
+  return null;
+}

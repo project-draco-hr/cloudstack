@@ -1,0 +1,44 @@
+{
+  try {
+    CreateVMSnapshotAnswer answer=null;
+    GuestOSVO guestOS=_guestOSDao.findById(userVm.getGuestOSId());
+    List<VolumeTO> volumeTOs=getVolumeTOList(userVm.getId());
+    VMSnapshotTO current=null;
+    VMSnapshotVO currentSnapshot=_vmSnapshotDao.findCurrentSnapshotByVmId(userVm.getId());
+    if (currentSnapshot != null)     current=getSnapshotWithParents(currentSnapshot);
+    VMSnapshotTO target=new VMSnapshotTO(vmSnapshot.getId(),vmSnapshot.getName(),vmSnapshot.getType(),null,vmSnapshot.getDescription(),false,current);
+    if (current == null)     vmSnapshot.setParent(null);
+ else     vmSnapshot.setParent(current.getId());
+    CreateVMSnapshotCommand ccmd=new CreateVMSnapshotCommand(userVm.getInstanceName(),target,volumeTOs,guestOS.getDisplayName(),userVm.getState());
+    answer=(CreateVMSnapshotAnswer)sendToPool(hostId,ccmd);
+    if (answer != null && answer.getResult()) {
+      processAnswer(vmSnapshot,userVm,answer,hostId);
+      s_logger.debug("Create vm snapshot " + vmSnapshot.getName() + " succeeded for vm: "+ userVm.getInstanceName());
+    }
+ else {
+      String errMsg=answer.getDetails();
+      s_logger.error("Agent reports creating vm snapshot " + vmSnapshot.getName() + " failed for vm: "+ userVm.getInstanceName()+ " due to "+ errMsg);
+      vmSnapshotStateTransitTo(vmSnapshot,VMSnapshot.Event.OperationFailed);
+    }
+    return vmSnapshot;
+  }
+ catch (  Exception e) {
+    if (e instanceof AgentUnavailableException) {
+      try {
+        vmSnapshotStateTransitTo(vmSnapshot,VMSnapshot.Event.OperationFailed);
+      }
+ catch (      NoTransitionException e1) {
+        s_logger.error("Cannot set vm snapshot state due to: " + e1.getMessage());
+      }
+    }
+    String msg=e.getMessage();
+    s_logger.error("Create vm snapshot " + vmSnapshot.getName() + " failed for vm: "+ userVm.getInstanceName()+ " due to "+ msg);
+    throw new CloudRuntimeException(msg);
+  }
+ finally {
+    if (vmSnapshot.getState() == VMSnapshot.State.Allocated) {
+      s_logger.warn("Create vm snapshot " + vmSnapshot.getName() + " failed for vm: "+ userVm.getInstanceName());
+      _vmSnapshotDao.remove(vmSnapshot.getId());
+    }
+  }
+}
