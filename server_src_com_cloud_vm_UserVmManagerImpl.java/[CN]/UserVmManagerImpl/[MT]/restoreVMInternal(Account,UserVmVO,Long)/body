@@ -29,12 +29,19 @@
     ex.addProxyObject(vm,vmId,"vmId");
     throw ex;
   }
-  VMTemplateVO template=_templateDao.findById(templateId);
-  if (template == null) {
-    InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template for specified volumeid and vmId");
-    ex.addProxyObject(vm,vmId,"vmId");
-    ex.addProxyObject(root,root.getId(),"volumeId");
-    throw ex;
+  VMTemplateVO template=null;
+  if (newTemplateId != null) {
+    template=_templateDao.findById(newTemplateId);
+    _accountMgr.checkAccess(caller,null,true,template);
+  }
+ else {
+    template=_templateDao.findById(templateId);
+    if (template == null) {
+      InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template for specified volumeid and vmId");
+      ex.addProxyObject(vm,vmId,"vmId");
+      ex.addProxyObject(root,root.getId(),"volumeId");
+      throw ex;
+    }
   }
   if (needRestart) {
     try {
@@ -47,7 +54,14 @@
       throw ex;
     }
   }
-  VolumeVO newVol=_storageMgr.allocateDuplicateVolume(root,null);
+  VolumeVO newVol=null;
+  if (newTemplateId != null) {
+    newVol=_storageMgr.allocateDuplicateVolume(root,newTemplateId);
+    vm.setGuestOSId(template.getGuestOSId());
+    vm.setTemplateId(newTemplateId);
+    _vmDao.update(vmId,vm);
+  }
+ else   newVol=_storageMgr.allocateDuplicateVolume(root,null);
   _volsDao.attachVolume(newVol.getId(),vmId,newVol.getDeviceId());
   try {
     _volsDao.detachVolume(root.getId());
@@ -67,6 +81,6 @@
       throw ex;
     }
   }
-  s_logger.debug("Restore VM " + vm.getUuid() + " with template "+ root.getTemplateId()+ " successfully");
+  s_logger.debug("Restore VM " + vmId + " with template "+ template.getUuid()+ " done successfully");
   return vm;
 }
