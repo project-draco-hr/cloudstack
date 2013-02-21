@@ -1,0 +1,72 @@
+{
+  Long userId=caller.getId();
+  Account owner=_accountDao.findById(vm.getAccountId());
+  UserVO user=_userDao.findById(userId);
+  long vmId=vm.getId();
+  boolean needRestart=false;
+  if (owner == null) {
+    throw new InvalidParameterValueException("The owner of " + vm + " does not exist: "+ vm.getAccountId());
+  }
+  if (owner.getState() == Account.State.disabled) {
+    throw new PermissionDeniedException("The owner of " + vm + " is disabled: "+ vm.getAccountId());
+  }
+  if (vm.getState() != VirtualMachine.State.Running && vm.getState() != VirtualMachine.State.Stopped) {
+    throw new CloudRuntimeException("Vm " + vm.getUuid() + " currently in "+ vm.getState()+ " state, restore vm can only execute when VM in Running or Stopped");
+  }
+  if (vm.getState() == VirtualMachine.State.Running) {
+    needRestart=true;
+  }
+  List<VolumeVO> rootVols=_volsDao.findByInstance(vmId);
+  if (rootVols.isEmpty()) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Can not find root volume for VM " + vm.getUuid());
+    ex.addProxyObject(vm,vmId,"vmId");
+    throw ex;
+  }
+  VolumeVO root=rootVols.get(0);
+  Long templateId=root.getTemplateId();
+  if (templateId == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Currently there is no support to reset a vm that is deployed using ISO " + vm.getUuid());
+    ex.addProxyObject(vm,vmId,"vmId");
+    throw ex;
+  }
+  VMTemplateVO template=_templateDao.findById(templateId);
+  if (template == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template for specified volumeid and vmId");
+    ex.addProxyObject(vm,vmId,"vmId");
+    ex.addProxyObject(root,root.getId(),"volumeId");
+    throw ex;
+  }
+  if (needRestart) {
+    try {
+      _itMgr.stop(vm,user,caller);
+    }
+ catch (    ResourceUnavailableException e) {
+      s_logger.debug("Stop vm " + vm.getUuid() + " failed",e);
+      CloudRuntimeException ex=new CloudRuntimeException("Stop vm failed for specified vmId");
+      ex.addProxyObject(vm,vmId,"vmId");
+      throw ex;
+    }
+  }
+  VolumeVO newVol=_storageMgr.allocateDuplicateVolume(root,null);
+  _volsDao.attachVolume(newVol.getId(),vmId,newVol.getDeviceId());
+  try {
+    _volsDao.detachVolume(root.getId());
+    _storageMgr.destroyVolume(root);
+  }
+ catch (  ConcurrentOperationException e) {
+    s_logger.debug("Unable to delete old root volume " + root.getId() + ", user may manually delete it",e);
+  }
+  if (needRestart) {
+    try {
+      _itMgr.start(vm,null,user,caller);
+    }
+ catch (    Exception e) {
+      s_logger.debug("Unable to start VM " + vm.getUuid(),e);
+      CloudRuntimeException ex=new CloudRuntimeException("Unable to start VM with specified id" + e.getMessage());
+      ex.addProxyObject(vm,vmId,"vmId");
+      throw ex;
+    }
+  }
+  s_logger.debug("Restore VM " + vm.getUuid() + " with template "+ root.getTemplateId()+ " successfully");
+  return vm;
+}
