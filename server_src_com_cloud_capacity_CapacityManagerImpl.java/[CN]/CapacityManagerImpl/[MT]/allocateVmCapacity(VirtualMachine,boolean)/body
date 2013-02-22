@@ -1,15 +1,17 @@
 {
   long hostId=vm.getHostId();
+  HostVO host=_hostDao.findById(hostId);
+  long clusterId=host.getClusterId();
+  float cpuOvercommitRatio=Float.parseFloat(_clusterDetailsDao.findDetail(clusterId,"cpuOvercommitRatio").getValue());
+  float memoryOvercommitRatio=Float.parseFloat(_clusterDetailsDao.findDetail(clusterId,"memoryOvercommitRatio").getValue());
   ServiceOfferingVO svo=_offeringsDao.findById(vm.getServiceOfferingId());
   CapacityVO capacityCpu=_capacityDao.findByHostIdType(hostId,CapacityVO.CAPACITY_TYPE_CPU);
   CapacityVO capacityMem=_capacityDao.findByHostIdType(hostId,CapacityVO.CAPACITY_TYPE_MEMORY);
   if (capacityCpu == null || capacityMem == null || svo == null) {
     return;
   }
-  int cpu=svo.getCpu() * svo.getSpeed();
-  long ram=svo.getRamSize() * 1024L * 1024L;
-  String opFactor=_configDao.getValue(Config.CPUOverprovisioningFactor.key());
-  float cpuOverprovisioningFactor=NumbersUtil.parseFloat(opFactor,1);
+  int cpu=(int)(svo.getCpu() * svo.getSpeed());
+  long ram=(long)(svo.getRamSize() * 1024L * 1024L);
   Transaction txn=Transaction.currentTxn();
   try {
     txn.start();
@@ -20,11 +22,12 @@
     long reservedCpu=capacityCpu.getReservedCapacity();
     long reservedMem=capacityMem.getReservedCapacity();
     long actualTotalCpu=capacityCpu.getTotalCapacity();
-    long totalCpu=(long)(actualTotalCpu * cpuOverprovisioningFactor);
+    long actualTotalMem=capacityMem.getTotalCapacity();
+    long totalCpu=(long)(actualTotalCpu * cpuOvercommitRatio);
+    long totalMem=(long)(actualTotalMem * memoryOvercommitRatio);
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Hosts's actual total CPU: " + actualTotalCpu + " and CPU after applying overprovisioning: "+ totalCpu);
     }
-    long totalMem=capacityMem.getTotalCapacity();
     long freeCpu=totalCpu - (reservedCpu + usedCpu);
     long freeMem=totalMem - (reservedMem + usedMem);
     if (s_logger.isDebugEnabled()) {
