@@ -1,0 +1,71 @@
+{
+  boolean recreate=_recreateSystemVmEnabled;
+  List<VolumeTask> tasks=new ArrayList<VolumeTask>();
+  for (  VolumeVO vol : vols) {
+    StoragePoolVO assignedPool=null;
+    if (destVols != null) {
+      StoragePool pool=destVols.get(vol);
+      if (pool != null) {
+        assignedPool=_storagePoolDao.findById(pool.getId());
+      }
+    }
+    if (assignedPool == null && recreate) {
+      assignedPool=_storagePoolDao.findById(vol.getPoolId());
+    }
+    if (assignedPool != null || recreate) {
+      Volume.State state=vol.getState();
+      if (state == Volume.State.Allocated || state == Volume.State.Creating) {
+        VolumeTask task=new VolumeTask(VolumeTaskType.RECREATE,vol,null);
+        tasks.add(task);
+      }
+ else {
+        if (vol.isRecreatable()) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Volume " + vol + " will be recreated on storage pool "+ assignedPool+ " assigned by deploymentPlanner");
+          }
+          VolumeTask task=new VolumeTask(VolumeTaskType.RECREATE,vol,null);
+          tasks.add(task);
+        }
+ else {
+          if (assignedPool.getId() != vol.getPoolId()) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Mismatch in storage pool " + assignedPool + " assigned by deploymentPlanner and the one associated with volume "+ vol);
+            }
+            DiskOfferingVO diskOffering=_diskOfferingDao.findById(vol.getDiskOfferingId());
+            if (diskOffering.getUseLocalStorage()) {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Local volume " + vol + " will be recreated on storage pool "+ assignedPool+ " assigned by deploymentPlanner");
+              }
+              VolumeTask task=new VolumeTask(VolumeTaskType.RECREATE,vol,null);
+              tasks.add(task);
+            }
+ else {
+              if (s_logger.isDebugEnabled()) {
+                s_logger.debug("Shared volume " + vol + " will be migrated on storage pool "+ assignedPool+ " assigned by deploymentPlanner");
+              }
+              VolumeTask task=new VolumeTask(VolumeTaskType.MIGRATE,vol,null);
+              tasks.add(task);
+            }
+          }
+ else {
+            StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
+            VolumeTask task=new VolumeTask(VolumeTaskType.NOP,vol,pool);
+            tasks.add(task);
+          }
+        }
+      }
+    }
+ else {
+      if (vol.getPoolId() == null) {
+        throw new StorageUnavailableException("Volume has no pool associate and also no storage pool assigned in DeployDestination, Unable to create " + vol,Volume.class,vol.getId());
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("No need to recreate the volume: " + vol + ", since it already has a pool assigned: "+ vol.getPoolId()+ ", adding disk to VM");
+      }
+      StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
+      VolumeTask task=new VolumeTask(VolumeTaskType.NOP,vol,pool);
+      tasks.add(task);
+    }
+  }
+  return tasks;
+}

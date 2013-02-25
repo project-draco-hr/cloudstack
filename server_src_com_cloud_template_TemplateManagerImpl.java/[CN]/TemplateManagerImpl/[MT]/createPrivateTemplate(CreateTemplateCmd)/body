@@ -1,0 +1,70 @@
+{
+  Long userId=UserContext.current().getCallerUserId();
+  if (userId == null) {
+    userId=User.UID_SYSTEM;
+  }
+  long templateId=command.getEntityId();
+  Long volumeId=command.getVolumeId();
+  Long snapshotId=command.getSnapshotId();
+  VMTemplateVO privateTemplate=null;
+  Long accountId=null;
+  SnapshotVO snapshot=null;
+  try {
+    TemplateInfo tmplInfo=this.tmplFactory.getTemplate(templateId);
+    snapshot=_snapshotDao.findById(snapshotId);
+    ZoneScope scope=new ZoneScope(snapshot.getDataCenterId());
+    List<DataStore> store=this.dataStoreMgr.getImageStores(scope);
+    if (store.size() > 1) {
+      throw new CloudRuntimeException("muliple image data store, don't know which one to use");
+    }
+    AsyncCallFuture<CommandResult> future=null;
+    if (snapshotId != null) {
+      SnapshotInfo snapInfo=this.snapshotFactory.getSnapshot(snapshotId);
+      future=this.imageSvr.createTemplateFromSnapshotAsync(snapInfo,tmplInfo,store.get(0));
+    }
+ else     if (volumeId != null) {
+      VolumeInfo volInfo=this.volFactory.getVolume(volumeId);
+      future=this.imageSvr.createTemplateFromVolumeAsync(volInfo,tmplInfo,store.get(0));
+    }
+ else {
+      throw new CloudRuntimeException("Creating private Template need to specify snapshotId or volumeId");
+    }
+    CommandResult result=null;
+    try {
+      result=future.get();
+      if (result.isFailed()) {
+        privateTemplate=null;
+        s_logger.debug("Failed to create template" + result.getResult());
+        throw new CloudRuntimeException("Failed to create template" + result.getResult());
+      }
+      privateTemplate=this._tmpltDao.findById(templateId);
+      UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_TEMPLATE_CREATE,privateTemplate.getAccountId(),snapshot.getDataCenterId(),privateTemplate.getId(),privateTemplate.getName(),null,privateTemplate.getSourceTemplateId(),privateTemplate.getSize());
+      _usageEventDao.persist(usageEvent);
+    }
+ catch (    InterruptedException e) {
+      s_logger.debug("Failed to create template",e);
+      throw new CloudRuntimeException("Failed to create template",e);
+    }
+catch (    ExecutionException e) {
+      s_logger.debug("Failed to create template",e);
+      throw new CloudRuntimeException("Failed to create template",e);
+    }
+  }
+  finally {
+    if (privateTemplate == null) {
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      this._tmpltDao.expunge(templateId);
+      if (accountId != null) {
+        _resourceLimitMgr.decrementResourceCount(accountId,ResourceType.template);
+      }
+      txn.commit();
+    }
+  }
+  if (privateTemplate != null) {
+    return privateTemplate;
+  }
+ else {
+    throw new CloudRuntimeException("Failed to create a template");
+  }
+}

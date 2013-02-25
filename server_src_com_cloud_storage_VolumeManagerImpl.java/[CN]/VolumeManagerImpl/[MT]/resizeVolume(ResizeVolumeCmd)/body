@@ -1,0 +1,113 @@
+{
+  Long newSize=null;
+  boolean shrinkOk=cmd.getShrinkOk();
+  VolumeVO volume=_volsDao.findById(cmd.getEntityId());
+  if (volume == null) {
+    throw new InvalidParameterValueException("No such volume");
+  }
+  DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+  DiskOfferingVO newDiskOffering=null;
+  newDiskOffering=_diskOfferingDao.findById(cmd.getNewDiskOfferingId());
+  if (_volsDao.getHypervisorType(volume.getId()) == HypervisorType.None) {
+    throw new InvalidParameterValueException("Can't resize a volume that has never been attached, not sure which hypervisor type. Recreate volume to resize.");
+  }
+  if (_volsDao.getHypervisorType(volume.getId()) != HypervisorType.KVM && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.XenServer) {
+    throw new InvalidParameterValueException("Cloudstack currently only supports volumes marked as KVM or XenServer hypervisor for resize");
+  }
+  if (volume.getState() != Volume.State.Ready) {
+    throw new InvalidParameterValueException("Volume should be in ready state before attempting a resize");
+  }
+  if (!volume.getVolumeType().equals(Volume.Type.DATADISK)) {
+    throw new InvalidParameterValueException("Can only resize DATA volumes");
+  }
+  if (newDiskOffering == null) {
+    if (diskOffering.isCustomized()) {
+      newSize=cmd.getSize();
+      if (newSize == null) {
+        throw new InvalidParameterValueException("new offering is of custom size, need to specify a size");
+      }
+      newSize=(newSize << 30);
+    }
+ else {
+      throw new InvalidParameterValueException("current offering" + volume.getDiskOfferingId() + " cannot be resized, need to specify a disk offering");
+    }
+  }
+ else {
+    if (newDiskOffering.getRemoved() != null || !DiskOfferingVO.Type.Disk.equals(newDiskOffering.getType())) {
+      throw new InvalidParameterValueException("Disk offering ID is missing or invalid");
+    }
+    if (diskOffering.getTags() != null) {
+      if (!newDiskOffering.getTags().equals(diskOffering.getTags())) {
+        throw new InvalidParameterValueException("Tags on new and old disk offerings must match");
+      }
+    }
+ else     if (newDiskOffering.getTags() != null) {
+      throw new InvalidParameterValueException("There are no tags on current disk offering, new disk offering needs to have no tags");
+    }
+    if (newDiskOffering.getDomainId() == null) {
+    }
+ else {
+      _configMgr.checkDiskOfferingAccess(UserContext.current().getCaller(),newDiskOffering);
+    }
+    if (newDiskOffering.isCustomized()) {
+      newSize=cmd.getSize();
+      if (newSize == null) {
+        throw new InvalidParameterValueException("new offering is of custom size, need to specify a size");
+      }
+      newSize=(newSize << 30);
+    }
+ else {
+      newSize=newDiskOffering.getDiskSize();
+    }
+  }
+  if (newSize == null) {
+    throw new InvalidParameterValueException("could not detect a size parameter or fetch one from the diskofferingid parameter");
+  }
+  if (!validateVolumeSizeRange(newSize)) {
+    throw new InvalidParameterValueException("Requested size out of range");
+  }
+  _accountMgr.checkAccess(UserContext.current().getCaller(),null,true,volume);
+  UserVmVO userVm=_userVmDao.findById(volume.getInstanceId());
+  PrimaryDataStoreInfo pool=(PrimaryDataStoreInfo)this.dataStoreMgr.getDataStore(volume.getPoolId(),DataStoreRole.Primary);
+  long currentSize=volume.getSize();
+  if (currentSize > newSize && !shrinkOk) {
+    throw new InvalidParameterValueException("Going from existing size of " + currentSize + " to size of "+ newSize+ " would shrink the volume, need to sign off by supplying the shrinkok parameter with value of true");
+  }
+  long[] hosts=null;
+  String instanceName="none";
+  if (userVm != null) {
+    instanceName=userVm.getInstanceName();
+    if (userVm.getHostId() != null) {
+      hosts=new long[]{userVm.getHostId()};
+    }
+ else     if (userVm.getLastHostId() != null) {
+      hosts=new long[]{userVm.getLastHostId()};
+    }
+    if (_volsDao.getHypervisorType(volume.getId()) == HypervisorType.XenServer && !userVm.getState().equals(State.Stopped)) {
+      throw new InvalidParameterValueException("VM must be stopped or disk detached in order to resize with the Xen HV");
+    }
+  }
+  ResizeVolumePayload payload=new ResizeVolumePayload(newSize,shrinkOk,instanceName,hosts);
+  try {
+    VolumeInfo vol=this.volFactory.getVolume(volume.getId());
+    vol.addPayload(payload);
+    AsyncCallFuture<VolumeApiResult> future=this.volService.resize(vol);
+    future.get();
+    volume=_volsDao.findById(volume.getId());
+    if (newDiskOffering != null) {
+      volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
+    }
+    _volsDao.update(volume.getId(),volume);
+    return volume;
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("failed get resize volume result",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("failed get resize volume result",e);
+  }
+catch (  Exception e) {
+    s_logger.debug("failed get resize volume result",e);
+  }
+  return null;
+}

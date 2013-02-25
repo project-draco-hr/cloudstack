@@ -1,0 +1,54 @@
+{
+  Map<Network.Service,Set<Network.Provider>> svcProviderMap=new HashMap<Network.Service,Set<Network.Provider>>();
+  Set<Network.Provider> defaultProviders=new HashSet<Network.Provider>();
+  defaultProviders.add(Provider.VPCVirtualRouter);
+  boolean sourceNatSvc=false;
+  boolean firewallSvs=false;
+  for (  String serviceName : supportedServices) {
+    Service service=Network.Service.getService(serviceName);
+    if (service == null || nonSupportedServices.contains(service)) {
+      throw new InvalidParameterValueException("Service " + serviceName + " is not supported in VPC");
+    }
+    svcProviderMap.put(service,defaultProviders);
+    if (service == Service.NetworkACL) {
+      firewallSvs=true;
+    }
+    if (service == Service.SourceNat) {
+      sourceNatSvc=true;
+    }
+  }
+  if (!sourceNatSvc) {
+    s_logger.debug("Automatically adding source nat service to the list of VPC services");
+    svcProviderMap.put(Service.SourceNat,defaultProviders);
+  }
+  if (!firewallSvs) {
+    s_logger.debug("Automatically adding network ACL service to the list of VPC services");
+    svcProviderMap.put(Service.NetworkACL,defaultProviders);
+  }
+  svcProviderMap.put(Service.Gateway,defaultProviders);
+  if (serviceProviders != null) {
+    for (    String serviceStr : serviceProviders.keySet()) {
+      Network.Service service=Network.Service.getService(serviceStr);
+      if (svcProviderMap.containsKey(service)) {
+        Set<Provider> providers=new HashSet<Provider>();
+        if (serviceProviders.get(serviceStr) != null && serviceProviders.get(serviceStr).size() > 1) {
+          throw new InvalidParameterValueException("In the current release only one provider can be " + "specified for the service");
+        }
+        for (        String prvNameStr : serviceProviders.get(serviceStr)) {
+          Network.Provider provider=Network.Provider.getProvider(prvNameStr);
+          if (provider == null) {
+            throw new InvalidParameterValueException("Invalid service provider: " + prvNameStr);
+          }
+          providers.add(provider);
+        }
+        svcProviderMap.put(service,providers);
+      }
+ else {
+        throw new InvalidParameterValueException("Service " + serviceStr + " is not enabled for the network "+ "offering, can't add a provider to it");
+      }
+    }
+  }
+  VpcOffering offering=createVpcOffering(name,displayText,svcProviderMap,false,null);
+  UserContext.current().setEventDetails(" Id: " + offering.getId() + " Name: "+ name);
+  return offering;
+}

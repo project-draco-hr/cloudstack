@@ -1,12 +1,6 @@
 {
   long vmId=vm.getId();
-  VirtualMachineGuru<T> vmGuru;
-  if (vm.getHypervisorType() == HypervisorType.BareMetal) {
-    vmGuru=getBareMetalVmGuru(vm);
-  }
- else {
-    vmGuru=getVmGuru(vm);
-  }
+  VirtualMachineGuru<T> vmGuru=getVmGuru(vm);
   vm=vmGuru.findById(vm.getId());
   Ternary<T,ReservationContext,ItWorkVO> start=changeToStartState(vmGuru,vm,caller,account);
   if (start == null) {
@@ -57,7 +51,7 @@
             }
             continue;
           }
-          StoragePoolVO pool=_storagePoolDao.findById(vol.getPoolId());
+          StoragePool pool=(StoragePool)dataStoreMgr.getPrimaryDataStore(vol.getPoolId());
           if (!pool.isInMaintenance()) {
             if (s_logger.isDebugEnabled()) {
               s_logger.debug("Root volume is ready, need to place VM in volume's cluster");
@@ -113,6 +107,11 @@
       }
       long destHostId=dest.getHost().getId();
       vm.setPodId(dest.getPod().getId());
+      Long cluster_id=dest.getCluster().getId();
+      ClusterDetailsVO cluster_detail_cpu=_clusterDetailsDao.findDetail(cluster_id,"cpuOvercommitRatio");
+      ClusterDetailsVO cluster_detail_ram=_clusterDetailsDao.findDetail(cluster_id,"memoryOvercommitRatio");
+      vmProfile.setcpuOvercommitRatio(Float.parseFloat(cluster_detail_cpu.getValue()));
+      vmProfile.setramOvercommitRatio(Float.parseFloat(cluster_detail_ram.getValue()));
       try {
         if (!changeState(vm,Event.OperationRetry,destHostId,work,Step.Prepare)) {
           throw new ConcurrentOperationException("Unable to update the state of the Virtual Machine");
@@ -127,7 +126,7 @@
         }
         _networkMgr.prepare(vmProfile,dest,ctx);
         if (vm.getHypervisorType() != HypervisorType.BareMetal) {
-          _storageMgr.prepare(vmProfile,dest);
+          this.volumeMgr.prepare(vmProfile,dest);
         }
         if (!reuseVolume) {
           reuseVolume=true;

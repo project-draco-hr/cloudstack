@@ -1,0 +1,32 @@
+{
+  if (dest == null) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("DeployDestination cannot be null, cannot prepare Volumes for the vm: " + vm);
+    }
+    throw new CloudRuntimeException("Unable to prepare Volume for vm because DeployDestination is null, vm:" + vm);
+  }
+  List<VolumeVO> vols=_volsDao.findUsableVolumesForInstance(vm.getId());
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Checking if we need to prepare " + vols.size() + " volumes for "+ vm);
+  }
+  List<VolumeTask> tasks=getTasks(vols,dest.getStorageForDisks());
+  Volume vol=null;
+  StoragePool pool=null;
+  for (  VolumeTask task : tasks) {
+    if (task.type == VolumeTaskType.NOP) {
+      pool=(StoragePool)dataStoreMgr.getDataStore(task.pool.getId(),DataStoreRole.Primary);
+      vol=task.volume;
+    }
+ else     if (task.type == VolumeTaskType.MIGRATE) {
+      pool=(StoragePool)dataStoreMgr.getDataStore(task.pool.getId(),DataStoreRole.Primary);
+      migrateVolume(task.volume,pool);
+      vol=task.volume;
+    }
+ else     if (task.type == VolumeTaskType.RECREATE) {
+      Pair<VolumeVO,DataStore> result=recreateVolume(task.volume,vm,dest);
+      pool=(StoragePool)dataStoreMgr.getDataStore(result.second().getId(),DataStoreRole.Primary);
+      vol=result.first();
+    }
+    vm.addDisk(new VolumeTO(vol,pool));
+  }
+}

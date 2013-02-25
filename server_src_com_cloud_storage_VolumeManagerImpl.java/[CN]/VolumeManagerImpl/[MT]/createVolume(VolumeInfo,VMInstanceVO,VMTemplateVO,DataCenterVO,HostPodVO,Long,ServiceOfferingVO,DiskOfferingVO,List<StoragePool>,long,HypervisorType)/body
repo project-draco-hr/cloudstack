@@ -1,0 +1,51 @@
+{
+  StoragePool pool=null;
+  if (diskOffering != null && diskOffering.isCustomized()) {
+    diskOffering.setDiskSize(size);
+  }
+  DiskProfile dskCh=null;
+  if (volume.getVolumeType() == Type.ROOT && Storage.ImageFormat.ISO != template.getFormat()) {
+    dskCh=createDiskCharacteristics(volume,template,dc,offering);
+  }
+ else {
+    dskCh=createDiskCharacteristics(volume,template,dc,diskOffering);
+  }
+  dskCh.setHyperType(hyperType);
+  final HashSet<StoragePool> avoidPools=new HashSet<StoragePool>(avoids);
+  pool=storageMgr.findStoragePool(dskCh,dc,pod,clusterId,vm.getHostId(),vm,avoidPools);
+  if (pool == null) {
+    s_logger.warn("Unable to find storage poll when create volume " + volume.getName());
+    throw new CloudRuntimeException("Unable to find storage poll when create volume" + volume.getName());
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Trying to create " + volume + " on "+ pool);
+  }
+  DataStore store=this.dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
+  AsyncCallFuture<VolumeApiResult> future=null;
+  boolean isNotCreatedFromTemplate=volume.getTemplateId() == null ? true : false;
+  if (isNotCreatedFromTemplate) {
+    future=this.volService.createVolumeAsync(volume,store);
+  }
+ else {
+    TemplateInfo templ=this.tmplFactory.getTemplate(template.getId());
+    future=this.volService.createVolumeFromTemplateAsync(volume,store.getId(),templ);
+  }
+  try {
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      s_logger.debug("create volume failed: " + result.getResult());
+      throw new CloudRuntimeException("create volume failed:" + result.getResult());
+    }
+    UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),null,volume.getSize());
+    _usageEventDao.persist(usageEvent);
+    return result.getVolume();
+  }
+ catch (  InterruptedException e) {
+    s_logger.error("create volume failed",e);
+    throw new CloudRuntimeException("create volume failed",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.error("create volume failed",e);
+    throw new CloudRuntimeException("create volume failed",e);
+  }
+}

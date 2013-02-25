@@ -1,0 +1,41 @@
+{
+  DataCenterVO dc=_dcDao.findById(host.getDataCenterId());
+  if (dc == null || !dc.isLocalStorageEnabled()) {
+    return null;
+  }
+  DataStore store=null;
+  try {
+    StoragePoolVO pool=_storagePoolDao.findPoolByHostPath(host.getDataCenterId(),host.getPodId(),pInfo.getHost(),pInfo.getHostPath(),pInfo.getUuid());
+    if (pool == null && host.getHypervisorType() == HypervisorType.VMware) {
+      if (pInfo.getHostPath().length() > 0) {
+        pool=_storagePoolDao.findPoolByHostPath(host.getDataCenterId(),host.getPodId(),pInfo.getHost(),"",pInfo.getUuid());
+      }
+    }
+    DataStoreProvider provider=this.dataStoreProviderMgr.getDefaultPrimaryDataStoreProvider();
+    DataStoreLifeCycle lifeCycle=provider.getLifeCycle();
+    if (pool == null) {
+      Map<String,Object> params=new HashMap<String,Object>();
+      String name=(host.getName() + " Local Storage");
+      params.put("zoneId",host.getDataCenterId());
+      params.put("clusterId",host.getClusterId());
+      params.put("podId",host.getPodId());
+      params.put("url",pInfo.getPoolType().toString() + "://" + pInfo.getHost()+ "/"+ pInfo.getHostPath());
+      params.put("name",name);
+      params.put("localStorage",true);
+      params.put("details",pInfo.getDetails());
+      params.put("uuid",pInfo.getUuid());
+      params.put("providerId",provider.getId());
+      store=lifeCycle.initialize(params);
+    }
+ else {
+      store=(DataStore)dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
+    }
+    HostScope scope=new HostScope(host.getId());
+    lifeCycle.attachHost(store,scope,pInfo);
+  }
+ catch (  Exception e) {
+    s_logger.warn("Unable to setup the local storage pool for " + host,e);
+    throw new ConnectionException(true,"Unable to setup the local storage pool for " + host,e);
+  }
+  return (DataStore)dataStoreMgr.getDataStore(store.getId(),DataStoreRole.Primary);
+}

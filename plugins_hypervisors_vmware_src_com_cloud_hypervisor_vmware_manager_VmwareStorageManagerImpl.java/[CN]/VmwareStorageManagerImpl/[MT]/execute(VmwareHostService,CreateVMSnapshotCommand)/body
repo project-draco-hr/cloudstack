@@ -1,0 +1,68 @@
+{
+  List<VolumeTO> volumeTOs=cmd.getVolumeTOs();
+  String vmName=cmd.getVmName();
+  String vmSnapshotName=cmd.getTarget().getSnapshotName();
+  String vmSnapshotDesc=cmd.getTarget().getDescription();
+  boolean snapshotMemory=cmd.getTarget().getType() == VMSnapshot.Type.DiskAndMemory;
+  VirtualMachineMO vmMo=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  Map<String,String> mapNewDisk=new HashMap<String,String>();
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    ManagedObjectReference taskmgr=context.getServiceContent().getTaskManager();
+    ManagedObjectReference[] tasks=(ManagedObjectReference[])context.getVimClient().getDynamicProperty(taskmgr,"recentTask");
+    for (    ManagedObjectReference taskMor : tasks) {
+      TaskInfo info=(TaskInfo)(context.getVimClient().getDynamicProperty(taskMor,"info"));
+      if (info.getEntityName().equals(cmd.getVmName()) && info.getName().equalsIgnoreCase("CreateSnapshot_Task")) {
+        s_logger.debug("There is already a VM snapshot task running, wait for it");
+        context.getVimClient().waitForTask(taskMor);
+      }
+    }
+    vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null)     vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="Unable to find VM for CreateVMSnapshotCommand";
+      s_logger.debug(msg);
+      return new CreateVMSnapshotAnswer(cmd,false,msg);
+    }
+ else {
+      if (vmMo.getSnapshotMor(vmSnapshotName) != null) {
+        s_logger.debug("VM snapshot " + vmSnapshotName + " already exists");
+      }
+ else       if (!vmMo.createSnapshot(vmSnapshotName,vmSnapshotDesc,snapshotMemory,true)) {
+        return new CreateVMSnapshotAnswer(cmd,false,"Unable to create snapshot due to esxi internal failed");
+      }
+      VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
+      for (int i=0; i < vdisks.length; i++) {
+        @SuppressWarnings("deprecation") List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
+        for (        Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
+          String vmdkName=fileItem.first().split(" ")[1];
+          if (vmdkName.endsWith(".vmdk")) {
+            vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
+          }
+          String[] s=vmdkName.split("-");
+          mapNewDisk.put(s[0],vmdkName);
+        }
+      }
+      for (      VolumeTO volumeTO : volumeTOs) {
+        String parentUUID=volumeTO.getPath();
+        String[] s=parentUUID.split("-");
+        String key=s[0];
+        volumeTO.setPath(mapNewDisk.get(key));
+      }
+      return new CreateVMSnapshotAnswer(cmd,cmd.getTarget(),volumeTOs);
+    }
+  }
+ catch (  Exception e) {
+    String msg=e.getMessage();
+    s_logger.error("failed to create snapshot for vm:" + vmName + " due to "+ msg);
+    try {
+      if (vmMo.getSnapshotMor(vmSnapshotName) != null) {
+        vmMo.removeSnapshot(vmSnapshotName,false);
+      }
+    }
+ catch (    Exception e1) {
+    }
+    return new CreateVMSnapshotAnswer(cmd,false,e.getMessage());
+  }
+}

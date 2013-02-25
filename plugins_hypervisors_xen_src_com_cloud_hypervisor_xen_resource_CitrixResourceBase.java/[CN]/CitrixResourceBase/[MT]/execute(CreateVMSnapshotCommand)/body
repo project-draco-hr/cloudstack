@@ -1,0 +1,96 @@
+{
+  String vmName=cmd.getVmName();
+  String vmSnapshotName=cmd.getTarget().getSnapshotName();
+  List<VolumeTO> listVolumeTo=cmd.getVolumeTOs();
+  VirtualMachine.State vmState=cmd.getVmState();
+  String guestOSType=cmd.getGuestOSType();
+  boolean snapshotMemory=cmd.getTarget().getType() == VMSnapshot.Type.DiskAndMemory;
+  long timeout=600;
+  Connection conn=getConnection();
+  VM vm=null;
+  VM vmSnapshot=null;
+  boolean success=false;
+  try {
+    Set<VM> vmSnapshots=VM.getByNameLabel(conn,cmd.getTarget().getSnapshotName());
+    if (vmSnapshots.size() > 0)     return new CreateVMSnapshotAnswer(cmd,cmd.getTarget(),cmd.getVolumeTOs());
+    Task task=null;
+    Set<Task> tasks=Task.getByNameLabel(conn,"Async.VM.snapshot");
+    tasks.addAll(Task.getByNameLabel(conn,"Async.VM.checkpoint"));
+    for (    Task taskItem : tasks) {
+      if (taskItem.getOtherConfig(conn).containsKey("CS_VM_SNAPSHOT_KEY")) {
+        String vmSnapshotTaskName=taskItem.getOtherConfig(conn).get("CS_VM_SNAPSHOT_KEY");
+        if (vmSnapshotTaskName != null && vmSnapshotTaskName.equals(cmd.getTarget().getSnapshotName())) {
+          task=taskItem;
+        }
+      }
+    }
+    if (task == null) {
+      try {
+        vm=getVM(conn,vmName);
+      }
+ catch (      Exception e) {
+        if (!snapshotMemory) {
+          vm=createWorkingVM(conn,vmName,guestOSType,listVolumeTo);
+        }
+      }
+      if (vm == null) {
+        return new CreateVMSnapshotAnswer(cmd,false,"Creating VM Snapshot Failed due to can not find vm: " + vmName);
+      }
+      if (!snapshotMemory) {
+        task=vm.snapshotAsync(conn,vmSnapshotName);
+      }
+ else {
+        Set<VBD> vbds=vm.getVBDs(conn);
+        Pool pool=Pool.getByUuid(conn,_host.pool);
+        for (        VBD vbd : vbds) {
+          VBD.Record vbdr=vbd.getRecord(conn);
+          if (vbdr.userdevice.equals("0")) {
+            VDI vdi=vbdr.VDI;
+            SR sr=vdi.getSR(conn);
+            pool.setSuspendImageSR(conn,sr);
+          }
+        }
+        task=vm.checkpointAsync(conn,vmSnapshotName);
+      }
+      task.addToOtherConfig(conn,"CS_VM_SNAPSHOT_KEY",vmSnapshotName);
+    }
+    waitForTask(conn,task,1000,timeout * 1000);
+    checkForSuccess(conn,task);
+    String result=task.getResult(conn);
+    String ref=result.substring("<value>".length(),result.length() - "</value>".length());
+    vmSnapshot=Types.toVM(ref);
+    success=true;
+    return new CreateVMSnapshotAnswer(cmd,cmd.getTarget(),cmd.getVolumeTOs());
+  }
+ catch (  Exception e) {
+    String msg=e.getMessage();
+    s_logger.error("Creating VM Snapshot " + cmd.getTarget().getSnapshotName() + " failed due to: "+ msg);
+    return new CreateVMSnapshotAnswer(cmd,false,msg);
+  }
+ finally {
+    try {
+      if (!success) {
+        if (vmSnapshot != null) {
+          s_logger.debug("Delete exsisting VM Snapshot " + vmSnapshotName + " after making VolumeTO failed");
+          Set<VBD> vbds=vmSnapshot.getVBDs(conn);
+          for (          VBD vbd : vbds) {
+            VBD.Record vbdr=vbd.getRecord(conn);
+            if (vbdr.type == VbdType.DISK) {
+              VDI vdi=vbdr.VDI;
+              vdi.destroy(conn);
+            }
+          }
+          vmSnapshot.destroy(conn);
+        }
+      }
+      if (vmState == VirtualMachine.State.Stopped) {
+        if (vm != null) {
+          vm.destroy(conn);
+        }
+      }
+    }
+ catch (    Exception e2) {
+      s_logger.error("delete snapshot error due to " + e2.getMessage());
+    }
+  }
+}

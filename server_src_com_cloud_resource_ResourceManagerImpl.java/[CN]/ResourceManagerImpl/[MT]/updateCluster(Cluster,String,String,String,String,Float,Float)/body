@@ -1,0 +1,162 @@
+{
+  ClusterVO cluster=(ClusterVO)clusterToUpdate;
+  boolean doUpdate=false;
+  if (hypervisor != null && !hypervisor.isEmpty()) {
+    Hypervisor.HypervisorType hypervisorType=Hypervisor.HypervisorType.getType(hypervisor);
+    if (hypervisorType == null) {
+      s_logger.error("Unable to resolve " + hypervisor + " to a valid supported hypervisor type");
+      throw new InvalidParameterValueException("Unable to resolve " + hypervisor + " to a supported type");
+    }
+ else {
+      cluster.setHypervisorType(hypervisor);
+      doUpdate=true;
+    }
+  }
+  Cluster.ClusterType newClusterType=null;
+  if (clusterType != null && !clusterType.isEmpty()) {
+    try {
+      newClusterType=Cluster.ClusterType.valueOf(clusterType);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve " + clusterType + " to a supported type");
+    }
+    if (newClusterType == null) {
+      s_logger.error("Unable to resolve " + clusterType + " to a valid supported cluster type");
+      throw new InvalidParameterValueException("Unable to resolve " + clusterType + " to a supported type");
+    }
+ else {
+      cluster.setClusterType(newClusterType);
+      doUpdate=true;
+    }
+  }
+  Grouping.AllocationState newAllocationState=null;
+  if (allocationState != null && !allocationState.isEmpty()) {
+    try {
+      newAllocationState=Grouping.AllocationState.valueOf(allocationState);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve Allocation State '" + allocationState + "' to a supported state");
+    }
+    if (newAllocationState == null) {
+      s_logger.error("Unable to resolve " + allocationState + " to a valid supported allocation State");
+      throw new InvalidParameterValueException("Unable to resolve " + allocationState + " to a supported state");
+    }
+ else {
+      _capacityDao.updateCapacityState(null,null,cluster.getId(),null,allocationState);
+      cluster.setAllocationState(newAllocationState);
+      doUpdate=true;
+    }
+  }
+  Managed.ManagedState newManagedState=null;
+  Managed.ManagedState oldManagedState=cluster.getManagedState();
+  if (managedstate != null && !managedstate.isEmpty()) {
+    try {
+      newManagedState=Managed.ManagedState.valueOf(managedstate);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve Managed State '" + managedstate + "' to a supported state");
+    }
+    if (newManagedState == null) {
+      s_logger.error("Unable to resolve Managed State '" + managedstate + "' to a supported state");
+      throw new InvalidParameterValueException("Unable to resolve Managed State '" + managedstate + "' to a supported state");
+    }
+ else {
+      doUpdate=true;
+    }
+  }
+  ClusterDetailsVO memory_detail=_clusterDetailsDao.findDetail(cluster.getId(),"memoryOvercommitRatio");
+  if (memory_detail == null) {
+    if (memoryovercommitratio.compareTo(1f) > 0) {
+      memory_detail=new ClusterDetailsVO(cluster.getId(),"memoryOvercommitRatio",Float.toString(memoryovercommitratio));
+      _clusterDetailsDao.persist(memory_detail);
+    }
+  }
+ else {
+    memory_detail.setValue(Float.toString(memoryovercommitratio));
+    _clusterDetailsDao.update(memory_detail.getId(),memory_detail);
+  }
+  ClusterDetailsVO cpu_detail=_clusterDetailsDao.findDetail(cluster.getId(),"cpuOvercommitRatio");
+  if (cpu_detail == null) {
+    if (cpuovercommitratio.compareTo(1f) > 0) {
+      cpu_detail=new ClusterDetailsVO(cluster.getId(),"cpuOvercommitRatio",Float.toString(cpuovercommitratio));
+      _clusterDetailsDao.persist(cpu_detail);
+    }
+  }
+ else {
+    cpu_detail.setValue(Float.toString(cpuovercommitratio));
+    _clusterDetailsDao.update(cpu_detail.getId(),cpu_detail);
+  }
+  if (doUpdate) {
+    Transaction txn=Transaction.currentTxn();
+    try {
+      txn.start();
+      _clusterDao.update(cluster.getId(),cluster);
+      txn.commit();
+    }
+ catch (    Exception e) {
+      s_logger.error("Unable to update cluster due to " + e.getMessage(),e);
+      throw new CloudRuntimeException("Failed to update cluster. Please contact Cloud Support.");
+    }
+  }
+  if (newManagedState != null && !newManagedState.equals(oldManagedState)) {
+    Transaction txn=Transaction.currentTxn();
+    if (newManagedState.equals(Managed.ManagedState.Unmanaged)) {
+      boolean success=false;
+      try {
+        txn.start();
+        cluster.setManagedState(Managed.ManagedState.PrepareUnmanaged);
+        _clusterDao.update(cluster.getId(),cluster);
+        txn.commit();
+        List<HostVO> hosts=listAllUpAndEnabledHosts(Host.Type.Routing,cluster.getId(),cluster.getPodId(),cluster.getDataCenterId());
+        for (        HostVO host : hosts) {
+          if (host.getType().equals(Host.Type.Routing) && !host.getStatus().equals(Status.Down) && !host.getStatus().equals(Status.Disconnected)&& !host.getStatus().equals(Status.Up)&& !host.getStatus().equals(Status.Alert)) {
+            String msg="host " + host.getPrivateIpAddress() + " should not be in "+ host.getStatus().toString()+ " status";
+            throw new CloudRuntimeException("PrepareUnmanaged Failed due to " + msg);
+          }
+        }
+        for (        HostVO host : hosts) {
+          if (host.getStatus().equals(Status.Up)) {
+            umanageHost(host.getId());
+          }
+        }
+        int retry=40;
+        boolean lsuccess=true;
+        for (int i=0; i < retry; i++) {
+          lsuccess=true;
+          try {
+            Thread.sleep(5 * 1000);
+          }
+ catch (          Exception e) {
+          }
+          hosts=listAllUpAndEnabledHosts(Host.Type.Routing,cluster.getId(),cluster.getPodId(),cluster.getDataCenterId());
+          for (          HostVO host : hosts) {
+            if (!host.getStatus().equals(Status.Down) && !host.getStatus().equals(Status.Disconnected) && !host.getStatus().equals(Status.Alert)) {
+              lsuccess=false;
+              break;
+            }
+          }
+          if (lsuccess == true) {
+            success=true;
+            break;
+          }
+        }
+        if (success == false) {
+          throw new CloudRuntimeException("PrepareUnmanaged Failed due to some hosts are still in UP status after 5 Minutes, please try later ");
+        }
+      }
+  finally {
+        txn.start();
+        cluster.setManagedState(success ? Managed.ManagedState.Unmanaged : Managed.ManagedState.PrepareUnmanagedError);
+        _clusterDao.update(cluster.getId(),cluster);
+        txn.commit();
+      }
+    }
+ else     if (newManagedState.equals(Managed.ManagedState.Managed)) {
+      txn.start();
+      cluster.setManagedState(Managed.ManagedState.Managed);
+      _clusterDao.update(cluster.getId(),cluster);
+      txn.commit();
+    }
+  }
+  return cluster;
+}

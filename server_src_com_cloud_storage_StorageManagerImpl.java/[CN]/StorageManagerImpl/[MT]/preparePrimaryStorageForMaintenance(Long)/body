@@ -4,180 +4,23 @@
   Account account=UserContext.current().getCaller();
   boolean restart=true;
   StoragePoolVO primaryStorage=null;
-  try {
-    primaryStorage=_storagePoolDao.lockRow(primaryStorageId,true);
-    if (primaryStorage == null) {
-      String msg="Unable to obtain lock on the storage pool record in preparePrimaryStorageForMaintenance()";
-      s_logger.error(msg);
-      throw new ExecutionException(msg);
-    }
-    List<StoragePoolVO> spes=_storagePoolDao.listBy(primaryStorage.getDataCenterId(),primaryStorage.getPodId(),primaryStorage.getClusterId());
-    for (    StoragePoolVO sp : spes) {
-      if (sp.getStatus() == StoragePoolStatus.PrepareForMaintenance) {
-        throw new CloudRuntimeException("Only one storage pool in a cluster can be in PrepareForMaintenance mode, " + sp.getId() + " is already in  PrepareForMaintenance mode ");
-      }
-    }
-    if (!primaryStorage.getStatus().equals(StoragePoolStatus.Up) && !primaryStorage.getStatus().equals(StoragePoolStatus.ErrorInMaintenance)) {
-      throw new InvalidParameterValueException("Primary storage with id " + primaryStorageId + " is not ready for migration, as the status is:"+ primaryStorage.getStatus().toString());
-    }
-    List<HostVO> hosts=_resourceMgr.listHostsInClusterByStatus(primaryStorage.getClusterId(),Status.Up);
-    if (hosts == null || hosts.size() == 0) {
-      primaryStorage.setStatus(StoragePoolStatus.Maintenance);
-      _storagePoolDao.update(primaryStorageId,primaryStorage);
-      return _storagePoolDao.findById(primaryStorageId);
-    }
- else {
-      primaryStorage.setStatus(StoragePoolStatus.PrepareForMaintenance);
-      _storagePoolDao.update(primaryStorageId,primaryStorage);
-    }
-    for (    HostVO host : hosts) {
-      ModifyStoragePoolCommand cmd=new ModifyStoragePoolCommand(false,primaryStorage);
-      final Answer answer=_agentMgr.easySend(host.getId(),cmd);
-      if (answer == null || !answer.getResult()) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("ModifyStoragePool false failed due to " + ((answer == null) ? "answer null" : answer.getDetails()));
-        }
-      }
- else {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("ModifyStoragePool false secceeded");
-        }
-      }
-    }
-    List<StoragePoolVO> upPools=_storagePoolDao.listByStatusInZone(primaryStorage.getDataCenterId(),StoragePoolStatus.Up);
-    if (upPools == null || upPools.size() == 0) {
-      restart=false;
-    }
-    List<VolumeVO> allVolumes=_volsDao.findByPoolId(primaryStorageId);
-    for (    VolumeVO volume : allVolumes) {
-      VMInstanceVO vmInstance=_vmInstanceDao.findById(volume.getInstanceId());
-      if (vmInstance == null) {
-        continue;
-      }
-      if (vmInstance.getState().equals(State.Running) || vmInstance.getState().equals(State.Starting) || vmInstance.getState().equals(State.Stopping)) {
-        try {
-          StoragePoolWorkVO work=new StoragePoolWorkVO(vmInstance.getId(),primaryStorageId,false,false,_serverId);
-          _storagePoolWorkDao.persist(work);
-        }
- catch (        Exception e) {
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Work record already exists, re-using by re-setting values");
-          }
-          StoragePoolWorkVO work=_storagePoolWorkDao.findByPoolIdAndVmId(primaryStorageId,vmInstance.getId());
-          work.setStartedAfterMaintenance(false);
-          work.setStoppedForMaintenance(false);
-          work.setManagementServerId(_serverId);
-          _storagePoolWorkDao.update(work.getId(),work);
-        }
-      }
-    }
-    List<StoragePoolWorkVO> pendingWork=_storagePoolWorkDao.listPendingWorkForPrepareForMaintenanceByPoolId(primaryStorageId);
-    for (    StoragePoolWorkVO work : pendingWork) {
-      VMInstanceVO vmInstance=_vmInstanceDao.findById(work.getVmId());
-      if (vmInstance == null) {
-        continue;
-      }
-      if (vmInstance.getType().equals(VirtualMachine.Type.ConsoleProxy)) {
-        ConsoleProxyVO consoleProxy=_consoleProxyDao.findById(vmInstance.getId());
-        if (!_vmMgr.advanceStop(consoleProxy,true,user,account)) {
-          String errorMsg="There was an error stopping the console proxy id: " + vmInstance.getId() + " ,cannot enable storage maintenance";
-          s_logger.warn(errorMsg);
-          throw new CloudRuntimeException(errorMsg);
-        }
- else {
-          work.setStoppedForMaintenance(true);
-          _storagePoolWorkDao.update(work.getId(),work);
-        }
-        if (restart) {
-          if (_vmMgr.advanceStart(consoleProxy,null,user,account) == null) {
-            String errorMsg="There was an error starting the console proxy id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance";
-            s_logger.warn(errorMsg);
-          }
- else {
-            work.setStartedAfterMaintenance(true);
-            _storagePoolWorkDao.update(work.getId(),work);
-          }
-        }
-      }
-      if (vmInstance.getType().equals(VirtualMachine.Type.User)) {
-        UserVmVO userVm=_userVmDao.findById(vmInstance.getId());
-        if (!_vmMgr.advanceStop(userVm,true,user,account)) {
-          String errorMsg="There was an error stopping the user vm id: " + vmInstance.getId() + " ,cannot enable storage maintenance";
-          s_logger.warn(errorMsg);
-          throw new CloudRuntimeException(errorMsg);
-        }
- else {
-          work.setStoppedForMaintenance(true);
-          _storagePoolWorkDao.update(work.getId(),work);
-        }
-      }
-      if (vmInstance.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
-        SecondaryStorageVmVO secStrgVm=_secStrgDao.findById(vmInstance.getId());
-        if (!_vmMgr.advanceStop(secStrgVm,true,user,account)) {
-          String errorMsg="There was an error stopping the ssvm id: " + vmInstance.getId() + " ,cannot enable storage maintenance";
-          s_logger.warn(errorMsg);
-          throw new CloudRuntimeException(errorMsg);
-        }
- else {
-          work.setStoppedForMaintenance(true);
-          _storagePoolWorkDao.update(work.getId(),work);
-        }
-        if (restart) {
-          if (_vmMgr.advanceStart(secStrgVm,null,user,account) == null) {
-            String errorMsg="There was an error starting the ssvm id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance";
-            s_logger.warn(errorMsg);
-          }
- else {
-            work.setStartedAfterMaintenance(true);
-            _storagePoolWorkDao.update(work.getId(),work);
-          }
-        }
-      }
-      if (vmInstance.getType().equals(VirtualMachine.Type.DomainRouter)) {
-        DomainRouterVO domR=_domrDao.findById(vmInstance.getId());
-        if (!_vmMgr.advanceStop(domR,true,user,account)) {
-          String errorMsg="There was an error stopping the domain router id: " + vmInstance.getId() + " ,cannot enable primary storage maintenance";
-          s_logger.warn(errorMsg);
-          throw new CloudRuntimeException(errorMsg);
-        }
- else {
-          work.setStoppedForMaintenance(true);
-          _storagePoolWorkDao.update(work.getId(),work);
-        }
-        if (restart) {
-          if (_vmMgr.advanceStart(domR,null,user,account) == null) {
-            String errorMsg="There was an error starting the domain router id: " + vmInstance.getId() + " on another storage pool, cannot enable primary storage maintenance";
-            s_logger.warn(errorMsg);
-          }
- else {
-            work.setStartedAfterMaintenance(true);
-            _storagePoolWorkDao.update(work.getId(),work);
-          }
-        }
-      }
-    }
-    primaryStorage.setStatus(StoragePoolStatus.Maintenance);
-    _storagePoolDao.update(primaryStorageId,primaryStorage);
-    return _storagePoolDao.findById(primaryStorageId);
+  primaryStorage=_storagePoolDao.findById(primaryStorageId);
+  if (primaryStorage == null) {
+    String msg="Unable to obtain lock on the storage pool record in preparePrimaryStorageForMaintenance()";
+    s_logger.error(msg);
+    throw new InvalidParameterValueException(msg);
   }
- catch (  Exception e) {
-    if (e instanceof ExecutionException || e instanceof ResourceUnavailableException) {
-      s_logger.error("Exception in enabling primary storage maintenance:",e);
-      setPoolStateToError(primaryStorage);
-      throw (ResourceUnavailableException)e;
+  List<StoragePoolVO> spes=_storagePoolDao.listBy(primaryStorage.getDataCenterId(),primaryStorage.getPodId(),primaryStorage.getClusterId());
+  for (  StoragePoolVO sp : spes) {
+    if (sp.getStatus() == StoragePoolStatus.PrepareForMaintenance) {
+      throw new CloudRuntimeException("Only one storage pool in a cluster can be in PrepareForMaintenance mode, " + sp.getId() + " is already in  PrepareForMaintenance mode ");
     }
-    if (e instanceof InvalidParameterValueException) {
-      s_logger.error("Exception in enabling primary storage maintenance:",e);
-      setPoolStateToError(primaryStorage);
-      throw (InvalidParameterValueException)e;
-    }
-    if (e instanceof InsufficientCapacityException) {
-      s_logger.error("Exception in enabling primary storage maintenance:",e);
-      setPoolStateToError(primaryStorage);
-      throw (InsufficientCapacityException)e;
-    }
-    s_logger.error("Exception in enabling primary storage maintenance:",e);
-    setPoolStateToError(primaryStorage);
-    throw new CloudRuntimeException(e.getMessage());
   }
+  if (!primaryStorage.getStatus().equals(DataStoreStatus.Up) && !primaryStorage.getStatus().equals(DataStoreStatus.ErrorInMaintenance)) {
+    throw new InvalidParameterValueException("Primary storage with id " + primaryStorageId + " is not ready for migration, as the status is:"+ primaryStorage.getStatus().toString());
+  }
+  DataStoreProvider provider=dataStoreProviderMgr.getDataStoreProviderById(primaryStorage.getStorageProviderId());
+  DataStoreLifeCycle lifeCycle=provider.getLifeCycle();
+  lifeCycle.maintain(primaryStorage.getId());
+  return (PrimaryDataStoreInfo)dataStoreMgr.getDataStore(primaryStorage.getId(),DataStoreRole.Primary);
 }

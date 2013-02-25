@@ -1,0 +1,55 @@
+{
+  VolumeVO newVol;
+  boolean recreate=_recreateSystemVmEnabled;
+  DataStore destPool=null;
+  if (recreate && (dest.getStorageForDisks() == null || dest.getStorageForDisks().get(vol) == null)) {
+    destPool=dataStoreMgr.getDataStore(vol.getPoolId(),DataStoreRole.Primary);
+    s_logger.debug("existing pool: " + destPool.getId());
+  }
+ else {
+    StoragePool pool=dest.getStorageForDisks().get(vol);
+    destPool=dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
+  }
+  if (vol.getState() == Volume.State.Allocated || vol.getState() == Volume.State.Creating) {
+    newVol=vol;
+  }
+ else {
+    newVol=switchVolume(vol,vm);
+    if (dest.getStorageForDisks() != null && dest.getStorageForDisks().containsKey(vol)) {
+      StoragePool poolWithOldVol=dest.getStorageForDisks().get(vol);
+      dest.getStorageForDisks().put(newVol,poolWithOldVol);
+      dest.getStorageForDisks().remove(vol);
+    }
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Created new volume " + newVol + " for old volume "+ vol);
+    }
+  }
+  VolumeInfo volume=volFactory.getVolume(newVol.getId(),destPool);
+  Long templateId=newVol.getTemplateId();
+  AsyncCallFuture<VolumeApiResult> future=null;
+  if (templateId == null) {
+    future=this.volService.createVolumeAsync(volume,destPool);
+  }
+ else {
+    TemplateInfo templ=this.tmplFactory.getTemplate(templateId);
+    future=this.volService.createVolumeFromTemplateAsync(volume,destPool.getId(),templ);
+  }
+  VolumeApiResult result=null;
+  try {
+    result=future.get();
+    if (result.isFailed()) {
+      s_logger.debug("Unable to create " + newVol + ":"+ result.getResult());
+      throw new StorageUnavailableException("Unable to create " + newVol + ":"+ result.getResult(),destPool.getId());
+    }
+    newVol=this._volsDao.findById(newVol.getId());
+  }
+ catch (  InterruptedException e) {
+    s_logger.error("Unable to create " + newVol,e);
+    throw new StorageUnavailableException("Unable to create " + newVol + ":"+ e.toString(),destPool.getId());
+  }
+catch (  ExecutionException e) {
+    s_logger.error("Unable to create " + newVol,e);
+    throw new StorageUnavailableException("Unable to create " + newVol + ":"+ e.toString(),destPool.getId());
+  }
+  return new Pair<VolumeVO,DataStore>(newVol,destPool);
+}

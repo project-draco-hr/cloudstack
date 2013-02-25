@@ -1,10 +1,32 @@
 {
+  String providerUuid=cmd.getStorageProviderUuid();
+  DataStoreProvider storeProvider=dataStoreProviderMgr.getDataStoreProviderByUuid(providerUuid);
+  if (storeProvider == null) {
+    storeProvider=dataStoreProviderMgr.getDefaultPrimaryDataStoreProvider();
+    if (storeProvider == null) {
+      throw new InvalidParameterValueException("can't find storage provider: " + providerUuid);
+    }
+  }
   Long clusterId=cmd.getClusterId();
   Long podId=cmd.getPodId();
-  Map ds=cmd.getDetails();
-  if (clusterId != null && podId == null) {
-    throw new InvalidParameterValueException("Cluster id requires pod id");
+  Long zoneId=cmd.getZoneId();
+  ScopeType scopeType=ScopeType.CLUSTER;
+  String scope=cmd.getScope();
+  if (scope != null) {
+    try {
+      scopeType=Enum.valueOf(ScopeType.class,scope);
+    }
+ catch (    Exception e) {
+      throw new InvalidParameterValueException("invalid scope" + scope);
+    }
   }
+  if (scopeType == ScopeType.CLUSTER && clusterId == null) {
+    throw new InvalidParameterValueException("cluster id can't be null, if scope is cluster");
+  }
+ else   if (scopeType == ScopeType.ZONE && zoneId == null) {
+    throw new InvalidParameterValueException("zone id can't be null, if scope is zone");
+  }
+  Map ds=cmd.getDetails();
   Map<String,String> details=new HashMap<String,String>();
   if (ds != null) {
     Collection detailsCollection=ds.values();
@@ -18,7 +40,6 @@
       }
     }
   }
-  Long zoneId=cmd.getZoneId();
   DataCenterVO zone=_dcDao.findById(cmd.getZoneId());
   if (zone == null) {
     throw new InvalidParameterValueException("unable to find zone by id " + zoneId);
@@ -27,210 +48,31 @@
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getType())) {
     throw new PermissionDeniedException("Cannot perform this operation, Zone is currently disabled: " + zoneId);
   }
-  List<HostVO> allHosts=_resourceMgr.listAllUpAndEnabledHosts(Host.Type.Routing,clusterId,podId,zoneId);
-  if (allHosts.isEmpty()) {
-    throw new ResourceUnavailableException("No host up to associate a storage pool with in cluster " + clusterId,Pod.class,podId);
-  }
-  URI uri=null;
+  Map<String,Object> params=new HashMap<String,Object>();
+  params.put("zoneId",zone.getId());
+  params.put("clusterId",clusterId);
+  params.put("podId",podId);
+  params.put("url",cmd.getUrl());
+  params.put("tags",cmd.getTags());
+  params.put("name",cmd.getStoragePoolName());
+  params.put("details",details);
+  params.put("providerId",storeProvider.getId());
+  DataStoreLifeCycle lifeCycle=storeProvider.getLifeCycle();
+  DataStore store=null;
   try {
-    uri=new URI(UriUtils.encodeURIComponent(cmd.getUrl()));
-    if (uri.getScheme() == null) {
-      throw new InvalidParameterValueException("scheme is null " + cmd.getUrl() + ", add nfs:// as a prefix");
+    store=lifeCycle.initialize(params);
+    if (scopeType == ScopeType.CLUSTER) {
+      ClusterScope clusterScope=new ClusterScope(clusterId,podId,zoneId);
+      lifeCycle.attachCluster(store,clusterScope);
     }
- else     if (uri.getScheme().equalsIgnoreCase("nfs")) {
-      String uriHost=uri.getHost();
-      String uriPath=uri.getPath();
-      if (uriHost == null || uriPath == null || uriHost.trim().isEmpty() || uriPath.trim().isEmpty()) {
-        throw new InvalidParameterValueException("host or path is null, should be nfs://hostname/path");
-      }
-    }
- else     if (uri.getScheme().equalsIgnoreCase("sharedMountPoint")) {
-      String uriPath=uri.getPath();
-      if (uriPath == null) {
-        throw new InvalidParameterValueException("host or path is null, should be sharedmountpoint://localhost/path");
-      }
-    }
- else     if (uri.getScheme().equalsIgnoreCase("rbd")) {
-      String uriPath=uri.getPath();
-      if (uriPath == null) {
-        throw new InvalidParameterValueException("host or path is null, should be rbd://hostname/pool");
-      }
+ else     if (scopeType == ScopeType.ZONE) {
+      ZoneScope zoneScope=new ZoneScope(zoneId);
+      lifeCycle.attachZone(store,zoneScope);
     }
   }
- catch (  URISyntaxException e) {
-    throw new InvalidParameterValueException(cmd.getUrl() + " is not a valid uri");
+ catch (  Exception e) {
+    s_logger.debug("Failed to add data store",e);
+    throw new CloudRuntimeException("Failed to add data store",e);
   }
-  String tags=cmd.getTags();
-  if (tags != null) {
-    String[] tokens=tags.split(",");
-    for (    String tag : tokens) {
-      tag=tag.trim();
-      if (tag.length() == 0) {
-        continue;
-      }
-      details.put(tag,"true");
-    }
-  }
-  String scheme=uri.getScheme();
-  String storageHost=uri.getHost();
-  String hostPath=uri.getPath();
-  String userInfo=uri.getUserInfo();
-  int port=uri.getPort();
-  StoragePoolVO pool=null;
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("createPool Params @ scheme - " + scheme + " storageHost - "+ storageHost+ " hostPath - "+ hostPath+ " port - "+ port);
-  }
-  if (scheme.equalsIgnoreCase("nfs")) {
-    if (port == -1) {
-      port=2049;
-    }
-    pool=new StoragePoolVO(StoragePoolType.NetworkFilesystem,storageHost,port,hostPath);
-    if (clusterId == null) {
-      throw new IllegalArgumentException("NFS need to have clusters specified for XenServers");
-    }
-  }
- else   if (scheme.equalsIgnoreCase("file")) {
-    if (port == -1) {
-      port=0;
-    }
-    pool=new StoragePoolVO(StoragePoolType.Filesystem,"localhost",0,hostPath);
-  }
- else   if (scheme.equalsIgnoreCase("sharedMountPoint")) {
-    pool=new StoragePoolVO(StoragePoolType.SharedMountPoint,storageHost,0,hostPath);
-  }
- else   if (scheme.equalsIgnoreCase("clvm")) {
-    pool=new StoragePoolVO(StoragePoolType.CLVM,storageHost,0,hostPath.replaceFirst("/",""));
-  }
- else   if (scheme.equalsIgnoreCase("rbd")) {
-    if (port == -1) {
-      port=6789;
-    }
-    pool=new StoragePoolVO(StoragePoolType.RBD,storageHost,port,hostPath.replaceFirst("/",""),userInfo);
-  }
- else   if (scheme.equalsIgnoreCase("PreSetup")) {
-    pool=new StoragePoolVO(StoragePoolType.PreSetup,storageHost,0,hostPath);
-  }
- else   if (scheme.equalsIgnoreCase("iscsi")) {
-    String[] tokens=hostPath.split("/");
-    int lun=NumbersUtil.parseInt(tokens[tokens.length - 1],-1);
-    if (port == -1) {
-      port=3260;
-    }
-    if (lun != -1) {
-      if (clusterId == null) {
-        throw new IllegalArgumentException("IscsiLUN need to have clusters specified");
-      }
-      hostPath.replaceFirst("/","");
-      pool=new StoragePoolVO(StoragePoolType.IscsiLUN,storageHost,port,hostPath);
-    }
- else {
-      for (      StoragePoolDiscoverer discoverer : _discoverers) {
-        Map<StoragePoolVO,Map<String,String>> pools;
-        try {
-          pools=discoverer.find(cmd.getZoneId(),podId,uri,details);
-        }
- catch (        DiscoveryException e) {
-          throw new IllegalArgumentException("Not enough information for discovery " + uri,e);
-        }
-        if (pools != null) {
-          Map.Entry<StoragePoolVO,Map<String,String>> entry=pools.entrySet().iterator().next();
-          pool=entry.getKey();
-          details=entry.getValue();
-          break;
-        }
-      }
-    }
-  }
- else   if (scheme.equalsIgnoreCase("iso")) {
-    if (port == -1) {
-      port=2049;
-    }
-    pool=new StoragePoolVO(StoragePoolType.ISO,storageHost,port,hostPath);
-  }
- else   if (scheme.equalsIgnoreCase("vmfs")) {
-    pool=new StoragePoolVO(StoragePoolType.VMFS,"VMFS datastore: " + hostPath,0,hostPath);
-  }
- else   if (scheme.equalsIgnoreCase("ocfs2")) {
-    port=7777;
-    pool=new StoragePoolVO(StoragePoolType.OCFS2,"clustered",port,hostPath);
-  }
- else {
-    s_logger.warn("Unable to figure out the scheme for URI: " + uri);
-    throw new IllegalArgumentException("Unable to figure out the scheme for URI: " + uri);
-  }
-  if (pool == null) {
-    s_logger.warn("Unable to figure out the scheme for URI: " + uri);
-    throw new IllegalArgumentException("Unable to figure out the scheme for URI: " + uri);
-  }
-  List<StoragePoolVO> pools=_storagePoolDao.listPoolByHostPath(storageHost,hostPath);
-  if (!pools.isEmpty() && !scheme.equalsIgnoreCase("sharedmountpoint")) {
-    Long oldPodId=pools.get(0).getPodId();
-    throw new ResourceInUseException("Storage pool " + uri + " already in use by another pod (id="+ oldPodId+ ")","StoragePool",uri.toASCIIString());
-  }
-  long poolId=_storagePoolDao.getNextInSequence(Long.class,"id");
-  String uuid=null;
-  if (scheme.equalsIgnoreCase("sharedmountpoint") || scheme.equalsIgnoreCase("clvm")) {
-    uuid=UUID.randomUUID().toString();
-  }
- else   if (scheme.equalsIgnoreCase("PreSetup")) {
-    uuid=hostPath.replace("/","");
-  }
- else {
-    uuid=UUID.nameUUIDFromBytes(new String(storageHost + hostPath).getBytes()).toString();
-  }
-  List<StoragePoolVO> spHandles=_storagePoolDao.findIfDuplicatePoolsExistByUUID(uuid);
-  if ((spHandles != null) && (spHandles.size() > 0)) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Another active pool with the same uuid already exists");
-    }
-    throw new ResourceInUseException("Another active pool with the same uuid already exists");
-  }
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("In createPool Setting poolId - " + poolId + " uuid - "+ uuid+ " zoneId - "+ zoneId+ " podId - "+ podId+ " poolName - "+ cmd.getStoragePoolName());
-  }
-  pool.setId(poolId);
-  pool.setUuid(uuid);
-  pool.setDataCenterId(cmd.getZoneId());
-  pool.setPodId(podId);
-  pool.setName(cmd.getStoragePoolName());
-  pool.setClusterId(clusterId);
-  pool.setStatus(StoragePoolStatus.Up);
-  pool=_storagePoolDao.persist(pool,details);
-  if (pool.getPoolType() == StoragePoolType.OCFS2 && !_ocfs2Mgr.prepareNodes(allHosts,pool)) {
-    s_logger.warn("Can not create storage pool " + pool + " on cluster "+ clusterId);
-    _storagePoolDao.expunge(pool.getId());
-    return null;
-  }
-  boolean success=false;
-  for (  HostVO h : allHosts) {
-    success=createStoragePool(h.getId(),pool);
-    if (success) {
-      break;
-    }
-  }
-  if (!success) {
-    s_logger.warn("Can not create storage pool " + pool + " on cluster "+ clusterId);
-    _storagePoolDao.expunge(pool.getId());
-    return null;
-  }
-  s_logger.debug("In createPool Adding the pool to each of the hosts");
-  List<HostVO> poolHosts=new ArrayList<HostVO>();
-  for (  HostVO h : allHosts) {
-    try {
-      connectHostToSharedPool(h.getId(),pool);
-      poolHosts.add(h);
-    }
- catch (    Exception e) {
-      s_logger.warn("Unable to establish a connection between " + h + " and "+ pool,e);
-    }
-  }
-  if (poolHosts.isEmpty()) {
-    s_logger.warn("No host can access storage pool " + pool + " on cluster "+ clusterId);
-    _storagePoolDao.expunge(pool.getId());
-    return null;
-  }
- else {
-    createCapacityEntry(pool);
-  }
-  return pool;
+  return (PrimaryDataStoreInfo)dataStoreMgr.getDataStore(store.getId(),DataStoreRole.Primary);
 }

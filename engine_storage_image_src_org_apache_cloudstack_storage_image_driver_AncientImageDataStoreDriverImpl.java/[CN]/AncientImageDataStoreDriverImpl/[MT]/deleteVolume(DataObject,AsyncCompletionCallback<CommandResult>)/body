@@ -1,0 +1,27 @@
+{
+  VolumeVO vol=volumeDao.findById(data.getId());
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Expunging " + vol);
+  }
+  VolumeHostVO volumeHost=volumeHostDao.findByVolumeId(vol.getId());
+  if (volumeHost != null) {
+    if (volumeHost.getDownloadState() == VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+      HostVO ssHost=hostDao.findById(volumeHost.getHostId());
+      DeleteVolumeCommand dtCommand=new DeleteVolumeCommand(ssHost.getStorageUrl(),volumeHost.getInstallPath());
+      Answer answer=agentMgr.sendToSecStorage(ssHost,dtCommand);
+      if (answer == null || !answer.getResult()) {
+        s_logger.debug("Failed to delete " + volumeHost + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
+        return;
+      }
+    }
+ else     if (volumeHost.getDownloadState() == VMTemplateStorageResourceAssoc.Status.DOWNLOAD_IN_PROGRESS) {
+      s_logger.debug("Volume: " + vol.getName() + " is currently being uploaded; cant' delete it.");
+      throw new CloudRuntimeException("Please specify a volume that is not currently being uploaded.");
+    }
+    volumeHostDao.remove(volumeHost.getId());
+    volumeDao.remove(vol.getId());
+    CommandResult result=new CommandResult();
+    callback.complete(result);
+    return;
+  }
+}

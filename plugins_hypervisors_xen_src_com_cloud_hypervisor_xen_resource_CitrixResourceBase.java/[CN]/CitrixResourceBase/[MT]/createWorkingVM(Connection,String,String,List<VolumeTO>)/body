@@ -1,0 +1,41 @@
+{
+  String guestOsTypeName=getGuestOsType(guestOSType,false);
+  if (guestOsTypeName == null) {
+    String msg=" Hypervisor " + this.getClass().getName() + " doesn't support guest OS type "+ guestOSType+ ". you can choose 'Other install media' to run it as HVM";
+    s_logger.warn(msg);
+    throw new CloudRuntimeException(msg);
+  }
+  VM template=getVM(conn,guestOsTypeName);
+  VM vm=template.createClone(conn,vmName);
+  vm.setIsATemplate(conn,false);
+  Map<VDI,VolumeTO> vdiMap=new HashMap<VDI,VolumeTO>();
+  for (  VolumeTO volume : listVolumeTo) {
+    String vdiUuid=volume.getPath();
+    try {
+      VDI vdi=VDI.getByUuid(conn,vdiUuid);
+      vdiMap.put(vdi,volume);
+    }
+ catch (    Types.UuidInvalid e) {
+      s_logger.warn("Unable to find vdi by uuid: " + vdiUuid + ", skip it");
+    }
+  }
+  for (  VDI vdi : vdiMap.keySet()) {
+    VolumeTO volumeTO=vdiMap.get(vdi);
+    VBD.Record vbdr=new VBD.Record();
+    vbdr.VM=vm;
+    vbdr.VDI=vdi;
+    if (volumeTO.getType() == Volume.Type.ROOT) {
+      vbdr.bootable=true;
+      vbdr.unpluggable=false;
+    }
+ else {
+      vbdr.bootable=false;
+      vbdr.unpluggable=true;
+    }
+    vbdr.userdevice=new Long(volumeTO.getDeviceId()).toString();
+    vbdr.mode=Types.VbdMode.RW;
+    vbdr.type=Types.VbdType.DISK;
+    VBD.create(conn,vbdr);
+  }
+  return vm;
+}

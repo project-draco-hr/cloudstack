@@ -1,0 +1,85 @@
+{
+  SnapshotVO snapshot=this.snapshotDao.findById(snapObj.getId());
+  StoragePool pool=(StoragePool)volObj.getDataStore();
+  String vdiUUID=null;
+  Long snapshotId=snapshot.getId();
+  Long volumeId=snapshot.getVolumeId();
+  Long dcId=snapshot.getDataCenterId();
+  String secondaryStoragePoolUrl=this.snapshotMgr.getSecondaryStorageURL(snapshot);
+  long accountId=snapshot.getAccountId();
+  String backedUpSnapshotUuid=snapshot.getBackupSnapshotId();
+  snapshot=snapshotDao.findById(snapshotId);
+  if (snapshot.getVersion().trim().equals("2.1")) {
+    VolumeVO volume=this.volDao.findByIdIncludingRemoved(volumeId);
+    if (volume == null) {
+      throw new CloudRuntimeException("failed to upgrade snapshot " + snapshotId + " due to unable to find orignal volume:"+ volumeId+ ", try it later ");
+    }
+    if (volume.getTemplateId() == null) {
+      snapshotDao.updateSnapshotVersion(volumeId,"2.1","2.2");
+    }
+ else {
+      VMTemplateVO template=templateDao.findByIdIncludingRemoved(volume.getTemplateId());
+      if (template == null) {
+        throw new CloudRuntimeException("failed to upgrade snapshot " + snapshotId + " due to unalbe to find orignal template :"+ volume.getTemplateId()+ ", try it later ");
+      }
+      Long templateId=template.getId();
+      Long tmpltAccountId=template.getAccountId();
+      if (!snapshotDao.lockInLockTable(snapshotId.toString(),10)) {
+        throw new CloudRuntimeException("failed to upgrade snapshot " + snapshotId + " due to this snapshot is being used, try it later ");
+      }
+      UpgradeSnapshotCommand cmd=new UpgradeSnapshotCommand(null,secondaryStoragePoolUrl,dcId,accountId,volumeId,templateId,tmpltAccountId,null,snapshot.getBackupSnapshotId(),snapshot.getName(),"2.1");
+      Answer answer=null;
+      try {
+        answer=this.storagMgr.sendToPool(pool,cmd);
+      }
+ catch (      StorageUnavailableException e) {
+      }
+ finally {
+        snapshotDao.unlockFromLockTable(snapshotId.toString());
+      }
+      if ((answer != null) && answer.getResult()) {
+        snapshotDao.updateSnapshotVersion(volumeId,"2.1","2.2");
+      }
+ else {
+        throw new CloudRuntimeException("Unable to upgrade snapshot from 2.1 to 2.2 for " + snapshot.getId());
+      }
+    }
+  }
+  String basicErrMsg="Failed to create volume from " + snapshot.getName() + " on pool "+ pool;
+  try {
+    if (snapshot.getSwiftId() != null && snapshot.getSwiftId() != 0) {
+      snapshotMgr.downloadSnapshotsFromSwift(snapshot);
+    }
+ else     if (snapshot.getS3Id() != null && snapshot.getS3Id() != 0) {
+      snapshotMgr.downloadSnapshotsFromS3(snapshot);
+    }
+    String value=configDao.getValue(Config.CreateVolumeFromSnapshotWait.toString());
+    int _createVolumeFromSnapshotWait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CreateVolumeFromSnapshotWait.getDefaultValue()));
+    CreateVolumeFromSnapshotCommand createVolumeFromSnapshotCommand=new CreateVolumeFromSnapshotCommand(pool,secondaryStoragePoolUrl,dcId,accountId,volumeId,backedUpSnapshotUuid,snapshot.getName(),_createVolumeFromSnapshotWait);
+    CreateVolumeFromSnapshotAnswer answer;
+    if (!snapshotDao.lockInLockTable(snapshotId.toString(),10)) {
+      throw new CloudRuntimeException("failed to create volume from " + snapshotId + " due to this snapshot is being used, try it later ");
+    }
+    answer=(CreateVolumeFromSnapshotAnswer)this.storagMgr.sendToPool(pool,createVolumeFromSnapshotCommand);
+    if (answer != null && answer.getResult()) {
+      vdiUUID=answer.getVdi();
+      VolumeVO vol=this.volDao.findById(volObj.getId());
+      vol.setPath(vdiUUID);
+      this.volDao.update(vol.getId(),vol);
+      return null;
+    }
+ else {
+      s_logger.error(basicErrMsg + " due to " + ((answer == null) ? "null" : answer.getDetails()));
+      throw new CloudRuntimeException(basicErrMsg);
+    }
+  }
+ catch (  StorageUnavailableException e) {
+    s_logger.error(basicErrMsg,e);
+    throw new CloudRuntimeException(basicErrMsg);
+  }
+ finally {
+    if (snapshot.getSwiftId() != null) {
+      snapshotMgr.deleteSnapshotsDirForVolume(secondaryStoragePoolUrl,dcId,accountId,volumeId);
+    }
+  }
+}
