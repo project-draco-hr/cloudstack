@@ -1,0 +1,114 @@
+{
+  s_logger.debug("External devices stats collector is running...");
+  for (  DataCenterVO zone : _dcDao.listAll()) {
+    List<DomainRouterVO> domainRoutersInZone=_routerDao.listByDataCenter(zone.getId());
+    if (domainRoutersInZone == null) {
+      continue;
+    }
+    Map<Long,ExternalNetworkResourceUsageAnswer> lbDeviceUsageAnswerMap=new HashMap<Long,ExternalNetworkResourceUsageAnswer>();
+    Map<Long,ExternalNetworkResourceUsageAnswer> fwDeviceUsageAnswerMap=new HashMap<Long,ExternalNetworkResourceUsageAnswer>();
+    List<Long> accountsProcessed=new ArrayList<Long>();
+    for (    DomainRouterVO domainRouter : domainRoutersInZone) {
+      long accountId=domainRouter.getAccountId();
+      if (accountsProcessed.contains(new Long(accountId))) {
+        if (s_logger.isTraceEnabled()) {
+          s_logger.trace("Networks for Account " + accountId + " are already processed for external network usage, so skipping usage check.");
+        }
+        continue;
+      }
+      long zoneId=zone.getId();
+      List<NetworkVO> networksForAccount=_networkDao.listByZoneAndGuestType(accountId,zoneId,Network.GuestType.Isolated,false);
+      if (networksForAccount == null) {
+        continue;
+      }
+      for (      NetworkVO network : networksForAccount) {
+        if (!_networkMgr.networkIsConfiguredForExternalNetworking(zoneId,network.getId())) {
+          s_logger.debug("Network " + network.getId() + " is not configured for external networking, so skipping usage check.");
+          continue;
+        }
+        ExternalFirewallDeviceVO fwDeviceVO=getExternalFirewallForNetwork(network);
+        ExternalLoadBalancerDeviceVO lbDeviceVO=getExternalLoadBalancerForNetwork(network);
+        if (lbDeviceVO == null && fwDeviceVO == null) {
+          continue;
+        }
+        ExternalNetworkResourceUsageAnswer firewallAnswer=null;
+        HostVO externalFirewall=null;
+        if (fwDeviceVO != null) {
+          externalFirewall=_hostDao.findById(fwDeviceVO.getHostId());
+          if (externalFirewall != null) {
+            Long fwDeviceId=new Long(externalFirewall.getId());
+            if (!fwDeviceUsageAnswerMap.containsKey(fwDeviceId)) {
+              try {
+                ExternalNetworkResourceUsageCommand cmd=new ExternalNetworkResourceUsageCommand();
+                firewallAnswer=(ExternalNetworkResourceUsageAnswer)_agentMgr.easySend(externalFirewall.getId(),cmd);
+                if (firewallAnswer == null || !firewallAnswer.getResult()) {
+                  String details=(firewallAnswer != null) ? firewallAnswer.getDetails() : "details unavailable";
+                  String msg="Unable to get external firewall stats for network" + zone.getName() + " due to: "+ details+ ".";
+                  s_logger.error(msg);
+                }
+ else {
+                  fwDeviceUsageAnswerMap.put(fwDeviceId,firewallAnswer);
+                }
+              }
+ catch (              Exception e) {
+                String msg="Unable to get external firewall stats for network" + zone.getName();
+                s_logger.error(msg,e);
+              }
+            }
+ else {
+              if (s_logger.isTraceEnabled()) {
+                s_logger.trace("Reusing usage Answer for device id " + fwDeviceId + "for Network "+ network.getId());
+              }
+              firewallAnswer=fwDeviceUsageAnswerMap.get(fwDeviceId);
+            }
+          }
+        }
+        ExternalNetworkResourceUsageAnswer lbAnswer=null;
+        HostVO externalLoadBalancer=null;
+        if (lbDeviceVO != null) {
+          externalLoadBalancer=_hostDao.findById(lbDeviceVO.getHostId());
+          if (externalLoadBalancer != null) {
+            Long lbDeviceId=new Long(externalLoadBalancer.getId());
+            if (!lbDeviceUsageAnswerMap.containsKey(lbDeviceId)) {
+              try {
+                ExternalNetworkResourceUsageCommand cmd=new ExternalNetworkResourceUsageCommand();
+                lbAnswer=(ExternalNetworkResourceUsageAnswer)_agentMgr.easySend(externalLoadBalancer.getId(),cmd);
+                if (lbAnswer == null || !lbAnswer.getResult()) {
+                  String details=(lbAnswer != null) ? lbAnswer.getDetails() : "details unavailable";
+                  String msg="Unable to get external load balancer stats for " + zone.getName() + " due to: "+ details+ ".";
+                  s_logger.error(msg);
+                }
+ else {
+                  lbDeviceUsageAnswerMap.put(lbDeviceId,lbAnswer);
+                }
+              }
+ catch (              Exception e) {
+                String msg="Unable to get external load balancer stats for " + zone.getName();
+                s_logger.error(msg,e);
+              }
+            }
+ else {
+              if (s_logger.isTraceEnabled()) {
+                s_logger.trace("Reusing usage Answer for device id " + lbDeviceId + "for Network "+ network.getId());
+              }
+              lbAnswer=lbDeviceUsageAnswerMap.get(lbDeviceId);
+            }
+          }
+        }
+        if (firewallAnswer == null && lbAnswer == null) {
+          continue;
+        }
+        AccountVO account=_accountDao.findById(accountId);
+        if (account == null) {
+          s_logger.debug("Skipping stats update for account with ID " + accountId);
+          continue;
+        }
+        if (!manageStatsEntries(true,accountId,zoneId,network,externalFirewall,firewallAnswer,externalLoadBalancer,lbAnswer)) {
+          continue;
+        }
+        manageStatsEntries(false,accountId,zoneId,network,externalFirewall,firewallAnswer,externalLoadBalancer,lbAnswer);
+      }
+      accountsProcessed.add(new Long(accountId));
+    }
+  }
+}
