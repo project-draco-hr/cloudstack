@@ -13,32 +13,30 @@
   String[] hostTokens=tokens[0].split(":");
   _morHyperHost.setType(hostTokens[0]);
   _morHyperHost.set_value(hostTokens[1]);
+  _guestTrafficInfo=(VmwareTrafficLabel)params.get("guestTrafficInfo");
+  _publicTrafficInfo=(VmwareTrafficLabel)params.get("publicTrafficInfo");
   VmwareContext context=getServiceContext();
   try {
     VmwareManager mgr=context.getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
     mgr.setupResourceStartupParams(params);
     CustomFieldsManagerMO cfmMo=new CustomFieldsManagerMO(context,context.getServiceContent().getCustomFieldsManager());
     cfmMo.ensureCustomFieldDef("Datastore",CustomFieldConstants.CLOUD_UUID);
-    if (mgr.getNexusVSwitchGlobalParameter()) {
+    if (_publicTrafficInfo != null && _publicTrafficInfo.getVirtualSwitchType() != VirtualSwitchType.StandardVirtualSwitch || _guestTrafficInfo != null && _guestTrafficInfo.getVirtualSwitchType() != VirtualSwitchType.StandardVirtualSwitch) {
       cfmMo.ensureCustomFieldDef("DistributedVirtualPortgroup",CustomFieldConstants.CLOUD_GC_DVP);
     }
- else {
-      cfmMo.ensureCustomFieldDef("Network",CustomFieldConstants.CLOUD_GC);
-    }
+    cfmMo.ensureCustomFieldDef("Network",CustomFieldConstants.CLOUD_GC);
     cfmMo.ensureCustomFieldDef("VirtualMachine",CustomFieldConstants.CLOUD_UUID);
     cfmMo.ensureCustomFieldDef("VirtualMachine",CustomFieldConstants.CLOUD_NIC_MASK);
     VmwareHypervisorHost hostMo=this.getHyperHost(context);
     _hostName=hostMo.getHyperHostName();
     Map<String,String> vsmCredentials;
-    if (mgr.getNexusVSwitchGlobalParameter()) {
+    if (_guestTrafficInfo.getVirtualSwitchType() == VirtualSwitchType.NexusDistributedVirtualSwitch || _publicTrafficInfo.getVirtualSwitchType() == VirtualSwitchType.NexusDistributedVirtualSwitch) {
       vsmCredentials=mgr.getNexusVSMCredentialsByClusterId(Long.parseLong(_cluster));
       if (vsmCredentials != null) {
         s_logger.info("Stocking credentials while configuring resource.");
         context.registerStockObject("vsmcredentials",vsmCredentials);
       }
       _privateNetworkVSwitchName=mgr.getPrivateVSwitchName(Long.parseLong(_dcId),HypervisorType.VMware);
-      _publicNetworkVSwitchName=mgr.getPublicVSwitchName(Long.parseLong(_dcId),HypervisorType.VMware);
-      _guestNetworkVSwitchName=mgr.getGuestVSwitchName(Long.parseLong(_dcId),HypervisorType.VMware);
     }
   }
  catch (  Exception e) {
@@ -46,12 +44,6 @@
   }
   if (_privateNetworkVSwitchName == null) {
     _privateNetworkVSwitchName=(String)params.get("private.network.vswitch.name");
-  }
-  if (_publicNetworkVSwitchName == null) {
-    _publicNetworkVSwitchName=(String)params.get("public.network.vswitch.name");
-  }
-  if (_guestNetworkVSwitchName == null) {
-    _guestNetworkVSwitchName=(String)params.get("guest.network.vswitch.name");
   }
   String value=(String)params.get("vmware.reserve.cpu");
   if (value != null && value.equalsIgnoreCase("true"))   _reserveCpu=true;
@@ -62,8 +54,9 @@
   value=(String)params.get("vmware.root.disk.controller");
   if (value != null && value.equalsIgnoreCase("scsi"))   _rootDiskController=DiskControllerType.scsi;
  else   _rootDiskController=DiskControllerType.ide;
-  value=params.get("vmware.use.nexus.vswitch").toString();
-  if (value != null && value.equalsIgnoreCase("true"))   _nexusVSwitch=true;
+  Integer intObj=(Integer)params.get("ports.per.dvportgroup");
+  if (intObj != null)   _portsPerDvPortGroup=intObj.intValue();
+  s_logger.info("VmwareResource network configuration info." + " private traffic over vSwitch: " + _privateNetworkVSwitchName + ", public traffic over "+ this._publicTrafficInfo.getVirtualSwitchType()+ " : "+ this._publicTrafficInfo.getVirtualSwitchName()+ ", guest traffic over "+ this._guestTrafficInfo.getVirtualSwitchType()+ " : "+ this._guestTrafficInfo.getVirtualSwitchName());
   value=params.get("vmware.create.full.clone").toString();
   if (value != null && value.equalsIgnoreCase("true")) {
     _fullCloneFlag=true;
@@ -71,6 +64,5 @@
  else {
     _fullCloneFlag=false;
   }
-  s_logger.info("VmwareResource network configuration info. private vSwitch: " + _privateNetworkVSwitchName + ", public vSwitch: "+ _publicNetworkVSwitchName+ ", guest network: "+ _guestNetworkVSwitchName);
   return true;
 }

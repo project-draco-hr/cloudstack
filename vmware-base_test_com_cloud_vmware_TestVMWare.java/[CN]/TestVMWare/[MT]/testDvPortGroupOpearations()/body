@@ -1,0 +1,102 @@
+{
+  ManagedObjectReference morDvs, morDvPortGroup;
+  DatacenterMO dcMo;
+  DistributedVirtualSwitchMO dvsMo;
+  int networkRateMbps;
+  int networkRateMbpsToUpdate;
+  DVSTrafficShapingPolicy shapingPolicy;
+  VmwareDistributedVirtualSwitchVlanSpec vlanSpec;
+  DVSSecurityPolicy secPolicy;
+  VMwareDVSPortSetting dvsPortSetting;
+  DVPortgroupConfigSpec dvPortGroupSpec;
+  DVPortgroupConfigInfo dvPortgroupInfo=null;
+  String dvPortGroupName, dcMor;
+  Integer vid;
+  int numPorts;
+  int timeOutMs;
+  URL serviceUrl;
+  if (_args.length < MAX_ARGS) {
+    System.out.println("Using default parameters as required command line arguments are not provided.");
+    System.out.println("Sequence of arguments: <SERVERADDRESS> <USER> <PASSWORD> <DATACENTER> <DVSWITCH_MOR> <DVSWITCH_NAME> <DVPORTGROUP_NAME> <DVPORTGROUP_VLAN> <DVPORTGROUP_PORTCOUNT>");
+    morDvs=setupDVS("dvs-921");
+    dvPortGroupName="cloud.public.201.dvSwitch0.1";
+    networkRateMbps=201;
+    vid=new Integer(399);
+    timeOutMs=7000;
+    numPorts=64;
+    dcMor="datacenter-2";
+  }
+ else {
+    morDvs=setupDVS(_args[IND_DVSWITCH_MOR]);
+    dvPortGroupName=_args[IND_DVPORTGROUP_NAME];
+    vid=new Integer(IND_DVPORTGROUP_VLAN);
+    dcMor=_args[IND_DATACENTER_MOR];
+    numPorts=Integer.parseInt(_args[IND_DVPORTGROUP_PORTCOUNT]);
+    timeOutMs=7000;
+    networkRateMbps=201;
+  }
+  serviceUrl=new URL(cb.getServiceUrl());
+  dcMo=setupDatacenterObject(serviceUrl.getHost(),dcMor);
+  dvsMo=setupDistributedVirtualSwitchObject(morDvs.get_value(),serviceUrl.getHost());
+  shapingPolicy=HypervisorHostHelper.getDVSShapingPolicy(networkRateMbps);
+  secPolicy=HypervisorHostHelper.createDVSSecurityPolicy();
+  if (vid != null) {
+    vlanSpec=HypervisorHostHelper.createDVPortVlanIdSpec(vid);
+  }
+ else {
+    vlanSpec=HypervisorHostHelper.createDVPortVlanSpec();
+  }
+  dvsPortSetting=HypervisorHostHelper.createVmwareDVPortSettingSpec(shapingPolicy,secPolicy,vlanSpec);
+  dvPortGroupSpec=HypervisorHostHelper.createDvPortGroupSpec(dvPortGroupName,dvsPortSetting,numPorts);
+  if (!dcMo.hasDvPortGroup(dvPortGroupName)) {
+    System.out.print("\nTest create dvPortGroup : ");
+    try {
+      dvsMo.createDVPortGroup(dvPortGroupSpec);
+      System.out.println("Success\n");
+      HypervisorHostHelper.waitForDvPortGroupReady(dcMo,dvPortGroupName,timeOutMs);
+    }
+ catch (    Exception e) {
+      System.out.println("Failed\n");
+      throw new Exception(e);
+    }
+  }
+  System.out.print("\nTest presence of dvPortGroup : ");
+  if (dcMo.hasDvPortGroup(dvPortGroupName)) {
+    System.out.println("Success\n");
+  }
+ else {
+    System.out.println("Failed\n");
+  }
+  System.out.print("\nTest fetch dvPortGroup configuration : ");
+  try {
+    dvPortgroupInfo=dcMo.getDvPortGroupSpec(dvPortGroupName);
+    if (dvPortgroupInfo != null)     System.out.println("Success\n");
+  }
+ catch (  Exception e) {
+    System.out.println("Failed\n");
+  }
+  System.out.print("\nTest compare dvPortGroup configuration : ");
+  if (HypervisorHostHelper.isSpecMatch(dvPortgroupInfo,vid,shapingPolicy)) {
+    System.out.println("Success\n");
+  }
+ else {
+    System.out.println("Failed\n");
+  }
+  networkRateMbpsToUpdate=210;
+  shapingPolicy=HypervisorHostHelper.getDVSShapingPolicy(networkRateMbpsToUpdate);
+  dvsPortSetting=HypervisorHostHelper.createVmwareDVPortSettingSpec(shapingPolicy,secPolicy,vlanSpec);
+  dvPortGroupSpec.setDefaultPortConfig(dvsPortSetting);
+  dvPortGroupSpec.setConfigVersion(dvPortgroupInfo.getConfigVersion());
+  morDvPortGroup=dcMo.getDvPortGroupMor(dvPortGroupName);
+  System.out.print("\nTest update dvPortGroup configuration : ");
+  if (!HypervisorHostHelper.isSpecMatch(dvPortgroupInfo,vid,shapingPolicy)) {
+    try {
+      dvsMo.updateDvPortGroup(morDvPortGroup,dvPortGroupSpec);
+      System.out.println("Success\n");
+    }
+ catch (    Exception e) {
+      System.out.println("Failed\n");
+      throw new Exception(e);
+    }
+  }
+}
