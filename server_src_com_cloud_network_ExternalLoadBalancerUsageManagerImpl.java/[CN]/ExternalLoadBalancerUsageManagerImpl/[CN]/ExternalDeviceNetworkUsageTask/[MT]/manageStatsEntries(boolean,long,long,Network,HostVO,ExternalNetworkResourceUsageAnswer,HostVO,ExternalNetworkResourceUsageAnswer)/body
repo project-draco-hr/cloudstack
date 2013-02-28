@@ -1,0 +1,65 @@
+{
+  String accountErrorMsg="Failed to update external network stats entry. Details: account ID = " + accountId;
+  Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+  try {
+    txn.start();
+    String networkErrorMsg=accountErrorMsg + ", network ID = " + network.getId();
+    boolean sharedSourceNat=false;
+    Map<Network.Capability,String> sourceNatCapabilities=_networkMgr.getNetworkServiceCapabilities(network.getId(),Network.Service.SourceNat);
+    if (sourceNatCapabilities != null) {
+      String supportedSourceNatTypes=sourceNatCapabilities.get(Network.Capability.SupportedSourceNatTypes).toLowerCase();
+      if (supportedSourceNatTypes.contains("zone")) {
+        sharedSourceNat=true;
+      }
+    }
+    if (externalFirewall != null && firewallAnswer != null) {
+      if (!sharedSourceNat) {
+        List<IPAddressVO> sourceNatIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+        if (sourceNatIps.size() == 1) {
+          String publicIp=sourceNatIps.get(0).getAddress().addr();
+          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+            throw new ExecutionException(networkErrorMsg + ", source NAT IP = " + publicIp);
+          }
+        }
+        List<IPAddressVO> staticNatIps=_ipAddressDao.listStaticNatPublicIps(network.getId());
+        for (        IPAddressVO staticNatIp : staticNatIps) {
+          String publicIp=staticNatIp.getAddress().addr();
+          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+            throw new ExecutionException(networkErrorMsg + ", static NAT rule public IP = " + publicIp);
+          }
+        }
+        List<PortForwardingRuleVO> portForwardingRules=_portForwardingRulesDao.listByNetwork(network.getId());
+        for (        PortForwardingRuleVO portForwardingRule : portForwardingRules) {
+          String publicIp=_networkMgr.getIp(portForwardingRule.getSourceIpAddressId()).getAddress().addr();
+          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+            throw new ExecutionException(networkErrorMsg + ", port forwarding rule public IP = " + publicIp);
+          }
+        }
+      }
+ else {
+        if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),null,externalFirewall.getId(),firewallAnswer,false)) {
+          throw new ExecutionException(networkErrorMsg);
+        }
+      }
+    }
+    if (externalLoadBalancer != null && lbAnswer != null) {
+      boolean inline=_networkMgr.isNetworkInlineMode(network);
+      List<LoadBalancerVO> loadBalancers=_loadBalancerDao.listByNetworkId(network.getId());
+      for (      LoadBalancerVO loadBalancer : loadBalancers) {
+        String publicIp=_networkMgr.getIp(loadBalancer.getSourceIpAddressId()).getAddress().addr();
+        if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalLoadBalancer.getId(),lbAnswer,inline)) {
+          throw new ExecutionException(networkErrorMsg + ", load balancing rule public IP = " + publicIp);
+        }
+      }
+    }
+    return txn.commit();
+  }
+ catch (  Exception e) {
+    s_logger.warn("Exception: ",e);
+    txn.rollback();
+    return false;
+  }
+ finally {
+    txn.close();
+  }
+}

@@ -22,11 +22,41 @@
   String publicTrafficLabel=null;
   String guestTrafficLabel=null;
   Map<String,String> vsmCredentials=null;
+  VirtualSwitchType defaultVirtualSwitchType=VirtualSwitchType.StandardVirtualSwitch;
+  String paramGuestVswitchType=null;
+  String paramGuestVswitchName=null;
+  String paramPublicVswitchType=null;
+  String paramPublicVswitchName=null;
+  VmwareTrafficLabel guestTrafficLabelObj=new VmwareTrafficLabel(TrafficType.Guest);
+  VmwareTrafficLabel publicTrafficLabelObj=new VmwareTrafficLabel(TrafficType.Public);
+  Map<String,String> clusterDetails=_clusterDetailsDao.findDetails(clusterId);
+  _readGlobalConfigParameters();
+  if (useDVS) {
+    paramGuestVswitchType=_urlParams.get(ApiConstants.VSWITCH_TYPE_GUEST_TRAFFIC);
+    paramGuestVswitchName=_urlParams.get(ApiConstants.VSWITCH_NAME_GUEST_TRAFFIC);
+    paramPublicVswitchType=_urlParams.get(ApiConstants.VSWITCH_TYPE_PUBLIC_TRAFFIC);
+    paramPublicVswitchName=_urlParams.get(ApiConstants.VSWITCH_NAME_PUBLIC_TRAFFIC);
+    defaultVirtualSwitchType=getDefaultVirtualSwitchType();
+  }
+  guestTrafficLabel=_netmgr.getDefaultGuestTrafficLabel(dcId,HypervisorType.VMware);
+  publicTrafficLabel=_netmgr.getDefaultPublicTrafficLabel(dcId,HypervisorType.VMware);
+  guestTrafficLabelObj=getTrafficInfo(TrafficType.Guest,guestTrafficLabel,defaultVirtualSwitchType,paramGuestVswitchType,paramGuestVswitchName,clusterId);
+  publicTrafficLabelObj=getTrafficInfo(TrafficType.Public,publicTrafficLabel,defaultVirtualSwitchType,paramPublicVswitchType,paramPublicVswitchName,clusterId);
+  List<? extends PhysicalNetwork> pNetworkListGuestTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Guest);
+  List<? extends PhysicalNetwork> pNetworkListPublicTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Public);
+  PhysicalNetwork pNetworkPublic=pNetworkListPublicTraffic.get(0);
+  if (pNetworkListGuestTraffic.contains(pNetworkPublic)) {
+    if (publicTrafficLabelObj.getVirtualSwitchType() != guestTrafficLabelObj.getVirtualSwitchType()) {
+      String msg="Both public traffic and guest traffic is over same physical network " + pNetworkPublic + ". And virtual switch type chosen for each traffic is different"+ ". A physical network cannot be shared by different types of virtual switches.";
+      s_logger.error(msg);
+      throw new InvalidParameterValueException(msg);
+    }
+  }
   privateTrafficLabel=_netmgr.getDefaultManagementTrafficLabel(dcId,HypervisorType.VMware);
   if (privateTrafficLabel != null) {
     s_logger.info("Detected private network label : " + privateTrafficLabel);
   }
-  if (_vmwareMgr.getNexusVSwitchGlobalParameter()) {
+  if (nexusDVS) {
     DataCenterVO zone=_dcDao.findById(dcId);
     NetworkType zoneType=zone.getNetworkType();
     if (zoneType != NetworkType.Basic) {
@@ -45,7 +75,7 @@
   try {
     context=VmwareContextFactory.create(url.getHost(),username,password);
     if (privateTrafficLabel != null)     context.registerStockObject("privateTrafficLabel",privateTrafficLabel);
-    if (_vmwareMgr.getNexusVSwitchGlobalParameter()) {
+    if (nexusDVS) {
       if (vsmCredentials != null) {
         s_logger.info("Stocking credentials of Nexus VSM");
         context.registerStockObject("vsmcredentials",vsmCredentials);
@@ -59,7 +89,7 @@
       return null;
     }
     ManagedObjectReference morCluster=null;
-    Map<String,String> clusterDetails=_clusterDetailsDao.findDetails(clusterId);
+    clusterDetails=_clusterDetailsDao.findDetails(clusterId);
     if (clusterDetails.get("url") != null) {
       URI uriFromCluster=new URI(UriUtils.encodeURIComponent(clusterDetails.get("url")));
       morCluster=context.getHostMorByPath(URLDecoder.decode(uriFromCluster.getPath()));
@@ -101,12 +131,8 @@
       if (privateTrafficLabel != null) {
         params.put("private.network.vswitch.name",privateTrafficLabel);
       }
-      if (publicTrafficLabel != null) {
-        params.put("public.network.vswitch.name",publicTrafficLabel);
-      }
-      if (guestTrafficLabel != null) {
-        params.put("guest.network.vswitch.name",guestTrafficLabel);
-      }
+      params.put("guestTrafficInfo",guestTrafficLabelObj);
+      params.put("publicTrafficInfo",publicTrafficLabelObj);
       VmwareResource resource=new VmwareResource();
       try {
         resource.configure("VMware",params);
