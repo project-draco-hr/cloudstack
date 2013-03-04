@@ -1,0 +1,44 @@
+{
+  ScaleVmCommand reconfigureCmd=new ScaleVmCommand(vm.getInstanceName(),newServiceOffering.getCpu(),newServiceOffering.getSpeed(),newServiceOffering.getRamSize(),newServiceOffering.getRamSize());
+  Long dstHostId=vm.getHostId();
+  ItWorkVO work=new ItWorkVO(UUID.randomUUID().toString(),_nodeId,State.Reconfiguring,vm.getType(),vm.getId());
+  work.setStep(Step.Prepare);
+  work.setResourceType(ItWorkVO.ResourceType.Host);
+  work.setResourceId(vm.getHostId());
+  work=_workDao.persist(work);
+  boolean success=false;
+  try {
+    vm.setNewSvcOfferingId(newServiceOffering.getId());
+    changeState(vm,Event.ReconfiguringRequested,dstHostId,work,Step.Reconfiguring);
+    Answer reconfigureAnswer=_agentMgr.send(vm.getHostId(),reconfigureCmd);
+    if (!reconfigureAnswer.getResult()) {
+      s_logger.error("Unable to reconfigure due to " + reconfigureAnswer.getDetails());
+      return null;
+    }
+    changeState(vm,VirtualMachine.Event.OperationSucceeded,dstHostId,work,Step.Done);
+    success=true;
+  }
+ catch (  OperationTimedoutException e) {
+    throw new AgentUnavailableException("Operation timed out on reconfiguring " + vm,dstHostId);
+  }
+catch (  AgentUnavailableException e) {
+    throw e;
+  }
+catch (  NoTransitionException e) {
+    s_logger.info("Unable to change the state : " + e.getMessage());
+    throw new ConcurrentOperationException("Unable to change the state : " + e.getMessage());
+  }
+ finally {
+    work.setStep(Step.Done);
+    _workDao.update(work.getId(),work);
+    if (!success) {
+      try {
+        stateTransitTo(vm,Event.OperationFailed,vm.getHostId());
+      }
+ catch (      NoTransitionException e) {
+        s_logger.warn(e.getMessage());
+      }
+    }
+  }
+  return vm;
+}
