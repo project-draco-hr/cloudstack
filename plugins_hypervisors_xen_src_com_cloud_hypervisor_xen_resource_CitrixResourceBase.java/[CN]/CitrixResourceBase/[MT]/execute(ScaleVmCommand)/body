@@ -1,0 +1,50 @@
+{
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  String vmName=vmSpec.getName();
+  try {
+    Connection conn=getConnection();
+    Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    Host host=Host.getByUuid(conn,_host.uuid);
+    Iterator<VM> iter=vms.iterator();
+    while (iter.hasNext()) {
+      VM vm=iter.next();
+      VM.Record vmr=vm.getRecord(conn);
+      if ((vmr.powerState == VmPowerState.HALTED) || (vmr.powerState == VmPowerState.RUNNING && !isRefNull(vmr.residentOn) && !vmr.residentOn.getUuid(conn).equals(_host.uuid))) {
+        iter.remove();
+      }
+    }
+    if (vms.size() == 0) {
+      s_logger.info("No running VM " + vmName + " exists on XenServer"+ _host.uuid);
+      return new ScaleVmAnswer(cmd,false,"VM does not exist");
+    }
+    for (    VM vm : vms) {
+      VM.Record vmr=vm.getRecord(conn);
+      try {
+        scaleVM(conn,vm,vmSpec,host);
+      }
+ catch (      Exception e) {
+        String msg="Catch exception " + e.getClass().getName() + " when scaling VM:"+ vmName+ " due to "+ e.toString();
+        s_logger.debug(msg);
+        return new ScaleVmAnswer(cmd,false,msg);
+      }
+    }
+    String msg="scaling VM " + vmName + " is successful on host "+ host;
+    s_logger.debug(msg);
+    return new ScaleVmAnswer(cmd,true,msg);
+  }
+ catch (  XenAPIException e) {
+    String msg="Upgrade Vm " + vmName + " fail due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new ScaleVmAnswer(cmd,false,msg);
+  }
+catch (  XmlRpcException e) {
+    String msg="Upgrade Vm " + vmName + " fail due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    return new ScaleVmAnswer(cmd,false,msg);
+  }
+catch (  Exception e) {
+    String msg="Unable to upgrade " + vmName + " due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    return new ScaleVmAnswer(cmd,false,msg);
+  }
+}
