@@ -1,0 +1,57 @@
+{
+  Long accountId=null;
+  Long domainId=null;
+  Long vmId=null;
+  String ipaddr=null;
+  if (networkId == null) {
+    throw new InvalidParameterValueException("Invalid network id is given");
+  }
+  Network network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Invalid network id is given");
+  }
+  accountId=network.getAccountId();
+  domainId=network.getDomainId();
+  _accountMgr.checkAccess(ipOwner,null,true,network);
+  NicVO nicVO=_nicDao.findById(nicId);
+  if (nicVO == null) {
+    throw new InvalidParameterValueException("There is no nic for the " + nicId);
+  }
+  if (nicVO.getVmType() != VirtualMachine.Type.User) {
+    throw new InvalidParameterValueException("The nic is not belongs to user vm");
+  }
+  DataCenter dc=_dcDao.findById(network.getDataCenterId());
+  Long id=nicVO.getInstanceId();
+  DataCenter zone=_configMgr.getZone(zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Invalid zone Id is given");
+  }
+  s_logger.debug("Calling the ip allocation ...");
+  if (dc.getNetworkType() == NetworkType.Advanced && network.getGuestType() == Network.GuestType.Isolated) {
+    try {
+      ipaddr=_networkMgr.allocateGuestIP(ipOwner,false,zoneId,networkId,requestedIp);
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      throw new InvalidParameterValueException("Allocating guest ip for nic failed");
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("AddIpToVMNic is not supported in this network...");
+  }
+  if (ipaddr != null) {
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    boolean nicSecondaryIpSet=nicVO.getSecondaryIp();
+    if (!nicSecondaryIpSet) {
+      nicVO.setSecondaryIp(true);
+      s_logger.debug("Setting nics table ...");
+      _nicDao.update(nicId,nicVO);
+    }
+    s_logger.debug("Setting nic_secondary_ip table ...");
+    vmId=nicVO.getInstanceId();
+    NicSecondaryIpVO secondaryIpVO=new NicSecondaryIpVO(nicId,ipaddr,vmId,accountId,domainId,networkId);
+    _nicSecondaryIpDao.persist(secondaryIpVO);
+    txn.commit();
+  }
+  return ipaddr;
+}
