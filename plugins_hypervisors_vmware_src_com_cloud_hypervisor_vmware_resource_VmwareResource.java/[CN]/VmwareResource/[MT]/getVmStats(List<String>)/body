@@ -1,25 +1,25 @@
 {
   VmwareHypervisorHost hyperHost=getHyperHost(getServiceContext());
   HashMap<String,VmStatsEntry> vmResponseMap=new HashMap<String,VmStatsEntry>();
-  ManagedObjectReference perfMgr=getServiceContext().getServiceConnection().getServiceContent().getPerfManager();
-  VimPortType service=getServiceContext().getServiceConnection().getService();
+  ManagedObjectReference perfMgr=getServiceContext().getServiceContent().getPerfManager();
+  VimPortType service=getServiceContext().getService();
   PerfCounterInfo rxPerfCounterInfo=null;
   PerfCounterInfo txPerfCounterInfo=null;
-  PerfCounterInfo[] cInfo=(PerfCounterInfo[])getServiceContext().getServiceUtil().getDynamicProperty(perfMgr,"perfCounter");
-  for (int i=0; i < cInfo.length; ++i) {
-    if ("net".equalsIgnoreCase(cInfo[i].getGroupInfo().getKey())) {
-      if ("transmitted".equalsIgnoreCase(cInfo[i].getNameInfo().getKey())) {
-        txPerfCounterInfo=cInfo[i];
+  List<PerfCounterInfo> cInfo=(List<PerfCounterInfo>)getServiceContext().getVimClient().getDynamicProperty(perfMgr,"perfCounter");
+  for (  PerfCounterInfo info : cInfo) {
+    if ("net".equalsIgnoreCase(info.getGroupInfo().getKey())) {
+      if ("transmitted".equalsIgnoreCase(info.getNameInfo().getKey())) {
+        txPerfCounterInfo=info;
       }
-      if ("received".equalsIgnoreCase(cInfo[i].getNameInfo().getKey())) {
-        rxPerfCounterInfo=cInfo[i];
+      if ("received".equalsIgnoreCase(info.getNameInfo().getKey())) {
+        rxPerfCounterInfo=info;
       }
     }
   }
   ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","summary.config.numCpu","summary.quickStats.overallCpuUsage"});
   if (ocs != null && ocs.length > 0) {
     for (    ObjectContent oc : ocs) {
-      DynamicProperty[] objProps=oc.getPropSet();
+      List<DynamicProperty> objProps=oc.getPropSet();
       if (objProps != null) {
         String name=null;
         String numberCPUs=null;
@@ -41,11 +41,11 @@
         ManagedObjectReference vmMor=hyperHost.findVmOnHyperHost(name).getMor();
         assert(vmMor != null);
         ArrayList vmNetworkMetrics=new ArrayList();
-        PerfMetricId[] perfMetrics=service.queryAvailablePerfMetric(perfMgr,vmMor,null,null,null);
+        List<PerfMetricId> perfMetrics=service.queryAvailablePerfMetric(perfMgr,vmMor,null,null,null);
         if (perfMetrics != null) {
-          for (int index=0; index < perfMetrics.length; ++index) {
-            if (((rxPerfCounterInfo != null) && (perfMetrics[index].getCounterId() == rxPerfCounterInfo.getKey())) || ((txPerfCounterInfo != null) && (perfMetrics[index].getCounterId() == txPerfCounterInfo.getKey()))) {
-              vmNetworkMetrics.add(perfMetrics[index]);
+          for (int index=0; index < perfMetrics.size(); ++index) {
+            if (((rxPerfCounterInfo != null) && (perfMetrics.get(index).getCounterId() == rxPerfCounterInfo.getKey())) || ((txPerfCounterInfo != null) && (perfMetrics.get(index).getCounterId() == txPerfCounterInfo.getKey()))) {
+              vmNetworkMetrics.add(perfMetrics.get(index));
             }
           }
         }
@@ -56,22 +56,25 @@
           PerfQuerySpec qSpec=new PerfQuerySpec();
           qSpec.setEntity(vmMor);
           PerfMetricId[] availableMetricIds=(PerfMetricId[])vmNetworkMetrics.toArray(new PerfMetricId[0]);
-          qSpec.setMetricId(availableMetricIds);
-          PerfQuerySpec[] qSpecs=new PerfQuerySpec[]{qSpec};
-          PerfEntityMetricBase[] values=service.queryPerf(perfMgr,qSpecs);
-          for (int i=0; i < values.length; ++i) {
-            PerfSampleInfo[] infos=((PerfEntityMetric)values[i]).getSampleInfo();
-            sampleDuration=(infos[infos.length - 1].getTimestamp().getTimeInMillis() - infos[0].getTimestamp().getTimeInMillis()) / 1000;
-            PerfMetricSeries[] vals=((PerfEntityMetric)values[i]).getValue();
-            for (int vi=0; ((vals != null) && (vi < vals.length)); ++vi) {
-              if (vals[vi] instanceof PerfMetricIntSeries) {
-                PerfMetricIntSeries val=(PerfMetricIntSeries)vals[vi];
-                long[] perfValues=val.getValue();
-                if (vals[vi].getId().getCounterId() == rxPerfCounterInfo.getKey()) {
-                  networkReadKBs=sampleDuration * perfValues[3];
+          qSpec.getMetricId().addAll(Arrays.asList(availableMetricIds));
+          List<PerfQuerySpec> qSpecs=new ArrayList<PerfQuerySpec>();
+          qSpecs.add(qSpec);
+          List<PerfEntityMetricBase> values=service.queryPerf(perfMgr,qSpecs);
+          for (int i=0; i < values.size(); ++i) {
+            List<PerfSampleInfo> infos=((PerfEntityMetric)values.get(i)).getSampleInfo();
+            int endMs=infos.get(infos.size() - 1).getTimestamp().getSecond() * 1000 + infos.get(infos.size() - 1).getTimestamp().getMillisecond();
+            int beginMs=infos.get(0).getTimestamp().getSecond() * 1000 + infos.get(0).getTimestamp().getMillisecond();
+            sampleDuration=(endMs - beginMs) / 1000;
+            List<PerfMetricSeries> vals=((PerfEntityMetric)values.get(i)).getValue();
+            for (int vi=0; ((vals != null) && (vi < vals.size())); ++vi) {
+              if (vals.get(vi) instanceof PerfMetricIntSeries) {
+                PerfMetricIntSeries val=(PerfMetricIntSeries)vals.get(vi);
+                List<Long> perfValues=val.getValue();
+                if (vals.get(vi).getId().getCounterId() == rxPerfCounterInfo.getKey()) {
+                  networkReadKBs=sampleDuration * perfValues.get(3);
                 }
-                if (vals[vi].getId().getCounterId() == txPerfCounterInfo.getKey()) {
-                  networkWriteKBs=sampleDuration * perfValues[3];
+                if (vals.get(vi).getId().getCounterId() == txPerfCounterInfo.getKey()) {
+                  networkWriteKBs=sampleDuration * perfValues.get(3);
                 }
               }
             }
