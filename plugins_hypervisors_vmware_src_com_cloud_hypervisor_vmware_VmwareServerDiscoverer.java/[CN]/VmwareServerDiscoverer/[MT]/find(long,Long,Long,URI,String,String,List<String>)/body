@@ -30,6 +30,8 @@
   VmwareTrafficLabel guestTrafficLabelObj=new VmwareTrafficLabel(TrafficType.Guest);
   VmwareTrafficLabel publicTrafficLabelObj=new VmwareTrafficLabel(TrafficType.Public);
   Map<String,String> clusterDetails=_clusterDetailsDao.findDetails(clusterId);
+  DataCenterVO zone=_dcDao.findById(dcId);
+  NetworkType zoneType=zone.getNetworkType();
   _readGlobalConfigParameters();
   if (useDVS) {
     paramGuestVswitchType=_urlParams.get(ApiConstants.VSWITCH_TYPE_GUEST_TRAFFIC);
@@ -39,17 +41,26 @@
     defaultVirtualSwitchType=getDefaultVirtualSwitchType();
   }
   guestTrafficLabel=_netmgr.getDefaultGuestTrafficLabel(dcId,HypervisorType.VMware);
-  publicTrafficLabel=_netmgr.getDefaultPublicTrafficLabel(dcId,HypervisorType.VMware);
   guestTrafficLabelObj=getTrafficInfo(TrafficType.Guest,guestTrafficLabel,defaultVirtualSwitchType,paramGuestVswitchType,paramGuestVswitchName,clusterId);
-  publicTrafficLabelObj=getTrafficInfo(TrafficType.Public,publicTrafficLabel,defaultVirtualSwitchType,paramPublicVswitchType,paramPublicVswitchName,clusterId);
-  List<? extends PhysicalNetwork> pNetworkListGuestTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Guest);
-  List<? extends PhysicalNetwork> pNetworkListPublicTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Public);
-  PhysicalNetwork pNetworkPublic=pNetworkListPublicTraffic.get(0);
-  if (pNetworkListGuestTraffic.contains(pNetworkPublic)) {
-    if (publicTrafficLabelObj.getVirtualSwitchType() != guestTrafficLabelObj.getVirtualSwitchType()) {
-      String msg="Both public traffic and guest traffic is over same physical network " + pNetworkPublic + ". And virtual switch type chosen for each traffic is different"+ ". A physical network cannot be shared by different types of virtual switches.";
+  if (zoneType == NetworkType.Advanced) {
+    publicTrafficLabel=_netmgr.getDefaultPublicTrafficLabel(dcId,HypervisorType.VMware);
+    publicTrafficLabelObj=getTrafficInfo(TrafficType.Public,publicTrafficLabel,defaultVirtualSwitchType,paramPublicVswitchType,paramPublicVswitchName,clusterId);
+    List<? extends PhysicalNetwork> pNetworkListGuestTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Guest);
+    List<? extends PhysicalNetwork> pNetworkListPublicTraffic=_netmgr.getPhysicalNtwksSupportingTrafficType(dcId,TrafficType.Public);
+    PhysicalNetwork pNetworkPublic=pNetworkListPublicTraffic.get(0);
+    if (pNetworkListGuestTraffic.contains(pNetworkPublic)) {
+      if (publicTrafficLabelObj.getVirtualSwitchType() != guestTrafficLabelObj.getVirtualSwitchType()) {
+        String msg="Both public traffic and guest traffic is over same physical network " + pNetworkPublic + ". And virtual switch type chosen for each traffic is different"+ ". A physical network cannot be shared by different types of virtual switches.";
+        s_logger.error(msg);
+        throw new InvalidParameterValueException(msg);
+      }
+    }
+  }
+ else {
+    if (guestTrafficLabelObj.getVirtualSwitchType() != VirtualSwitchType.StandardVirtualSwitch) {
+      String msg="Detected that Guest traffic is over Distributed virtual switch in Basic zone. Only Standard vSwitch is supported in Basic zone.";
       s_logger.error(msg);
-      throw new InvalidParameterValueException(msg);
+      throw new DiscoveredWithErrorException(msg);
     }
   }
   privateTrafficLabel=_netmgr.getDefaultManagementTrafficLabel(dcId,HypervisorType.VMware);
@@ -57,8 +68,6 @@
     s_logger.info("Detected private network label : " + privateTrafficLabel);
   }
   if (nexusDVS) {
-    DataCenterVO zone=_dcDao.findById(dcId);
-    NetworkType zoneType=zone.getNetworkType();
     if (zoneType != NetworkType.Basic) {
       publicTrafficLabel=_netmgr.getDefaultPublicTrafficLabel(dcId,HypervisorType.VMware);
       if (publicTrafficLabel != null) {
@@ -100,7 +109,7 @@
  else {
         ClusterMO clusterMo=new ClusterMO(context,morCluster);
         ClusterDasConfigInfo dasConfig=clusterMo.getDasConfig();
-        if (dasConfig != null && dasConfig.getEnabled() != null && dasConfig.getEnabled().booleanValue()) {
+        if (dasConfig != null && dasConfig.isEnabled() != null && dasConfig.isEnabled().booleanValue()) {
           clusterDetails.put("NativeHA","true");
           _clusterDetailsDao.persist(clusterId,clusterDetails);
         }
@@ -119,7 +128,7 @@
       details.put("url",hostMo.getHostName());
       details.put("username",username);
       details.put("password",password);
-      String guid=morHost.getType() + ":" + morHost.get_value()+ "@"+ url.getHost();
+      String guid=morHost.getType() + ":" + morHost.getValue()+ "@"+ url.getHost();
       details.put("guid",guid);
       params.put("url",hostMo.getHostName());
       params.put("username",username);
