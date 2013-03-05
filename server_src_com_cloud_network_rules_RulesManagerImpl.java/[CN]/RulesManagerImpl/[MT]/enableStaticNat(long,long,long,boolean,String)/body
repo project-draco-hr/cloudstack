@@ -1,0 +1,98 @@
+{
+  UserContext ctx=UserContext.current();
+  Account caller=ctx.getCaller();
+  UserContext.current().setEventDetails("Ip Id: " + ipId);
+  IPAddressVO ipAddress=_ipAddressDao.findById(ipId);
+  if (ipAddress == null) {
+    throw new InvalidParameterValueException("Unable to find ip address by id " + ipId);
+  }
+  boolean performedIpAssoc=false;
+  boolean isOneToOneNat=ipAddress.isOneToOneNat();
+  Long associatedWithVmId=ipAddress.getAssociatedWithVmId();
+  Nic guestNic;
+  NicSecondaryIpVO nicSecIp=null;
+  String dstIp=null;
+  try {
+    Network network=_networkModel.getNetwork(networkId);
+    if (network == null) {
+      throw new InvalidParameterValueException("Unable to find network by id");
+    }
+    guestNic=_networkModel.getNicInNetwork(vmId,networkId);
+    if (guestNic == null) {
+      throw new InvalidParameterValueException("Vm doesn't belong to the network with specified id");
+    }
+    dstIp=guestNic.getIp4Address();
+    if (!_networkModel.areServicesSupportedInNetwork(network.getId(),Service.StaticNat)) {
+      throw new InvalidParameterValueException("Unable to create static nat rule; StaticNat service is not " + "supported in network with specified id");
+    }
+    if (!isSystemVm) {
+      UserVmVO vm=_vmDao.findById(vmId);
+      if (vm == null) {
+        throw new InvalidParameterValueException("Can't enable static nat for the address id=" + ipId + ", invalid virtual machine id specified ("+ vmId+ ").");
+      }
+      if (ipAddress.getAssociatedWithNetworkId() == null) {
+        boolean assignToVpcNtwk=network.getVpcId() != null && ipAddress.getVpcId() != null && ipAddress.getVpcId().longValue() == network.getVpcId();
+        if (assignToVpcNtwk) {
+          _networkModel.checkIpForService(ipAddress,Service.StaticNat,networkId);
+          s_logger.debug("The ip is not associated with the VPC network id=" + networkId + ", so assigning");
+          try {
+            ipAddress=_networkMgr.associateIPToGuestNetwork(ipId,networkId,false);
+          }
+ catch (          Exception ex) {
+            s_logger.warn("Failed to associate ip id=" + ipId + " to VPC network id="+ networkId+ " as "+ "a part of enable static nat");
+            return false;
+          }
+          performedIpAssoc=true;
+        }
+      }
+ else {
+        _networkModel.checkIpForService(ipAddress,Service.StaticNat,null);
+      }
+      if (ipAddress.getAssociatedWithNetworkId() == null) {
+        throw new InvalidParameterValueException("Ip address " + ipAddress + " is not assigned to the network "+ network);
+      }
+      checkIpAndUserVm(ipAddress,vm,caller);
+      if (vmGuestIp != null) {
+        if (!dstIp.equals(vmGuestIp)) {
+          boolean secondaryIpSet=_networkMgr.isSecondaryIpSetForNic(guestNic.getId());
+          if (!secondaryIpSet) {
+            throw new InvalidParameterValueException("VM ip " + vmGuestIp + " address not belongs to the vm");
+          }
+          nicSecIp=_nicSecondaryDao.findByIp4AddressAndNicId(vmGuestIp,guestNic.getId());
+          if (nicSecIp == null) {
+            throw new InvalidParameterValueException("VM ip " + vmGuestIp + " address not belongs to the vm");
+          }
+          dstIp=nicSecIp.getIp4Address();
+        }
+      }
+      isIpReadyForStaticNat(vmId,ipAddress,dstIp,caller,ctx.getCallerUserId());
+    }
+    ipAddress.setOneToOneNat(true);
+    ipAddress.setAssociatedWithVmId(vmId);
+    ipAddress.setVmIp(dstIp);
+    if (_ipAddressDao.update(ipAddress.getId(),ipAddress)) {
+      s_logger.trace("Enabling static nat for ip address " + ipAddress + " and vm id="+ vmId+ " on the backend");
+      if (applyStaticNatForIp(ipId,false,caller,false)) {
+        performedIpAssoc=false;
+        return true;
+      }
+ else {
+        s_logger.warn("Failed to enable static nat rule for ip address " + ipId + " on the backend");
+        ipAddress.setOneToOneNat(isOneToOneNat);
+        ipAddress.setAssociatedWithVmId(associatedWithVmId);
+        ipAddress.setVmIp(null);
+        _ipAddressDao.update(ipAddress.getId(),ipAddress);
+      }
+    }
+ else {
+      s_logger.warn("Failed to update ip address " + ipAddress + " in the DB as a part of enableStaticNat");
+    }
+  }
+  finally {
+    if (performedIpAssoc) {
+      IpAddress ip=_ipAddressDao.findById(ipAddress.getId());
+      _vpcMgr.unassignIPFromVpcNetwork(ip.getId(),networkId);
+    }
+  }
+  return false;
+}
