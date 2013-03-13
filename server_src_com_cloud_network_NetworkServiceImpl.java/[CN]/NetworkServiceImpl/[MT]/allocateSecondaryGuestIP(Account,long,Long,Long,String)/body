@@ -35,8 +35,45 @@
       throw new InvalidParameterValueException("Allocating guest ip for nic failed");
     }
   }
+ else   if (dc.getNetworkType() == NetworkType.Basic) {
+    Account caller=UserContext.current().getCaller();
+    long callerUserId=UserContext.current().getCallerUserId();
+    _accountMgr.checkAccess(caller,AccessType.UseNetwork,false,network);
+    VirtualMachine vm=_userVmDao.findById(nicVO.getInstanceId());
+    if (vm == null) {
+      throw new InvalidParameterValueException("There is no vm with the nic");
+    }
+    VMInstanceVO vmi=(VMInstanceVO)vm;
+    Long podId=vmi.getPodIdToDeployIn();
+    if (podId == null) {
+      throw new InvalidParameterValueException("vm pod id is null");
+    }
+    Pod pod=_hostPodDao.findById(podId);
+    if (pod == null) {
+      throw new InvalidParameterValueException("vm pod is null");
+    }
+    try {
+      ipaddr=_networkMgr.allocatePublicIpForGuestNic(networkId,dc,pod,caller,requestedIp);
+      if (ipaddr == null) {
+        throw new InvalidParameterValueException("Allocating ip to guest nic " + nicId + " failed");
+      }
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      s_logger.error("Allocating ip to guest nic " + nicId + " failed");
+      return null;
+    }
+  }
+ else   if (isSharedNetworkOfferingWithServices(network.getNetworkOfferingId()) && zone.getNetworkType() == NetworkType.Advanced) {
+    Account caller=UserContext.current().getCaller();
+    long callerUserId=UserContext.current().getCallerUserId();
+    _accountMgr.checkAccess(caller,AccessType.UseNetwork,false,network);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Associate IP address called by the user " + callerUserId + " account "+ ipOwner.getId());
+    }
+  }
  else {
-    throw new InvalidParameterValueException("AddIpToVMNic is not supported in this network...");
+    s_logger.error("AddIpToVMNic is not supported in this network...");
+    return null;
   }
   if (ipaddr != null) {
     Transaction txn=Transaction.currentTxn();
