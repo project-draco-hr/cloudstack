@@ -9,14 +9,46 @@
   }
   try {
     sp=conn.storagePoolLookupByUUIDString(name);
-    if (sp.getInfo().state != StoragePoolState.VIR_STORAGE_POOL_RUNNING) {
+    if (sp != null && sp.isActive() == 0) {
       sp.undefine();
       sp=null;
+      s_logger.debug("Found existing defined storage pool " + name + ". It wasn't running, so we undefined it.");
+    }
+    if (sp != null) {
+      s_logger.debug("Found existing defined storage pool " + name + ", using it.");
     }
   }
  catch (  LibvirtException e) {
+    sp=null;
+    s_logger.debug("createStoragePool didn't find existing running pool: " + e + ", need to create it");
+  }
+  if (path.endsWith("/")) {
+    path=path.substring(0,path.length() - 1);
   }
   if (sp == null) {
+    s_logger.debug("Didn't find an existing storage pool " + name + " by UUID, checking for pools with duplicate paths");
+    try {
+      String[] poolnames=conn.listStoragePools();
+      for (      String poolname : poolnames) {
+        s_logger.debug("Checking path of existing pool " + poolname + " against pool we want to create");
+        StoragePool p=conn.storagePoolLookupByName(poolname);
+        LibvirtStoragePoolDef pdef=getStoragePoolDef(conn,p);
+        if (pdef.getTargetPath().equals(path)) {
+          s_logger.debug("Storage pool utilizing path '" + path + "' already exists as pool "+ poolname+ ", undefining so we can re-define with correct name "+ name);
+          if (p.isPersistent() == 1) {
+            p.destroy();
+            p.undefine();
+          }
+ else {
+            p.destroy();
+          }
+        }
+      }
+    }
+ catch (    LibvirtException e) {
+      s_logger.error("Failure in attempting to see if an existing storage pool might " + "be using the path of the pool to be created:" + e);
+    }
+    s_logger.debug("Attempting to create storage pool " + name);
     if (type == StoragePoolType.NetworkFilesystem) {
       sp=createNfsStoragePool(conn,name,host,path);
     }
@@ -31,8 +63,8 @@
     }
   }
   try {
-    StoragePoolInfo spi=sp.getInfo();
-    if (spi.state != StoragePoolState.VIR_STORAGE_POOL_RUNNING) {
+    if (sp.isActive() == 0) {
+      s_logger.debug("attempting to activate pool " + name);
       sp.create(0);
     }
     LibvirtStoragePoolDef spd=getStoragePoolDef(conn,sp);
@@ -48,6 +80,12 @@
     return pool;
   }
  catch (  LibvirtException e) {
-    throw new CloudRuntimeException(e.toString());
+    String error=e.toString();
+    if (error.contains("Storage source conflict")) {
+      throw new CloudRuntimeException("A pool matching this location already exists in libvirt, " + " but has a different UUID/Name. Cannot create new pool without first " + " removing it. Check for inactive pools via 'virsh pool-list --all'. "+ error);
+    }
+ else {
+      throw new CloudRuntimeException(error);
+    }
   }
 }
