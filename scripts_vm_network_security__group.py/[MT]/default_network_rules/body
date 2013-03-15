@@ -1,4 +1,4 @@
-def default_network_rules(vm_name, vm_id, vm_ip, vm_mac, vif, brname):
+def default_network_rules(vm_name, vm_id, vm_ip, vm_mac, vif, brname, sec_ips):
     if (not addFWFramework(brname)):
         return False
     vmName = vm_name
@@ -21,6 +21,24 @@ def default_network_rules(vm_name, vm_id, vm_ip, vm_mac, vif, brname):
         execute(('iptables -N ' + vmchain_default))
     except:
         execute(('iptables -F ' + vmchain_default))
+    action = '-A'
+    vmipsetName = vm_name
+    if (create_ipset_forvm(vmipsetName) == False):
+        logging.debug((' failed to create ipset for rule ' + str(tokens)))
+        return 'false'
+    if (add_to_ipset(vmipsetName, [vm_ip], action) == False):
+        logging.debug(((' failed to add vm ' + vm_ip) + ' ip to set '))
+        return 'false'
+    secIpSet = '1'
+    ips = sec_ips.split(':')
+    ips.pop()
+    if (ips[0] == '0'):
+        secIpSet = '0'
+    if (secIpSet == '1'):
+        logging.debug('Adding ipset for secondary ips')
+        add_to_ipset(vmipsetName, ips, action)
+        if (write_secip_log_for_vm(vm_name, sec_ips, vm_id) == False):
+            logging.debug('Failed to log default network rules, ignoring')
     try:
         execute((((((('iptables -A ' + brfw) + '-OUT') + ' -m physdev --physdev-is-bridged --physdev-out ') + vif) + ' -j ') + vmchain_default))
         execute((((((('iptables -A ' + brfw) + '-IN') + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -j ') + vmchain_default))
@@ -28,14 +46,15 @@ def default_network_rules(vm_name, vm_id, vm_ip, vm_mac, vif, brname):
         execute((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -p udp --dport 67 --sport 68 -j ACCEPT'))
         execute((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-out ') + vif) + ' -p udp --dport 68 --sport 67  -j ACCEPT'))
         if (vm_ip is not None):
-            execute((((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' --source ') + vm_ip) + ' -p udp --dport 53  -j RETURN '))
-            execute(((((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' --source ') + vm_ip) + ' -j ') + vmchain_egress))
+            execute((((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -m set --set ') + vmipsetName) + ' src -p udp --dport 53  -j RETURN '))
+            execute(((((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-in ') + vif) + ' -m set --set ') + vmipsetName) + ' src -j ') + vmchain_egress))
         execute(((((('iptables -A ' + vmchain_default) + ' -m physdev --physdev-is-bridged --physdev-out ') + vif) + ' -j ') + vmchain))
         execute((('iptables -A ' + vmchain) + ' -j DROP'))
     except:
         logging.debug(('Failed to program default rules for vm ' + vm_name))
         return 'false'
     default_ebtables_rules(vmchain, vm_ip, vm_mac, vif)
+    ebtables_rules_vmip(vm_name, ips, '-I')
     if (vm_ip is not None):
         if (write_rule_log_for_vm(vmName, vm_id, vm_ip, domID, '_initial_', '-1') == False):
             logging.debug('Failed to log default network rules, ignoring')
