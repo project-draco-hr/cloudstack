@@ -1,0 +1,50 @@
+{
+  List<LoadBalancerTO> hcLB=new ArrayList<LoadBalancerTO>();
+  try {
+    if (_isSdx) {
+      return Answer.createUnsupportedCommandAnswer(cmd);
+    }
+    LoadBalancerTO[] loadBalancers=cmd.getLoadBalancers();
+    if (loadBalancers == null) {
+      return new HealthCheckLBConfigAnswer(hcLB);
+    }
+    for (    LoadBalancerTO loadBalancer : loadBalancers) {
+      HealthCheckPolicyTO[] healthCheckPolicies=loadBalancer.getHealthCheckPolicies();
+      if ((healthCheckPolicies != null) && (healthCheckPolicies.length > 0) && (healthCheckPolicies[0] != null)) {
+        String nsVirtualServerName=generateNSVirtualServerName(loadBalancer.getSrcIp(),loadBalancer.getSrcPort());
+        com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding[] serviceBindings=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.get(_netscalerService,nsVirtualServerName);
+        if (serviceBindings != null) {
+          for (          DestinationTO destination : loadBalancer.getDestinations()) {
+            String nsServiceName=generateNSServiceName(destination.getDestIp(),destination.getDestPort());
+            for (            com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding binding : serviceBindings) {
+              if (nsServiceName.equalsIgnoreCase(binding.get_servicename())) {
+                destination.setMonitorState(binding.get_curstate());
+                break;
+              }
+            }
+          }
+          hcLB.add(loadBalancer);
+        }
+      }
+    }
+  }
+ catch (  ExecutionException e) {
+    s_logger.error("Failed to execute HealthCheckLBConfigCommand due to ",e);
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+ else {
+      return new HealthCheckLBConfigAnswer(hcLB);
+    }
+  }
+catch (  Exception e) {
+    s_logger.error("Failed to execute HealthCheckLBConfigCommand due to ",e);
+    if (shouldRetry(numRetries)) {
+      return retry(cmd,numRetries);
+    }
+ else {
+      return new HealthCheckLBConfigAnswer(hcLB);
+    }
+  }
+  return new HealthCheckLBConfigAnswer(hcLB);
+}

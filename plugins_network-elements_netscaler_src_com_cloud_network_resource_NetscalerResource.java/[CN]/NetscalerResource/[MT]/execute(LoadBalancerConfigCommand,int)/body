@@ -13,10 +13,13 @@
       String lbProtocol=getNetScalerProtocol(loadBalancer);
       String lbAlgorithm=loadBalancer.getAlgorithm();
       String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort);
+      String nsMonitorName=generateNSMonitorName(srcIp,srcPort);
       if (loadBalancer.isAutoScaleVmGroupTO()) {
         applyAutoScaleConfig(loadBalancer);
         return new Answer(cmd);
       }
+      boolean hasMonitor=false;
+      boolean deleteMonitor=false;
       boolean destinationsToAdd=false;
       for (      DestinationTO destination : loadBalancer.getDestinations()) {
         if (!destination.isRevoked()) {
@@ -28,6 +31,19 @@
         addLBVirtualServer(nsVirtualServerName,srcIp,srcPort,lbAlgorithm,lbProtocol,loadBalancer.getStickinessPolicies(),null);
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("Created load balancing virtual server " + nsVirtualServerName + " on the Netscaler device");
+        }
+        HealthCheckPolicyTO[] healthCheckPolicies=loadBalancer.getHealthCheckPolicies();
+        if ((healthCheckPolicies != null) && (healthCheckPolicies.length > 0) && (healthCheckPolicies[0] != null)) {
+          for (          HealthCheckPolicyTO healthCheckPolicyTO : healthCheckPolicies) {
+            if (!healthCheckPolicyTO.isRevoked()) {
+              addLBMonitor(nsMonitorName,lbProtocol,healthCheckPolicyTO);
+              hasMonitor=true;
+            }
+ else {
+              deleteMonitor=true;
+              hasMonitor=false;
+            }
+          }
         }
         for (        DestinationTO destination : loadBalancer.getDestinations()) {
           String nsServerName=generateNSServerName(destination.getDestIp());
@@ -61,6 +77,17 @@
               apiCallResult=com.citrix.netscaler.nitro.resource.config.lb.lbvserver_service_binding.add(_netscalerService,svcBinding);
               if (apiCallResult.errorcode != 0) {
                 throw new ExecutionException("Failed to bind service: " + nsServiceName + " to the lb virtual server: "+ nsVirtualServerName+ " on Netscaler device");
+              }
+            }
+            if (hasMonitor) {
+              if (!isServiceBoundToMonitor(nsServiceName,nsMonitorName)) {
+                bindServiceToMonitor(nsServiceName,nsMonitorName);
+              }
+            }
+ else {
+              if (nsMonitorExist(nsMonitorName)) {
+                unBindServiceToMonitor(nsServiceName,nsMonitorName);
+                deleteMonitor=true;
               }
             }
             if (s_logger.isDebugEnabled()) {
@@ -124,7 +151,11 @@
             }
           }
           removeLBVirtualServer(nsVirtualServerName);
+          deleteMonitor=true;
         }
+      }
+      if (deleteMonitor) {
+        removeLBMonitor(nsMonitorName);
       }
     }
     if (s_logger.isInfoEnabled()) {

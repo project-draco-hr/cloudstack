@@ -1,0 +1,28 @@
+{
+  UserContext caller=UserContext.current();
+  Map<String,String> paramMap=cmd.getFullUrlParams();
+  if (paramMap.containsKey(ApiConstants.HEALTHCHECK_RESPONSE_TIMEOUT) && paramMap.containsKey(ApiConstants.HEALTHCHECK_INTERVAL_TIME)) {
+    if (cmd.getResponsTimeOut() > cmd.getHealthCheckInterval())     throw new InvalidParameterValueException("Failed to create HealthCheck policy : Monitor interval must be greater than response timeout");
+  }
+  LoadBalancerVO loadBalancer=_lbDao.findById(cmd.getLbRuleId());
+  if (loadBalancer == null) {
+    throw new InvalidParameterValueException("Failed: LB rule id: " + cmd.getLbRuleId() + " not present ");
+  }
+  _accountMgr.checkAccess(caller.getCaller(),null,true,loadBalancer);
+  if (loadBalancer.getState() == FirewallRule.State.Revoke) {
+    throw new InvalidParameterValueException("Failed:  LB rule id: " + cmd.getLbRuleId() + " is in deleting state: ");
+  }
+  if (!validateHealthCheck(cmd)) {
+    throw new InvalidParameterValueException("Failed to create HealthCheck policy: Validation Failed (HealthCheck Policy is not supported by LB Provider for the LB rule id :)" + cmd.getLbRuleId());
+  }
+  List<LBHealthCheckPolicyVO> hcPolicies=_lb2healthcheckDao.listByLoadBalancerId(cmd.getLbRuleId(),false);
+  if (hcPolicies.size() > 0) {
+    throw new InvalidParameterValueException("Failed to create HealthCheck policy: Already policy attached  for the LB Rule id :" + cmd.getLbRuleId());
+  }
+  LBHealthCheckPolicyVO hcpolicy=new LBHealthCheckPolicyVO(loadBalancer.getId(),cmd.getPingPath(),cmd.getDescription(),cmd.getResponsTimeOut(),cmd.getHealthCheckInterval(),cmd.getHealthyThreshold(),cmd.getUnhealthyThreshold());
+  List<LbHealthCheckPolicy> hcPolicyList=new ArrayList<LbHealthCheckPolicy>();
+  hcPolicyList.add(new LbHealthCheckPolicy(hcpolicy.getpingpath(),hcpolicy.getDescription(),hcpolicy.getResponseTime(),hcpolicy.getHealthcheckInterval(),hcpolicy.getHealthcheckThresshold(),hcpolicy.getUnhealthThresshold()));
+  LBHealthCheckPolicyVO policy=new LBHealthCheckPolicyVO(loadBalancer.getId(),cmd.getPingPath(),cmd.getDescription(),cmd.getResponsTimeOut(),cmd.getHealthCheckInterval(),cmd.getHealthyThreshold(),cmd.getUnhealthyThreshold());
+  policy=_lb2healthcheckDao.persist(policy);
+  return policy;
+}
