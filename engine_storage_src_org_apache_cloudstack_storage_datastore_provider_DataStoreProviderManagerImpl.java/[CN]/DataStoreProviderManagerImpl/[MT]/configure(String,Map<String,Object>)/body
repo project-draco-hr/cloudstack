@@ -1,39 +1,29 @@
 {
   Map<String,Object> copyParams=new HashMap<String,Object>(params);
-  List<DataStoreProviderVO> providerVos=providerDao.listAll();
   for (  DataStoreProvider provider : providers) {
-    boolean existingProvider=false;
-    DataStoreProviderVO providerVO=null;
-    for (    DataStoreProviderVO prov : providerVos) {
-      if (prov.getName().equalsIgnoreCase(provider.getName())) {
-        existingProvider=true;
-        providerVO=prov;
-        break;
-      }
+    String providerName=provider.getName();
+    if (providerMap.get(providerName) != null) {
+      s_logger.debug("Failed to register data store provider, provider name: " + providerName + " is not unique");
+      return false;
     }
-    String uuid=null;
-    if (!existingProvider) {
-      uuid=UUID.nameUUIDFromBytes(provider.getName().getBytes()).toString();
-      providerVO=new DataStoreProviderVO();
-      providerVO.setName(provider.getName());
-      providerVO.setUuid(uuid);
-      providerVO=providerDao.persist(providerVO);
-    }
- else {
-      uuid=providerVO.getUuid();
-    }
-    copyParams.put("uuid",uuid);
-    copyParams.put("id",providerVO.getId());
-    providerMap.put(uuid,provider);
+    s_logger.debug("registering data store provider:" + provider.getName());
+    providerMap.put(providerName,provider);
     try {
       boolean registrationResult=provider.configure(copyParams);
       if (!registrationResult) {
-        providerMap.remove(uuid);
+        providerMap.remove(providerName);
+        s_logger.debug("Failed to register data store provider: " + providerName);
+        return false;
+      }
+      Set<DataStoreProviderType> types=provider.getTypes();
+      if (types.contains(DataStoreProviderType.PRIMARY)) {
+        primaryDataStoreProviderMgr.registerDriver(provider.getName(),(PrimaryDataStoreDriver)provider.getDataStoreDriver());
+        primaryDataStoreProviderMgr.registerHostListener(provider.getName(),provider.getHostListener());
       }
     }
  catch (    Exception e) {
       s_logger.debug("configure provider failed",e);
-      providerMap.remove(uuid);
+      providerMap.remove(providerName);
     }
   }
   return true;

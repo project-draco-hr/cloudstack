@@ -1,0 +1,88 @@
+{
+  Long userId=UserContext.current().getCallerUserId();
+  User user=_userDao.findById(userId);
+  Account account=UserContext.current().getCaller();
+  StoragePoolVO poolVO=this.primaryDataStoreDao.findById(store.getId());
+  StoragePool pool=(StoragePool)store;
+  List<HostVO> hosts=_resourceMgr.listHostsInClusterByStatus(pool.getClusterId(),Status.Up);
+  if (hosts == null || hosts.size() == 0) {
+    return true;
+  }
+  for (  HostVO host : hosts) {
+    ModifyStoragePoolCommand msPoolCmd=new ModifyStoragePoolCommand(true,pool);
+    final Answer answer=agentMgr.easySend(host.getId(),msPoolCmd);
+    if (answer == null || !answer.getResult()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("ModifyStoragePool add failed due to " + ((answer == null) ? "answer null" : answer.getDetails()));
+      }
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("ModifyStoragePool add secceeded");
+      }
+    }
+  }
+  List<StoragePoolWorkVO> pendingWork=_storagePoolWorkDao.listPendingWorkForCancelMaintenanceByPoolId(poolVO.getId());
+  for (  StoragePoolWorkVO work : pendingWork) {
+    try {
+      VMInstanceVO vmInstance=vmDao.findById(work.getVmId());
+      if (vmInstance == null) {
+        continue;
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.ConsoleProxy)) {
+        ConsoleProxyVO consoleProxy=_consoleProxyDao.findById(vmInstance.getId());
+        if (vmMgr.advanceStart(consoleProxy,null,user,account) == null) {
+          String msg="There was an error starting the console proxy id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.SecondaryStorageVm)) {
+        SecondaryStorageVmVO ssVm=_secStrgDao.findById(vmInstance.getId());
+        if (vmMgr.advanceStart(ssVm,null,user,account) == null) {
+          String msg="There was an error starting the ssvm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.DomainRouter)) {
+        DomainRouterVO domR=_domrDao.findById(vmInstance.getId());
+        if (vmMgr.advanceStart(domR,null,user,account) == null) {
+          String msg="There was an error starting the domR id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      if (vmInstance.getType().equals(VirtualMachine.Type.User)) {
+        UserVmVO userVm=userVmDao.findById(vmInstance.getId());
+        if (vmMgr.advanceStart(userVm,null,user,account) == null) {
+          String msg="There was an error starting the user vm id: " + vmInstance.getId() + " on storage pool, cannot complete primary storage maintenance";
+          s_logger.warn(msg);
+          throw new ExecutionException(msg);
+        }
+ else {
+          work.setStartedAfterMaintenance(true);
+          _storagePoolWorkDao.update(work.getId(),work);
+        }
+      }
+      return true;
+    }
+ catch (    Exception e) {
+      s_logger.debug("Failed start vm",e);
+      throw new CloudRuntimeException(e.toString());
+    }
+  }
+  return false;
+}
