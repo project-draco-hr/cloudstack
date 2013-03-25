@@ -1,0 +1,28 @@
+{
+  boolean isVpc=getIsVpc(network);
+  long id=getRouterId(network,isVpc);
+  String routerName=getRouterName(isVpc,id);
+  String accountIdStr=String.valueOf(network.getAccountId());
+  BridgePort bridgePort=netBridge.addInteriorPort().create();
+  RouterPort routerPort=netRouter.addInteriorRouterPort();
+  String cidr=network.getCidr();
+  String cidrSubnet=NetUtils.getCidrSubNet(cidr);
+  int cidrSize=(int)NetUtils.getCidrSize(NetUtils.cidr2Netmask(cidr));
+  routerPort.networkAddress(cidrSubnet);
+  routerPort.networkLength(cidrSize);
+  routerPort.portAddress(network.getGateway());
+  if (getIsVpc(network)) {
+    int pos=1;
+    RuleChain inc=api.addChain().name(getChainName(String.valueOf(network.getId()),routerName,RuleChainCode.ACL_INGRESS)).tenantId(accountIdStr).create();
+    inc.addRule().type(DtoRule.Accept).dlType((short)0x0806).position(pos++).create();
+    inc.addRule().type(DtoRule.Accept).matchReturnFlow(true).position(pos++).create();
+    inc.addRule().type(DtoRule.Drop).position(pos).create();
+    RuleChain out=api.addChain().name(getChainName(String.valueOf(network.getId()),routerName,RuleChainCode.ACL_EGRESS)).tenantId(accountIdStr).create();
+    out.addRule().type(DtoRule.Accept).matchForwardFlow(true).position(1).create();
+    routerPort.outboundFilterId(inc.getId());
+    routerPort.inboundFilterId(out.getId());
+  }
+  routerPort.create();
+  bridgePort.link(routerPort.getId()).update();
+  netRouter.addRoute().type("Normal").weight(100).srcNetworkAddr("0.0.0.0").srcNetworkLength(0).dstNetworkAddr(cidrSubnet).dstNetworkLength(cidrSize).nextHopPort(routerPort.getId()).nextHopGateway(null).create();
+}

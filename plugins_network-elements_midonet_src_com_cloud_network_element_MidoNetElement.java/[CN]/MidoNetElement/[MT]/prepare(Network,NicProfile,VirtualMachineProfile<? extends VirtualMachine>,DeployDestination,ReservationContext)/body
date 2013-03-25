@@ -1,0 +1,32 @@
+{
+  s_logger.debug("prepare called with network: " + network.toString() + " nic: "+ nic.toString()+ " vm: "+ vm.toString());
+  if (!midoInNetwork(network)) {
+    return false;
+  }
+  if (nic.getTrafficType() == Networks.TrafficType.Guest && !canHandle(network,Service.StaticNat)) {
+    return false;
+  }
+  if (nic.getTrafficType() == Networks.TrafficType.Guest || nic.getTrafficType() == Networks.TrafficType.Public && nic.getBroadcastType() == Networks.BroadcastDomainType.Mido) {
+    Bridge netBridge=getOrCreateNetworkBridge(network);
+    if (nic.getTrafficType() == Networks.TrafficType.Public && vm.getVirtualMachine().getType() != VirtualMachine.Type.DomainRouter) {
+      Router providerRouter=api.getRouter(_providerRouterId);
+      Port[] ports=getOrCreatePublicBridgePorts(nic,netBridge,providerRouter);
+      RouterPort providerDownlink=(RouterPort)ports[1];
+      boolean routeExists=false;
+      for (      Route route : providerRouter.getRoutes(new MultivaluedMapImpl())) {
+        String ip4=route.getDstNetworkAddr();
+        if (ip4 != null && ip4.equals(nic.getIp4Address())) {
+          routeExists=true;
+          break;
+        }
+      }
+      if (!routeExists) {
+        providerRouter.addRoute().type("Normal").weight(100).srcNetworkAddr("0.0.0.0").srcNetworkLength(0).dstNetworkAddr(nic.getIp4Address()).dstNetworkLength(32).nextHopPort(providerDownlink.getId()).nextHopGateway(null).create();
+      }
+    }
+    BridgePort newPort=netBridge.addExteriorPort().create();
+    UUID nicUUID=getNicUUID(nic);
+    newPort.vifId(nicUUID).update();
+  }
+  return true;
+}

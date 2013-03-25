@@ -1,0 +1,54 @@
+{
+  if (!midoInNetwork(config)) {
+    return false;
+  }
+  if (canHandle(config,Service.Firewall)) {
+    String accountIdStr=String.valueOf(config.getAccountId());
+    String networkUUIDStr=String.valueOf(config.getId());
+    RuleChain preFilter=getChain(accountIdStr,networkUUIDStr,RuleChainCode.TR_PREFILTER);
+    RuleChain preNat=getChain(accountIdStr,networkUUIDStr,RuleChainCode.TR_PRENAT);
+    Map<String,Rule> existingRules=new HashMap<String,Rule>();
+    for (    Rule existingRule : preFilter.getRules()) {
+      if (existingRule.getType().equals(DtoRule.Jump) && existingRule.getNwSrcAddress() != null) {
+        String ruleString=new SimpleFirewallRule(existingRule).toStringArray()[0];
+        existingRules.put(ruleString,existingRule);
+      }
+    }
+    for (    FirewallRule rule : rulesToApply) {
+      IpAddress dstIp=_networkModel.getIp(rule.getSourceIpAddressId());
+      FirewallRuleTO ruleTO=new FirewallRuleTO(rule,null,dstIp.getAddress().addr());
+      SimpleFirewallRule fwRule=new SimpleFirewallRule(ruleTO);
+      String[] ruleStrings=fwRule.toStringArray();
+      if (rule.getState() == FirewallRule.State.Revoke) {
+        for (        String revokeRuleString : ruleStrings) {
+          Rule foundRule=existingRules.get(revokeRuleString);
+          if (foundRule != null) {
+            foundRule.delete();
+          }
+        }
+      }
+ else       if (rule.getState() == FirewallRule.State.Add) {
+        for (int i=0; i < ruleStrings.length; i++) {
+          String ruleString=ruleStrings[i];
+          Rule foundRule=existingRules.get(ruleString);
+          if (foundRule == null) {
+            String relatedCidr=fwRule.sourceCidrs.get(i);
+            Pair<String,Integer> cidrParts=NetUtils.getCidr(relatedCidr);
+            Rule toApply=preFilter.addRule().type(DtoRule.Jump).jumpChainId(preNat.getId()).position(1).nwSrcAddress(cidrParts.first()).nwSrcLength(cidrParts.second()).nwDstAddress(ruleTO.getSrcIp()).nwDstLength(32).nwProto(SimpleFirewallRule.stringToProtocolNumber(rule.getProtocol()));
+            if (rule.getProtocol().equals("icmp")) {
+              toApply.tpSrcStart(fwRule.icmpType).tpSrcEnd(fwRule.icmpType).tpDstStart(fwRule.icmpCode).tpDstEnd(fwRule.icmpCode);
+            }
+ else {
+              toApply.tpDstStart(fwRule.dstPortStart).tpDstEnd(fwRule.dstPortEnd);
+            }
+            toApply.create();
+          }
+        }
+      }
+    }
+    return true;
+  }
+ else {
+    return true;
+  }
+}

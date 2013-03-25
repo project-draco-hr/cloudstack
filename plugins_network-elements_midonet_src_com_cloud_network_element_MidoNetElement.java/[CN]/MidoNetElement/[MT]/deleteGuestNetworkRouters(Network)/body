@@ -1,0 +1,53 @@
+{
+  long accountID=network.getAccountId();
+  boolean isVpc=getIsVpc(network);
+  long id=getRouterId(network,isVpc);
+  Router tenantRouter=getGuestNetworkRouter(id,accountID,isVpc);
+  for (  Port peerPort : tenantRouter.getPeerPorts((new MultivaluedMapImpl()))) {
+    if (peerPort != null && peerPort instanceof RouterPort) {
+      RouterPort checkPort=(RouterPort)peerPort;
+      if (checkPort.getType().equals("ExteriorRouter")) {
+        checkPort.vifId(null).update();
+      }
+ else       if (checkPort.getType().equals("InteriorRouter")) {
+        checkPort.unlink();
+      }
+      checkPort.delete();
+    }
+ else     if (peerPort != null && peerPort instanceof BridgePort) {
+      BridgePort checkPort=(BridgePort)peerPort;
+      if (checkPort.getType().equals("ExteriorBridge")) {
+        checkPort.vifId(null).update();
+      }
+ else       if (checkPort.getType().equals("InteriorBridge")) {
+        checkPort.unlink();
+      }
+      checkPort.delete();
+    }
+  }
+  if (tenantRouter != null) {
+    for (    RouterPort p : tenantRouter.getPorts(new MultivaluedMapImpl())) {
+      if (p.getType().equals("ExteriorRouter")) {
+        p.vifId(null).update();
+      }
+      if (p.getType().equals("InteriorRouter")) {
+        p.unlink();
+      }
+      p.delete();
+    }
+    String accountIdStr=String.valueOf(accountID);
+    String routerName=getRouterName(isVpc,id);
+    RuleChain pre=api.getChain(tenantRouter.getInboundFilterId());
+    RuleChain preFilter=getChain(accountIdStr,routerName,RuleChainCode.TR_PREFILTER);
+    RuleChain preNat=getChain(accountIdStr,routerName,RuleChainCode.TR_PRENAT);
+    RuleChain post=api.getChain(tenantRouter.getOutboundFilterId());
+    pre.delete();
+    preFilter.delete();
+    preNat.delete();
+    post.delete();
+    for (    Route r : tenantRouter.getRoutes(new MultivaluedMapImpl())) {
+      r.delete();
+    }
+    tenantRouter.delete();
+  }
+}

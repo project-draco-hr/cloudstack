@@ -1,0 +1,45 @@
+{
+  s_logger.debug("applyStaticNats called with network: " + network.toString());
+  if (!midoInNetwork(network)) {
+    return false;
+  }
+  if (!canHandle(network,Service.StaticNat)) {
+    return false;
+  }
+  boolean resources=false;
+  Router tenantRouter=null;
+  Router providerRouter=null;
+  RouterPort[] ports=null;
+  RouterPort tenantUplink=null;
+  RouterPort providerDownlink=null;
+  RuleChain preFilter=null;
+  RuleChain preNat=null;
+  RuleChain post=null;
+  String accountIdStr=String.valueOf(network.getAccountId());
+  String networkUUIDStr=String.valueOf(network.getId());
+  for (  StaticNat rule : rules) {
+    IpAddress sourceIp=_networkModel.getIp(rule.getSourceIpAddressId());
+    String sourceIpAddr=sourceIp.getAddress().addr();
+    if (resources == false) {
+      tenantRouter=getOrCreateGuestNetworkRouter(network);
+      providerRouter=api.getRouter(_providerRouterId);
+      ports=getOrCreateProviderRouterPorts(tenantRouter,providerRouter);
+      tenantUplink=ports[0];
+      providerDownlink=ports[1];
+      boolean isVpc=getIsVpc(network);
+      long id=getRouterId(network,isVpc);
+      String routerName=getRouterName(isVpc,id);
+      preFilter=getChain(accountIdStr,routerName,RuleChainCode.TR_PREFILTER);
+      preNat=getChain(accountIdStr,routerName,RuleChainCode.TR_PRENAT);
+      post=api.getChain(tenantRouter.getOutboundFilterId());
+      resources=true;
+    }
+    if (rule.isForRevoke()) {
+      removeMidonetStaticNAT(preFilter,preNat,post,sourceIpAddr,rule.getDestIpAddress(),providerRouter);
+    }
+ else {
+      addMidonetStaticNAT(preFilter,preNat,post,sourceIpAddr,rule.getDestIpAddress(),tenantUplink,providerDownlink,providerRouter,network);
+    }
+  }
+  return true;
+}

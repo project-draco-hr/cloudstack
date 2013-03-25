@@ -1,0 +1,34 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("nic=" + nic);
+  }
+  LibvirtVMDef.InterfaceDef intf=new LibvirtVMDef.InterfaceDef();
+  String trafficLabel=nic.getName();
+  if (nic.getBroadcastType() == Networks.BroadcastDomainType.Mido && (nic.getType() == Networks.TrafficType.Guest || nic.getType() == Networks.TrafficType.Public)) {
+    String tapName=addTap();
+    MultivaluedMap qNet=new MultivaluedMapImpl();
+    String nicAuthority=nic.getBroadcastUri().getAuthority();
+    String tenantId=nicAuthority.split("\\.")[0];
+    qNet.add("tenant_id",tenantId);
+    String url=nicAuthority.split("\\.")[1];
+    String netName=url.split(":")[0];
+    MidonetApi api=new MidonetApi(_midoApiLocation);
+    api.enableLogging();
+    for (    Bridge b : api.getBridges(qNet)) {
+      if (b.getName().equals(netName)) {
+        for (        BridgePort p : b.getPorts()) {
+          UUID pvif=p.getVifId();
+          if (pvif != null && p.getVifId().toString().equals(nic.getUuid())) {
+            getMyHost(api).addHostInterfacePort().interfaceName(tapName).portId(p.getId()).create();
+            break;
+          }
+        }
+      }
+    }
+    intf.defEthernet(tapName,nic.getMac(),getGuestNicModel(guestOsType),"");
+  }
+ else {
+    throw new InternalErrorException("Only NICs of BroadcastDomain type Mido are supported by the MidoNetVifDriver");
+  }
+  return intf;
+}

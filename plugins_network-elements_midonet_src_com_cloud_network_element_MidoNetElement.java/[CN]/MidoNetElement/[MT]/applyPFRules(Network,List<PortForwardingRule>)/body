@@ -1,0 +1,113 @@
+{
+  s_logger.debug("applyPFRules called with network " + network.toString());
+  if (!midoInNetwork(network)) {
+    return false;
+  }
+  if (!canHandle(network,Service.PortForwarding)) {
+    return false;
+  }
+  String accountIdStr=String.valueOf(network.getAccountId());
+  String networkUUIDStr=String.valueOf(network.getId());
+  RuleChain preNat=getChain(accountIdStr,networkUUIDStr,RuleChainCode.TR_PRENAT);
+  RuleChain postNat=getChain(accountIdStr,networkUUIDStr,RuleChainCode.TR_POST);
+  RuleChain preFilter=getChain(accountIdStr,networkUUIDStr,RuleChainCode.TR_PREFILTER);
+  Router providerRouter=api.getRouter(_providerRouterId);
+  Router tenantRouter=getOrCreateGuestNetworkRouter(network);
+  RouterPort[] ports=getOrCreateProviderRouterPorts(tenantRouter,providerRouter);
+  RouterPort providerDownlink=ports[1];
+  Map<String,Rule> existingPreNatRules=new HashMap<String,Rule>();
+  for (  Rule existingRule : preNat.getRules()) {
+    String ruleString=new SimpleFirewallRule(existingRule).toStringArray()[0];
+    existingPreNatRules.put(ruleString,existingRule);
+  }
+  Map<String,Integer> ipRuleCounts=new HashMap<String,Integer>();
+  for (  Rule rule : preNat.getRules()) {
+    String ip=rule.getNwDstAddress();
+    if (ip != null && rule.getNwDstLength() == 32) {
+      if (ipRuleCounts.containsKey(ip)) {
+        ipRuleCounts.put(ip,new Integer(ipRuleCounts.get(ip).intValue() + 1));
+      }
+ else {
+        ipRuleCounts.put(ip,new Integer(1));
+      }
+    }
+  }
+  Map<String,Route> routes=new HashMap<String,Route>();
+  for (  Route route : providerRouter.getRoutes(new MultivaluedMapImpl())) {
+    String ip=route.getDstNetworkAddr();
+    if (ip != null && route.getDstNetworkLength() == 32) {
+      routes.put(ip,route);
+    }
+  }
+  for (  PortForwardingRule rule : rules) {
+    IpAddress dstIp=_networkModel.getIp(rule.getSourceIpAddressId());
+    PortForwardingRuleTO ruleTO=new PortForwardingRuleTO(rule,null,dstIp.getAddress().addr());
+    SimpleFirewallRule fwRule=new SimpleFirewallRule(ruleTO);
+    String[] ruleStrings=fwRule.toStringArray();
+    if (rule.getState() == FirewallRule.State.Revoke) {
+      for (      String revokeRuleString : ruleStrings) {
+        Rule foundPreNatRule=existingPreNatRules.get(revokeRuleString);
+        if (foundPreNatRule != null) {
+          String ip=foundPreNatRule.getNwDstAddress();
+          Integer cnt=ipRuleCounts.get(ip);
+          if (cnt != null) {
+            if (cnt == 1) {
+              ipRuleCounts.remove(ip);
+              Route route=routes.remove(ip);
+              route.delete();
+            }
+ else {
+              ipRuleCounts.put(ip,new Integer(ipRuleCounts.get(ip).intValue() - 1));
+            }
+          }
+          foundPreNatRule.delete();
+        }
+      }
+    }
+ else     if (rule.getState() == FirewallRule.State.Add) {
+      for (int i=0; i < ruleStrings.length; i++) {
+        String ruleString=ruleStrings[i];
+        Rule foundRule=existingPreNatRules.get(ruleString);
+        if (foundRule == null) {
+          String vmIp=ruleTO.getDstIp();
+          String publicIp=dstIp.getAddress().addr();
+          int privPortStart=ruleTO.getDstPortRange()[0];
+          int privPortEnd=ruleTO.getDstPortRange()[1];
+          int pubPortStart=ruleTO.getSrcPortRange()[0];
+          int pubPortEnd=ruleTO.getSrcPortRange()[1];
+          DtoRule.DtoNatTarget[] preTargets=new DtoRule.DtoNatTarget[]{new DtoRule.DtoNatTarget(vmIp,vmIp,privPortStart,privPortEnd)};
+          Rule preNatRule=preNat.addRule().type(DtoRule.DNAT).flowAction(DtoRule.Accept).nwDstAddress(publicIp).nwDstLength(32).tpDstStart(pubPortStart).tpDstEnd(pubPortEnd).natTargets(preTargets).nwProto(SimpleFirewallRule.stringToProtocolNumber(rule.getProtocol())).position(1);
+          Integer cnt=ipRuleCounts.get(publicIp);
+          if (cnt != null) {
+            ipRuleCounts.put(publicIp,new Integer(cnt.intValue() + 1));
+          }
+ else {
+            ipRuleCounts.put(publicIp,new Integer(1));
+          }
+          String preNatRuleStr=new SimpleFirewallRule(preNatRule).toStringArray()[0];
+          existingPreNatRules.put(preNatRuleStr,preNatRule);
+          preNatRule.create();
+          if (routes.get(publicIp) == null) {
+            Route route=providerRouter.addRoute().type("Normal").weight(100).srcNetworkAddr("0.0.0.0").srcNetworkLength(0).dstNetworkAddr(publicIp).dstNetworkLength(32).nextHopPort(providerDownlink.getId());
+            route.create();
+            routes.put(publicIp,route);
+          }
+          if (canHandle(network,Service.Firewall)) {
+            boolean defaultBlock=false;
+            for (            Rule filterRule : preFilter.getRules()) {
+              String pfDstIp=filterRule.getNwDstAddress();
+              if (pfDstIp != null && filterRule.getNwDstAddress().equals(publicIp)) {
+                defaultBlock=true;
+                break;
+              }
+            }
+            if (!defaultBlock) {
+              preFilter.addRule().type(DtoRule.Drop).nwDstAddress(publicIp).nwDstLength(32).create();
+            }
+          }
+        }
+      }
+    }
+  }
+  return true;
+}

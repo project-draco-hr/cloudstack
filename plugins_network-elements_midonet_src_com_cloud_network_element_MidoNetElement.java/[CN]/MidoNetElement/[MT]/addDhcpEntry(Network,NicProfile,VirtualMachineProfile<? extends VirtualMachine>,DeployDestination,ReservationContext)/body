@@ -1,0 +1,45 @@
+{
+  s_logger.debug("addDhcpEntry called with network: " + network.toString() + " nic: "+ nic.toString()+ " vm: "+ vm.toString());
+  if (!this.midoInNetwork(network)) {
+    return false;
+  }
+  if (vm.getType() != VirtualMachine.Type.User) {
+    return false;
+  }
+  Bridge netBridge=getOrCreateNetworkBridge(network);
+  ResourceCollection res=netBridge.getDhcpSubnets();
+  DhcpSubnet sub=null;
+  if (!res.isEmpty()) {
+    sub=(DhcpSubnet)res.get(0);
+  }
+ else {
+    Pair<String,Integer> cidrInfo=NetUtils.getCidr(network.getCidr());
+    sub=netBridge.addDhcpSubnet();
+    sub.subnetLength(cidrInfo.second());
+    sub.subnetPrefix(cidrInfo.first());
+    sub.defaultGateway(network.getGateway());
+    sub.dnsServerAddr(dest.getDataCenter().getDns1());
+    sub.create();
+  }
+  if (sub == null) {
+    s_logger.error("Failed to create DHCP subnet on Midonet bridge");
+    return false;
+  }
+ else {
+    boolean isNewDhcpHost=true;
+    for (    DhcpHost dhcpHost : sub.getDhcpHosts()) {
+      if (dhcpHost.getIpAddr().equals(nic.getIp4Address())) {
+        isNewDhcpHost=false;
+        break;
+      }
+    }
+    if (isNewDhcpHost) {
+      DhcpHost host=sub.addDhcpHost();
+      host.ipAddr(nic.getIp4Address());
+      host.macAddr(nic.getMacAddress());
+      host.name(vm.getHostName());
+      host.create();
+    }
+  }
+  return true;
+}
