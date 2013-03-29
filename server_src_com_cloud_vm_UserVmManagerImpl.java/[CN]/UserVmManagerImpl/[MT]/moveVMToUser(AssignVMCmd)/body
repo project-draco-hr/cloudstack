@@ -57,9 +57,15 @@
   }
   DataCenterVO zone=_dcDao.findById(vm.getDataCenterId());
   ServiceOfferingVO offering=_serviceOfferingDao.findByIdIncludingRemoved(vm.getServiceOfferingId());
+  List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   removeInstanceFromInstanceGroup(cmd.getVmId());
   resourceLimitCheck(newAccount,new Long(offering.getCpu()),new Long(offering.getRamSize()));
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.volume,_volsDao.findByInstance(cmd.getVmId()).size());
+  Long totalVolumesSize=(long)0;
+  for (  VolumeVO volume : volumes) {
+    totalVolumesSize+=volume.getSize();
+  }
+  _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.primary_storage,totalVolumesSize);
   VirtualMachineTemplate template=_templateDao.findById(vm.getTemplateId());
   if (!template.isPublicTemplate()) {
     Account templateOwner=_accountMgr.getAccount(template.getAccountId());
@@ -74,13 +80,14 @@
   vm.setAccountId(newAccount.getAccountId());
   vm.setDomainId(cmd.getDomainId());
   _vmDao.persist(vm);
-  List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   for (  VolumeVO volume : volumes) {
     UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),Volume.class.getName(),volume.getUuid());
     _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume);
+    _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
     volume.setAccountId(newAccount.getAccountId());
     _volsDao.persist(volume);
     _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume);
+    _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
     UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
     List<SnapshotVO> snapshots=_snapshotDao.listByVolumeIdIncludingRemoved(volume.getId());
     for (    SnapshotVO snapshot : snapshots) {
