@@ -22,32 +22,35 @@
       s_logger.debug("DeploymentPlan has host_id specified, choosing this host and making no checks on this host: " + hostIdSpecified);
     }
     HostVO host=_hostDao.findById(hostIdSpecified);
-    if (s_logger.isDebugEnabled()) {
-      if (host == null) {
-        s_logger.debug("The specified host cannot be found");
-      }
+    if (host == null) {
+      s_logger.debug("The specified host cannot be found");
+    }
+ else     if (avoid.shouldAvoid(host)) {
+      s_logger.debug("The specified host is in avoid set");
+    }
  else {
+      if (s_logger.isDebugEnabled()) {
         s_logger.debug("Looking for suitable pools for this host under zone: " + host.getDataCenterId() + ", pod: "+ host.getPodId()+ ", cluster: "+ host.getClusterId());
       }
-    }
-    DataCenterDeployment lastPlan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),hostIdSpecified,plan.getPoolId(),null,plan.getReservationContext());
-    Pair<Map<Volume,List<StoragePool>>,List<Volume>> result=findSuitablePoolsForVolumes(vmProfile,lastPlan,avoid,HostAllocator.RETURN_UPTO_ALL);
-    Map<Volume,List<StoragePool>> suitableVolumeStoragePools=result.first();
-    List<Volume> readyAndReusedVolumes=result.second();
-    if (!suitableVolumeStoragePools.isEmpty()) {
-      List<Host> suitableHosts=new ArrayList<Host>();
-      suitableHosts.add(host);
-      Pair<Host,Map<Volume,StoragePool>> potentialResources=findPotentialDeploymentResources(suitableHosts,suitableVolumeStoragePools);
-      if (potentialResources != null) {
-        Pod pod=_podDao.findById(host.getPodId());
-        Cluster cluster=_clusterDao.findById(host.getClusterId());
-        Map<Volume,StoragePool> storageVolMap=potentialResources.second();
-        for (        Volume vol : readyAndReusedVolumes) {
-          storageVolMap.remove(vol);
+      DataCenterDeployment lastPlan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),hostIdSpecified,plan.getPoolId(),null,plan.getReservationContext());
+      Pair<Map<Volume,List<StoragePool>>,List<Volume>> result=findSuitablePoolsForVolumes(vmProfile,lastPlan,avoid,HostAllocator.RETURN_UPTO_ALL);
+      Map<Volume,List<StoragePool>> suitableVolumeStoragePools=result.first();
+      List<Volume> readyAndReusedVolumes=result.second();
+      if (!suitableVolumeStoragePools.isEmpty()) {
+        List<Host> suitableHosts=new ArrayList<Host>();
+        suitableHosts.add(host);
+        Pair<Host,Map<Volume,StoragePool>> potentialResources=findPotentialDeploymentResources(suitableHosts,suitableVolumeStoragePools);
+        if (potentialResources != null) {
+          Pod pod=_podDao.findById(host.getPodId());
+          Cluster cluster=_clusterDao.findById(host.getClusterId());
+          Map<Volume,StoragePool> storageVolMap=potentialResources.second();
+          for (          Volume vol : readyAndReusedVolumes) {
+            storageVolMap.remove(vol);
+          }
+          DeployDestination dest=new DeployDestination(dc,pod,cluster,host,storageVolMap);
+          s_logger.debug("Returning Deployment Destination: " + dest);
+          return dest;
         }
-        DeployDestination dest=new DeployDestination(dc,pod,cluster,host,storageVolMap);
-        s_logger.debug("Returning Deployment Destination: " + dest);
-        return dest;
       }
     }
     s_logger.debug("Cannnot deploy to specified host, returning.");
