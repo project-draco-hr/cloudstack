@@ -19,6 +19,9 @@
   String sourcePath=disk.getPath();
   PhysicalDiskFormat sourceFormat=disk.getFormat();
   PhysicalDiskFormat destFormat=newDisk.getFormat();
+  QemuImg qemu=new QemuImg();
+  QemuImgFile srcFile=null;
+  QemuImgFile destFile=null;
   if ((srcPool.getType() != StoragePoolType.RBD) && (destPool.getType() != StoragePoolType.RBD)) {
     if (sourceFormat == PhysicalDiskFormat.TAR) {
       Script.runSimpleBashScript("tar -x -f " + sourcePath + " -C "+ destPath);
@@ -28,18 +31,41 @@
       Script.runSimpleBashScript("chmod 755 " + destPath);
       Script.runSimpleBashScript("cp -p -r " + sourcePath + "/* "+ destPath);
     }
- else     if (sourceFormat.equals(destFormat) && Script.runSimpleBashScript("qemu-img info " + sourcePath + "|grep backing") == null) {
-      Script.runSimpleBashScript("cp -f " + sourcePath + " "+ destPath);
-    }
  else {
-      Script.runSimpleBashScript("qemu-img convert -f " + sourceFormat + " -O "+ destFormat+ " "+ sourcePath+ " "+ destPath);
+      srcFile=new QemuImgFile(sourcePath,sourceFormat);
+      try {
+        Map<String,String> info=qemu.info(srcFile);
+        String backingFile=info.get(new String("backing_file"));
+        if (sourceFormat.equals(destFormat) && backingFile == null) {
+          Script.runSimpleBashScript("cp -f " + sourcePath + " "+ destPath);
+        }
+ else {
+          destFile=new QemuImgFile(destPath,destFormat);
+        }
+      }
+ catch (      QemuImgException e) {
+        s_logger.error("Failed to fetch the information of file " + srcFile.getFileName() + " the error was: "+ e.getMessage());
+      }
     }
   }
  else   if ((srcPool.getType() != StoragePoolType.RBD) && (destPool.getType() == StoragePoolType.RBD)) {
-    Script.runSimpleBashScript("qemu-img convert -f " + sourceFormat + " -O "+ destFormat+ " "+ sourcePath+ " "+ KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
+    srcFile=new QemuImgFile(sourcePath,sourceFormat);
+    destFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
+    destFile.setFormat(destFormat);
   }
  else {
-    Script.runSimpleBashScript("qemu-img convert -f " + sourceFormat + " -O "+ destFormat+ " "+ KVMPhysicalDisk.RBDStringBuilder(srcPool.getSourceHost(),srcPool.getSourcePort(),srcPool.getAuthUserName(),srcPool.getAuthSecret(),sourcePath)+ " "+ KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
+    srcFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(srcPool.getSourceHost(),srcPool.getSourcePort(),srcPool.getAuthUserName(),srcPool.getAuthSecret(),sourcePath));
+    srcFile.setFormat(sourceFormat);
+    destFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
+    destFile.setFormat(destFormat);
+  }
+  if (srcFile != null && destFile != null) {
+    try {
+      qemu.convert(srcFile,destFile);
+    }
+ catch (    QemuImgException e) {
+      s_logger.error("Failed to convert " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
+    }
   }
   return newDisk;
 }
