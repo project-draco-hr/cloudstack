@@ -2,21 +2,36 @@
   FirewallRuleTO[] rules=cmd.getRules();
   try {
     openConfiguration();
-    for (    FirewallRuleTO rule : rules) {
-      int startPort=0, endPort=0;
-      if (rule.getSrcPortRange() != null) {
-        startPort=rule.getSrcPortRange()[0];
-        endPort=rule.getSrcPortRange()[1];
+    if (rules[0].getTrafficType() == FirewallRule.TrafficType.Egress) {
+      Map<String,ArrayList<FirewallRuleTO>> activeRules=getActiveFirewallEgressRules(rules);
+      Set<String> guestVlans=activeRules.keySet();
+      List<String> cidrs=new ArrayList();
+      for (      String guestVlan : guestVlans) {
+        List<FirewallRuleTO> activeRulesForGuestNw=activeRules.get(guestVlan);
+        removeEgressSecurityPolicyAndApplications(SecurityPolicyType.SECURITYPOLICY_EGRESS,guestVlan,extractCidrs(activeRulesForGuestNw));
+        if (activeRulesForGuestNw.size() > 0) {
+          addEgressSecurityPolicyAndApplications(SecurityPolicyType.SECURITYPOLICY_EGRESS,guestVlan,extractApplications(activeRulesForGuestNw),extractCidrs(activeRulesForGuestNw));
+        }
       }
-      FirewallFilterTerm term=new FirewallFilterTerm(genIpIdentifier(rule.getSrcIp()) + "-" + String.valueOf(rule.getId()),rule.getSourceCidrList(),rule.getSrcIp(),rule.getProtocol(),startPort,endPort,rule.getIcmpType(),rule.getIcmpCode(),genIpIdentifier(rule.getSrcIp()) + _usageFilterIPInput.getCounterIdentifier());
-      if (!rule.revoked()) {
-        manageFirewallFilter(SrxCommand.ADD,term,_publicZoneInputFilterName);
-      }
+      commitConfiguration();
+    }
  else {
-        manageFirewallFilter(SrxCommand.DELETE,term,_publicZoneInputFilterName);
+      for (      FirewallRuleTO rule : rules) {
+        int startPort=0, endPort=0;
+        if (rule.getSrcPortRange() != null) {
+          startPort=rule.getSrcPortRange()[0];
+          endPort=rule.getSrcPortRange()[1];
+          FirewallFilterTerm term=new FirewallFilterTerm(genIpIdentifier(rule.getSrcIp()) + "-" + String.valueOf(rule.getId()),rule.getSourceCidrList(),rule.getSrcIp(),rule.getProtocol(),startPort,endPort,rule.getIcmpType(),rule.getIcmpCode(),genIpIdentifier(rule.getSrcIp()) + _usageFilterIPInput.getCounterIdentifier());
+          if (!rule.revoked()) {
+            manageFirewallFilter(SrxCommand.ADD,term,_publicZoneInputFilterName);
+          }
+ else {
+            manageFirewallFilter(SrxCommand.DELETE,term,_publicZoneInputFilterName);
+          }
+        }
+        commitConfiguration();
       }
     }
-    commitConfiguration();
     return new Answer(cmd);
   }
  catch (  ExecutionException e) {
