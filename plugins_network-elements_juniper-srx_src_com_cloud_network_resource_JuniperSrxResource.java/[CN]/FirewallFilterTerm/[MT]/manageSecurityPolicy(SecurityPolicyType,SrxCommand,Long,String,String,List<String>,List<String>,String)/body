@@ -2,10 +2,15 @@
   String fromZone=_publicZone;
   String toZone=_privateZone;
   String securityPolicyName;
-  String addressBookEntryName;
+  String addressBookEntryName=null;
   if (type.equals(SecurityPolicyType.VPN) && ipsecVpnName != null) {
     securityPolicyName=ipsecVpnName;
     addressBookEntryName=ipsecVpnName;
+  }
+ else   if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+    fromZone=_privateZone;
+    toZone=_publicZone;
+    securityPolicyName=genSecurityPolicyName(type,accountId,username,fromZone,toZone,privateIp);
   }
  else {
     securityPolicyName=genSecurityPolicyName(type,accountId,username,fromZone,toZone,privateIp);
@@ -39,15 +44,38 @@ return true;
 }
 return false;
 case ADD:
-if (!manageAddressBookEntry(SrxCommand.CHECK_IF_EXISTS,toZone,privateIp,ipsecVpnName)) {
+if (!type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+if (!manageAddressBookEntry(SrxCommand.CHECK_IF_EXISTS,toZone,privateIp,addressBookEntryName)) {
 throw new ExecutionException("No address book entry for policy: " + securityPolicyName);
 }
+}
+String srcAddrs="";
+String dstAddrs="";
 xml=SrxXml.SECURITY_POLICY_ADD.getXml();
+xml=replaceXmlValue(xml,"policy-name",securityPolicyName);
+if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+xml=replaceXmlValue(xml,"from-zone",_privateZone);
+xml=replaceXmlValue(xml,"to-zone",_publicZone);
+if (cidrs == null) {
+srcAddrs="<source-address>any</source-address>";
+}
+ else {
+for (String cidr : cidrs) {
+srcAddrs+="<source-address>" + genAddressBookEntryName(cidr) + "</source-address>";
+}
+}
+xml=replaceXmlValue(xml,"src-address",srcAddrs);
+dstAddrs="<destination-address>any</destination-address>";
+xml=replaceXmlValue(xml,"dst-address",dstAddrs);
+}
+ else {
 xml=replaceXmlValue(xml,"from-zone",fromZone);
 xml=replaceXmlValue(xml,"to-zone",toZone);
-xml=replaceXmlValue(xml,"policy-name",securityPolicyName);
-xml=replaceXmlValue(xml,"src-address","any");
-xml=replaceXmlValue(xml,"dest-address",addressBookEntryName);
+srcAddrs="<source-address>any</source-address>";
+xml=replaceXmlValue(xml,"src-address",srcAddrs);
+dstAddrs="<destination-address>" + addressBookEntryName + "</destination-address>";
+xml=replaceXmlValue(xml,"dst-address",dstAddrs);
+}
 if (type.equals(SecurityPolicyType.VPN) && ipsecVpnName != null) {
 xml=replaceXmlValue(xml,"tunnel","<tunnel><ipsec-vpn>" + ipsecVpnName + "</ipsec-vpn></tunnel>");
 }
@@ -55,7 +83,7 @@ xml=replaceXmlValue(xml,"tunnel","<tunnel><ipsec-vpn>" + ipsecVpnName + "</ipsec
 xml=replaceXmlValue(xml,"tunnel","");
 }
 String applications;
-if (applicationNames == null) {
+if (applicationNames == null || applicationNames.size() == 0) {
 applications="<application>any</application>";
 }
  else {
@@ -72,10 +100,10 @@ throw new ExecutionException("Failed to add security policy for privateIp " + pr
 return true;
 }
 case DELETE:
-if (!manageSecurityPolicy(type,SrxCommand.CHECK_IF_EXISTS,null,null,privateIp,applicationNames,ipsecVpnName)) {
+if (!manageSecurityPolicy(type,SrxCommand.CHECK_IF_EXISTS,null,null,privateIp,applicationNames,cidrs,ipsecVpnName)) {
 return true;
 }
-if (manageSecurityPolicy(type,SrxCommand.CHECK_IF_IN_USE,null,null,privateIp,applicationNames,ipsecVpnName)) {
+if (manageSecurityPolicy(type,SrxCommand.CHECK_IF_IN_USE,null,null,privateIp,applicationNames,cidrs,ipsecVpnName)) {
 return true;
 }
 xml=SrxXml.SECURITY_POLICY_GETONE.getXml();
