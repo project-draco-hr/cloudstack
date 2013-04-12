@@ -1,0 +1,47 @@
+{
+  boolean downloadJobExists=false;
+  VolumeDataStoreVO volumeHost=null;
+  volumeHost=_volumeStoreDao.findByStoreVolume(store.getId(),volume.getId());
+  if (volumeHost == null) {
+    volumeHost=new VolumeDataStoreVO(store.getId(),volume.getId(),new Date(),0,VMTemplateStorageResourceAssoc.Status.NOT_DOWNLOADED,null,null,"jobid0000",null,url,checkSum,format);
+    _volumeStoreDao.persist(volumeHost);
+  }
+ else   if ((volumeHost.getJobId() != null) && (volumeHost.getJobId().length() > 2)) {
+    downloadJobExists=true;
+  }
+  Long maxVolumeSizeInBytes=getMaxVolumeSizeInBytes();
+  String secUrl=store.getUri();
+  if (volumeHost != null) {
+    start();
+    DownloadCommand dcmd=new DownloadCommand(secUrl,volume,maxVolumeSizeInBytes,checkSum,url,format);
+    dcmd.setProxy(getHttpProxy());
+    if (downloadJobExists) {
+      dcmd=new DownloadProgressCommand(dcmd,volumeHost.getJobId(),RequestType.GET_OR_RESTART);
+      dcmd.setResourceType(ResourceType.VOLUME);
+    }
+    HostVO ssAhost=_ssvmMgr.pickSsvmHost(store);
+    if (ssAhost == null) {
+      s_logger.warn("There is no secondary storage VM for image store " + store.getName());
+      return;
+    }
+    DownloadListener dl=new DownloadListener(ssAhost,store,volume,_timer,_volumeStoreDao,volumeHost.getId(),this,dcmd,_volumeDao,_storageMgr,_resourceLimitMgr,_alertMgr,_accountMgr,callback);
+    if (downloadJobExists) {
+      dl.setCurrState(volumeHost.getDownloadState());
+    }
+    DownloadListener old=null;
+synchronized (_listenerVolMap) {
+      old=_listenerVolMap.put(volumeHost,dl);
+    }
+    if (old != null) {
+      old.abandon();
+    }
+    try {
+      send(ssAhost.getId(),dcmd,dl);
+    }
+ catch (    AgentUnavailableException e) {
+      s_logger.warn("Unable to start /resume download of volume " + volume.getName() + " to "+ store.getName(),e);
+      dl.setDisconnected();
+      dl.scheduleStatusCheck(RequestType.GET_OR_RESTART);
+    }
+  }
+}
