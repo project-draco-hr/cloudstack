@@ -1,0 +1,54 @@
+{
+  String deviceName=Provider.CiscoVnmc.getName();
+  NetworkDevice networkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  CiscoVnmcController ciscoVnmcResource=null;
+  PhysicalNetworkVO physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (physicalNetwork == null) {
+    throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+  }
+  long zoneId=physicalNetwork.getDataCenterId();
+  PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(physicalNetwork.getId(),networkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProvider == null) {
+    throw new CloudRuntimeException("Network Service Provider: " + networkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+ else   if (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  if (_ciscoVnmcDao.listByPhysicalNetwork(physicalNetworkId).size() != 0) {
+    throw new CloudRuntimeException("A Cisco Vnmc device is already configured on this physical network");
+  }
+  Map<String,String> params=new HashMap<String,String>();
+  params.put("guid",UUID.randomUUID().toString());
+  params.put("zoneId",String.valueOf(physicalNetwork.getDataCenterId()));
+  params.put("physicalNetworkId",String.valueOf(physicalNetwork.getId()));
+  params.put("name","Cisco VNMC Controller - " + cmd.getHost());
+  params.put("ip",cmd.getHost());
+  params.put("username",cmd.getUsername());
+  params.put("password",cmd.getPassword());
+  params.put("transportzoneisotype",physicalNetwork.getIsolationMethods().get(0).toLowerCase());
+  Map<String,Object> hostdetails=new HashMap<String,Object>();
+  hostdetails.putAll(params);
+  ServerResource resource=new CiscoVnmcResource();
+  Transaction txn=Transaction.currentTxn();
+  try {
+    resource.configure(cmd.getHost(),hostdetails);
+    Host host=_resourceMgr.addHost(zoneId,resource,Host.Type.ExternalFirewall,params);
+    if (host != null) {
+      txn.start();
+      ciscoVnmcResource=new CiscoVnmcControllerVO(host.getId(),physicalNetworkId,ntwkSvcProvider.getProviderName(),deviceName);
+      _ciscoVnmcDao.persist((CiscoVnmcControllerVO)ciscoVnmcResource);
+      DetailVO detail=new DetailVO(host.getId(),"deviceid",String.valueOf(ciscoVnmcResource.getId()));
+      _hostDetailsDao.persist(detail);
+      txn.commit();
+      return ciscoVnmcResource;
+    }
+ else {
+      throw new CloudRuntimeException("Failed to add Cisco Vnmc device due to internal error.");
+    }
+  }
+ catch (  ConfigurationException e) {
+    txn.rollback();
+    throw new CloudRuntimeException(e.getMessage());
+  }
+}

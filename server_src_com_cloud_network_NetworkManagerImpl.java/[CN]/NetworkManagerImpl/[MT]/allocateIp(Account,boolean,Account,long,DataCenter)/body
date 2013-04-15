@@ -1,6 +1,7 @@
 {
   VlanType vlanType=VlanType.VirtualNetwork;
   boolean assign=false;
+  boolean allocateFromDedicatedRange=false;
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
     PermissionDeniedException ex=new PermissionDeniedException("Cannot perform this operation, " + "Zone is currently disabled");
     ex.addProxyObject("data_center",zone.getId(),"zoneId");
@@ -23,7 +24,27 @@
     }
     _resourceLimitMgr.checkResourceLimit(accountToLock,ResourceType.public_ip);
     txn.start();
-    ip=fetchNewPublicIp(zone.getId(),null,null,ipOwner,vlanType,null,false,assign,null,isSystem,null);
+    List<Long> vlanDbIds=new ArrayList<Long>();
+    List<AccountVlanMapVO> maps=_accountVlanMapDao.listAccountVlanMapsByAccount(ipOwner.getId());
+    for (    AccountVlanMapVO map : maps) {
+      vlanDbIds.add(map.getVlanDbId());
+    }
+    if (vlanDbIds != null && !vlanDbIds.isEmpty()) {
+      allocateFromDedicatedRange=true;
+    }
+    try {
+      if (allocateFromDedicatedRange) {
+        ip=fetchNewPublicIp(zone.getId(),null,vlanDbIds,ipOwner,vlanType,null,false,assign,null,isSystem,null);
+      }
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      s_logger.warn("All IPs dedicated to account " + ipOwner.getId() + " has been acquired."+ " Now acquiring from the system pool");
+      txn.close();
+      allocateFromDedicatedRange=false;
+    }
+    if (!allocateFromDedicatedRange) {
+      ip=fetchNewPublicIp(zone.getId(),null,null,ipOwner,vlanType,null,false,assign,null,isSystem,null);
+    }
     if (ip == null) {
       InsufficientAddressCapacityException ex=new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zone.getId());
       ex.addProxyObject(ApiDBUtils.findZoneById(zone.getId()).getUuid());
