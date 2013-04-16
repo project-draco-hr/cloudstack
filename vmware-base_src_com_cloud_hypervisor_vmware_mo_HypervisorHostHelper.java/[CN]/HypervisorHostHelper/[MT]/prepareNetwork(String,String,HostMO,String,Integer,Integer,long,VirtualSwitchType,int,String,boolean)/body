@@ -1,0 +1,127 @@
+{
+  ManagedObjectReference morNetwork=null;
+  VmwareContext context=hostMo.getContext();
+  ManagedObjectReference dcMor=hostMo.getHyperHostDatacenter();
+  DatacenterMO dataCenterMo=new DatacenterMO(context,dcMor);
+  DistributedVirtualSwitchMO dvSwitchMo=null;
+  ManagedObjectReference morEthernetPortProfile=null;
+  String ethPortProfileName=null;
+  ManagedObjectReference morDvSwitch=null;
+  ManagedObjectReference morDvPortGroup=null;
+  String dvSwitchName=null;
+  boolean bWaitPortGroupReady=false;
+  boolean createGCTag=false;
+  String networkName;
+  Integer vid=null;
+  if (vlanId != null && !UNTAGGED_VLAN_NAME.equalsIgnoreCase(vlanId)) {
+    createGCTag=true;
+    vid=Integer.parseInt(vlanId);
+  }
+  networkName=composeCloudNetworkName(namePrefix,vlanId,networkRateMbps,physicalNetwork);
+  if (vSwitchType == VirtualSwitchType.VMwareDistributedVirtualSwitch) {
+    DVSTrafficShapingPolicy shapingPolicy;
+    VmwareDistributedVirtualSwitchVlanSpec vlanSpec;
+    DVSSecurityPolicy secPolicy;
+    VMwareDVSPortSetting dvsPortSetting;
+    DVPortgroupConfigSpec dvPortGroupSpec;
+    DVPortgroupConfigInfo dvPortgroupInfo;
+    dvSwitchName=physicalNetwork;
+    if (dvSwitchName == null) {
+      s_logger.warn("Detected null dvSwitch. Defaulting to dvSwitch0");
+      dvSwitchName="dvSwitch0";
+    }
+    morDvSwitch=dataCenterMo.getDvSwitchMor(dvSwitchName);
+    if (morDvSwitch == null) {
+      String msg="Unable to find distributed vSwitch " + morDvSwitch;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+ else {
+      s_logger.info("Found distributed vSwitch " + morDvSwitch);
+    }
+    dvSwitchMo=new DistributedVirtualSwitchMO(context,morDvSwitch);
+    shapingPolicy=getDVSShapingPolicy(networkRateMbps);
+    if (vid != null) {
+      vlanSpec=createDVPortVlanIdSpec(vid);
+    }
+ else {
+      vlanSpec=createDVPortVlanSpec();
+    }
+    secPolicy=createDVSSecurityPolicy();
+    dvsPortSetting=createVmwareDVPortSettingSpec(shapingPolicy,secPolicy,vlanSpec);
+    dvPortGroupSpec=createDvPortGroupSpec(networkName,dvsPortSetting,numPorts);
+    if (!dataCenterMo.hasDvPortGroup(networkName)) {
+      s_logger.info("Distributed Virtual Port group " + networkName + " not found.");
+      try {
+        dvSwitchMo.createDVPortGroup(dvPortGroupSpec);
+      }
+ catch (      Exception e) {
+        String msg="Failed to create distributed virtual port group " + networkName + " on dvSwitch "+ physicalNetwork;
+        throw new Exception(msg);
+      }
+      bWaitPortGroupReady=true;
+    }
+ else {
+      s_logger.info("Found Distributed Virtual Port group " + networkName);
+      dvPortgroupInfo=dataCenterMo.getDvPortGroupSpec(networkName);
+      if (!isSpecMatch(dvPortgroupInfo,vid,shapingPolicy)) {
+        s_logger.info("Updating Distributed Virtual Port group " + networkName);
+        dvPortGroupSpec.setDefaultPortConfig(dvsPortSetting);
+        dvPortGroupSpec.setConfigVersion(dvPortgroupInfo.getConfigVersion());
+        morDvPortGroup=dataCenterMo.getDvPortGroupMor(networkName);
+        try {
+          dvSwitchMo.updateDvPortGroup(morDvPortGroup,dvPortGroupSpec);
+        }
+ catch (        Exception e) {
+          String msg="Failed to update distributed virtual port group " + networkName + " on dvSwitch "+ physicalNetwork;
+          throw new Exception(msg);
+        }
+        bWaitPortGroupReady=true;
+      }
+    }
+  }
+ else   if (vSwitchType == VirtualSwitchType.NexusDistributedVirtualSwitch) {
+    ethPortProfileName=physicalNetwork;
+    if (ethPortProfileName == null) {
+      s_logger.warn("Detected null ethrenet port profile. Defaulting to epp0.");
+      ethPortProfileName="epp0";
+    }
+    morEthernetPortProfile=dataCenterMo.getDvPortGroupMor(ethPortProfileName);
+    if (morEthernetPortProfile == null) {
+      String msg="Unable to find Ethernet port profile " + ethPortProfileName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+ else {
+      s_logger.info("Found Ethernet port profile " + ethPortProfileName);
+    }
+    long averageBandwidth=0L;
+    if (networkRateMbps != null && networkRateMbps.intValue() > 0) {
+      averageBandwidth=(long)(networkRateMbps.intValue() * 1024L * 1024L);
+    }
+    long peakBandwidth=(long)(averageBandwidth * 1.5);
+    long burstSize=5 * averageBandwidth / 8;
+    if (!dataCenterMo.hasDvPortGroup(networkName)) {
+      s_logger.info("Port profile " + networkName + " not found.");
+      createPortProfile(context,physicalNetwork,networkName,vid,networkRateMbps,peakBandwidth,burstSize,gateway,configureVServiceInNexus);
+      bWaitPortGroupReady=true;
+    }
+ else {
+      s_logger.info("Port profile " + networkName + " found.");
+      updatePortProfile(context,physicalNetwork,networkName,vid,networkRateMbps,peakBandwidth,burstSize);
+    }
+  }
+  if (bWaitPortGroupReady)   morNetwork=waitForDvPortGroupReady(dataCenterMo,networkName,timeOutMs);
+ else   morNetwork=dataCenterMo.getDvPortGroupMor(networkName);
+  if (morNetwork == null) {
+    String msg="Failed to create guest network " + networkName;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  if (createGCTag) {
+    NetworkMO networkMo=new NetworkMO(hostMo.getContext(),morNetwork);
+    networkMo.setCustomFieldValue(CustomFieldConstants.CLOUD_GC_DVP,"true");
+    s_logger.debug("Added custom field : " + CustomFieldConstants.CLOUD_GC_DVP);
+  }
+  return new Pair<ManagedObjectReference,String>(morNetwork,networkName);
+}

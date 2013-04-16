@@ -83,18 +83,12 @@
       }
       VirtualMachineProfileImpl<T> vmProfile=new VirtualMachineProfileImpl<T>(vm,template,offering,account,params);
       DeployDestination dest=null;
-      for (      DeploymentPlanner planner : _planners) {
-        if (planner.canHandle(vmProfile,plan,avoids)) {
-          dest=planner.plan(vmProfile,plan,avoids);
-        }
- else {
-          continue;
-        }
-        if (dest != null) {
-          avoids.addHost(dest.getHost().getId());
-          journal.record("Deployment found ",vmProfile,dest);
-          break;
-        }
+      try {
+        dest=_dpMgr.planDeployment(vmProfile,plan,avoids);
+      }
+ catch (      AffinityConflictException e2) {
+        s_logger.warn("Unable to create deployment, affinity rules associted to the VM conflict",e2);
+        throw new CloudRuntimeException("Unable to create deployment, affinity rules associted to the VM conflict");
       }
       if (dest == null) {
         if (planChangedByVolume) {
@@ -104,6 +98,10 @@
           continue;
         }
         throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId());
+      }
+      if (dest != null) {
+        avoids.addHost(dest.getHost().getId());
+        journal.record("Deployment found ",vmProfile,dest);
       }
       long destHostId=dest.getHost().getId();
       vm.setPodId(dest.getPod().getId());
