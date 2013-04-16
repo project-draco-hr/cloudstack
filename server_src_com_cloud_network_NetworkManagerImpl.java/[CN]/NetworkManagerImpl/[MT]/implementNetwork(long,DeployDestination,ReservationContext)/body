@@ -13,17 +13,30 @@
   try {
     NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,network.getGuruName());
     Network.State state=network.getState();
-    if (state == Network.State.Implemented || state == Network.State.Setup || state == Network.State.Implementing) {
+    if (state == Network.State.Implemented || state == Network.State.Implementing) {
       s_logger.debug("Network id=" + networkId + " is already implemented");
       implemented.set(guru,network);
       return implemented;
+    }
+    if (state == Network.State.Setup) {
+      DataCenterVO zone=_dcDao.findById(network.getDataCenterId());
+      if (!isSharedNetworkOfferingWithServices(network.getNetworkOfferingId()) || (zone.getNetworkType() == NetworkType.Basic)) {
+        s_logger.debug("Network id=" + networkId + " is already implemented");
+        implemented.set(guru,network);
+        return implemented;
+      }
     }
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Asking " + guru.getName() + " to implement "+ network);
     }
     NetworkOfferingVO offering=_networkOfferingDao.findById(network.getNetworkOfferingId());
     network.setReservationId(context.getReservationId());
-    stateTransitTo(network,Event.ImplementNetwork);
+    if (isSharedNetworkWithServices(network)) {
+      network.setState(Network.State.Implementing);
+    }
+ else {
+      stateTransitTo(network,Event.ImplementNetwork);
+    }
     Network result=guru.implement(network,offering,dest,context);
     network.setCidr(result.getCidr());
     network.setBroadcastUri(result.getBroadcastUri());
@@ -32,7 +45,12 @@
     network.setPhysicalNetworkId(result.getPhysicalNetworkId());
     _networksDao.update(networkId,network);
     implementNetworkElementsAndResources(dest,context,network,offering);
-    stateTransitTo(network,Event.OperationSucceeded);
+    if (isSharedNetworkWithServices(network)) {
+      network.setState(Network.State.Implemented);
+    }
+ else {
+      stateTransitTo(network,Event.OperationSucceeded);
+    }
     network.setRestartRequired(false);
     _networksDao.update(network.getId(),network);
     implemented.set(guru,network);
@@ -46,7 +64,13 @@
     if (implemented.first() == null) {
       s_logger.debug("Cleaning up because we're unable to implement the network " + network);
       try {
-        stateTransitTo(network,Event.OperationFailed);
+        if (isSharedNetworkWithServices(network)) {
+          network.setState(Network.State.Shutdown);
+          _networksDao.update(networkId,network);
+        }
+ else {
+          stateTransitTo(network,Event.OperationFailed);
+        }
       }
  catch (      NoTransitionException e) {
         s_logger.error(e.getMessage());
