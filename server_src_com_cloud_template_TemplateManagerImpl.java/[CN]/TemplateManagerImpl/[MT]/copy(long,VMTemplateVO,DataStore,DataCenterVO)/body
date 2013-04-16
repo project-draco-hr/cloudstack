@@ -1,0 +1,65 @@
+{
+  long tmpltId=template.getId();
+  long dstZoneId=dstZone.getId();
+  List<DataStore> dstSecStores=this.dataStoreMgr.getImageStoresByScope(new ZoneScope(dstZoneId));
+  if (dstSecStores == null || dstSecStores.isEmpty()) {
+    throw new StorageUnavailableException("Destination zone is not ready, no image store associated",DataCenter.class,dstZone.getId());
+  }
+  AccountVO account=_accountDao.findById(template.getAccountId());
+  TemplateDataStoreVO srcTmpltStore=this._tmplStoreDao.findByStoreTemplate(srcSecStore.getId(),tmpltId);
+  _resourceLimitMgr.checkResourceLimit(account,ResourceType.template);
+  _resourceLimitMgr.checkResourceLimit(account,ResourceType.secondary_storage,new Long(srcTmpltStore.getSize()));
+  String copyEventType;
+  String createEventType;
+  if (template.getFormat().equals(ImageFormat.ISO)) {
+    copyEventType=EventTypes.EVENT_ISO_COPY;
+    createEventType=EventTypes.EVENT_ISO_CREATE;
+  }
+ else {
+    copyEventType=EventTypes.EVENT_TEMPLATE_COPY;
+    createEventType=EventTypes.EVENT_TEMPLATE_CREATE;
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  for (  DataStore dstSecStore : dstSecStores) {
+    TemplateDataStoreVO dstTmpltStore=null;
+    try {
+      dstTmpltStore=this._tmplStoreDao.findByStoreTemplate(dstSecStore.getId(),tmpltId,true);
+      if (dstTmpltStore != null) {
+        dstTmpltStore=_tmplStoreDao.lockRow(dstTmpltStore.getId(),true);
+        if (dstTmpltStore != null && dstTmpltStore.getDownloadState() == Status.DOWNLOADED) {
+          if (dstTmpltStore.getDestroyed() == false) {
+            return true;
+          }
+ else {
+            dstTmpltStore.setDestroyed(false);
+            _tmplStoreDao.update(dstTmpltStore.getId(),dstTmpltStore);
+            return true;
+          }
+        }
+ else         if (dstTmpltStore != null && dstTmpltStore.getDownloadState() == Status.DOWNLOAD_ERROR) {
+          if (dstTmpltStore.getDestroyed() == true) {
+            dstTmpltStore.setDestroyed(false);
+            dstTmpltStore.setDownloadState(Status.NOT_DOWNLOADED);
+            dstTmpltStore.setDownloadPercent(0);
+            dstTmpltStore.setCopy(true);
+            dstTmpltStore.setErrorString("");
+            dstTmpltStore.setJobId(null);
+            _tmplStoreDao.update(dstTmpltStore.getId(),dstTmpltStore);
+          }
+        }
+      }
+    }
+  finally {
+      txn.commit();
+    }
+    if (_downloadMonitor.copyTemplate(template,srcSecStore,dstSecStore)) {
+      _tmpltDao.addTemplateToZone(template,dstZoneId);
+      if (account.getId() != Account.ACCOUNT_ID_SYSTEM) {
+        UsageEventUtils.publishUsageEvent(copyEventType,account.getId(),dstZoneId,tmpltId,null,null,null,srcTmpltStore.getSize(),template.getClass().getName(),template.getUuid());
+      }
+      return true;
+    }
+  }
+  return false;
+}
