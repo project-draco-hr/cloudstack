@@ -1,2 +1,44 @@
 {
+  TemplateObject templateObj=(TemplateObject)data;
+  VMTemplateVO template=templateObj.getImage();
+  ImageStoreImpl store=(ImageStoreImpl)templateObj.getDataStore();
+  long storeId=store.getId();
+  Long sZoneId=store.getDataCenterId();
+  long templateId=template.getId();
+  Account account=_accountDao.findByIdIncludingRemoved(template.getAccountId());
+  String eventType="";
+  if (template.getFormat().equals(ImageFormat.ISO)) {
+    eventType=EventTypes.EVENT_ISO_DELETE;
+  }
+ else {
+    eventType=EventTypes.EVENT_TEMPLATE_DELETE;
+  }
+  UsageEventUtils.publishUsageEvent(eventType,account.getId(),sZoneId,templateId,null,null,null);
+  List<UserVmVO> userVmUsingIso=_userVmDao.listByIsoId(templateId);
+  if (userVmUsingIso == null || userVmUsingIso.isEmpty()) {
+    TemplateDataStoreVO tmplStore=_templateStoreDao.findByStoreTemplate(storeId,templateId);
+    String installPath=tmplStore.getInstallPath();
+    if (installPath != null) {
+      Answer answer=_agentMgr.sendToSecStorage(store,new DeleteTemplateCommand(store.getTO(),store.getUri(),installPath,template.getId(),template.getAccountId()));
+      if (answer == null || !answer.getResult()) {
+        s_logger.debug("Failed to deleted template at store: " + store.getName());
+        CommandResult result=new CommandResult();
+        result.setSucess(false);
+        result.setResult("Delete template failed");
+        callback.complete(result);
+      }
+ else {
+        s_logger.debug("Deleted template at: " + installPath);
+        CommandResult result=new CommandResult();
+        result.setSucess(false);
+        callback.complete(result);
+      }
+      List<VMTemplateZoneVO> templateZones=templateZoneDao.listByZoneTemplate(sZoneId,templateId);
+      if (templateZones != null) {
+        for (        VMTemplateZoneVO templateZone : templateZones) {
+          templateZoneDao.remove(templateZone.getId());
+        }
+      }
+    }
+  }
 }
