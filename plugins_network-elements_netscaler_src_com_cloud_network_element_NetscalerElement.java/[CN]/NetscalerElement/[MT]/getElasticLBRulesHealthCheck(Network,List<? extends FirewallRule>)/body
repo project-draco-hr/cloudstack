@@ -1,4 +1,5 @@
 {
+  HealthCheckLBConfigAnswer answer=null;
   List<LoadBalancingRule> loadBalancingRules=new ArrayList<LoadBalancingRule>();
   for (  FirewallRule rule : rules) {
     if (rule.getPurpose().equals(Purpose.LoadBalancing)) {
@@ -6,19 +7,13 @@
     }
   }
   if (loadBalancingRules == null || loadBalancingRules.isEmpty()) {
-    return true;
+    return null;
   }
   String errMsg=null;
   ExternalLoadBalancerDeviceVO lbDeviceVO=getExternalLoadBalancerForNetwork(network);
   if (lbDeviceVO == null) {
-    try {
-      lbDeviceVO=allocateLoadBalancerForNetwork(network);
-    }
- catch (    Exception e) {
-      errMsg="Could not allocate a NetSclaer load balancer for configuring elastic load balancer rules due to " + e.getMessage();
-      s_logger.error(errMsg);
-      throw new ResourceUnavailableException(errMsg,this.getClass(),0);
-    }
+    s_logger.warn("There is no external load balancer device assigned to this network either network is not implement are already shutdown so just returning");
+    return null;
   }
   if (!isNetscalerDevice(lbDeviceVO.getDeviceName())) {
     errMsg="There are no NetScaler load balancer assigned for this network. So NetScaler element can not be handle elastic load balancer rules.";
@@ -36,25 +31,17 @@
     int srcPort=rule.getSourcePortStart();
     List<LbDestination> destinations=rule.getDestinations();
     if ((destinations != null && !destinations.isEmpty()) || rule.isAutoScaleConfig()) {
-      LoadBalancerTO loadBalancer=new LoadBalancerTO(lbUuid,srcIp,srcPort,protocol,algorithm,revoked,false,false,destinations,rule.getStickinessPolicies(),rule.getHealthCheckPolicies());
-      if (rule.isAutoScaleConfig()) {
-        loadBalancer.setAutoScaleVmGroup(rule.getAutoScaleVmGroup());
-      }
+      LoadBalancerTO loadBalancer=new LoadBalancerTO(lbUuid,srcIp,srcPort,protocol,algorithm,revoked,false,false,destinations,null,rule.getHealthCheckPolicies());
       loadBalancersToApply.add(loadBalancer);
     }
   }
   if (loadBalancersToApply.size() > 0) {
     int numLoadBalancersForCommand=loadBalancersToApply.size();
     LoadBalancerTO[] loadBalancersForCommand=loadBalancersToApply.toArray(new LoadBalancerTO[numLoadBalancersForCommand]);
-    LoadBalancerConfigCommand cmd=new LoadBalancerConfigCommand(loadBalancersForCommand,null);
+    HealthCheckLBConfigCommand cmd=new HealthCheckLBConfigCommand(loadBalancersForCommand);
     HostVO externalLoadBalancer=_hostDao.findById(lbDeviceVO.getHostId());
-    Answer answer=_agentMgr.easySend(externalLoadBalancer.getId(),cmd);
-    if (answer == null || !answer.getResult()) {
-      String details=(answer != null) ? answer.getDetails() : "details unavailable";
-      String msg="Unable to apply elastic load balancer rules to the external load balancer appliance in zone " + network.getDataCenterId() + " due to: "+ details+ ".";
-      s_logger.error(msg);
-      throw new ResourceUnavailableException(msg,DataCenter.class,network.getDataCenterId());
-    }
+    answer=(HealthCheckLBConfigAnswer)_agentMgr.easySend(externalLoadBalancer.getId(),cmd);
+    return answer.getLoadBalancers();
   }
-  return true;
+  return null;
 }
