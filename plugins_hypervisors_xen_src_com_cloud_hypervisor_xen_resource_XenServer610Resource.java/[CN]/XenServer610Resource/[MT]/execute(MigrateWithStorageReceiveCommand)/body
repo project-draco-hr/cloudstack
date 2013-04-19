@@ -1,0 +1,31 @@
+{
+  Connection connection=getConnection();
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  Map<VolumeTO,StorageFilerTO> volumeToFiler=cmd.getVolumeToFiler();
+  try {
+    Map<VolumeTO,Object> volumeToSr=new HashMap<VolumeTO,Object>();
+    for (    Map.Entry<VolumeTO,StorageFilerTO> entry : volumeToFiler.entrySet()) {
+      SR sr=getStorageRepository(connection,entry.getValue().getUuid());
+      volumeToSr.put(entry.getKey(),sr);
+    }
+    Map<NicTO,Object> nicToNetwork=new HashMap<NicTO,Object>();
+    for (    NicTO nicTo : vmSpec.getNics()) {
+      Network network=getNetwork(connection,nicTo);
+      nicToNetwork.put(nicTo,network);
+    }
+    Map<String,String> other=new HashMap<String,String>();
+    other.put("live","true");
+    Network network=getNativeNetworkForTraffic(connection,TrafficType.Storage,null).getNetwork();
+    Host host=Host.getByUuid(connection,_host.uuid);
+    Map<String,String> token=host.migrateReceive(connection,network,other);
+    return new MigrateWithStorageReceiveAnswer(cmd,volumeToSr,nicToNetwork,token);
+  }
+ catch (  CloudRuntimeException e) {
+    s_logger.error("Migration of vm " + vmSpec.getName() + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageReceiveAnswer(cmd,e);
+  }
+catch (  Exception e) {
+    s_logger.error("Migration of vm " + vmSpec.getName() + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageReceiveAnswer(cmd,e);
+  }
+}
