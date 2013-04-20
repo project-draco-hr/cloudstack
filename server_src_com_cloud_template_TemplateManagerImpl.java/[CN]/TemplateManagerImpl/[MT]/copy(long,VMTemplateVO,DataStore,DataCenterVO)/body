@@ -21,6 +21,7 @@
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
+  TemplateInfo srcTemplate=this.tmplFactory.getTemplate(template.getId(),srcSecStore);
   for (  DataStore dstSecStore : dstSecStores) {
     TemplateDataStoreVO dstTmpltStore=null;
     try {
@@ -53,12 +54,21 @@
   finally {
       txn.commit();
     }
-    if (_downloadMonitor.copyTemplate(template,srcSecStore,dstSecStore)) {
+    AsyncCallFuture<TemplateApiResult> future=this.tmpltSvr.copyTemplate(srcTemplate,dstSecStore);
+    try {
+      TemplateApiResult result=future.get();
+      if (result.isFailed()) {
+        s_logger.debug("copy template failed:" + result.getResult());
+        return false;
+      }
       _tmpltDao.addTemplateToZone(template,dstZoneId);
       if (account.getId() != Account.ACCOUNT_ID_SYSTEM) {
         UsageEventUtils.publishUsageEvent(copyEventType,account.getId(),dstZoneId,tmpltId,null,null,null,srcTmpltStore.getSize(),template.getClass().getName(),template.getUuid());
       }
       return true;
+    }
+ catch (    Exception ex) {
+      s_logger.debug("failed to copy template to image store:" + dstSecStore.getName() + " ,will try next one");
     }
   }
   return false;
