@@ -1,0 +1,91 @@
+{
+  Connection connection=getConnection();
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  Map<VolumeTO,Object> volumeToSr=cmd.getVolumeToSr();
+  Map<NicTO,Object> nicToNetwork=cmd.getNicToNetwork();
+  Map<String,String> token=cmd.getToken();
+  final String vmName=vmSpec.getName();
+  State state=s_vms.getState(_cluster,vmName);
+  Set<VolumeTO> volumeToSet=null;
+  boolean migrated=false;
+  Task task=null;
+synchronized (_cluster.intern()) {
+    s_vms.put(_cluster,_name,vmName,State.Stopping);
+  }
+  try {
+    Set<VM> vms=VM.getByNameLabel(connection,vmSpec.getName());
+    VM vmToMigrate=vms.iterator().next();
+    Map<String,String> other=new HashMap<String,String>();
+    other.put("live","true");
+    Map<VDI,SR> vdiMap=new HashMap<VDI,SR>();
+    for (    Map.Entry<VolumeTO,Object> entry : volumeToSr.entrySet()) {
+      if (entry.getValue() instanceof SR) {
+        SR sr=(SR)entry.getValue();
+        VDI vdi=getVDIbyUuid(connection,entry.getKey().getPath());
+        vdiMap.put(vdi,sr);
+      }
+ else {
+        throw new CloudRuntimeException("The object " + entry.getValue() + " passed is not of type SR.");
+      }
+    }
+    Map<VIF,Network> vifMap=new HashMap<VIF,Network>();
+    for (    Map.Entry<NicTO,Object> entry : nicToNetwork.entrySet()) {
+      if (entry.getValue() instanceof Network) {
+        Network network=(Network)entry.getValue();
+        VIF vif=getVifByMac(connection,vmToMigrate,entry.getKey().getMac());
+        vifMap.put(vif,network);
+      }
+ else {
+        throw new CloudRuntimeException("The object " + entry.getValue() + " passed is not of type Network.");
+      }
+    }
+    task=vmToMigrate.assertCanMigrateAsync(connection,token,true,vdiMap,vifMap,other);
+    try {
+      long timeout=(_migratewait) * 1000L;
+      waitForTask(connection,task,1000,timeout);
+      checkForSuccess(connection,task);
+    }
+ catch (    Types.HandleInvalid e) {
+      s_logger.error("Error while checking if vm " + vmName + " can be migrated.",e);
+      throw new CloudRuntimeException("Error while checking if vm " + vmName + " can be migrated.",e);
+    }
+    task=vmToMigrate.migrateSendAsync(connection,token,true,vdiMap,vifMap,other);
+    try {
+      long timeout=(_migratewait) * 1000L;
+      waitForTask(connection,task,1000,timeout);
+      checkForSuccess(connection,task);
+    }
+ catch (    Types.HandleInvalid e) {
+      s_logger.error("Error while migrating vm " + vmName,e);
+      throw new CloudRuntimeException("Error while migrating vm " + vmName,e);
+    }
+    migrated=true;
+    return new MigrateWithStorageSendAnswer(cmd,volumeToSet);
+  }
+ catch (  CloudRuntimeException e) {
+    s_logger.error("Migration of vm " + vmName + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageSendAnswer(cmd,e);
+  }
+catch (  Exception e) {
+    s_logger.error("Migration of vm " + vmName + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageSendAnswer(cmd,e);
+  }
+ finally {
+    if (task != null) {
+      try {
+        task.destroy(connection);
+      }
+ catch (      Exception e) {
+        s_logger.debug("Unable to destroy task " + task.toString() + " on host "+ _host.uuid+ " due to "+ e.toString());
+      }
+    }
+synchronized (_cluster.intern()) {
+      if (migrated) {
+        s_vms.remove(_cluster,_name,vmName);
+      }
+ else {
+        s_vms.put(_cluster,_name,vmName,state);
+      }
+    }
+  }
+}

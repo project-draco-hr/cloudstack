@@ -1,6 +1,31 @@
 {
 synchronized (_storagePool) {
-    for (    NfsStoragePool primaryStoragePool : _storagePool.values()) {
+    for (    String uuid : _storagePool.keySet()) {
+      NfsStoragePool primaryStoragePool=_storagePool.get(uuid);
+      StoragePool storage=null;
+      try {
+        Connect conn=LibvirtConnection.getConnection();
+        storage=conn.storagePoolLookupByUUIDString(uuid);
+        if (storage == null) {
+          s_logger.debug("Libvirt storage pool " + uuid + " not found, removing from HA list");
+          removeStoragePool(uuid);
+          continue;
+        }
+ else         if (storage.getInfo().state != StoragePoolState.VIR_STORAGE_POOL_RUNNING) {
+          s_logger.debug("Libvirt storage pool " + uuid + " found, but not running, removing from HA list");
+          removeStoragePool(uuid);
+          continue;
+        }
+        s_logger.debug("Found NFS storage pool " + uuid + " in libvirt, continuing");
+      }
+ catch (      LibvirtException e) {
+        s_logger.debug("Failed to lookup libvirt storage pool " + uuid + " due to: "+ e);
+        if (e.toString().contains("pool not found")) {
+          s_logger.debug("removing pool from HA monitor since it was deleted");
+          removeStoragePool(uuid);
+          continue;
+        }
+      }
       String result=null;
       for (int i=0; i < 5; i++) {
         Script cmd=new Script(_heartBeatPath,_heartBeatUpdateTimeout,s_logger);

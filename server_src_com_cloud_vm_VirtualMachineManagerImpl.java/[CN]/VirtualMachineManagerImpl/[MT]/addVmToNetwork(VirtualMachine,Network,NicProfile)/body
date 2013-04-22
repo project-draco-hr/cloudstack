@@ -19,13 +19,24 @@
     NicTO nicTO=toNicTO(nic,vmProfile.getVirtualMachine().getHypervisorType());
     VirtualMachineGuru<VMInstanceVO> vmGuru=getVmGuru(vmVO);
     s_logger.debug("Plugging nic for vm " + vm + " in network "+ network);
-    if (vmGuru.plugNic(network,nicTO,vmTO,context,dest)) {
-      s_logger.debug("Nic is plugged successfully for vm " + vm + " in network "+ network+ ". Vm  is a part of network now");
-      return nic;
-    }
+    boolean result=false;
+    try {
+      result=vmGuru.plugNic(network,nicTO,vmTO,context,dest);
+      if (result) {
+        s_logger.debug("Nic is plugged successfully for vm " + vm + " in network "+ network+ ". Vm  is a part of network now");
+        long isDefault=(nic.isDefaultNic()) ? 1 : 0;
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_ASSIGN,vmVO.getAccountId(),vmVO.getDataCenterId(),vmVO.getId(),Long.toString(nic.getId()),nic.getNetworkId(),null,isDefault,VirtualMachine.class.getName(),vmVO.getUuid());
+        return nic;
+      }
  else {
-      s_logger.warn("Failed to plug nic to the vm " + vm + " in network "+ network);
-      return null;
+        s_logger.warn("Failed to plug nic to the vm " + vm + " in network "+ network);
+        return null;
+      }
+    }
+  finally {
+      if (!result) {
+        _networkMgr.removeNic(vmProfile,_nicsDao.findById(nic.getId()));
+      }
     }
   }
  else   if (vm.getState() == State.Stopped) {
