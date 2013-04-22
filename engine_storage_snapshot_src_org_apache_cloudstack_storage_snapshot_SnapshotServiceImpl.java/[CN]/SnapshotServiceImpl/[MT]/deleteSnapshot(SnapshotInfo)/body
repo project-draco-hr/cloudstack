@@ -1,3 +1,60 @@
 {
-  return false;
+  Long snapshotId=snapInfo.getId();
+  SnapshotObject snapshot=(SnapshotObject)snapInfo;
+  if (!Snapshot.State.BackedUp.equals(snapshot.getState())) {
+    throw new InvalidParameterValueException("Can't delete snapshotshot " + snapshotId + " due to it is not in BackedUp Status");
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Calling deleteSnapshot for snapshotId: " + snapshotId);
+  }
+  SnapshotVO lastSnapshot=null;
+  if (snapshot.getBackupSnapshotId() != null) {
+    List<SnapshotVO> snaps=_snapshotDao.listByBackupUuid(snapshot.getVolumeId(),snapshot.getBackupSnapshotId());
+    if (snaps != null && snaps.size() > 1) {
+      snapshot.setBackupSnapshotId(null);
+      SnapshotVO snapshotVO=this._snapshotDao.findById(snapshotId);
+      _snapshotDao.update(snapshot.getId(),snapshotVO);
+    }
+  }
+  _snapshotDao.remove(snapshotId);
+  long lastId=snapshotId;
+  boolean destroy=false;
+  while (true) {
+    lastSnapshot=_snapshotDao.findNextSnapshot(lastId);
+    if (lastSnapshot == null) {
+      destroy=true;
+      break;
+    }
+    if (lastSnapshot.getRemoved() == null) {
+      break;
+    }
+    lastId=lastSnapshot.getId();
+  }
+  if (destroy) {
+    lastSnapshot=_snapshotDao.findByIdIncludingRemoved(lastId);
+    while (lastSnapshot.getRemoved() != null) {
+      String BackupSnapshotId=lastSnapshot.getBackupSnapshotId();
+      if (BackupSnapshotId != null) {
+        List<SnapshotVO> snaps=_snapshotDao.listByBackupUuid(lastSnapshot.getVolumeId(),BackupSnapshotId);
+        if (snaps != null && snaps.size() > 1) {
+          lastSnapshot.setBackupSnapshotId(null);
+          _snapshotDao.update(lastSnapshot.getId(),lastSnapshot);
+        }
+ else {
+          if (destroySnapshotBackUp(lastSnapshot)) {
+          }
+ else {
+            s_logger.debug("Destroying snapshot backup failed " + lastSnapshot);
+            break;
+          }
+        }
+      }
+      lastId=lastSnapshot.getPrevSnapshotId();
+      if (lastId == 0) {
+        break;
+      }
+      lastSnapshot=_snapshotDao.findByIdIncludingRemoved(lastId);
+    }
+  }
+  return true;
 }
