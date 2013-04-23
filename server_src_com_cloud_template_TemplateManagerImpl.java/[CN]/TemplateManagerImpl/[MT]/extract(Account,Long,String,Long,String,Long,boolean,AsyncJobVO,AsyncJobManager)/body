@@ -27,47 +27,32 @@
       throw new InvalidParameterValueException("Unsupported format, could not extract the template");
     }
   }
-  if (zoneId == null && _swiftMgr.isSwiftEnabled()) {
-    zoneId=_swiftMgr.chooseZoneForTmpltExtract(templateId);
-  }
-  if (zoneId == null && _s3Mgr.isS3Enabled()) {
-    zoneId=_s3Mgr.chooseZoneForTemplateExtract(template);
-  }
-  if (_dcDao.findById(zoneId) == null) {
+  if (zoneId != null && _dcDao.findById(zoneId) == null) {
     throw new IllegalArgumentException("Please specify a valid zone.");
   }
   if (!_accountMgr.isRootAdmin(caller.getType()) && !template.isExtractable()) {
     throw new InvalidParameterValueException("Unable to extract template id=" + templateId + " as it's not extractable");
   }
   _accountMgr.checkAccess(caller,AccessType.ModifyEntry,true,template);
-  List<HostVO> sservers=getSecondaryStorageHosts(zoneId);
-  VMTemplateHostVO tmpltHostRef=null;
-  if (sservers != null) {
-    for (    HostVO secondaryStorageHost : sservers) {
-      tmpltHostRef=_tmpltHostDao.findByHostTemplate(secondaryStorageHost.getId(),templateId);
-      if (tmpltHostRef != null) {
-        if (tmpltHostRef.getDownloadState() != com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
-          tmpltHostRef=null;
-        }
- else {
+  List<DataStore> ssStores=this.dataStoreMgr.getImageStoresByScope(new ZoneScope(zoneId));
+  TemplateDataStoreVO tmpltStoreRef=null;
+  ImageStoreEntity tmpltStore=null;
+  if (ssStores != null) {
+    for (    DataStore store : ssStores) {
+      tmpltStoreRef=this._tmplStoreDao.findByStoreTemplate(store.getId(),templateId);
+      if (tmpltStoreRef != null) {
+        if (tmpltStoreRef.getDownloadState() == com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+          tmpltStore=(ImageStoreEntity)store;
           break;
         }
       }
     }
   }
-  if (tmpltHostRef == null && _swiftMgr.isSwiftEnabled()) {
-    SwiftTO swift=_swiftMgr.getSwiftTO(templateId);
-    if (swift != null && sservers != null) {
-      downloadTemplateFromSwiftToSecondaryStorage(zoneId,templateId);
-    }
-  }
- else   if (tmpltHostRef == null && _s3Mgr.isS3Enabled()) {
-    if (sservers != null) {
-      _s3Mgr.downloadTemplateFromS3ToSecondaryStorage(zoneId,templateId,_primaryStorageDownloadWait);
-    }
-  }
-  if (tmpltHostRef == null) {
+  if (tmpltStoreRef == null) {
     throw new InvalidParameterValueException("The " + desc + " has not been downloaded ");
+  }
+  if (tmpltStore.getProviderName().equalsIgnoreCase("S3") || tmpltStore.getProviderName().equalsIgnoreCase("Swift")) {
+    return new Pair<Long,String>(null,tmpltStoreRef.getInstallPath());
   }
   Upload.Mode extractMode;
   if (mode == null || (!mode.equalsIgnoreCase(Upload.Mode.FTP_UPLOAD.toString()) && !mode.equalsIgnoreCase(Upload.Mode.HTTP_DOWNLOAD.toString()))) {
@@ -103,11 +88,11 @@
     if (_uploadMonitor.isTypeUploadInProgress(templateId,isISO ? Type.ISO : Type.TEMPLATE)) {
       throw new IllegalArgumentException(template.getName() + " upload is in progress. Please wait for some time to schedule another upload for the same");
     }
-    return _uploadMonitor.extractTemplate(template,url,tmpltHostRef,zoneId,eventId,job.getId(),mgr);
+    return new Pair<Long,String>(_uploadMonitor.extractTemplate(template,url,tmpltStoreRef,zoneId,eventId,job.getId(),mgr),null);
   }
-  UploadVO vo=_uploadMonitor.createEntityDownloadURL(template,tmpltHostRef,zoneId,eventId);
+  UploadVO vo=_uploadMonitor.createEntityDownloadURL(template,tmpltStoreRef,zoneId,eventId);
   if (vo != null) {
-    return vo.getId();
+    return new Pair<Long,String>(vo.getId(),null);
   }
  else {
     return null;
