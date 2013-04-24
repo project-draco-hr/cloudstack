@@ -4,22 +4,22 @@
   for (  UploadVO extractJob : extractJobs) {
     if (getTimeDiff(extractJob.getLastUpdated()) > EXTRACT_URL_LIFE_LIMIT_IN_SECONDS) {
       String path=extractJob.getInstallPath();
-      HostVO secStorage=ApiDBUtils.findHostById(extractJob.getHostId());
-      DeleteEntityDownloadURLCommand cmd=new DeleteEntityDownloadURLCommand(path,extractJob.getType(),extractJob.getUploadUrl(),secStorage.getParent());
-      HostVO ssvm=_ssvmMgr.pickSsvmHost(secStorage);
-      if (ssvm == null) {
+      DataStore secStore=this.storeMgr.getDataStore(extractJob.getHostId(),DataStoreRole.Image);
+      DeleteEntityDownloadURLCommand cmd=new DeleteEntityDownloadURLCommand(path,extractJob.getType(),extractJob.getUploadUrl(),((ImageStoreVO)secStore).getParent());
+      EndPoint ep=_epSelector.select(secStore);
+      if (ep == null) {
         s_logger.warn("UploadMonitor cleanup: There is no secondary storage VM for secondary storage host " + extractJob.getHostId());
         continue;
       }
       if (s_logger.isDebugEnabled()) {
-        s_logger.debug("UploadMonitor cleanup: Sending deletion of extract URL " + extractJob.getUploadUrl() + " to ssvm "+ ssvm.getId());
+        s_logger.debug("UploadMonitor cleanup: Sending deletion of extract URL " + extractJob.getUploadUrl() + " to ssvm "+ ep.getHostAddr());
       }
-      try {
-        send(ssvm.getId(),cmd,null);
+      Answer ans=ep.sendMessage(cmd);
+      if (ans != null && ans.getResult()) {
         _uploadDao.remove(extractJob.getId());
       }
- catch (      AgentUnavailableException e) {
-        s_logger.warn("UploadMonitor cleanup: Unable to delete the link for " + extractJob.getType() + " id="+ extractJob.getTypeId()+ " url="+ extractJob.getUploadUrl()+ " on ssvm "+ ssvm.getId(),e);
+ else {
+        s_logger.warn("UploadMonitor cleanup: Unable to delete the link for " + extractJob.getType() + " id="+ extractJob.getTypeId()+ " url="+ extractJob.getUploadUrl()+ " on ssvm "+ ep.getHostAddr());
       }
     }
   }
