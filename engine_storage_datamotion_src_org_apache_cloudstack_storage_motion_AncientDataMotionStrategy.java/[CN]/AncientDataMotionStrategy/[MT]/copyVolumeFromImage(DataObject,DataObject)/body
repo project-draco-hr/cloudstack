@@ -1,34 +1,17 @@
 {
-  String value=configDao.getValue(Config.RecreateSystemVmEnabled.key());
+  String value=configDao.getValue(Config.CopyVolumeWait.key());
   int _copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
-  VolumeDataStoreVO volumeStoreVO=volumeStoreDao.findByVolume(srcData.getId());
-  DataStore srcStore=srcData.getDataStore();
-  String[] volumePath=volumeStoreVO.getInstallPath().split("/");
-  String volumeUUID=volumePath[volumePath.length - 1].split("\\.")[0];
-  StoragePool destPool=(StoragePool)destData.getDataStore();
-  CopyVolumeCommand cvCmd=new CopyVolumeCommand(srcData.getId(),volumeUUID,destPool,srcStore.getUri(),false,_copyvolumewait);
-  CopyVolumeAnswer cvAnswer=null;
-  String errMsg=null;
-  try {
-    cvAnswer=(CopyVolumeAnswer)this.storageMgr.sendToPool(destPool,cvCmd);
+  if (srcData.getDataStore().getRole() != DataStoreRole.ImageCache && destData.getDataStore().getRole() != DataStoreRole.ImageCache) {
+    DataObject cacheData=cacheMgr.createCacheObject(srcData,destData.getDataStore().getScope());
+    CopyCommand cmd=new CopyCommand(cacheData.getTO(),destData.getTO(),_copyvolumewait);
+    EndPoint ep=selector.select(cacheData,destData);
+    Answer answer=ep.sendMessage(cmd);
+    return answer;
   }
- catch (  StorageUnavailableException e1) {
-    s_logger.debug("Failed to copy volume " + srcData.getId() + " to "+ destData.getId(),e1);
-    errMsg=e1.toString();
+ else {
+    CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_copyvolumewait);
+    EndPoint ep=selector.select(srcData,destData);
+    Answer answer=ep.sendMessage(cmd);
+    return answer;
   }
-  if (cvAnswer == null || !cvAnswer.getResult()) {
-    errMsg=cvAnswer.getDetails();
-  }
-  VolumeVO vol=this.volDao.findById(destData.getId());
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  vol.setPath(cvAnswer.getVolumePath());
-  vol.setFolder(destPool.getPath());
-  vol.setPodId(destPool.getPodId());
-  vol.setPoolId(destPool.getId());
-  vol.setPodId(destPool.getPodId());
-  this.volDao.update(vol.getId(),vol);
-  volumeStoreDao.remove(volumeStoreVO.getId());
-  txn.commit();
-  return cvAnswer;
 }
