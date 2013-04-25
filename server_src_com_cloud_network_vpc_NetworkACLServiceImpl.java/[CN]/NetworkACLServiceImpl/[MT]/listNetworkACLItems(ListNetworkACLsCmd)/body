@@ -1,0 +1,65 @@
+{
+  Long networkId=cmd.getNetworkId();
+  Long id=cmd.getId();
+  Long aclId=cmd.getAclId();
+  String trafficType=cmd.getTrafficType();
+  String protocol=cmd.getProtocol();
+  String action=cmd.getAction();
+  Map<String,String> tags=cmd.getTags();
+  Account caller=UserContext.current().getCaller();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
+  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
+  Long domainId=domainIdRecursiveListProject.first();
+  Boolean isRecursive=domainIdRecursiveListProject.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  Filter filter=new Filter(NetworkACLItemVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<NetworkACLItemVO> sb=_networkACLItemDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),Op.EQ);
+  sb.and("aclId",sb.entity().getAclId(),Op.EQ);
+  sb.and("trafficType",sb.entity().getTrafficType(),Op.EQ);
+  sb.and("protocol",sb.entity().getProtocol(),Op.EQ);
+  sb.and("action",sb.entity().getAction(),Op.EQ);
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<NetworkACLItemVO> sc=sb.create();
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (networkId != null) {
+    Network network=_networkDao.findById(networkId);
+    aclId=network.getNetworkACLId();
+  }
+  if (trafficType != null) {
+    sc.setParameters("trafficType",trafficType);
+  }
+  if (aclId != null) {
+    sc.setParameters("aclId",aclId);
+  }
+  if (protocol != null) {
+    sc.setParameters("protocol",protocol);
+  }
+  if (action != null) {
+    sc.setParameters("action",action);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.NetworkACL.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
+  Pair<List<NetworkACLItemVO>,Integer> result=_networkACLItemDao.searchAndCount(sc,filter);
+  return new Pair<List<? extends NetworkACLItem>,Integer>(result.first(),result.second());
+}
