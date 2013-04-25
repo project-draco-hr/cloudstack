@@ -34,14 +34,21 @@
   }
   String diskDeviceType=details.get(VmDetailConstants.ROOK_DISK_CONTROLLER);
   if (!(vm.getVirtualMachine() instanceof DomainRouterVO || vm.getVirtualMachine() instanceof ConsoleProxyVO || vm.getVirtualMachine() instanceof SecondaryStorageVmVO)) {
-    if (diskDeviceType != null) {
-      details.remove(VmDetailConstants.ROOK_DISK_CONTROLLER);
+    if (diskDeviceType == null) {
+      details.put(VmDetailConstants.ROOK_DISK_CONTROLLER,_vmwareMgr.getRootDiskController());
     }
-    details.put(VmDetailConstants.ROOK_DISK_CONTROLLER,_vmwareMgr.getRootDiskController());
+  }
+  List<NicProfile> nicProfiles=vm.getNics();
+  for (  NicProfile nicProfile : nicProfiles) {
+    if (nicProfile.getTrafficType() == TrafficType.Guest) {
+      if (_networkMgr.isProviderSupportServiceInNetwork(nicProfile.getNetworkId(),Service.Firewall,Provider.CiscoVnmc)) {
+        details.put("ConfigureVServiceInNexus",Boolean.TRUE.toString());
+      }
+      break;
+    }
   }
   to.setDetails(details);
   if (vm.getVirtualMachine() instanceof DomainRouterVO) {
-    List<NicProfile> nicProfiles=vm.getNics();
     NicProfile publicNicProfile=null;
     for (    NicProfile nicProfile : nicProfiles) {
       if (nicProfile.getTrafficType() == TrafficType.Public) {
@@ -99,6 +106,14 @@
     sbMacSequence.deleteCharAt(sbMacSequence.length() - 1);
     String bootArgs=to.getBootArgs();
     to.setBootArgs(bootArgs + " nic_macs=" + sbMacSequence.toString());
+  }
+  if (!(vm.getVirtualMachine() instanceof DomainRouterVO || vm.getVirtualMachine() instanceof ConsoleProxyVO || vm.getVirtualMachine() instanceof SecondaryStorageVmVO)) {
+    String nestedVirt=_configDao.getValue(Config.VmwareEnableNestedVirtualization.key());
+    if (nestedVirt != null) {
+      s_logger.debug("Nested virtualization requested, adding flag to vm configuration");
+      details.put(VmDetailConstants.NESTED_VIRTUALIZATION_FLAG,nestedVirt);
+      to.setDetails(details);
+    }
   }
   GuestOSVO guestOS=_guestOsDao.findById(vm.getVirtualMachine().getGuestOSId());
   to.setOs(guestOS.getDisplayName());

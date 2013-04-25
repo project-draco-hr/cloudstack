@@ -1,0 +1,83 @@
+{
+  DataCenter zone=_configMgr.getZone(network.getDataCenterId());
+  if (zone.getNetworkType() == NetworkType.Basic) {
+    s_logger.debug("Not handling network implement in zone of type " + NetworkType.Basic);
+    return false;
+  }
+  if (!canHandle(network)) {
+    return false;
+  }
+  List<CiscoVnmcControllerVO> devices=_ciscoVnmcDao.listByPhysicalNetwork(network.getPhysicalNetworkId());
+  if (devices.isEmpty()) {
+    s_logger.error("No Cisco Vnmc device on network " + network.getName());
+    return false;
+  }
+  List<CiscoAsa1000vDeviceVO> asaList=_ciscoAsa1000vDao.listByPhysicalNetwork(network.getPhysicalNetworkId());
+  if (asaList.isEmpty()) {
+    s_logger.debug("No Cisco ASA 1000v device on network " + network.getName());
+    return false;
+  }
+  NetworkAsa1000vMapVO asaForNetwork=_networkAsa1000vMapDao.findByNetworkId(network.getId());
+  if (asaForNetwork != null) {
+    s_logger.debug("Cisco ASA 1000v device already associated with network " + network.getName());
+    return true;
+  }
+  if (!_networkModel.isProviderSupportServiceInNetwork(network.getId(),Service.SourceNat,Provider.CiscoVnmc)) {
+    s_logger.error("SourceNat service is not provided by Cisco Vnmc device on network " + network.getName());
+    return false;
+  }
+  Transaction txn=Transaction.currentTxn();
+  boolean status=false;
+  try {
+    txn.start();
+    CiscoAsa1000vDevice assignedAsa=assignAsa1000vToNetwork(network);
+    if (assignedAsa == null) {
+      s_logger.error("Unable to assign ASA 1000v device to network " + network.getName());
+      return false;
+    }
+    ClusterVO asaCluster=_clusterDao.findById(assignedAsa.getClusterId());
+    ClusterVSMMapVO clusterVsmMap=_clusterVsmMapDao.findByClusterId(assignedAsa.getClusterId());
+    if (clusterVsmMap == null) {
+      s_logger.error("Vmware cluster " + asaCluster.getName() + " has no Cisco Nexus VSM device associated with it");
+      return false;
+    }
+    CiscoNexusVSMDeviceVO vsmDevice=_vsmDeviceDao.findById(clusterVsmMap.getVsmId());
+    if (vsmDevice == null) {
+      s_logger.error("Unable to load details of Cisco Nexus VSM device associated with cluster " + asaCluster.getName());
+      return false;
+    }
+    CiscoVnmcControllerVO ciscoVnmcDevice=devices.get(0);
+    HostVO ciscoVnmcHost=_hostDao.findById(ciscoVnmcDevice.getHostId());
+    _hostDao.loadDetails(ciscoVnmcHost);
+    Account owner=context.getAccount();
+    PublicIp sourceNatIp=_networkMgr.assignSourceNatIpAddressToGuestNetwork(owner,network);
+    String vlan=network.getBroadcastUri().getHost();
+    long vlanId=Long.parseLong(vlan);
+    List<VlanVO> vlanVOList=_vlanDao.listVlansByPhysicalNetworkId(network.getPhysicalNetworkId());
+    List<String> publicGateways=new ArrayList<String>();
+    for (    VlanVO vlanVO : vlanVOList) {
+      publicGateways.add(vlanVO.getVlanGateway());
+    }
+    String gatewayNetmask=NetUtils.getCidrNetmask(network.getCidr());
+    if (!createLogicalEdgeFirewall(vlanId,network.getGateway(),gatewayNetmask,sourceNatIp.getAddress().addr(),sourceNatIp.getNetmask(),publicGateways,ciscoVnmcHost.getId())) {
+      s_logger.error("Failed to create logical edge firewall in Cisco VNMC device for network " + network.getName());
+      return false;
+    }
+    if (!configureNexusVsmForAsa(vlanId,network.getGateway(),vsmDevice.getUserName(),vsmDevice.getPassword(),vsmDevice.getipaddr(),assignedAsa.getInPortProfile(),ciscoVnmcHost.getId())) {
+      s_logger.error("Failed to configure Cisco Nexus VSM " + vsmDevice.getipaddr() + " for ASA device for network "+ network.getName());
+      return false;
+    }
+    if (!associateAsaWithLogicalEdgeFirewall(vlanId,assignedAsa.getManagementIp(),ciscoVnmcHost.getId())) {
+      s_logger.error("Failed to associate Cisco ASA 1000v (" + assignedAsa.getManagementIp() + ") with logical edge firewall in VNMC for network "+ network.getName());
+      return false;
+    }
+    status=true;
+    txn.commit();
+  }
+  finally {
+    if (!status) {
+      txn.rollback();
+    }
+  }
+  return true;
+}

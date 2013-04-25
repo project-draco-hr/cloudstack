@@ -1,0 +1,113 @@
+{
+  _eth1ip=(String)params.get("eth1ip");
+  _eth1mask=(String)params.get("eth1mask");
+  if (_eth1ip != null) {
+    params.put("private.network.device","eth1");
+  }
+ else {
+    s_logger.warn("eth1ip parameter has not been configured, assuming that we are not inside a system vm");
+  }
+  String eth2ip=(String)params.get("eth2ip");
+  if (eth2ip != null) {
+    params.put("public.network.device","eth2");
+  }
+  _publicIp=(String)params.get("eth2ip");
+  _hostname=(String)params.get("name");
+  String inSystemVM=(String)params.get("secondary.storage.vm");
+  if (inSystemVM == null || "true".equalsIgnoreCase(inSystemVM)) {
+    _inSystemVM=true;
+  }
+  _storageIp=(String)params.get("storageip");
+  if (_storageIp == null && _inSystemVM) {
+    s_logger.warn("There is no storageip in /proc/cmdline, something wrong!");
+  }
+  _storageNetmask=(String)params.get("storagenetmask");
+  _storageGateway=(String)params.get("storagegateway");
+  super.configure(name,params);
+  _params=params;
+  String value=(String)params.get("scripts.timeout");
+  _timeout=NumbersUtil.parseInt(value,1440) * 1000;
+  _storage=(StorageLayer)params.get(StorageLayer.InstanceConfigKey);
+  if (_storage == null) {
+    value=(String)params.get(StorageLayer.ClassConfigKey);
+    if (value == null) {
+      value="com.cloud.storage.JavaStorageLayer";
+    }
+    try {
+      Class<?> clazz=Class.forName(value);
+      _storage=(StorageLayer)clazz.newInstance();
+      _storage.configure("StorageLayer",params);
+    }
+ catch (    ClassNotFoundException e) {
+      throw new ConfigurationException("Unable to find class " + value);
+    }
+catch (    InstantiationException e) {
+      throw new ConfigurationException("Unable to find class " + value);
+    }
+catch (    IllegalAccessException e) {
+      throw new ConfigurationException("Unable to find class " + value);
+    }
+  }
+  if (_inSystemVM)   _storage.mkdirs(_parent);
+  _configSslScr=Script.findScript(getDefaultScriptsDir(),"config_ssl.sh");
+  if (_configSslScr != null) {
+    s_logger.info("config_ssl.sh found in " + _configSslScr);
+  }
+  _configAuthScr=Script.findScript(getDefaultScriptsDir(),"config_auth.sh");
+  if (_configSslScr != null) {
+    s_logger.info("config_auth.sh found in " + _configAuthScr);
+  }
+  _configIpFirewallScr=Script.findScript(getDefaultScriptsDir(),"ipfirewall.sh");
+  if (_configIpFirewallScr != null) {
+    s_logger.info("_configIpFirewallScr found in " + _configIpFirewallScr);
+  }
+  _role=(String)params.get("role");
+  if (_role == null)   _role=SecondaryStorageVm.Role.templateProcessor.toString();
+  s_logger.info("Secondary storage runs in role " + _role);
+  _guid=(String)params.get("guid");
+  if (_guid == null) {
+    throw new ConfigurationException("Unable to find the guid");
+  }
+  _dc=(String)params.get("zone");
+  if (_dc == null) {
+    throw new ConfigurationException("Unable to find the zone");
+  }
+  _pod=(String)params.get("pod");
+  _instance=(String)params.get("instance");
+  if (!_inSystemVM) {
+    _parent=(String)params.get("mount.path");
+  }
+  if (_inSystemVM) {
+    _localgw=(String)params.get("localgw");
+    if (_localgw != null) {
+      String mgmtHost=(String)params.get("host");
+      addRouteToInternalIpOrCidr(_localgw,_eth1ip,_eth1mask,mgmtHost);
+      String internalDns1=(String)params.get("internaldns1");
+      if (internalDns1 == null) {
+        s_logger.warn("No DNS entry found during configuration of NfsSecondaryStorage");
+      }
+ else {
+        addRouteToInternalIpOrCidr(_localgw,_eth1ip,_eth1mask,internalDns1);
+      }
+      String internalDns2=(String)params.get("internaldns2");
+      if (internalDns2 != null) {
+        addRouteToInternalIpOrCidr(_localgw,_eth1ip,_eth1mask,internalDns2);
+      }
+    }
+    startAdditionalServices();
+    _params.put("install.numthreads","50");
+    _params.put("secondary.storage.vm","true");
+  }
+  try {
+    _params.put(StorageLayer.InstanceConfigKey,_storage);
+    _dlMgr=new DownloadManagerImpl();
+    _dlMgr.configure("DownloadManager",_params);
+    _upldMgr=new UploadManagerImpl();
+    _upldMgr.configure("UploadManager",params);
+  }
+ catch (  ConfigurationException e) {
+    s_logger.warn("Caught problem while configuring DownloadManager",e);
+    return false;
+  }
+  return true;
+}

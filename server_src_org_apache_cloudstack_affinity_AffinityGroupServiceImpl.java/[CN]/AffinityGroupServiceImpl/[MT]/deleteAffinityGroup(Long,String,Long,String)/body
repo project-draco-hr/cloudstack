@@ -1,0 +1,40 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Account owner=_accountMgr.finalizeOwner(caller,account,domainId,null);
+  AffinityGroupVO group=null;
+  if (affinityGroupId != null) {
+    group=_affinityGroupDao.findById(affinityGroupId);
+    if (group == null) {
+      throw new InvalidParameterValueException("Unable to find affinity group: " + affinityGroupId + "; failed to delete group.");
+    }
+  }
+ else   if (affinityGroupName != null) {
+    group=_affinityGroupDao.findByAccountAndName(owner.getAccountId(),affinityGroupName);
+    if (group == null) {
+      throw new InvalidParameterValueException("Unable to find affinity group: " + affinityGroupName + "; failed to delete group.");
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("Either the affinity group Id or group name must be specified to delete the group");
+  }
+  if (affinityGroupId == null) {
+    affinityGroupId=group.getId();
+  }
+  _accountMgr.checkAccess(caller,null,true,group);
+  final Transaction txn=Transaction.currentTxn();
+  txn.start();
+  group=_affinityGroupDao.lockRow(affinityGroupId,true);
+  if (group == null) {
+    throw new InvalidParameterValueException("Unable to find affinity group by id " + affinityGroupId);
+  }
+  List<AffinityGroupVMMapVO> affinityGroupVmMap=_affinityGroupVMMapDao.listByAffinityGroup(affinityGroupId);
+  if (!affinityGroupVmMap.isEmpty()) {
+    throw new ResourceInUseException("Cannot delete affinity group when it's in use by virtual machines");
+  }
+  _affinityGroupDao.expunge(affinityGroupId);
+  txn.commit();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Deleted affinity group id=" + affinityGroupId);
+  }
+  return true;
+}
