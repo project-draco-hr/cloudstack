@@ -67,6 +67,26 @@
   _volsDao.attachVolume(newVol.getId(),vmId,newVol.getDeviceId());
   _volsDao.detachVolume(root.getId());
   this.volumeMgr.destroyVolume(root);
+  if (template.getEnablePassword()) {
+    String password=generateRandomPassword();
+    boolean result=resetVMPasswordInternal(vmId,password);
+    if (result) {
+      vm.setPassword(password);
+      _vmDao.loadDetails(vm);
+      String sshPublicKey=vm.getDetail("SSH.PublicKey");
+      if (sshPublicKey != null && !sshPublicKey.equals("") && password != null && !password.equals("saved_password")) {
+        String encryptedPasswd=RSAHelper.encryptWithSSHPublicKey(sshPublicKey,password);
+        if (encryptedPasswd == null) {
+          throw new CloudRuntimeException("VM reset is completed but error occurred when encrypting newly created password");
+        }
+        vm.setDetail("Encrypted.Password",encryptedPasswd);
+        _vmDao.saveDetails(vm);
+      }
+    }
+ else {
+      throw new CloudRuntimeException("VM reset is completed but failed to reset password for the virtual machine ");
+    }
+  }
   if (needRestart) {
     try {
       _itMgr.start(vm,null,user,caller);
