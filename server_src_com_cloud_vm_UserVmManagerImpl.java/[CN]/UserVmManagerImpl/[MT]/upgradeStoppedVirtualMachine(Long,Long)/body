@@ -1,0 +1,45 @@
+{
+  Account caller=UserContext.current().getCaller();
+  UserVmVO vmInstance=_vmDao.findById(vmId);
+  if (vmInstance == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  ServiceOfferingVO newServiceOffering=_offeringDao.findById(svcOffId);
+  ServiceOfferingVO currentServiceOffering=_offeringDao.findByIdIncludingRemoved(vmInstance.getServiceOfferingId());
+  int newCpu=newServiceOffering.getCpu();
+  int newMemory=newServiceOffering.getRamSize();
+  int currentCpu=currentServiceOffering.getCpu();
+  int currentMemory=currentServiceOffering.getRamSize();
+  if (newCpu > currentCpu) {
+    _resourceLimitMgr.checkResourceLimit(caller,ResourceType.cpu,newCpu - currentCpu);
+  }
+  if (newMemory > currentMemory) {
+    _resourceLimitMgr.checkResourceLimit(caller,ResourceType.memory,newMemory - currentMemory);
+  }
+  _itMgr.checkIfCanUpgrade(vmInstance,svcOffId);
+  List<VMSnapshotVO> vmSnapshots=_vmSnapshotDao.findByVm(vmId);
+  for (  VMSnapshotVO vmSnapshotVO : vmSnapshots) {
+    if (vmSnapshotVO.getType() == VMSnapshot.Type.DiskAndMemory) {
+      if (!_vmSnapshotMgr.deleteAllVMSnapshots(vmId,VMSnapshot.Type.DiskAndMemory)) {
+        String errMsg="Failed to remove VM snapshot during upgrading, snapshot id " + vmSnapshotVO.getId();
+        s_logger.debug(errMsg);
+        throw new CloudRuntimeException(errMsg);
+      }
+    }
+  }
+  _itMgr.upgradeVmDb(vmId,svcOffId);
+  if (newCpu > currentCpu) {
+    _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
+  }
+ else   if (currentCpu > newCpu) {
+    _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(currentCpu - newCpu));
+  }
+  if (newMemory > currentMemory) {
+    _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+  }
+ else   if (currentMemory > newMemory) {
+    _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(currentMemory - newMemory));
+  }
+  return _vmDao.findById(vmInstance.getId());
+}
