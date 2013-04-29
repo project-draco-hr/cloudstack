@@ -1,0 +1,50 @@
+{
+  SnapshotInfo parentSnapshot=snapshot.getParent();
+  if (parentSnapshot.getPath().equalsIgnoreCase(snapshot.getPath())) {
+    s_logger.debug("backup an empty snapshot");
+    SnapshotDataStoreVO parentSnapshotOnBackupStore=this.snapshotStoreDao.findBySnapshot(parentSnapshot.getId(),DataStoreRole.Image);
+    if (parentSnapshotOnBackupStore != null && parentSnapshotOnBackupStore.getState() == State.Ready) {
+      DataStore store=dataStoreMgr.getDataStore(parentSnapshotOnBackupStore.getDataStoreId(),parentSnapshotOnBackupStore.getRole());
+      SnapshotInfo snapshotOnImageStore=(SnapshotInfo)store.create(snapshot);
+      snapshotOnImageStore.processEvent(Event.CreateOnlyRequested);
+      SnapshotObjectTO snapTO=new SnapshotObjectTO();
+      snapTO.setPath(parentSnapshotOnBackupStore.getInstallPath());
+      CreateObjectAnswer createSnapshotAnswer=new CreateObjectAnswer(snapTO);
+      snapshotOnImageStore.processEvent(Event.OperationSuccessed,createSnapshotAnswer);
+      SnapshotObject snapObj=(SnapshotObject)snapshot;
+      try {
+        snapObj.processEvent(Snapshot.Event.OperationNotPerformed);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.debug("Failed to change state: " + snapshot.getId() + ": "+ e.toString());
+        throw new CloudRuntimeException(e.toString());
+      }
+      return this.snapshotDataFactory.getSnapshot(snapObj.getId(),store);
+    }
+ else {
+      s_logger.debug("parent snapshot hasn't been backed up yet");
+    }
+  }
+  boolean fullBackup=false;
+  long preSnapshotId=0;
+  if (parentSnapshot != null) {
+    preSnapshotId=parentSnapshot.getId();
+    int _deltaSnapshotMax=NumbersUtil.parseInt(configDao.getValue("snapshot.delta.max"),SnapshotManager.DELTAMAX);
+    int deltaSnap=_deltaSnapshotMax;
+    int i;
+    SnapshotDataStoreVO parentSnapshotOnBackupStore=null;
+    for (i=1; i < deltaSnap; i++) {
+      parentSnapshotOnBackupStore=this.snapshotStoreDao.findBySnapshot(parentSnapshot.getId(),DataStoreRole.Image);
+      Long prevBackupId=parentSnapshotOnBackupStore.getParentSnapshotId();
+      if (prevBackupId == 0) {
+        break;
+      }
+      parentSnapshotOnBackupStore=this.snapshotStoreDao.findBySnapshot(prevBackupId,DataStoreRole.Image);
+    }
+    if (i >= deltaSnap) {
+      fullBackup=true;
+    }
+  }
+  snapshot.addPayload(fullBackup);
+  return this.snapshotSvr.backupSnapshot(snapshot);
+}
