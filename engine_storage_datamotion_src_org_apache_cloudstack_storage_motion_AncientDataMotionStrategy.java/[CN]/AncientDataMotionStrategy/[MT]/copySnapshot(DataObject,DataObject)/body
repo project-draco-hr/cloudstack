@@ -1,53 +1,28 @@
 {
-  SnapshotInfo srcSnapshot=(SnapshotInfo)srcObject;
-  VolumeInfo baseVolume=srcSnapshot.getBaseVolume();
-  Long dcId=baseVolume.getDataCenterId();
-  Long accountId=baseVolume.getAccountId();
-  DataStore secStore=getSecHost(baseVolume.getId(),baseVolume.getDataCenterId());
-  Long secHostId=secStore.getId();
-  String secondaryStoragePoolUrl=secStore.getUri();
-  String snapshotUuid=srcSnapshot.getPath();
-  SnapshotVO prevSnapshot=null;
-  String prevSnapshotUuid=null;
-  String prevBackupUuid=null;
-  SwiftTO swift=_swiftMgr.getSwiftTO();
-  S3TO s3=_s3Mgr.getS3TO();
-  long prevSnapshotId=srcSnapshot.getPrevSnapshotId();
-  if (prevSnapshotId > 0) {
-    prevSnapshot=snapshotDao.findByIdIncludingRemoved(prevSnapshotId);
-    if (prevSnapshot.getBackupSnapshotId() != null && swift == null) {
-      if (prevSnapshot.getVersion() != null && prevSnapshot.getVersion().equals("2.2")) {
-        prevBackupUuid=prevSnapshot.getBackupSnapshotId();
-        prevSnapshotUuid=prevSnapshot.getPath();
-      }
-    }
- else     if ((prevSnapshot.getSwiftId() != null && swift != null) || (prevSnapshot.getS3Id() != null && s3 != null)) {
-      prevBackupUuid=prevSnapshot.getBackupSnapshotId();
-      prevSnapshotUuid=prevSnapshot.getPath();
-    }
-  }
-  boolean isVolumeInactive=this.volumeMgr.volumeInactive(baseVolume);
-  String vmName=this.volumeMgr.getVmNameOnVolume(baseVolume);
-  StoragePool srcPool=(StoragePool)dataStoreMgr.getPrimaryDataStore(baseVolume.getPoolId());
   String value=configDao.getValue(Config.BackupSnapshotWait.toString());
   int _backupsnapshotwait=NumbersUtil.parseInt(value,Integer.parseInt(Config.BackupSnapshotWait.getDefaultValue()));
-  BackupSnapshotCommand backupSnapshotCommand=new BackupSnapshotCommand(secondaryStoragePoolUrl,dcId,accountId,baseVolume.getId(),srcSnapshot.getId(),secHostId,baseVolume.getPath(),srcPool,snapshotUuid,srcSnapshot.getName(),prevSnapshotUuid,prevBackupUuid,isVolumeInactive,vmName,_backupsnapshotwait);
-  if (swift != null) {
-    backupSnapshotCommand.setSwift(swift);
-  }
- else   if (s3 != null) {
-    backupSnapshotCommand.setS3(s3);
-  }
-  BackupSnapshotAnswer answer=(BackupSnapshotAnswer)this.snapshotMgr.sendToPool(baseVolume,backupSnapshotCommand);
-  if (answer != null && answer.getResult()) {
-    SnapshotVO snapshotVO=this.snapshotDao.findById(srcSnapshot.getId());
-    snapshotVO.setBackupSnapshotId(answer.getBackupSnapshotName());
-    SnapshotDataStoreVO snapshotStore=new SnapshotDataStoreVO(secStore.getId(),snapshotVO.getId());
-    this._snapshotStoreDao.persist(snapshotStore);
-    if (answer.isFull()) {
-      snapshotVO.setPrevSnapshotId(0L);
+  DataObject cacheData=null;
+  try {
+    if (destData.getDataStore().getRole() != DataStoreRole.ImageCache) {
+      cacheData=cacheMgr.getCacheObject(srcData,destData.getDataStore().getScope());
+      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait);
+      cmd.setCacheTO(cacheData.getTO());
+      EndPoint ep=selector.select(srcData,destData);
+      Answer answer=ep.sendMessage(cmd);
+      return answer;
     }
-    this.snapshotDao.update(srcSnapshot.getId(),snapshotVO);
+ else {
+      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait);
+      EndPoint ep=selector.select(srcData,destData);
+      Answer answer=ep.sendMessage(cmd);
+      return answer;
+    }
   }
-  return answer;
+ catch (  Exception e) {
+    s_logger.debug("copy snasphot failed: " + e.toString());
+    if (cacheData != null) {
+      cacheMgr.deleteCacheObject(cacheData);
+    }
+    throw new CloudRuntimeException(e.toString());
+  }
 }

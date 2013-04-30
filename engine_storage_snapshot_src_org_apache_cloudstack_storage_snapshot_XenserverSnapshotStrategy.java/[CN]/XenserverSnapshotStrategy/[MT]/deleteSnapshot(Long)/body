@@ -1,0 +1,41 @@
+{
+  SnapshotVO snapshotVO=snapshotDao.findById(snapshotId);
+  if (snapshotVO.getState() == Snapshot.State.Destroyed) {
+    return true;
+  }
+  if (!Snapshot.State.BackedUp.equals(snapshotVO.getState())) {
+    throw new InvalidParameterValueException("Can't delete snapshotshot " + snapshotId + " due to it is not in BackedUp Status");
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Calling deleteSnapshot for snapshotId: " + snapshotId);
+  }
+  SnapshotInfo snapshotOnPrimary=this.snapshotDataFactory.getSnapshot(snapshotId,DataStoreRole.Primary);
+  SnapshotObject obj=(SnapshotObject)snapshotOnPrimary;
+  try {
+    obj.processEvent(Snapshot.Event.DestroyRequested);
+  }
+ catch (  NoTransitionException e) {
+    s_logger.debug("Failed to destroy snapshot: " + e.toString());
+    return false;
+  }
+  try {
+    if (snapshotOnPrimary != null) {
+      deleteSnapshotChain(snapshotOnPrimary);
+    }
+    SnapshotInfo snapshotOnImage=this.snapshotDataFactory.getSnapshot(snapshotId,DataStoreRole.Image);
+    if (snapshotOnImage != null) {
+      deleteSnapshotChain(snapshotOnImage);
+    }
+    obj.processEvent(Snapshot.Event.OperationSucceeded);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to delete snapshot: " + e.toString());
+    try {
+      obj.processEvent(Snapshot.Event.OperationFailed);
+    }
+ catch (    NoTransitionException e1) {
+      s_logger.debug("Failed to change snapshot state: " + e.toString());
+    }
+  }
+  return true;
+}
