@@ -1,0 +1,87 @@
+{
+switch (status) {
+case ABORTED:
+case UNRECOVERABLE_ERROR:
+case DOWNLOAD_FINISHED:
+    return 0;
+default :
+}
+int bytes=0;
+try {
+  Header contentLengthHeader=request.getResponseHeader("Content-Length");
+  boolean chunked=false;
+  long remoteSize2=0;
+  if (contentLengthHeader == null) {
+    Header chunkedHeader=request.getResponseHeader("Transfer-Encoding");
+    if (chunkedHeader == null || !"chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      errorString=" Failed to receive length of download ";
+      return 0;
+    }
+ else     if ("chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      chunked=true;
+    }
+  }
+ else {
+    remoteSize2=Long.parseLong(contentLengthHeader.getValue());
+  }
+  if (remoteSize == 0) {
+    remoteSize=remoteSize2;
+  }
+  if (remoteSize > MAX_TEMPLATE_SIZE_IN_BYTES) {
+    s_logger.info("Remote size is too large: " + remoteSize + " , max="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+    status=Status.UNRECOVERABLE_ERROR;
+    errorString="Download file size is too large";
+    return 0;
+  }
+  if (remoteSize == 0) {
+    remoteSize=MAX_TEMPLATE_SIZE_IN_BYTES;
+  }
+  InputStream in=!chunked ? new BufferedInputStream(request.getResponseBodyAsStream()) : new ChunkedInputStream(request.getResponseBodyAsStream());
+  s_logger.info("Starting download from " + getDownloadUrl() + " to s3 bucket "+ s3.getBucketName()+ " remoteSize="+ remoteSize+ " , max size="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+  Date start=new Date();
+  s3Key=join(asList(installPath,fileName),S3Utils.SEPARATOR);
+  ObjectMetadata metadata=new ObjectMetadata();
+  metadata.setContentLength(remoteSize);
+  PutObjectRequest putObjectRequest=new PutObjectRequest(s3.getBucketName(),s3Key,in,metadata).withStorageClass(StorageClass.ReducedRedundancy);
+  putObjectRequest.setProgressListener(new ProgressListener(){
+    @Override public void progressChanged(    ProgressEvent progressEvent){
+      s_logger.info(progressEvent.getBytesTransfered() + " number of byte transferd " + new Date());
+      totalBytes+=progressEvent.getBytesTransfered();
+      if (progressEvent.getEventCode() == ProgressEvent.COMPLETED_EVENT_CODE) {
+        s_logger.info("download completed");
+        status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
+      }
+ else {
+        status=TemplateDownloader.Status.IN_PROGRESS;
+      }
+    }
+  }
+);
+  S3Utils.putObject(s3,putObjectRequest);
+  Date finish=new Date();
+  String downloaded="(incomplete download)";
+  if (totalBytes >= remoteSize) {
+    status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
+    downloaded="(download complete remote=" + remoteSize + "bytes)";
+  }
+  errorString="Downloaded " + totalBytes + " bytes "+ downloaded;
+  downloadTime+=finish.getTime() - start.getTime();
+  return totalBytes;
+}
+ catch (HttpException hte) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=hte.getMessage();
+}
+catch (IOException ioe) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=ioe.getMessage();
+}
+ finally {
+  request.releaseConnection();
+  if (callback != null) {
+    callback.downloadComplete(status);
+  }
+}
+return 0;
+}
