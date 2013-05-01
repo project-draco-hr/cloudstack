@@ -5,6 +5,7 @@
     throw new InvalidParameterValueException("Can't release Public IP range " + vlanDbId + " as it not dedicated to any account");
   }
   long allocIpCount=_publicIpAddressDao.countIPs(vlan.getDataCenterId(),vlanDbId,true);
+  List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlanDbId);
   boolean success=true;
   if (allocIpCount > 0) {
     try {
@@ -15,9 +16,8 @@
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("lock vlan " + vlanDbId + " is acquired");
       }
-      List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlanDbId);
       for (      IPAddressVO ip : ips) {
-        if (!ip.isOneToOneNat() && !(ip.isSourceNat() && _networkModel.getNetwork(ip.getAssociatedWithNetworkId()) != null) && !(_firewallDao.countRulesByIpId(ip.getId()) > 0)) {
+        if (!ip.isOneToOneNat() && !ip.isSourceNat() && !(_firewallDao.countRulesByIpId(ip.getId()) > 0)) {
           if (s_logger.isDebugEnabled()) {
             s_logger.debug("Releasing Public IP addresses" + ip + " of vlan "+ vlanDbId+ " as part of Public IP"+ " range release to the system pool");
           }
@@ -33,6 +33,9 @@
     }
   }
   if (_accountVlanMapDao.remove(acctVln.get(0).getId())) {
+    for (    IPAddressVO ip : ips) {
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_RELEASE,acctVln.get(0).getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
+    }
     return true;
   }
  else {

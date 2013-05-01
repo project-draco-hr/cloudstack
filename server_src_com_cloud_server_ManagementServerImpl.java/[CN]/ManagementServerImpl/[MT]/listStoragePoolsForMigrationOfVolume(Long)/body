@@ -1,0 +1,76 @@
+{
+  Account caller=UserContext.current().getCaller();
+  if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Caller is not a root admin, permission denied to migrate the volume");
+    }
+    throw new PermissionDeniedException("No permission to migrate volume, only root admin can migrate a volume");
+  }
+  VolumeVO volume=_volumeDao.findById(volumeId);
+  if (volume == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find volume with" + " specified id.");
+    ex.addProxyObject(volume,volumeId,"volumeId");
+    throw ex;
+  }
+  List<StoragePool> allPools=new ArrayList<StoragePool>();
+  List<StoragePool> suitablePools=new ArrayList<StoragePool>();
+  Long instanceId=volume.getInstanceId();
+  VMInstanceVO vm=null;
+  if (instanceId != null) {
+    vm=_vmInstanceDao.findById(instanceId);
+  }
+  if (vm == null || vm.getState() != State.Running) {
+    s_logger.info("Volume " + volume + " isn't attached to any running vm. Only volumes attached to a running"+ " VM can be migrated.");
+    return new Pair<List<? extends StoragePool>,List<? extends StoragePool>>(allPools,suitablePools);
+  }
+  if (!Volume.State.Ready.equals(volume.getState())) {
+    s_logger.info("Volume " + volume + " must be in ready state for migration.");
+    return new Pair<List<? extends StoragePool>,List<? extends StoragePool>>(allPools,suitablePools);
+  }
+  if (!_volumeMgr.volumeOnSharedStoragePool(volume)) {
+    s_logger.info("Volume " + volume + " is on local storage. It cannot be migrated to another pool.");
+    return new Pair<List<? extends StoragePool>,List<? extends StoragePool>>(allPools,suitablePools);
+  }
+  boolean storageMotionSupported=false;
+  Long hostId=vm.getHostId();
+  if (hostId != null) {
+    HostVO host=_hostDao.findById(hostId);
+    HypervisorCapabilitiesVO capabilities=null;
+    if (host != null) {
+      capabilities=_hypervisorCapabilitiesDao.findByHypervisorTypeAndVersion(host.getHypervisorType(),host.getHypervisorVersion());
+    }
+ else {
+      s_logger.error("Details of the host on which the vm " + vm + ", to which volume "+ volume+ " is "+ "attached, couldn't be retrieved.");
+    }
+    if (capabilities != null) {
+      storageMotionSupported=capabilities.isStorageMotionSupported();
+    }
+ else {
+      s_logger.error("Capabilities for host " + host + " couldn't be retrieved.");
+    }
+  }
+  if (storageMotionSupported) {
+    StoragePoolVO srcVolumePool=_poolDao.findById(volume.getPoolId());
+    List<StoragePoolVO> storagePools=_poolDao.findPoolsByTags(volume.getDataCenterId(),volume.getPodId(),srcVolumePool.getClusterId(),null);
+    storagePools.remove(srcVolumePool);
+    for (    StoragePoolVO pool : storagePools) {
+      if (pool.isShared()) {
+        allPools.add((StoragePool)this.dataStoreMgr.getPrimaryDataStore(pool.getId()));
+      }
+    }
+    ExcludeList avoid=new ExcludeList();
+    avoid.addPool(srcVolumePool.getId());
+    DataCenterDeployment plan=new DataCenterDeployment(volume.getDataCenterId(),volume.getPodId(),srcVolumePool.getClusterId(),null,null,null);
+    VirtualMachineProfile<VMInstanceVO> profile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+    DiskProfile diskProfile=new DiskProfile(volume,diskOffering,profile.getHypervisorType());
+    for (    StoragePoolAllocator allocator : _storagePoolAllocators) {
+      List<StoragePool> pools=allocator.allocateToPool(diskProfile,profile,plan,avoid,StoragePoolAllocator.RETURN_UPTO_ALL);
+      if (pools != null && !pools.isEmpty()) {
+        suitablePools.addAll(pools);
+        break;
+      }
+    }
+  }
+  return new Pair<List<? extends StoragePool>,List<? extends StoragePool>>(allPools,suitablePools);
+}

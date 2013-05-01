@@ -1,0 +1,43 @@
+{
+  Integer temp=0;
+  int i;
+  List<Pair<Integer,Integer>> existingRanges=network.getVnet();
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  _physicalNetworkDao.acquireInLockTable(network.getId(),10);
+  _datacneter_vnet.lockRange(network.getDataCenterId(),network.getId(),start,end);
+  List<DataCenterVnetVO> result=_datacneter_vnet.listAllocatedVnetsInRange(network.getDataCenterId(),network.getId(),start,end);
+  if (!result.isEmpty()) {
+    txn.close();
+    throw new InvalidParameterValueException("Some of the vnets from this range are allocated, can only remove a range which has no allocated vnets");
+  }
+  for (i=0; i < existingRanges.size(); i++) {
+    if (existingRanges.get(i).first() <= start & existingRanges.get(i).second() >= end) {
+      temp=existingRanges.get(i).second();
+      existingRanges.get(i).second(start - 1);
+      existingRanges.add(new Pair<Integer,Integer>((end + 1),temp));
+      break;
+    }
+  }
+  if (temp == 0) {
+    throw new InvalidParameterValueException("The vlan range you are trying to delete does not exist.");
+  }
+  if (existingRanges.get(i).first() > existingRanges.get(i).second()) {
+    existingRanges.remove(i);
+  }
+  if (existingRanges.get(existingRanges.size() - 1).first() > existingRanges.get(existingRanges.size() - 1).second()) {
+    existingRanges.remove(existingRanges.size() - 1);
+  }
+  _datacneter_vnet.deleteRange(txn,network.getDataCenterId(),network.getId(),start,end);
+  String vnetString="";
+  for (  Pair<Integer,Integer> vnetRange : existingRanges) {
+    vnetString=vnetString + vnetRange.first().toString() + "-"+ vnetRange.second().toString()+ ";";
+  }
+  vnetString=vnetString + "*";
+  vnetString=vnetString.replace(";*","");
+  network.setVnet(vnetString);
+  _physicalNetworkDao.update(network.getId(),network);
+  txn.commit();
+  _physicalNetworkDao.releaseFromLockTable(network.getId());
+  return true;
+}

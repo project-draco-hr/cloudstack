@@ -17,12 +17,15 @@
   if ((accountName != null) && (domainId != null)) {
     vlanOwner=_accountDao.findActiveAccount(accountName,domainId);
     if (vlanOwner == null) {
-      throw new InvalidParameterValueException("Please specify a valid account");
+      throw new InvalidParameterValueException("Unable to find account by name " + accountName);
+    }
+ else     if (vlanOwner.getId() == Account.ACCOUNT_ID_SYSTEM) {
+      throw new InvalidParameterValueException("Please specify a valid account. Cannot dedicate IP range to system account");
     }
   }
   VlanVO vlan=_vlanDao.findById(vlanDbId);
   if (vlan == null) {
-    throw new InvalidParameterValueException("Please specify a valid Public IP range id");
+    throw new InvalidParameterValueException("Unable to find vlan by id " + vlanDbId);
   }
   List<AccountVlanMapVO> maps=_accountVlanMapDao.listAccountVlanMapsByVlan(vlanDbId);
   if (maps != null && !maps.isEmpty()) {
@@ -43,7 +46,7 @@
     Long allocatedToAccountId=ip.getAllocatedToAccountId();
     if (allocatedToAccountId != null) {
       Account accountAllocatedTo=_accountMgr.getActiveAccountById(allocatedToAccountId);
-      if (!accountAllocatedTo.getAccountName().equalsIgnoreCase(accountName))       throw new InvalidParameterValueException("Public IP address in range is already allocated to another account");
+      if (!accountAllocatedTo.getAccountName().equalsIgnoreCase(accountName))       throw new InvalidParameterValueException(ip.getAddress() + " Public IP address in range is allocated to another account ");
     }
   }
   Transaction txn=Transaction.currentTxn();
@@ -51,5 +54,8 @@
   AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(vlanOwner.getId(),vlan.getId());
   _accountVlanMapDao.persist(accountVlanMapVO);
   txn.commit();
+  for (  IPAddressVO ip : ips) {
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_ASSIGN,vlanOwner.getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
+  }
   return vlan;
 }
