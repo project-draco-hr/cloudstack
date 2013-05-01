@@ -1,0 +1,28 @@
+{
+  if (!routerNic.getBroadcastUri().getScheme().equals("pvlan")) {
+    return false;
+  }
+  setupDhcpForPvlan(add,router,routerNic);
+  Long hostId=router.getHostId();
+  List<UserVmVO> vms=_userVmDao.listByHostId(hostId);
+  for (  UserVmVO vm : vms) {
+    if (vm.getState() != State.Running) {
+      continue;
+    }
+    List<NicVO> nics=_nicDao.listByVmId(vm.getId());
+    for (    NicVO nic : nics) {
+      if (nic.getNetworkId() == routerNic.getNetworkId()) {
+        try {
+          Network network=_networkDao.findById(routerNic.getNetworkId());
+          NicProfile profile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),null,_networkModel.isSecurityGroupSupportedInNetwork(network),_networkModel.getNetworkTag(vm.getHypervisorType(),network));
+          setupVmWithDhcpHostForPvlan(add,router,profile);
+        }
+ catch (        ResourceUnavailableException e) {
+          s_logger.warn("Fail to program pvlan on nic " + nic.getMacAddress(),e);
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
