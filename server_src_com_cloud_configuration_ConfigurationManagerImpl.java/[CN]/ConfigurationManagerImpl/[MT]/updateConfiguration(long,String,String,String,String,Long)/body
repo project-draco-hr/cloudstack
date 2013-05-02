@@ -1,0 +1,170 @@
+{
+  String validationMsg=validateConfigurationValue(name,value,scope);
+  if (validationMsg != null) {
+    s_logger.error("Invalid configuration option, name: " + name + ", value:"+ value);
+    throw new InvalidParameterValueException(validationMsg);
+  }
+  if (scope != null && !scope.isEmpty() && !Config.ConfigurationParameterScope.global.toString().equalsIgnoreCase(scope)) {
+switch (Config.ConfigurationParameterScope.valueOf(scope)) {
+case zone:
+      DataCenterVO zone=_zoneDao.findById(resourceId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("unable to find zone by id " + resourceId);
+    }
+  DcDetailVO dcDetailVO=_dcDetailsDao.findDetail(resourceId,name.toLowerCase());
+if (dcDetailVO == null) {
+  dcDetailVO=new DcDetailVO(resourceId,name,value);
+  _dcDetailsDao.persist(dcDetailVO);
+}
+ else {
+  dcDetailVO.setValue(value);
+  _dcDetailsDao.update(dcDetailVO.getId(),dcDetailVO);
+}
+break;
+case cluster:
+ClusterVO cluster=_clusterDao.findById(resourceId);
+if (cluster == null) {
+throw new InvalidParameterValueException("unable to find cluster by id " + resourceId);
+}
+ClusterDetailsVO clusterDetailsVO=_clusterDetailsDao.findDetail(resourceId,name);
+if (clusterDetailsVO == null) {
+clusterDetailsVO=new ClusterDetailsVO(resourceId,name,value);
+_clusterDetailsDao.persist(clusterDetailsVO);
+}
+ else {
+clusterDetailsVO.setValue(value);
+_clusterDetailsDao.update(clusterDetailsVO.getId(),clusterDetailsVO);
+}
+break;
+case storagepool:
+StoragePoolVO pool=_storagePoolDao.findById(resourceId);
+if (pool == null) {
+throw new InvalidParameterValueException("unable to find storage pool by id " + resourceId);
+}
+StoragePoolDetailVO storagePoolDetailVO=_storagePoolDetailsDao.findDetail(resourceId,name);
+if (storagePoolDetailVO == null) {
+storagePoolDetailVO=new StoragePoolDetailVO(resourceId,name,value);
+_storagePoolDetailsDao.persist(storagePoolDetailVO);
+}
+ else {
+storagePoolDetailVO.setValue(value);
+_storagePoolDetailsDao.update(storagePoolDetailVO.getId(),storagePoolDetailVO);
+}
+break;
+case account:
+AccountVO account=_accountDao.findById(resourceId);
+if (account == null) {
+throw new InvalidParameterValueException("unable to find account by id " + resourceId);
+}
+AccountDetailVO accountDetailVO=_accountDetailsDao.findDetail(resourceId,name);
+if (accountDetailVO == null) {
+accountDetailVO=new AccountDetailVO(resourceId,name,value);
+_accountDetailsDao.persist(accountDetailVO);
+}
+ else {
+accountDetailVO.setValue(value);
+_accountDetailsDao.update(accountDetailVO.getId(),accountDetailVO);
+}
+break;
+default :
+throw new InvalidParameterValueException("Scope provided is invalid");
+}
+return value;
+}
+Transaction txn=Transaction.currentTxn();
+txn.start();
+if (!_configDao.update(name,category,value)) {
+s_logger.error("Failed to update configuration option, name: " + name + ", value:"+ value);
+throw new CloudRuntimeException("Failed to update configuration value. Please contact Cloud Support.");
+}
+PreparedStatement pstmt=null;
+if (Config.XenGuestNetwork.key().equalsIgnoreCase(name)) {
+String sql="update host_details set value=? where name=?";
+try {
+pstmt=txn.prepareAutoCloseStatement(sql);
+pstmt.setString(1,value);
+pstmt.setString(2,"guest.network.device");
+pstmt.executeUpdate();
+}
+ catch (Throwable e) {
+throw new CloudRuntimeException("Failed to update guest.network.device in host_details due to exception ",e);
+}
+}
+ else if (Config.XenPrivateNetwork.key().equalsIgnoreCase(name)) {
+String sql="update host_details set value=? where name=?";
+try {
+pstmt=txn.prepareAutoCloseStatement(sql);
+pstmt.setString(1,value);
+pstmt.setString(2,"private.network.device");
+pstmt.executeUpdate();
+}
+ catch (Throwable e) {
+throw new CloudRuntimeException("Failed to update private.network.device in host_details due to exception ",e);
+}
+}
+ else if (Config.XenPublicNetwork.key().equalsIgnoreCase(name)) {
+String sql="update host_details set value=? where name=?";
+try {
+pstmt=txn.prepareAutoCloseStatement(sql);
+pstmt.setString(1,value);
+pstmt.setString(2,"public.network.device");
+pstmt.executeUpdate();
+}
+ catch (Throwable e) {
+throw new CloudRuntimeException("Failed to update public.network.device in host_details due to exception ",e);
+}
+}
+ else if (Config.XenStorageNetwork1.key().equalsIgnoreCase(name)) {
+String sql="update host_details set value=? where name=?";
+try {
+pstmt=txn.prepareAutoCloseStatement(sql);
+pstmt.setString(1,value);
+pstmt.setString(2,"storage.network.device1");
+pstmt.executeUpdate();
+}
+ catch (Throwable e) {
+throw new CloudRuntimeException("Failed to update storage.network.device1 in host_details due to exception ",e);
+}
+}
+ else if (Config.XenStorageNetwork2.key().equals(name)) {
+String sql="update host_details set value=? where name=?";
+try {
+pstmt=txn.prepareAutoCloseStatement(sql);
+pstmt.setString(1,value);
+pstmt.setString(2,"storage.network.device2");
+pstmt.executeUpdate();
+}
+ catch (Throwable e) {
+throw new CloudRuntimeException("Failed to update storage.network.device2 in host_details due to exception ",e);
+}
+}
+ else if (Config.SystemVMUseLocalStorage.key().equalsIgnoreCase(name)) {
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Config 'system.vm.use.local.storage' changed to value:" + value + ", need to update System VM offerings");
+}
+boolean useLocalStorage=Boolean.parseBoolean(_configDao.getValue(Config.SystemVMUseLocalStorage.key()));
+ServiceOfferingVO serviceOffering=_serviceOfferingDao.findByName(ServiceOffering.consoleProxyDefaultOffUniqueName);
+if (serviceOffering != null) {
+serviceOffering.setUseLocalStorage(useLocalStorage);
+if (!_serviceOfferingDao.update(serviceOffering.getId(),serviceOffering)) {
+throw new CloudRuntimeException("Failed to update ConsoleProxy offering's use_local_storage option to value:" + useLocalStorage);
+}
+}
+serviceOffering=_serviceOfferingDao.findByName(ServiceOffering.routerDefaultOffUniqueName);
+if (serviceOffering != null) {
+serviceOffering.setUseLocalStorage(useLocalStorage);
+if (!_serviceOfferingDao.update(serviceOffering.getId(),serviceOffering)) {
+throw new CloudRuntimeException("Failed to update SoftwareRouter offering's use_local_storage option to value:" + useLocalStorage);
+}
+}
+serviceOffering=_serviceOfferingDao.findByName(ServiceOffering.ssvmDefaultOffUniqueName);
+if (serviceOffering != null) {
+serviceOffering.setUseLocalStorage(useLocalStorage);
+if (!_serviceOfferingDao.update(serviceOffering.getId(),serviceOffering)) {
+throw new CloudRuntimeException("Failed to update SecondaryStorage offering's use_local_storage option to value:" + useLocalStorage);
+}
+}
+}
+txn.commit();
+return _configDao.getValue(name);
+}
