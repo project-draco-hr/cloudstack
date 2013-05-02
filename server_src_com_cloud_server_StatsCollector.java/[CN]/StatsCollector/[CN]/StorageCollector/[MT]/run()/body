@@ -3,26 +3,27 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("StorageCollector is running...");
     }
-    List<HostVO> hosts=_ssvmMgr.listSecondaryStorageHostsInAllZones();
+    List<DataStore> stores=_dataStoreMgr.listImageStores();
     ConcurrentHashMap<Long,StorageStats> storageStats=new ConcurrentHashMap<Long,StorageStats>();
-    for (    HostVO host : hosts) {
-      if (host.getStorageUrl() == null) {
+    for (    DataStore store : stores) {
+      if (store.getUri() == null) {
         continue;
       }
-      GetStorageStatsCommand command=new GetStorageStatsCommand(host.getStorageUrl());
-      HostVO ssAhost=_ssvmMgr.pickSsvmHost(host);
+      GetStorageStatsCommand command=new GetStorageStatsCommand(store.getUri());
+      EndPoint ssAhost=_epSelector.select(store);
       if (ssAhost == null) {
-        s_logger.debug("There is no secondary storage VM for secondary storage host " + host.getName());
+        s_logger.debug("There is no secondary storage VM for secondary storage host " + store.getName());
         continue;
       }
-      long hostId=host.getId();
-      Answer answer=_agentMgr.easySend(ssAhost.getId(),command);
+      long storeId=store.getId();
+      Answer answer=ssAhost.sendMessage(command);
       if (answer != null && answer.getResult()) {
-        storageStats.put(hostId,(StorageStats)answer);
-        s_logger.trace("HostId: " + hostId + " Used: "+ ((StorageStats)answer).getByteUsed()+ " Total Available: "+ ((StorageStats)answer).getCapacityBytes());
-        if (_storageStats.get(hostId) != null && _storageStats.get(hostId).getCapacityBytes() != ((StorageStats)answer).getCapacityBytes()) {
-          host.setTotalSize(((StorageStats)answer).getCapacityBytes());
-          _hostDao.update(hostId,host);
+        storageStats.put(storeId,(StorageStats)answer);
+        s_logger.trace("HostId: " + storeId + " Used: "+ ((StorageStats)answer).getByteUsed()+ " Total Available: "+ ((StorageStats)answer).getCapacityBytes());
+        if (_storageStats.get(storeId) != null && _storageStats.get(storeId).getCapacityBytes() != ((StorageStats)answer).getCapacityBytes()) {
+          ImageStoreVO imgStore=_imageStoreDao.findById(storeId);
+          imgStore.setTotalSize(((StorageStats)answer).getCapacityBytes());
+          _imageStoreDao.update(storeId,imgStore);
         }
       }
     }
