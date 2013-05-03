@@ -8,6 +8,12 @@ default :
 }
 int bytes=0;
 try {
+  int responseCode=HttpStatus.SC_OK;
+  if ((responseCode=client.executeMethod(request)) != HttpStatus.SC_OK) {
+    status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+    errorString=" HTTP Server returned " + responseCode + " (expected 200 OK) ";
+    return 0;
+  }
   Header contentLengthHeader=request.getResponseHeader("Content-Length");
   boolean chunked=false;
   long remoteSize2=0;
@@ -52,6 +58,12 @@ try {
         s_logger.info("download completed");
         status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
       }
+ else       if (progressEvent.getEventCode() == ProgressEvent.FAILED_EVENT_CODE) {
+        status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      }
+ else       if (progressEvent.getEventCode() == ProgressEvent.CANCELED_EVENT_CODE) {
+        status=TemplateDownloader.Status.ABORTED;
+      }
  else {
         status=TemplateDownloader.Status.IN_PROGRESS;
       }
@@ -59,6 +71,8 @@ try {
   }
 );
   S3Utils.putObject(s3,putObjectRequest);
+  while (status != TemplateDownloader.Status.DOWNLOAD_FINISHED && status != TemplateDownloader.Status.UNRECOVERABLE_ERROR && status != TemplateDownloader.Status.ABORTED) {
+  }
   Date finish=new Date();
   String downloaded="(incomplete download)";
   if (totalBytes >= remoteSize) {
@@ -76,6 +90,10 @@ try {
 catch (IOException ioe) {
   status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
   errorString=ioe.getMessage();
+}
+catch (AmazonClientException ex) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=ex.getMessage();
 }
  finally {
   request.releaseConnection();
