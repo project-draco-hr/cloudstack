@@ -1,0 +1,35 @@
+@attr(tags=['advanced', 'advancedns', 'smoke'])
+def test_02_revert_vm_snapshots(self):
+    try:
+        ssh_client = self.virtual_machine.get_ssh_client()
+        cmds = [('rm -rf %s/%s' % (self.services['test_dir'], self.services['random_data'])), ('ls %s/%s' % (self.services['test_dir'], self.services['random_data']))]
+        for c in cmds:
+            self.debug(c)
+            result = ssh_client.execute(c)
+            self.debug(result)
+    except Exception:
+        self.fail(('SSH failed for Virtual machine: %s' % self.virtual_machine.ipaddress))
+    if (str(result[0]).index('No such file or directory') == (-1)):
+        self.fail('Check the random data has be delete from temp file!')
+    time.sleep(self.services['sleep'])
+    list_snapshot_response = VmSnapshot.list(self.apiclient, vmid=self.virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(list_snapshot_response, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(list_snapshot_response, None, 'Check if snapshot exists in ListSnapshot')
+    self.assertEqual(list_snapshot_response[0].state, 'Ready', 'Check the snapshot of vm is ready!')
+    VmSnapshot.revertToSnapshot(self.apiclient, list_snapshot_response[0].id)
+    list_vm_response = list_virtual_machines(self.apiclient, id=self.virtual_machine.id)
+    self.assertEqual(list_vm_response[0].state, 'Stopped', 'Check the state of vm is Stopped!')
+    cmd = startVirtualMachine.startVirtualMachineCmd()
+    cmd.id = list_vm_response[0].id
+    self.apiclient.startVirtualMachine(cmd)
+    time.sleep(self.services['sleep'])
+    try:
+        ssh_client = self.virtual_machine.get_ssh_client(reconnect=True)
+        cmds = [('cat %s/%s' % (self.services['test_dir'], self.services['random_data']))]
+        for c in cmds:
+            self.debug(c)
+            result = ssh_client.execute(c)
+            self.debug(result)
+    except Exception:
+        self.fail(('SSH failed for Virtual machine: %s' % self.virtual_machine.ipaddress))
+    self.assertEqual(self.random_data_0, result[0], 'Check the random data is equal with the ramdom file!')
