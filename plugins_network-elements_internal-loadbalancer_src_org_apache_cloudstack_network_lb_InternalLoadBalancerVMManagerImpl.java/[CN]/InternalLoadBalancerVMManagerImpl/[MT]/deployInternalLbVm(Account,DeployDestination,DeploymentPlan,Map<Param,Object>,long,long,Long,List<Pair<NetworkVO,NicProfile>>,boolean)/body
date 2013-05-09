@@ -1,0 +1,80 @@
+{
+  long id=_internalLbVmDao.getNextInSequence(Long.class,"id");
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Creating the internal lb vm " + id + " in datacenter "+ dest.getDataCenter());
+  }
+  ServiceOfferingVO routerOffering=_serviceOfferingDao.findById(svcOffId);
+  List<HypervisorType> hypervisors=getHypervisors(dest,plan,null);
+  int allocateRetry=0;
+  int startRetry=0;
+  DomainRouterVO internalLbVm=null;
+  for (Iterator<HypervisorType> iter=hypervisors.iterator(); iter.hasNext(); ) {
+    HypervisorType hType=iter.next();
+    try {
+      s_logger.debug("Allocating the Internal lb with the hypervisor type " + hType);
+      String templateName=null;
+switch (hType) {
+case XenServer:
+        templateName=_configServer.getConfigValue(Config.RouterTemplateXen.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+      break;
+case KVM:
+    templateName=_configServer.getConfigValue(Config.RouterTemplateKVM.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+  break;
+case VMware:
+templateName=_configServer.getConfigValue(Config.RouterTemplateVmware.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+case Hyperv:
+templateName=_configServer.getConfigValue(Config.RouterTemplateHyperv.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+case LXC:
+templateName=_configServer.getConfigValue(Config.RouterTemplateLXC.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+default :
+break;
+}
+VMTemplateVO template=_templateDao.findRoutingTemplate(hType,templateName);
+if (template == null) {
+s_logger.debug(hType + " won't support system vm, skip it");
+continue;
+}
+internalLbVm=new DomainRouterVO(id,routerOffering.getId(),internalLbProviderId,VirtualMachineName.getSystemVmName(id,_instance,_internalLbVmNamePrefix),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),false,0,false,RedundantState.UNKNOWN,false,false,VirtualMachine.Type.InternalLoadBalancerVm,vpcId);
+internalLbVm.setRole(Role.INTERNAL_LB_VM);
+internalLbVm=_itMgr.allocate(internalLbVm,template,routerOffering,networks,plan,null,owner);
+}
+ catch (InsufficientCapacityException ex) {
+if (allocateRetry < 2 && iter.hasNext()) {
+s_logger.debug("Failed to allocate the Internal lb vm with hypervisor type " + hType + ", retrying one more time");
+continue;
+}
+ else {
+throw ex;
+}
+}
+ finally {
+allocateRetry++;
+}
+if (startVm) {
+try {
+internalLbVm=startInternalLbVm(internalLbVm,_accountMgr.getSystemAccount(),User.UID_SYSTEM,params);
+break;
+}
+ catch (InsufficientCapacityException ex) {
+if (startRetry < 2 && iter.hasNext()) {
+s_logger.debug("Failed to start the Internal lb vm  " + internalLbVm + " with hypervisor type "+ hType+ ", "+ "destroying it and recreating one more time");
+destroyInternalLbVm(internalLbVm.getId(),_accountMgr.getSystemAccount(),User.UID_SYSTEM);
+continue;
+}
+ else {
+throw ex;
+}
+}
+ finally {
+startRetry++;
+}
+}
+ else {
+return internalLbVm;
+}
+}
+return internalLbVm;
+}
