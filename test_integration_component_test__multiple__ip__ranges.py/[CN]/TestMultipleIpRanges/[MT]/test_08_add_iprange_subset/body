@@ -1,12 +1,14 @@
 @attr(tags=['advanced_sg', 'sg'])
-def test_04_add_noncontiguous_ip_range(self):
-    'Test adding non-contiguous ip range in existing cidr\n\n            1.Add ip range in new cidr\n            1.Add non-contigous ip range in cidr added at step1\n            2.Verify the ip range using list APIs\n        '
+def test_08_add_iprange_subset(self):
+    'Test adding ip range subset to existing CIDR\n\n            1.Add IP range in new CIDR\n            2.Try to add ip range subset to CIDR added in step1\n        '
     ip2 = self.increment_cidr()
     test_nw = ip2.network
     ip = IPAddress(test_nw)
     test_gateway = ip.__add__(1)
-    test_startIp = ip.__add__(50)
-    test_endIp = ip.__add__(60)
+    test_startIp = ip.__add__(2)
+    test_endIp = ip.__add__(10)
+    test_startIp2 = ip.__add__(20)
+    test_endIp2 = ip.__add__(30)
     self.services['vlan_ip_range']['startip'] = test_startIp
     self.services['vlan_ip_range']['endip'] = test_endIp
     self.services['vlan_ip_range']['gateway'] = test_gateway
@@ -18,13 +20,19 @@ def test_04_add_noncontiguous_ip_range(self):
     self.cleanup.append(new_vlan)
     new_vlan_res = new_vlan.list(self.apiclient, id=new_vlan.vlan.id)
     self.verify_vlan_range(new_vlan_res, self.services['vlan_ip_range'])
-    test_startIp2 = ip.__add__(10)
-    test_endIp2 = ip.__add__(20)
+    cidr = ip2.cidr
+    mask_len = (2 ** (32 - (cidr.prefixlen + 1)))
+    netmask = IPAddress(self.netmask)
+    subset = netmask.__iadd__(mask_len)
+    self.services['vlan_ip_range']['netmask'] = subset
     self.services['vlan_ip_range']['startip'] = test_startIp2
     self.services['vlan_ip_range']['endip'] = test_endIp2
-    new_vlan = PublicIpRange.create(self.apiclient, self.services['vlan_ip_range'])
-    self.debug(('Created new vlan range with startip:%s and endip:%s' % (test_startIp, test_endIp)))
-    self.cleanup.append(new_vlan)
-    new_vlan_res = new_vlan.list(self.apiclient, id=new_vlan.vlan.id)
-    self.verify_vlan_range(new_vlan_res, self.services['vlan_ip_range'])
+    try:
+        new_vlan2 = PublicIpRange.create(self.apiclient, self.services['vlan_ip_range'])
+    except cloudstackAPIException as cs:
+        self.debug(cs.errorMsg)
+        self.assertTrue((cs.errorMsg.find('new subnet is a subset of the existing subnet') > 0), msg='Fail: CS allowed adding ip range subset to existing CIDR')
+        return
+    self.cleanup.append(new_vlan2)
+    self.fail('CS should not allow adding ip range subset to existing CIDR')
     return
