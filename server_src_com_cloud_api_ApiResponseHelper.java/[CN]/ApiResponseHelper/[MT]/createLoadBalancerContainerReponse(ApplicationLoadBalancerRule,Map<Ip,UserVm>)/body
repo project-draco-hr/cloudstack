@@ -1,0 +1,53 @@
+{
+  ApplicationLoadBalancerResponse lbResponse=new ApplicationLoadBalancerResponse();
+  lbResponse.setId(lb.getUuid());
+  lbResponse.setName(lb.getName());
+  lbResponse.setDescription(lb.getDescription());
+  lbResponse.setAlgorithm(lb.getAlgorithm());
+  Network nw=ApiDBUtils.findNetworkById(lb.getNetworkId());
+  lbResponse.setNetworkId(nw.getUuid());
+  populateOwner(lbResponse,lb);
+  if (lb.getScheme() == Scheme.Internal) {
+    lbResponse.setSourceIp(lb.getSourceIp().addr());
+    Network network=ApiDBUtils.findNetworkById(lb.getNetworkId());
+    lbResponse.setSourceIpNetworkId(network.getUuid());
+  }
+ else {
+    IpAddress publicIp=ApiDBUtils.findIpAddressById(lb.getSourceIpAddressId());
+    lbResponse.setSourceIp(publicIp.getAddress().addr());
+    Network ntwk=ApiDBUtils.findNetworkById(publicIp.getNetworkId());
+    lbResponse.setSourceIpNetworkId(ntwk.getUuid());
+  }
+  List<ApplicationLoadBalancerRuleResponse> ruleResponses=new ArrayList<ApplicationLoadBalancerRuleResponse>();
+  ApplicationLoadBalancerRuleResponse ruleResponse=new ApplicationLoadBalancerRuleResponse();
+  ruleResponse.setInstancePort(lb.getDefaultPortStart());
+  ruleResponse.setSourcePort(lb.getSourcePortStart());
+  String stateToSet=lb.getState().toString();
+  if (stateToSet.equals(FirewallRule.State.Revoke)) {
+    stateToSet="Deleting";
+  }
+  ruleResponse.setState(stateToSet);
+  ruleResponse.setObjectName("loadbalancerrule");
+  ruleResponses.add(ruleResponse);
+  lbResponse.setLbRules(ruleResponses);
+  List<ApplicationLoadBalancerInstanceResponse> instanceResponses=new ArrayList<ApplicationLoadBalancerInstanceResponse>();
+  for (  Ip ip : lbInstances.keySet()) {
+    ApplicationLoadBalancerInstanceResponse instanceResponse=new ApplicationLoadBalancerInstanceResponse();
+    instanceResponse.setIpAddress(ip.addr());
+    UserVm vm=lbInstances.get(ip);
+    instanceResponse.setId(vm.getUuid());
+    instanceResponse.setName(vm.getInstanceName());
+    instanceResponse.setObjectName("loadbalancerinstance");
+    instanceResponses.add(instanceResponse);
+  }
+  lbResponse.setLbInstances(instanceResponses);
+  List<? extends ResourceTag> tags=ApiDBUtils.listByResourceTypeAndId(TaggedResourceType.LoadBalancer,lb.getId());
+  List<ResourceTagResponse> tagResponses=new ArrayList<ResourceTagResponse>();
+  for (  ResourceTag tag : tags) {
+    ResourceTagResponse tagResponse=createResourceTagResponse(tag,true);
+    tagResponses.add(tagResponse);
+  }
+  lbResponse.setTags(tagResponses);
+  lbResponse.setObjectName("loadbalancer");
+  return lbResponse;
+}

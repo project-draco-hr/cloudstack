@@ -1,0 +1,30 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  newRule=_lbDao.persist(newRule);
+  boolean success=true;
+  try {
+    detectLbRulesConflicts(newRule);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    s_logger.debug("Load balancer " + newRule.getId() + " for Ip address "+ newRule.getSourceIp().addr()+ ", source port "+ newRule.getSourcePortStart()+ ", instance port "+ newRule.getDefaultPortStart()+ " is added successfully.");
+    UserContext.current().setEventDetails("Load balancer Id: " + newRule.getId());
+    Network ntwk=_networkModel.getNetwork(newRule.getNetworkId());
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_CREATE,newRule.getAccountId(),ntwk.getDataCenterId(),newRule.getId(),null,LoadBalancingRule.class.getName(),newRule.getUuid());
+    txn.commit();
+    return newRule;
+  }
+ catch (  Exception e) {
+    success=false;
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add lb rule for ip address " + newRule.getSourceIpAddressId(),e);
+  }
+ finally {
+    if (!success && newRule != null) {
+      _lbMgr.removeLBRule(newRule);
+    }
+  }
+}
