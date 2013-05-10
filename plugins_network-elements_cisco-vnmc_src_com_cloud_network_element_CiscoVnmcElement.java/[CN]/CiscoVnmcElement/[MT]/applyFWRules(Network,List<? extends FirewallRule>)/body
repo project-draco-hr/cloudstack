@@ -1,0 +1,41 @@
+{
+  if (!_networkModel.isProviderSupportServiceInNetwork(network.getId(),Service.Firewall,Provider.CiscoVnmc)) {
+    s_logger.error("Firewall service is not provided by Cisco Vnmc device on network " + network.getName());
+    return false;
+  }
+  List<CiscoVnmcControllerVO> devices=_ciscoVnmcDao.listByPhysicalNetwork(network.getPhysicalNetworkId());
+  if (devices.isEmpty()) {
+    s_logger.error("No Cisco Vnmc device on network " + network.getName());
+    return true;
+  }
+  NetworkAsa1000vMapVO asaForNetwork=_networkAsa1000vMapDao.findByNetworkId(network.getId());
+  if (asaForNetwork == null) {
+    s_logger.debug("Cisco ASA 1000v device is not associated with network " + network.getName());
+    return true;
+  }
+  if (network.getState() == Network.State.Allocated) {
+    s_logger.debug("External firewall was asked to apply firewall rules for network with ID " + network.getId() + "; this network is not implemented. Skipping backend commands.");
+    return true;
+  }
+  CiscoVnmcControllerVO ciscoVnmcDevice=devices.get(0);
+  HostVO ciscoVnmcHost=_hostDao.findById(ciscoVnmcDevice.getHostId());
+  List<FirewallRuleTO> rulesTO=new ArrayList<FirewallRuleTO>();
+  for (  FirewallRule rule : rules) {
+    IpAddress sourceIp=_networkModel.getIp(rule.getSourceIpAddressId());
+    FirewallRuleTO ruleTO=new FirewallRuleTO(rule,null,sourceIp.getAddress().addr(),rule.getPurpose(),rule.getTrafficType());
+    rulesTO.add(ruleTO);
+  }
+  if (!rulesTO.isEmpty()) {
+    SetFirewallRulesCommand cmd=new SetFirewallRulesCommand(rulesTO);
+    cmd.setContextParam(NetworkElementCommand.GUEST_VLAN_TAG,network.getBroadcastUri().getHost());
+    cmd.setContextParam(NetworkElementCommand.GUEST_NETWORK_CIDR,network.getCidr());
+    Answer answer=_agentMgr.easySend(ciscoVnmcHost.getId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      String details=(answer != null) ? answer.getDetails() : "details unavailable";
+      String msg="Unable to apply firewall rules to Cisco ASA 1000v appliance due to: " + details + ".";
+      s_logger.error(msg);
+      throw new ResourceUnavailableException(msg,DataCenter.class,network.getDataCenterId());
+    }
+  }
+  return true;
+}

@@ -16,7 +16,7 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is not Running, unable to migrate the vm" + vm);
     }
-    InvalidParameterValueException ex=new InvalidParameterValueException("VM is not Running, unable to migrate the vm with specified id");
+    InvalidParameterValueException ex=new InvalidParameterValueException("VM is not Running, unable to" + " migrate the vm with specified id");
     ex.addProxyObject(vm,vmId,"vmId");
     throw ex;
   }
@@ -24,14 +24,7 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug(vm + " is not XenServer/VMware/KVM/OVM, cannot migrate this VM.");
     }
-    throw new InvalidParameterValueException("Unsupported Hypervisor Type for VM migration, we support XenServer/VMware/KVM only");
-  }
-  ServiceOfferingVO svcOffering=_offeringsDao.findById(vm.getServiceOfferingId());
-  if (svcOffering.getUseLocalStorage()) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug(vm + " is using Local Storage, cannot migrate this VM.");
-    }
-    throw new InvalidParameterValueException("Unsupported operation, VM uses Local storage, cannot migrate");
+    throw new InvalidParameterValueException("Unsupported Hypervisor Type for VM migration, we support " + "XenServer/VMware/KVM/Ovm only");
   }
   long srcHostId=vm.getHostId();
   Host srcHost=_hostDao.findById(srcHostId);
@@ -44,39 +37,85 @@
     ex.addProxyObject(vm,vmId,"vmId");
     throw ex;
   }
-  Long cluster=srcHost.getClusterId();
-  Type hostType=srcHost.getType();
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Searching for all hosts in cluster: " + cluster + " for migrating VM "+ vm);
+  boolean canMigrateWithStorage=false;
+  HypervisorCapabilitiesVO capabilities=_hypervisorCapabilitiesDao.findByHypervisorTypeAndVersion(srcHost.getHypervisorType(),srcHost.getHypervisorVersion());
+  if (capabilities != null) {
+    canMigrateWithStorage=capabilities.isStorageMotionSupported();
   }
-  Pair<List<HostVO>,Integer> allHostsInClusterPair=searchForServers(startIndex,pageSize,null,hostType,null,null,null,cluster,null,null,null,null);
-  List<HostVO> allHostsInCluster=allHostsInClusterPair.first();
-  allHostsInCluster.remove(srcHost);
-  Pair<List<? extends Host>,Integer> otherHostsInCluster=new Pair<List<? extends Host>,Integer>(allHostsInCluster,new Integer(allHostsInClusterPair.second().intValue() - 1));
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Other Hosts in this cluster: " + allHostsInCluster);
-  }
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Calling HostAllocators to search for hosts in cluster: " + cluster + " having enough capacity and suitable for migration");
-  }
-  List<Host> suitableHosts=new ArrayList<Host>();
   VirtualMachineProfile<VMInstanceVO> vmProfile=new VirtualMachineProfileImpl<VMInstanceVO>(vm);
-  DataCenterDeployment plan=new DataCenterDeployment(srcHost.getDataCenterId(),srcHost.getPodId(),srcHost.getClusterId(),null,null,null);
+  List<VolumeVO> volumes=_volumeDao.findCreatedByInstance(vmProfile.getId());
+  boolean usesLocal=false;
+  for (  VolumeVO volume : volumes) {
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+    DiskProfile diskProfile=new DiskProfile(volume,diskOffering,vmProfile.getHypervisorType());
+    if (diskProfile.useLocalStorage()) {
+      usesLocal=true;
+      break;
+    }
+  }
+  if (!canMigrateWithStorage && usesLocal) {
+    throw new InvalidParameterValueException("Unsupported operation, VM uses Local storage, cannot migrate");
+  }
+  Type hostType=srcHost.getType();
+  Pair<List<HostVO>,Integer> allHostsPair=null;
+  List<HostVO> allHosts=null;
+  Map<Host,Boolean> requiresStorageMotion=new HashMap<Host,Boolean>();
+  DataCenterDeployment plan=null;
+  if (canMigrateWithStorage) {
+    allHostsPair=searchForServers(startIndex,pageSize,null,hostType,null,srcHost.getDataCenterId(),null,null,null,null,null,null,srcHost.getHypervisorType(),srcHost.getHypervisorVersion());
+    allHosts=allHostsPair.first();
+    allHosts.remove(srcHost);
+    for (    Host host : allHosts) {
+      Map<Volume,List<StoragePool>> volumePools=findSuitablePoolsForVolumes(vmProfile,host);
+      if (volumePools.isEmpty()) {
+        allHosts.remove(host);
+      }
+ else {
+        if (host.getClusterId() != srcHost.getClusterId() || usesLocal) {
+          requiresStorageMotion.put(host,true);
+        }
+      }
+    }
+    plan=new DataCenterDeployment(srcHost.getDataCenterId(),null,null,null,null,null);
+  }
+ else {
+    Long cluster=srcHost.getClusterId();
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Searching for all hosts in cluster " + cluster + " for migrating VM "+ vm);
+    }
+    allHostsPair=searchForServers(startIndex,pageSize,null,hostType,null,null,null,cluster,null,null,null,null,null,null);
+    allHosts=allHostsPair.first();
+    allHosts.remove(srcHost);
+    plan=new DataCenterDeployment(srcHost.getDataCenterId(),srcHost.getPodId(),srcHost.getClusterId(),null,null,null);
+  }
+  Pair<List<? extends Host>,Integer> otherHosts=new Pair<List<? extends Host>,Integer>(allHosts,new Integer(allHosts.size()));
+  List<Host> suitableHosts=new ArrayList<Host>();
   ExcludeList excludes=new ExcludeList();
   excludes.addHost(srcHostId);
+  long vmGroupCount=_affinityGroupVMMapDao.countAffinityGroupsForVm(vm.getId());
+  if (vmGroupCount > 0) {
+    for (    AffinityGroupProcessor processor : _affinityProcessors) {
+      processor.process(vmProfile,plan,excludes);
+    }
+  }
   for (  HostAllocator allocator : _hostAllocators) {
-    suitableHosts=allocator.allocateTo(vmProfile,plan,Host.Type.Routing,excludes,HostAllocator.RETURN_UPTO_ALL,false);
+    if (canMigrateWithStorage) {
+      suitableHosts=allocator.allocateTo(vmProfile,plan,Host.Type.Routing,excludes,allHosts,HostAllocator.RETURN_UPTO_ALL,false);
+    }
+ else {
+      suitableHosts=allocator.allocateTo(vmProfile,plan,Host.Type.Routing,excludes,HostAllocator.RETURN_UPTO_ALL,false);
+    }
     if (suitableHosts != null && !suitableHosts.isEmpty()) {
       break;
     }
   }
-  if (suitableHosts.isEmpty()) {
-    s_logger.debug("No suitable hosts found");
-  }
+  if (s_logger.isDebugEnabled()) {
+    if (suitableHosts.isEmpty()) {
+      s_logger.debug("No suitable hosts found");
+    }
  else {
-    if (s_logger.isDebugEnabled()) {
       s_logger.debug("Hosts having capacity and suitable for migration: " + suitableHosts);
     }
   }
-  return new Pair<Pair<List<? extends Host>,Integer>,List<? extends Host>>(otherHostsInCluster,suitableHosts);
+  return new Ternary<Pair<List<? extends Host>,Integer>,List<? extends Host>,Map<Host,Boolean>>(otherHosts,suitableHosts,requiresStorageMotion);
 }

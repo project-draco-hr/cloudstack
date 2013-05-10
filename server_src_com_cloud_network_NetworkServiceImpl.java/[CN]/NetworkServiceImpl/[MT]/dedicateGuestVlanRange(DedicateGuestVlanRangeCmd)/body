@@ -1,0 +1,123 @@
+{
+  String vlan=cmd.getVlan();
+  String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  Long projectId=cmd.getProjectId();
+  int startVlan, endVlan;
+  String updatedVlanRange=null;
+  long guestVlanMapId=0;
+  long guestVlanMapAccountId=0;
+  Account vlanOwner=null;
+  if (projectId != null) {
+    if (accountName != null) {
+      throw new InvalidParameterValueException("accountName and projectId are mutually exclusive");
+    }
+    Project project=_projectMgr.getProject(projectId);
+    if (project == null) {
+      throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+    }
+    vlanOwner=_accountMgr.getAccount(project.getProjectAccountId());
+  }
+  if ((accountName != null) && (domainId != null)) {
+    vlanOwner=_accountDao.findActiveAccount(accountName,domainId);
+    if (vlanOwner == null) {
+      throw new InvalidParameterValueException("Unable to find account by name " + accountName);
+    }
+  }
+  PhysicalNetworkVO physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (physicalNetwork == null) {
+    throw new InvalidParameterValueException("Unable to find physical network by id " + physicalNetworkId);
+  }
+ else   if (physicalNetwork.getIsolationMethods() == null || !physicalNetwork.getIsolationMethods().contains("VLAN")) {
+    throw new InvalidParameterValueException("Cannot dedicate guest vlan range. " + "Physical isolation type of network " + physicalNetworkId + " is not VLAN");
+  }
+  String[] vlanRange=vlan.split("-");
+  if (vlanRange.length != 2) {
+    throw new InvalidParameterValueException("Invalid format for parameter value vlan " + vlan + " .Vlan should be specified as 'startvlan-endvlan'");
+  }
+  try {
+    startVlan=Integer.parseInt(vlanRange[0]);
+    endVlan=Integer.parseInt(vlanRange[1]);
+  }
+ catch (  NumberFormatException e) {
+    s_logger.warn("Unable to parse guest vlan range:",e);
+    throw new InvalidParameterValueException("Please provide valid guest vlan range");
+  }
+  List<Pair<Integer,Integer>> existingRanges=physicalNetwork.getVnet();
+  Boolean exists=false;
+  if (!existingRanges.isEmpty()) {
+    for (int i=0; i < existingRanges.size(); i++) {
+      int existingStartVlan=existingRanges.get(i).first();
+      int existingEndVlan=existingRanges.get(i).second();
+      if (startVlan >= existingStartVlan && endVlan <= existingEndVlan) {
+        exists=true;
+        break;
+      }
+    }
+    if (!exists) {
+      throw new InvalidParameterValueException("Unable to find guest vlan by range " + vlan);
+    }
+  }
+  for (int i=startVlan; i <= endVlan; i++) {
+    List<DataCenterVnetVO> allocatedVlans=_datacneter_vnet.listAllocatedVnetsInRange(physicalNetwork.getDataCenterId(),physicalNetwork.getId(),startVlan,endVlan);
+    if (allocatedVlans != null && !allocatedVlans.isEmpty()) {
+      for (      DataCenterVnetVO allocatedVlan : allocatedVlans) {
+        if (allocatedVlan.getAccountId() != vlanOwner.getAccountId()) {
+          throw new InvalidParameterValueException("Guest vlan from this range " + allocatedVlan.getVnet() + " is allocated to a different account."+ " Can only dedicate a range which has no allocated vlans or has vlans allocated to the same account ");
+        }
+      }
+    }
+  }
+  List<AccountGuestVlanMapVO> guestVlanMaps=_accountGuestVlanMapDao.listAccountGuestVlanMapsByPhysicalNetwork(physicalNetworkId);
+  for (  AccountGuestVlanMapVO guestVlanMap : guestVlanMaps) {
+    List<Integer> vlanTokens=getVlanFromRange(guestVlanMap.getGuestVlanRange());
+    int dedicatedStartVlan=vlanTokens.get(0).intValue();
+    int dedicatedEndVlan=vlanTokens.get(1).intValue();
+    guestVlanMapId=guestVlanMap.getId();
+    guestVlanMapAccountId=guestVlanMap.getAccountId();
+    if (startVlan >= dedicatedStartVlan && endVlan <= dedicatedEndVlan) {
+      if (guestVlanMap.getAccountId() != vlanOwner.getAccountId()) {
+        throw new InvalidParameterValueException("Vlan range is already dedicated to another account. Cannot dedicate guest vlan range " + vlan);
+      }
+ else {
+        s_logger.debug("Vlan range " + vlan + " is already dedicated to the specified account"+ accountName);
+        return guestVlanMap;
+      }
+    }
+    if (startVlan < dedicatedStartVlan & endVlan + 1 >= dedicatedStartVlan & endVlan <= dedicatedEndVlan) {
+      updatedVlanRange=startVlan + "-" + dedicatedEndVlan;
+      break;
+    }
+ else     if (startVlan >= dedicatedStartVlan & startVlan - 1 <= dedicatedEndVlan & endVlan > dedicatedEndVlan) {
+      updatedVlanRange=dedicatedStartVlan + "-" + endVlan;
+      break;
+    }
+ else     if (startVlan < dedicatedStartVlan & endVlan > dedicatedEndVlan) {
+      updatedVlanRange=startVlan + "-" + endVlan;
+      break;
+    }
+  }
+  AccountGuestVlanMapVO accountGuestVlanMapVO;
+  if (updatedVlanRange != null) {
+    if (guestVlanMapAccountId != vlanOwner.getAccountId()) {
+      throw new InvalidParameterValueException("Vlan range is partially dedicated to another account. Cannot dedicate guest vlan range " + vlan);
+    }
+    accountGuestVlanMapVO=_accountGuestVlanMapDao.findById(guestVlanMapId);
+    accountGuestVlanMapVO.setGuestVlanRange(updatedVlanRange);
+    _accountGuestVlanMapDao.update(guestVlanMapId,accountGuestVlanMapVO);
+  }
+ else {
+    Transaction txn=Transaction.currentTxn();
+    accountGuestVlanMapVO=new AccountGuestVlanMapVO(vlanOwner.getAccountId(),physicalNetworkId);
+    accountGuestVlanMapVO.setGuestVlanRange(startVlan + "-" + endVlan);
+    _accountGuestVlanMapDao.persist(accountGuestVlanMapVO);
+    txn.commit();
+  }
+  for (int i=startVlan; i <= endVlan; i++) {
+    List<DataCenterVnetVO> dataCenterVnet=_datacneter_vnet.findVnet(physicalNetwork.getDataCenterId(),((Integer)i).toString());
+    dataCenterVnet.get(0).setAccountGuestVlanMapId(accountGuestVlanMapVO.getId());
+    _datacneter_vnet.update(dataCenterVnet.get(0).getId(),dataCenterVnet.get(0));
+  }
+  return accountGuestVlanMapVO;
+}
