@@ -1,0 +1,44 @@
+{
+  VolumeObjectTO volume=(VolumeObjectTO)cmd.getData();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volume.getDataStore();
+  try {
+    VmwareContext context=this.hostService.getServiceContext(null);
+    VmwareHypervisorHost hyperHost=this.hostService.getHyperHost(context,null);
+    DatacenterMO dcMo=new DatacenterMO(context,hyperHost.getHyperHostDatacenter());
+    ManagedObjectReference morDatastore=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+    if (morDatastore == null)     throw new Exception("Unable to find datastore in vSphere");
+    DatastoreMO dsMo=new DatastoreMO(context,morDatastore);
+    VirtualMachineMO vmMo=null;
+    String volumeUuid=UUID.randomUUID().toString().replace("-","");
+    String volumeDatastorePath=String.format("[%s] %s.vmdk",dsMo.getName(),volumeUuid);
+    String dummyVmName=this.hostService.getWorkerName(context,cmd,0);
+    try {
+      vmMo=prepareVolumeHostDummyVm(hyperHost,dsMo,dummyVmName);
+      if (vmMo == null) {
+        throw new Exception("Unable to create a dummy VM for volume creation");
+      }
+synchronized (this) {
+        VmwareHelper.deleteVolumeVmdkFiles(dsMo,volumeUuid.toString(),dcMo);
+        vmMo.createDisk(volumeDatastorePath,(int)(volume.getSize() / (1024L * 1024L)),morDatastore,vmMo.getScsiDeviceControllerKey());
+        vmMo.detachDisk(volumeDatastorePath,false);
+      }
+      VolumeObjectTO newVol=new VolumeObjectTO();
+      newVol.setPath(volumeUuid);
+      return new CreateObjectAnswer(newVol);
+    }
+  finally {
+      s_logger.info("Destroy dummy VM after volume creation");
+      vmMo.detachAllDisks();
+      vmMo.destroy();
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      this.hostService.invalidateServiceContext(null);
+    }
+    String msg="CreateCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg,e);
+    return new CreateObjectAnswer(e.toString());
+  }
+}

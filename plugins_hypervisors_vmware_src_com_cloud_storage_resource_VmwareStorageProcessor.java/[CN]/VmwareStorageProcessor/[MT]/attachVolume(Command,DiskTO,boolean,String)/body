@@ -1,0 +1,39 @@
+{
+  VolumeObjectTO volumeTO=(VolumeObjectTO)disk.getData();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volumeTO.getDataStore();
+  try {
+    VmwareHypervisorHost hyperHost=this.hostService.getHyperHost(this.hostService.getServiceContext(null),null);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="Unable to find the VM to execute AttachVolumeCommand, vmName: " + vmName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+    if (morDs == null) {
+      String msg="Unable to find the mounted datastore to execute AttachVolumeCommand, vmName: " + vmName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    DatastoreMO dsMo=new DatastoreMO(this.hostService.getServiceContext(null),morDs);
+    String datastoreVolumePath=String.format("[%s] %s.vmdk",dsMo.getName(),volumeTO.getPath());
+    AttachAnswer answer=new AttachAnswer(disk);
+    if (isAttach) {
+      vmMo.attachDisk(new String[]{datastoreVolumePath},morDs);
+    }
+ else {
+      vmMo.removeAllSnapshots();
+      vmMo.detachDisk(datastoreVolumePath,false);
+    }
+    return answer;
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      this.hostService.invalidateServiceContext(null);
+    }
+    String msg="AttachVolumeCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg,e);
+    return new AttachAnswer(msg);
+  }
+}

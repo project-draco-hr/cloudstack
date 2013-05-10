@@ -1,0 +1,42 @@
+{
+  Connection conn=hypervisorResource.getConnection();
+  SnapshotObjectTO snapshotTO=(SnapshotObjectTO)cmd.getData();
+  long snapshotId=snapshotTO.getId();
+  String snapshotName=snapshotTO.getName();
+  String details="create snapshot operation Failed for snapshotId: " + snapshotId;
+  String snapshotUUID=null;
+  try {
+    String volumeUUID=snapshotTO.getVolume().getPath();
+    VDI volume=VDI.getByUuid(conn,volumeUUID);
+    VDI snapshot=volume.snapshot(conn,new HashMap<String,String>());
+    if (snapshotName != null) {
+      snapshot.setNameLabel(conn,snapshotName);
+    }
+    snapshotUUID=snapshot.getUuid(conn);
+    String preSnapshotUUID=snapshotTO.getParentSnapshotPath();
+    if (preSnapshotUUID != null) {
+      SR sr=volume.getSR(conn);
+      String srUUID=sr.getUuid(conn);
+      String type=sr.getType(conn);
+      Boolean isISCSI=IsISCSI(type);
+      String snapshotParentUUID=getVhdParent(conn,srUUID,snapshotUUID,isISCSI);
+      String preSnapshotParentUUID=getVhdParent(conn,srUUID,preSnapshotUUID,isISCSI);
+      if (snapshotParentUUID != null && snapshotParentUUID.equals(preSnapshotParentUUID)) {
+        snapshot.destroy(conn);
+        snapshotUUID=preSnapshotUUID;
+      }
+    }
+    SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
+    newSnapshot.setPath(snapshotUUID);
+    return new CreateObjectAnswer(newSnapshot);
+  }
+ catch (  XenAPIException e) {
+    details+=", reason: " + e.toString();
+    s_logger.warn(details,e);
+  }
+catch (  Exception e) {
+    details+=", reason: " + e.toString();
+    s_logger.warn(details,e);
+  }
+  return new CreateObjectAnswer(details);
+}
