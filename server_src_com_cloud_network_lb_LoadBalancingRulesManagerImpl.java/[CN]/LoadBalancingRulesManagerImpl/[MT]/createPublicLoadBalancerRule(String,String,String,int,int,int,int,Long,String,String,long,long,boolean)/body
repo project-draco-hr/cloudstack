@@ -1,0 +1,65 @@
+{
+  Account lbOwner=_accountMgr.getAccount(lbOwnerId);
+  if (srcPortStart != srcPortEnd) {
+    throw new InvalidParameterValueException("Port ranges are not supported by the load balancer");
+  }
+  IPAddressVO ipVO=null;
+  if (ipAddrId != null) {
+    ipVO=_ipAddressDao.findById(ipAddrId);
+  }
+  Network network=_networkModel.getNetwork(networkId);
+  LoadBalancer result=null;
+  if (result == null) {
+    IpAddress systemIp=null;
+    NetworkOffering off=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+    if (off.getElasticLb() && ipVO == null && network.getVpcId() == null) {
+      systemIp=_networkMgr.assignSystemIp(networkId,lbOwner,true,false);
+      ipVO=_ipAddressDao.findById(systemIp.getId());
+    }
+    if (ipVO == null) {
+      throw new InvalidParameterValueException("Unable to create load balance rule; can't find/allocate source IP");
+    }
+ else     if (ipVO.isOneToOneNat()) {
+      throw new NetworkRuleConflictException("Can't do load balance on ip address: " + ipVO.getAddress());
+    }
+    boolean performedIpAssoc=false;
+    try {
+      if (ipVO.getAssociatedWithNetworkId() == null) {
+        boolean assignToVpcNtwk=network.getVpcId() != null && ipVO.getVpcId() != null && ipVO.getVpcId().longValue() == network.getVpcId();
+        if (assignToVpcNtwk) {
+          _networkModel.checkIpForService(ipVO,Service.Lb,networkId);
+          s_logger.debug("The ip is not associated with the VPC network id=" + networkId + " so assigning");
+          ipVO=_networkMgr.associateIPToGuestNetwork(ipAddrId,networkId,false);
+          performedIpAssoc=true;
+        }
+      }
+ else {
+        _networkModel.checkIpForService(ipVO,Service.Lb,null);
+      }
+      if (ipVO.getAssociatedWithNetworkId() == null) {
+        throw new InvalidParameterValueException("Ip address " + ipVO + " is not assigned to the network "+ network);
+      }
+      result=createPublicLoadBalancer(xId,name,description,srcPortStart,defPortStart,ipVO.getId(),protocol,algorithm,openFirewall,UserContext.current());
+    }
+ catch (    Exception ex) {
+      s_logger.warn("Failed to create load balancer due to ",ex);
+      if (ex instanceof NetworkRuleConflictException) {
+        throw (NetworkRuleConflictException)ex;
+      }
+    }
+ finally {
+      if (result == null && systemIp != null) {
+        s_logger.debug("Releasing system IP address " + systemIp + " as corresponding lb rule failed to create");
+        _networkMgr.handleSystemIpRelease(systemIp);
+      }
+      if (performedIpAssoc) {
+        ipVO=_ipAddressDao.findById(ipVO.getId());
+        _vpcMgr.unassignIPFromVpcNetwork(ipVO.getId(),networkId);
+      }
+    }
+  }
+  if (result == null) {
+    throw new CloudRuntimeException("Failed to create load balancer rule: " + name);
+  }
+  return result;
+}
