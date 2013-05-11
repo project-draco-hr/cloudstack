@@ -1,0 +1,32 @@
+{
+  if (rules == null || rules.isEmpty()) {
+    return true;
+  }
+  DomainRouterVO elbVm=findElbVmForLb(rules.get(0));
+  if (elbVm == null) {
+    s_logger.warn("Unable to apply lb rules, ELB vm  doesn't exist in the network " + network.getId());
+    throw new ResourceUnavailableException("Unable to apply lb rules",DataCenter.class,network.getDataCenterId());
+  }
+  if (elbVm.getState() == State.Running) {
+    long sourceIpId=_networkModel.getPublicIpAddress(rules.get(0).getSourceIp().addr(),network.getDataCenterId()).getId();
+    List<LoadBalancerVO> lbs=_lbDao.listByIpAddress(sourceIpId);
+    List<LoadBalancingRule> lbRules=new ArrayList<LoadBalancingRule>();
+    for (    LoadBalancerVO lb : lbs) {
+      List<LbDestination> dstList=_lbMgr.getExistingDestinations(lb.getId());
+      List<LbStickinessPolicy> policyList=_lbMgr.getStickinessPolicies(lb.getId());
+      List<LbHealthCheckPolicy> hcPolicyList=_lbMgr.getHealthCheckPolicies(lb.getId());
+      Ip sourceIp=_networkModel.getPublicIpAddress(lb.getSourceIpAddressId()).getAddress();
+      LoadBalancingRule loadBalancing=new LoadBalancingRule(lb,dstList,policyList,hcPolicyList,sourceIp);
+      lbRules.add(loadBalancing);
+    }
+    return applyLBRules(elbVm,lbRules,network.getId());
+  }
+ else   if (elbVm.getState() == State.Stopped || elbVm.getState() == State.Stopping) {
+    s_logger.debug("ELB VM is in " + elbVm.getState() + ", so not sending apply LoadBalancing rules commands to the backend");
+    return true;
+  }
+ else {
+    s_logger.warn("Unable to apply loadbalancing rules, ELB VM is not in the right state " + elbVm.getState());
+    throw new ResourceUnavailableException("Unable to apply loadbalancing rules, ELB VM is not in the right state",VirtualRouter.class,elbVm.getId());
+  }
+}

@@ -1,0 +1,76 @@
+{
+  Long id=cmd.getId();
+  String name=cmd.getLoadBalancerRuleName();
+  String ip=cmd.getSourceIp();
+  Long ipNtwkId=cmd.getSourceIpNetworkId();
+  String keyword=cmd.getKeyword();
+  Scheme scheme=cmd.getScheme();
+  Long networkId=cmd.getNetworkId();
+  Map<String,String> tags=cmd.getTags();
+  Account caller=UserContext.current().getCaller();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
+  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
+  Long domainId=domainIdRecursiveListProject.first();
+  Boolean isRecursive=domainIdRecursiveListProject.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  Filter searchFilter=new Filter(ApplicationLoadBalancerRuleVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  SearchBuilder<ApplicationLoadBalancerRuleVO> sb=_lbDao.createSearchBuilder();
+  _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.EQ);
+  sb.and("sourceIpAddress",sb.entity().getSourceIp(),SearchCriteria.Op.EQ);
+  sb.and("sourceIpAddressNetworkId",sb.entity().getSourceIpNetworkId(),SearchCriteria.Op.EQ);
+  sb.and("scheme",sb.entity().getScheme(),SearchCriteria.Op.EQ);
+  sb.and("networkId",sb.entity().getNetworkId(),SearchCriteria.Op.EQ);
+  sb.and("sourceIpAddress",sb.entity().getSourceIp(),SearchCriteria.Op.NNULL);
+  sb.and("sourceIpAddressNetworkId",sb.entity().getSourceIpNetworkId(),SearchCriteria.Op.NNULL);
+  if (tags != null && !tags.isEmpty()) {
+    SearchBuilder<ResourceTagVO> tagSearch=_resourceTagDao.createSearchBuilder();
+    for (int count=0; count < tags.size(); count++) {
+      tagSearch.or().op("key" + String.valueOf(count),tagSearch.entity().getKey(),SearchCriteria.Op.EQ);
+      tagSearch.and("value" + String.valueOf(count),tagSearch.entity().getValue(),SearchCriteria.Op.EQ);
+      tagSearch.cp();
+    }
+    tagSearch.and("resourceType",tagSearch.entity().getResourceType(),SearchCriteria.Op.EQ);
+    sb.groupBy(sb.entity().getId());
+    sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
+  }
+  SearchCriteria<ApplicationLoadBalancerRuleVO> sc=sb.create();
+  _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  if (keyword != null) {
+    SearchCriteria<ApplicationLoadBalancerRuleVO> ssc=_lbDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    ssc.addOr("description",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (name != null) {
+    sc.setParameters("name",name);
+  }
+  if (id != null) {
+    sc.setParameters("id",id);
+  }
+  if (ip != null) {
+    sc.setParameters("sourceIpAddress",ip);
+  }
+  if (ipNtwkId != null) {
+    sc.setParameters("sourceIpAddressNetworkId",ipNtwkId);
+  }
+  if (scheme != null) {
+    sc.setParameters("scheme",scheme);
+  }
+  if (networkId != null) {
+    sc.setParameters("networkId",networkId);
+  }
+  if (tags != null && !tags.isEmpty()) {
+    int count=0;
+    sc.setJoinParameters("tagSearch","resourceType",TaggedResourceType.LoadBalancer.toString());
+    for (    String key : tags.keySet()) {
+      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
+      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
+      count++;
+    }
+  }
+  Pair<List<ApplicationLoadBalancerRuleVO>,Integer> result=_lbDao.searchAndCount(sc,searchFilter);
+  return new Pair<List<? extends ApplicationLoadBalancerRule>,Integer>(result.first(),result.second());
+}

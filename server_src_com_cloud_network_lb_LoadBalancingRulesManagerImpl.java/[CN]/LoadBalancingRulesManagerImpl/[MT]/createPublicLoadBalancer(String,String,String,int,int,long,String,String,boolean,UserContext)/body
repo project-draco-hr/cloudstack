@@ -1,0 +1,67 @@
+{
+  if (!NetUtils.isValidPort(destPort)) {
+    throw new InvalidParameterValueException("privatePort is an invalid value: " + destPort);
+  }
+  if ((algorithm == null) || !NetUtils.isValidAlgorithm(algorithm)) {
+    throw new InvalidParameterValueException("Invalid algorithm: " + algorithm);
+  }
+  IPAddressVO ipAddr=_ipAddressDao.findById(sourceIpId);
+  if (ipAddr == null || !ipAddr.readyToUse()) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to create load balancer rule, invalid IP address id specified");
+    ex.addProxyObject(ipAddr,sourceIpId,"sourceIpId");
+    throw ex;
+  }
+ else   if (ipAddr.isOneToOneNat()) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to create load balancer rule; specified sourceip id has static nat enabled");
+    ex.addProxyObject(ipAddr,sourceIpId,"sourceIpId");
+    throw ex;
+  }
+  _accountMgr.checkAccess(caller.getCaller(),null,true,ipAddr);
+  Long networkId=ipAddr.getAssociatedWithNetworkId();
+  if (networkId == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to create load balancer rule ; specified sourceip id is not associated with any network");
+    ex.addProxyObject(ipAddr,sourceIpId,"sourceIpId");
+    throw ex;
+  }
+  isLbServiceSupportedInNetwork(networkId,Scheme.Public);
+  _firewallMgr.validateFirewallRule(caller.getCaller(),ipAddr,srcPort,srcPort,protocol,Purpose.LoadBalancing,FirewallRuleType.User,networkId,null);
+  LoadBalancerVO newRule=new LoadBalancerVO(xId,name,description,sourceIpId,srcPort,srcPort,algorithm,networkId,ipAddr.getAllocatedToAccountId(),ipAddr.getAllocatedInDomainId());
+  Ip sourceIp=getSourceIp(newRule);
+  LoadBalancingRule loadBalancing=new LoadBalancingRule(newRule,new ArrayList<LbDestination>(),new ArrayList<LbStickinessPolicy>(),new ArrayList<LbHealthCheckPolicy>(),sourceIp);
+  if (!validateLbRule(loadBalancing)) {
+    throw new InvalidParameterValueException("LB service provider cannot support this rule");
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  newRule=_lbDao.persist(newRule);
+  if (openFirewall) {
+    _firewallMgr.createRuleForAllCidrs(sourceIpId,caller.getCaller(),srcPort,srcPort,protocol,null,null,newRule.getId(),networkId);
+  }
+  boolean success=true;
+  try {
+    _firewallMgr.detectRulesConflict(newRule);
+    if (!_firewallDao.setStateToAdd(newRule)) {
+      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    }
+    s_logger.debug("Load balancer " + newRule.getId() + " for Ip address id="+ sourceIpId+ ", public port "+ srcPort+ ", private port "+ destPort+ " is added successfully.");
+    UserContext.current().setEventDetails("Load balancer Id: " + newRule.getId());
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_CREATE,ipAddr.getAllocatedToAccountId(),ipAddr.getDataCenterId(),newRule.getId(),null,LoadBalancingRule.class.getName(),newRule.getUuid());
+    txn.commit();
+    return newRule;
+  }
+ catch (  Exception e) {
+    success=false;
+    if (e instanceof NetworkRuleConflictException) {
+      throw (NetworkRuleConflictException)e;
+    }
+    throw new CloudRuntimeException("Unable to add rule for ip address id=" + newRule.getSourceIpAddressId(),e);
+  }
+ finally {
+    if (!success && newRule != null) {
+      txn.start();
+      _firewallMgr.revokeRelatedFirewallRule(newRule.getId(),false);
+      removeLBRule(newRule);
+      txn.commit();
+    }
+  }
+}
