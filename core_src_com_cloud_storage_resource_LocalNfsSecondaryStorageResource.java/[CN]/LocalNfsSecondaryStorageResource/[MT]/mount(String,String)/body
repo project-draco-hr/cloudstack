@@ -1,0 +1,55 @@
+{
+  File file=new File(root);
+  if (!file.exists()) {
+    if (_storage.mkdir(root)) {
+      s_logger.debug("create mount point: " + root);
+    }
+ else {
+      s_logger.debug("Unable to create mount point: " + root);
+      return null;
+    }
+  }
+  Script script=null;
+  String result=null;
+  script=new Script(!_inSystemVM,"mount",_timeout,s_logger);
+  List<String> res=new ArrayList<String>();
+  ZfsPathParser parser=new ZfsPathParser(root);
+  script.execute(parser);
+  res.addAll(parser.getPaths());
+  for (  String s : res) {
+    if (s.contains(root)) {
+      return root;
+    }
+  }
+  Script command=new Script(!_inSystemVM,"mount",_timeout,s_logger);
+  command.add("-t","nfs");
+  if ("Mac OS X".equalsIgnoreCase(System.getProperty("os.name"))) {
+    command.add("-o","resvport");
+  }
+  if (_inSystemVM) {
+    command.add("-o","soft,timeo=133,retrans=2147483647,tcp,acdirmax=0,acdirmin=0");
+  }
+  command.add(nfsPath);
+  command.add(root);
+  result=command.execute();
+  if (result != null) {
+    s_logger.warn("Unable to mount " + nfsPath + " due to "+ result);
+    file=new File(root);
+    if (file.exists())     file.delete();
+    return null;
+  }
+  script=new Script(true,"chmod",_timeout,s_logger);
+  script.add("777",root);
+  result=script.execute();
+  if (result != null) {
+    s_logger.warn("Unable to set permissions for " + root + " due to "+ result);
+    return null;
+  }
+  if (!checkForSnapshotsDir(root)) {
+    return null;
+  }
+  if (!checkForVolumesDir(root)) {
+    return null;
+  }
+  return root;
+}
