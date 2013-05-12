@@ -1,0 +1,77 @@
+{
+  String vlanId=cmd.getContextParam(NetworkElementCommand.GUEST_VLAN_TAG);
+  String tenant="vlan-" + vlanId;
+  FirewallRuleTO[] rules=cmd.getRules();
+  Map<String,List<FirewallRuleTO>> publicIpRulesMap=new HashMap<String,List<FirewallRuleTO>>();
+  for (  FirewallRuleTO rule : rules) {
+    String publicIp=rule.getSrcIp();
+    if (!publicIpRulesMap.containsKey(publicIp)) {
+      List<FirewallRuleTO> publicIpRulesList=new ArrayList<FirewallRuleTO>();
+      publicIpRulesMap.put(publicIp,publicIpRulesList);
+    }
+    publicIpRulesMap.get(publicIp).add(rule);
+  }
+  try {
+    if (!_connection.createTenantVDCAclPolicySet(tenant,true)) {
+      throw new Exception("Failed to create ACL ingress policy set in VNMC for guest network with vlan " + vlanId);
+    }
+    if (!_connection.createTenantVDCAclPolicySet(tenant,false)) {
+      throw new Exception("Failed to create ACL egress policy set in VNMC for guest network with vlan " + vlanId);
+    }
+    for (    String publicIp : publicIpRulesMap.keySet()) {
+      String policyIdentifier=publicIp.replace('.','-');
+      if (!_connection.createTenantVDCAclPolicy(tenant,policyIdentifier)) {
+        throw new Exception("Failed to create ACL policy in VNMC for guest network with vlan " + vlanId);
+      }
+      if (!_connection.createTenantVDCAclPolicyRef(tenant,policyIdentifier,true)) {
+        throw new Exception("Failed to associate ACL policy with ACL ingress policy set in VNMC for guest network with vlan " + vlanId);
+      }
+      if (!_connection.createTenantVDCAclPolicyRef(tenant,policyIdentifier,false)) {
+        throw new Exception("Failed to associate ACL policy with ACL egress policy set in VNMC for guest network with vlan " + vlanId);
+      }
+      for (      FirewallRuleTO rule : publicIpRulesMap.get(publicIp)) {
+        if (rule.revoked()) {
+          if (!_connection.deleteTenantVDCAclRule(tenant,Long.toString(rule.getId()),policyIdentifier)) {
+            throw new Exception("Failed to delete ACL rule in VNMC for guest network with vlan " + vlanId);
+          }
+        }
+ else {
+          String[] externalIpRange=getIpRangeFromCidr(rule.getSourceCidrList().get(0));
+          if (rule.getTrafficType() == TrafficType.Ingress) {
+            if (!rule.getProtocol().equalsIgnoreCase("icmp")) {
+              if (!_connection.createTenantVDCIngressAclRule(tenant,Long.toString(rule.getId()),policyIdentifier,rule.getProtocol().toUpperCase(),externalIpRange[0],externalIpRange[1],Integer.toString(rule.getSrcPortRange()[0]),Integer.toString(rule.getSrcPortRange()[1]),publicIp)) {
+                throw new Exception("Failed to create ACL ingress rule in VNMC for guest network with vlan " + vlanId);
+              }
+            }
+ else {
+              if (!_connection.createTenantVDCIngressAclRule(tenant,Long.toString(rule.getId()),policyIdentifier,rule.getProtocol().toUpperCase(),externalIpRange[0],externalIpRange[1],publicIp)) {
+                throw new Exception("Failed to create ACL ingress rule in VNMC for guest network with vlan " + vlanId);
+              }
+            }
+          }
+ else {
+            if (!rule.getProtocol().equalsIgnoreCase("icmp")) {
+              if (!_connection.createTenantVDCEgressAclRule(tenant,Long.toString(rule.getId()),policyIdentifier,rule.getProtocol().toUpperCase(),Integer.toString(rule.getSrcPortRange()[0]),Integer.toString(rule.getSrcPortRange()[1]),publicIp,externalIpRange[0],externalIpRange[1])) {
+                throw new Exception("Failed to create ACL egress rule in VNMC for guest network with vlan " + vlanId);
+              }
+            }
+ else {
+              if (!_connection.createTenantVDCEgressAclRule(tenant,Long.toString(rule.getId()),policyIdentifier,rule.getProtocol().toUpperCase(),publicIp,externalIpRange[0],externalIpRange[1])) {
+                throw new Exception("Failed to create ACL egress rule in VNMC for guest network with vlan " + vlanId);
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!_connection.associateAclPolicySet(tenant)) {
+      throw new Exception("Failed to associate ACL policy set with edge security profile in VNMC for guest network with vlan " + vlanId);
+    }
+  }
+ catch (  Throwable e) {
+    String msg="SetFirewallRulesCommand failed due to " + e.getMessage();
+    s_logger.error(msg,e);
+    return new Answer(cmd,false,msg);
+  }
+  return new Answer(cmd,true,"Success");
+}

@@ -1,0 +1,65 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  TemplateObjectTO template=(TemplateObjectTO)srcData;
+  DataStoreTO srcStore=srcData.getDataStore();
+  if (!(srcStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("unsupported protocol");
+  }
+  NfsTO nfsImageStore=(NfsTO)srcStore;
+  DataTO destData=cmd.getDestTO();
+  DataStoreTO destStore=destData.getDataStore();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)destStore;
+  String secondaryStorageUrl=nfsImageStore.getUrl();
+  assert(secondaryStorageUrl != null);
+  String templateUrl=secondaryStorageUrl + File.separator + srcData.getPath();
+  String templateName=null;
+  String mountPoint=null;
+  if (templateUrl.endsWith(".ova")) {
+    int index=templateUrl.lastIndexOf("/");
+    mountPoint=templateUrl.substring(0,index);
+    mountPoint=mountPoint.substring(secondaryStorageUrl.length() + 1);
+    if (!mountPoint.endsWith("/")) {
+      mountPoint=mountPoint + "/";
+    }
+    templateName=templateUrl.substring(index + 1).replace("." + ImageFormat.OVA.getFileExtension(),"");
+    if (templateName == null || templateName.isEmpty()) {
+      templateName=template.getName();
+    }
+  }
+ else {
+    mountPoint=templateUrl.substring(secondaryStorageUrl.length() + 1);
+    if (!mountPoint.endsWith("/")) {
+      mountPoint=mountPoint + "/";
+    }
+    templateName=template.getName();
+  }
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    String templateUuidName=UUID.nameUUIDFromBytes((templateName + "@" + primaryStore.getUuid()+ "-"+ hyperHost.getMor().getValue()).getBytes()).toString();
+    templateUuidName=templateUuidName.replace("-","");
+    DatacenterMO dcMo=new DatacenterMO(context,hyperHost.getHyperHostDatacenter());
+    VirtualMachineMO templateMo=VmwareHelper.pickOneVmOnRunningHost(dcMo.findVmByNameAndLabel(templateUuidName),true);
+    if (templateMo == null) {
+      if (s_logger.isInfoEnabled())       s_logger.info("Template " + templateName + " is not setup yet, setup template from secondary storage with uuid name: "+ templateUuidName);
+      ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+      assert(morDs != null);
+      DatastoreMO primaryStorageDatastoreMo=new DatastoreMO(context,morDs);
+      copyTemplateFromSecondaryToPrimary(hyperHost,primaryStorageDatastoreMo,secondaryStorageUrl,mountPoint,templateName,templateUuidName);
+    }
+ else {
+      s_logger.info("Template " + templateName + " has already been setup, skip the template setup process in primary storage");
+    }
+    TemplateObjectTO newTemplate=new TemplateObjectTO();
+    newTemplate.setPath(templateUuidName);
+    return new CopyCmdAnswer(newTemplate);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    String msg="Unable to execute PrimaryStorageDownloadCommand due to exception";
+    s_logger.error(msg,e);
+    return new CopyCmdAnswer(msg);
+  }
+}

@@ -5,6 +5,7 @@
   if (planToDeploy != null && planToDeploy.getDataCenterId() != 0) {
     plan=new DataCenterDeployment(planToDeploy.getDataCenterId(),planToDeploy.getPodId(),planToDeploy.getClusterId(),planToDeploy.getHostId(),planToDeploy.getPoolId(),planToDeploy.getPhysicalNetworkId());
   }
+  boolean planChangedByReadyVolume=false;
   List<VolumeVO> vols=_volsDao.findReadyRootVolumesByInstance(vm.getId());
   if (!vols.isEmpty()) {
     VolumeVO vol=vols.get(0);
@@ -24,13 +25,16 @@
       }
  else {
         plan=new DataCenterDeployment(rootVolDcId,rootVolPodId,rootVolClusterId,null,vol.getPoolId(),null,null);
+        planChangedByReadyVolume=true;
       }
     }
   }
-  DeploymentPlanner planner=ComponentContext.getComponent(plannerToUse);
-  DeployDestination dest=null;
-  if (planner.canHandle(vmProfile,plan,exclude)) {
-    dest=planner.plan(vmProfile,plan,exclude);
+  DeployDestination dest;
+  try {
+    dest=_dpMgr.planDeployment(vmProfile,plan,exclude);
+  }
+ catch (  AffinityConflictException e) {
+    throw new CloudRuntimeException("Unable to create deployment, affinity rules associted to the VM conflict");
   }
   if (dest != null) {
     VMReservationVO vmReservation=new VMReservationVO(vm.getId(),dest.getDataCenter().getId(),dest.getPod().getId(),dest.getCluster().getId(),dest.getHost().getId());
@@ -44,6 +48,9 @@
     vmEntityVO.setVmReservation(vmReservation);
     _vmEntityDao.persist(vmEntityVO);
     return vmReservation.getUuid();
+  }
+ else   if (planChangedByReadyVolume) {
+    return UUID.randomUUID().toString();
   }
  else {
     throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId());

@@ -1,0 +1,87 @@
+{
+  _name=name;
+  String value=null;
+  _storage=(StorageLayer)params.get(StorageLayer.InstanceConfigKey);
+  if (_storage == null) {
+    value=(String)params.get(StorageLayer.ClassConfigKey);
+    if (value == null) {
+      throw new ConfigurationException("Unable to find the storage layer");
+    }
+    Class<StorageLayer> clazz;
+    try {
+      clazz=(Class<StorageLayer>)Class.forName(value);
+      _storage=clazz.newInstance();
+    }
+ catch (    ClassNotFoundException e) {
+      throw new ConfigurationException("Unable to instantiate " + value);
+    }
+catch (    InstantiationException e) {
+      throw new ConfigurationException("Unable to instantiate " + value);
+    }
+catch (    IllegalAccessException e) {
+      throw new ConfigurationException("Unable to instantiate " + value);
+    }
+  }
+  String useSsl=(String)params.get("sslcopy");
+  if (useSsl != null) {
+    _sslCopy=Boolean.parseBoolean(useSsl);
+  }
+  String inSystemVM=(String)params.get("secondary.storage.vm");
+  if (inSystemVM != null && "true".equalsIgnoreCase(inSystemVM)) {
+    s_logger.info("DownloadManager: starting additional services since we are inside system vm");
+    startAdditionalServices();
+    blockOutgoingOnPrivate();
+  }
+  value=(String)params.get("install.timeout.pergig");
+  installTimeoutPerGig=NumbersUtil.parseInt(value,15 * 60) * 1000;
+  value=(String)params.get("install.numthreads");
+  final int numInstallThreads=NumbersUtil.parseInt(value,10);
+  String scriptsDir=(String)params.get("template.scripts.dir");
+  if (scriptsDir == null) {
+    scriptsDir="scripts/storage/secondary";
+  }
+  listTmpltScr=Script.findScript(scriptsDir,"listvmtmplt.sh");
+  if (listTmpltScr == null) {
+    throw new ConfigurationException("Unable to find the listvmtmplt.sh");
+  }
+  s_logger.info("listvmtmplt.sh found in " + listTmpltScr);
+  createTmpltScr=Script.findScript(scriptsDir,"createtmplt.sh");
+  if (createTmpltScr == null) {
+    throw new ConfigurationException("Unable to find createtmplt.sh");
+  }
+  s_logger.info("createtmplt.sh found in " + createTmpltScr);
+  listVolScr=Script.findScript(scriptsDir,"listvolume.sh");
+  if (listVolScr == null) {
+    throw new ConfigurationException("Unable to find the listvolume.sh");
+  }
+  s_logger.info("listvolume.sh found in " + listVolScr);
+  createVolScr=Script.findScript(scriptsDir,"createvolume.sh");
+  if (createVolScr == null) {
+    throw new ConfigurationException("Unable to find createvolume.sh");
+  }
+  s_logger.info("createvolume.sh found in " + createVolScr);
+  _processors=new HashMap<String,Processor>();
+  Processor processor=new VhdProcessor();
+  processor.configure("VHD Processor",params);
+  _processors.put("VHD Processor",processor);
+  processor=new IsoProcessor();
+  processor.configure("ISO Processor",params);
+  _processors.put("ISO Processor",processor);
+  processor=new QCOW2Processor();
+  processor.configure("QCOW2 Processor",params);
+  _processors.put("QCOW2 Processor",processor);
+  processor=new VmdkProcessor();
+  processor.configure("VMDK Processor",params);
+  _processors.put("VMDK Processor",processor);
+  processor=new RawImageProcessor();
+  processor.configure("Raw Image Processor",params);
+  _processors.put("Raw Image Processor",processor);
+  _templateDir=(String)params.get("public.templates.root.dir");
+  if (_templateDir == null) {
+    _templateDir=TemplateConstants.DEFAULT_TMPLT_ROOT_DIR;
+  }
+  _templateDir+=File.separator + TemplateConstants.DEFAULT_TMPLT_FIRST_LEVEL_DIR;
+  _volumeDir=TemplateConstants.DEFAULT_VOLUME_ROOT_DIR + File.separator;
+  threadPool=Executors.newFixedThreadPool(numInstallThreads);
+  return true;
+}

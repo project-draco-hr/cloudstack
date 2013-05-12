@@ -12,53 +12,73 @@
     HypervisorType hType=iter.next();
     try {
       s_logger.debug("Allocating the domR with the hypervisor type " + hType);
-      VMTemplateVO template=_templateDao.findRoutingTemplate(hType);
-      if (template == null) {
-        s_logger.debug(hType + " won't support system vm, skip it");
-        continue;
-      }
-      boolean offerHA=routerOffering.getOfferHA();
-      if (isRedundant) {
-        offerHA=false;
-      }
-      router=new DomainRouterVO(id,routerOffering.getId(),vrProvider.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),isRedundant,0,false,RedundantState.UNKNOWN,offerHA,false,vpcId);
-      router.setRole(Role.VIRTUAL_ROUTER);
-      router=_itMgr.allocate(router,template,routerOffering,networks,plan,null,owner);
-    }
- catch (    InsufficientCapacityException ex) {
-      if (allocateRetry < 2 && iter.hasNext()) {
-        s_logger.debug("Failed to allocate the VR with hypervisor type " + hType + ", retrying one more time");
-        continue;
-      }
+      String templateName=null;
+switch (hType) {
+case XenServer:
+        templateName=_configServer.getConfigValue(Config.RouterTemplateXen.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+      break;
+case KVM:
+    templateName=_configServer.getConfigValue(Config.RouterTemplateKVM.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+  break;
+case VMware:
+templateName=_configServer.getConfigValue(Config.RouterTemplateVmware.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+case Hyperv:
+templateName=_configServer.getConfigValue(Config.RouterTemplateHyperv.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+case LXC:
+templateName=_configServer.getConfigValue(Config.RouterTemplateLXC.key(),Config.ConfigurationParameterScope.zone.toString(),dest.getDataCenter().getId());
+break;
+default :
+break;
+}
+VMTemplateVO template=_templateDao.findRoutingTemplate(hType,templateName);
+if (template == null) {
+s_logger.debug(hType + " won't support system vm, skip it");
+continue;
+}
+boolean offerHA=routerOffering.getOfferHA();
+if (isRedundant) {
+offerHA=false;
+}
+router=new DomainRouterVO(id,routerOffering.getId(),vrProvider.getId(),VirtualMachineName.getRouterName(id,_instance),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),isRedundant,0,false,RedundantState.UNKNOWN,offerHA,false,vpcId);
+router.setRole(Role.VIRTUAL_ROUTER);
+router=_itMgr.allocate(router,template,routerOffering,networks,plan,null,owner);
+}
+ catch (InsufficientCapacityException ex) {
+if (allocateRetry < 2 && iter.hasNext()) {
+s_logger.debug("Failed to allocate the VR with hypervisor type " + hType + ", retrying one more time");
+continue;
+}
  else {
-        throw ex;
-      }
-    }
+throw ex;
+}
+}
  finally {
-      allocateRetry++;
-    }
-    if (startRouter) {
-      try {
-        router=startVirtualRouter(router,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount(),params);
-        break;
-      }
- catch (      InsufficientCapacityException ex) {
-        if (startRetry < 2 && iter.hasNext()) {
-          s_logger.debug("Failed to start the VR  " + router + " with hypervisor type "+ hType+ ", "+ "destroying it and recreating one more time");
-          destroyRouter(router.getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM),User.UID_SYSTEM);
-          continue;
-        }
+allocateRetry++;
+}
+if (startRouter) {
+try {
+router=startVirtualRouter(router,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount(),params);
+break;
+}
+ catch (InsufficientCapacityException ex) {
+if (startRetry < 2 && iter.hasNext()) {
+s_logger.debug("Failed to start the VR  " + router + " with hypervisor type "+ hType+ ", "+ "destroying it and recreating one more time");
+destroyRouter(router.getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM),User.UID_SYSTEM);
+continue;
+}
  else {
-          throw ex;
-        }
-      }
+throw ex;
+}
+}
  finally {
-        startRetry++;
-      }
-    }
+startRetry++;
+}
+}
  else {
-      return router;
-    }
-  }
-  return router;
+return router;
+}
+}
+return router;
 }

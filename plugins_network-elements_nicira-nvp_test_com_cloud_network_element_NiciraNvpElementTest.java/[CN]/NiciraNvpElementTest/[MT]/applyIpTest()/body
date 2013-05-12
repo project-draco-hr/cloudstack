@@ -1,0 +1,51 @@
+{
+  Network network=mock(Network.class);
+  when(network.getBroadcastDomainType()).thenReturn(BroadcastDomainType.Lswitch);
+  when(network.getId()).thenReturn(42L);
+  when(network.getPhysicalNetworkId()).thenReturn(42L);
+  NetworkOffering offering=mock(NetworkOffering.class);
+  when(offering.getId()).thenReturn(42L);
+  when(offering.getTrafficType()).thenReturn(TrafficType.Guest);
+  when(offering.getGuestType()).thenReturn(GuestType.Isolated);
+  List<PublicIpAddress> ipAddresses=new ArrayList<PublicIpAddress>();
+  PublicIpAddress pipReleased=mock(PublicIpAddress.class);
+  PublicIpAddress pipAllocated=mock(PublicIpAddress.class);
+  Ip ipReleased=new Ip("42.10.10.10");
+  Ip ipAllocated=new Ip("10.10.10.10");
+  when(pipAllocated.getState()).thenReturn(IpAddress.State.Allocated);
+  when(pipAllocated.getAddress()).thenReturn(ipAllocated);
+  when(pipAllocated.getNetmask()).thenReturn("255.255.255.0");
+  when(pipReleased.getState()).thenReturn(IpAddress.State.Releasing);
+  when(pipReleased.getAddress()).thenReturn(ipReleased);
+  when(pipReleased.getNetmask()).thenReturn("255.255.255.0");
+  ipAddresses.add(pipAllocated);
+  ipAddresses.add(pipReleased);
+  Set<Service> services=new HashSet<Service>();
+  services.add(Service.SourceNat);
+  services.add(Service.StaticNat);
+  services.add(Service.PortForwarding);
+  List<NiciraNvpDeviceVO> deviceList=new ArrayList<NiciraNvpDeviceVO>();
+  NiciraNvpDeviceVO nndVO=mock(NiciraNvpDeviceVO.class);
+  NiciraNvpRouterMappingVO nnrmVO=mock(NiciraNvpRouterMappingVO.class);
+  when(_niciraNvpRouterMappingDao.findByNetworkId(42L)).thenReturn(nnrmVO);
+  when(nnrmVO.getLogicalRouterUuid()).thenReturn("abcde");
+  when(nndVO.getHostId()).thenReturn(42L);
+  HostVO hvo=mock(HostVO.class);
+  when(hvo.getId()).thenReturn(42L);
+  when(hvo.getDetail("l3gatewayserviceuuid")).thenReturn("abcde");
+  when(_hostDao.findById(42L)).thenReturn(hvo);
+  deviceList.add(nndVO);
+  when(_niciraNvpDao.listByPhysicalNetwork(42L)).thenReturn(deviceList);
+  ConfigurePublicIpsOnLogicalRouterAnswer answer=mock(ConfigurePublicIpsOnLogicalRouterAnswer.class);
+  when(answer.getResult()).thenReturn(true);
+  when(_agentManager.easySend(eq(42L),any(ConfigurePublicIpsOnLogicalRouterCommand.class))).thenReturn(answer);
+  assertTrue(_element.applyIps(network,ipAddresses,services));
+  verify(_agentManager,atLeast(1)).easySend(eq(42L),argThat(new ArgumentMatcher<ConfigurePublicIpsOnLogicalRouterCommand>(){
+    @Override public boolean matches(    Object argument){
+      ConfigurePublicIpsOnLogicalRouterCommand command=(ConfigurePublicIpsOnLogicalRouterCommand)argument;
+      if (command.getPublicCidrs().size() == 1)       return true;
+      return false;
+    }
+  }
+));
+}

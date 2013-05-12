@@ -1,0 +1,91 @@
+{
+  SnapshotObjectTO srcSnapshot=(SnapshotObjectTO)cmd.getSrcTO();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)srcSnapshot.getDataStore();
+  SnapshotObjectTO destSnapshot=(SnapshotObjectTO)cmd.getDestTO();
+  DataStoreTO destStore=destSnapshot.getDataStore();
+  if (!(destStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("unsupported protocol");
+  }
+  NfsTO destNfsStore=(NfsTO)destStore;
+  String secondaryStorageUrl=destNfsStore.getUrl();
+  String snapshotUuid=srcSnapshot.getPath();
+  String prevSnapshotUuid=srcSnapshot.getParentSnapshotPath();
+  String prevBackupUuid=destSnapshot.getParentSnapshotPath();
+  VirtualMachineMO workerVm=null;
+  String workerVMName=null;
+  String volumePath=srcSnapshot.getVolume().getPath();
+  ManagedObjectReference morDs=null;
+  DatastoreMO dsMo=null;
+  String details=null;
+  boolean success=false;
+  String snapshotBackupUuid=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  VirtualMachineMO vmMo=null;
+  String vmName=srcSnapshot.getVmName();
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+    try {
+      vmMo=hyperHost.findVmOnHyperHost(vmName);
+      if (vmMo == null) {
+        if (s_logger.isDebugEnabled())         s_logger.debug("Unable to find owner VM for BackupSnapshotCommand on host " + hyperHost.getHyperHostName() + ", will try within datacenter");
+        vmMo=hyperHost.findVmOnPeerHyperHost(vmName);
+        if (vmMo == null) {
+          dsMo=new DatastoreMO(hyperHost.getContext(),morDs);
+          workerVMName=hostService.getWorkerName(context,cmd,0);
+          if (!hyperHost.createBlankVm(workerVMName,1,512,0,false,4,0,VirtualMachineGuestOsIdentifier.OTHER_GUEST.value(),morDs,false)) {
+            String msg="Unable to create worker VM to execute BackupSnapshotCommand";
+            s_logger.error(msg);
+            throw new Exception(msg);
+          }
+          vmMo=hyperHost.findVmOnHyperHost(workerVMName);
+          if (vmMo == null) {
+            throw new Exception("Failed to find the newly create or relocated VM. vmName: " + workerVMName);
+          }
+          workerVm=vmMo;
+          String datastoreVolumePath=String.format("[%s] %s.vmdk",dsMo.getName(),volumePath);
+          vmMo.attachDisk(new String[]{datastoreVolumePath},morDs);
+        }
+      }
+      if (!vmMo.createSnapshot(snapshotUuid,"Snapshot taken for " + srcSnapshot.getName(),false,false)) {
+        throw new Exception("Failed to take snapshot " + srcSnapshot.getName() + " on vm: "+ vmName);
+      }
+      snapshotBackupUuid=backupSnapshotToSecondaryStorage(vmMo,destSnapshot.getPath(),srcSnapshot.getVolume().getPath(),snapshotUuid,secondaryStorageUrl,prevSnapshotUuid,prevBackupUuid,hostService.getWorkerName(context,cmd,1));
+      success=(snapshotBackupUuid != null);
+      if (success) {
+        details="Successfully backedUp the snapshotUuid: " + snapshotUuid + " to secondary storage.";
+        return new CopyCmdAnswer(details);
+      }
+ else {
+        SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
+        newSnapshot.setPath(snapshotBackupUuid);
+        return new CopyCmdAnswer(newSnapshot);
+      }
+    }
+  finally {
+      if (vmMo != null) {
+        ManagedObjectReference snapshotMor=vmMo.getSnapshotMor(snapshotUuid);
+        if (snapshotMor != null) {
+          vmMo.removeSnapshot(snapshotUuid,false);
+        }
+      }
+      try {
+        if (workerVm != null) {
+          workerVm.detachAllDisks();
+          workerVm.destroy();
+        }
+      }
+ catch (      Throwable e) {
+        s_logger.warn("Failed to destroy worker VM: " + workerVMName);
+      }
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    s_logger.error("Unexpecpted exception ",e);
+    details="BackupSnapshotCommand exception: " + StringUtils.getExceptionStackInfo(e);
+    return new CopyCmdAnswer(details);
+  }
+}
