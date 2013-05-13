@@ -1,0 +1,133 @@
+{
+  s_logger.debug("Updating network ACLs");
+  PreparedStatement pstmt=null;
+  PreparedStatement pstmtDelete=null;
+  ResultSet rs=null;
+  ResultSet rsAcls=null;
+  ResultSet rsCidr=null;
+  long nextAclId=3;
+  try {
+    pstmt=conn.prepareStatement("SELECT id, vpc_id, uuid FROM `cloud`.`networks` where vpc_id is not null and removed is null");
+    rs=pstmt.executeQuery();
+    while (rs.next()) {
+      Long networkId=rs.getLong(1);
+      s_logger.debug("Updating network ACLs for network: " + networkId);
+      Long vpcId=rs.getLong(2);
+      String tierUuid=rs.getString(3);
+      pstmt=conn.prepareStatement("SELECT id, uuid, start_port, end_port, state, protocol, icmp_code, icmp_type, created, traffic_type FROM `cloud`.`firewall_rules` where network_id = ? and purpose = 'NetworkACL'");
+      pstmt.setLong(1,networkId);
+      rsAcls=pstmt.executeQuery();
+      boolean hasAcls=false;
+      Long aclId=null;
+      int number=1;
+      while (rsAcls.next()) {
+        if (!hasAcls) {
+          hasAcls=true;
+          aclId=nextAclId++;
+          s_logger.debug("Creating network ACL for tier: " + tierUuid);
+          pstmt=conn.prepareStatement("INSERT INTO `cloud`.`network_acl` (id, uuid, vpc_id, description, name) values (?, UUID(), ? , ?, ?)");
+          pstmt.setLong(1,aclId);
+          pstmt.setLong(2,vpcId);
+          pstmt.setString(3,"ACL for tier " + tierUuid);
+          pstmt.setString(4,"tier_" + tierUuid);
+          pstmt.executeUpdate();
+        }
+        Long fwRuleId=rsAcls.getLong(1);
+        String cidr=null;
+        pstmt=conn.prepareStatement("SELECT id, source_cidr FROM `cloud`.`firewall_rules_cidrs` where firewall_rule_id = ?");
+        pstmt.setLong(1,fwRuleId);
+        rsCidr=pstmt.executeQuery();
+        while (rsCidr.next()) {
+          Long cidrId=rsCidr.getLong(1);
+          String sourceCidr=rsCidr.getString(2);
+          if (cidr == null) {
+            cidr=sourceCidr;
+          }
+ else {
+            cidr+="," + sourceCidr;
+          }
+          pstmtDelete=conn.prepareStatement("DELETE FROM `cloud`.`firewall_rules_cidrs` where id = ?");
+          pstmtDelete.setLong(1,cidrId);
+          pstmtDelete.executeUpdate();
+        }
+        String aclItemUuid=rsAcls.getString(2);
+        s_logger.debug("Moving firewall rule: " + aclItemUuid);
+        pstmt=conn.prepareStatement("INSERT INTO `cloud`.`network_acl_item` (uuid, acl_id, start_port, end_port, state, protocol, icmp_code, icmp_type, created, traffic_type, cidr, number, action) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )");
+        pstmt.setString(1,aclItemUuid);
+        pstmt.setLong(2,aclId);
+        Integer startPort=rsAcls.getInt(3);
+        if (rsAcls.wasNull()) {
+          pstmt.setNull(3,Types.INTEGER);
+        }
+ else {
+          pstmt.setLong(3,startPort);
+        }
+        Integer endPort=rsAcls.getInt(4);
+        if (rsAcls.wasNull()) {
+          pstmt.setNull(4,Types.INTEGER);
+        }
+ else {
+          pstmt.setLong(4,endPort);
+        }
+        String state=rsAcls.getString(5);
+        pstmt.setString(5,state);
+        String protocol=rsAcls.getString(6);
+        pstmt.setString(6,protocol);
+        Integer icmpCode=rsAcls.getInt(7);
+        if (rsAcls.wasNull()) {
+          pstmt.setNull(7,Types.INTEGER);
+        }
+ else {
+          pstmt.setLong(7,icmpCode);
+        }
+        Integer icmpType=rsAcls.getInt(8);
+        if (rsAcls.wasNull()) {
+          pstmt.setNull(8,Types.INTEGER);
+        }
+ else {
+          pstmt.setLong(8,icmpType);
+        }
+        Date created=rsAcls.getDate(9);
+        pstmt.setDate(9,created);
+        String trafficType=rsAcls.getString(10);
+        pstmt.setString(10,trafficType);
+        pstmt.setString(11,cidr);
+        pstmt.setInt(12,number++);
+        pstmt.setString(13,"Allow");
+        pstmt.executeUpdate();
+        pstmtDelete=conn.prepareStatement("DELETE FROM `cloud`.`firewall_rules` where id = ?");
+        pstmtDelete.setLong(1,fwRuleId);
+        pstmtDelete.executeUpdate();
+      }
+      if (!hasAcls) {
+        aclId=NetworkACL.DEFAULT_DENY;
+      }
+      pstmt=conn.prepareStatement("UPDATE `cloud`.`networks` set network_acl_id=? where id=?");
+      pstmt.setLong(1,aclId);
+      pstmt.setLong(2,networkId);
+      pstmt.executeUpdate();
+    }
+    s_logger.debug("Done updating network ACLs ");
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Unable to move network acls from firewall rules table to network_acl_item table",e);
+  }
+ finally {
+    try {
+      if (rs != null) {
+        rs.close();
+      }
+      if (rsAcls != null) {
+        rsAcls.close();
+      }
+      if (rsCidr != null) {
+        rsCidr.close();
+      }
+      if (pstmt != null) {
+        pstmt.close();
+      }
+    }
+ catch (    SQLException e) {
+    }
+  }
+}
