@@ -1,0 +1,213 @@
+{
+  NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(networkOfferingId);
+  if (ntwkOff.getTrafficType() != TrafficType.Guest) {
+    s_logger.warn("Only guest networks can be created using this method");
+    return null;
+  }
+  boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,aclType);
+  if (updateResourceCount) {
+    _resourceLimitMgr.checkResourceLimit(owner,ResourceType.network);
+  }
+  if (ntwkOff.getState() != NetworkOffering.State.Enabled) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Can't use specified network offering id as its stat is not " + NetworkOffering.State.Enabled);
+    ex.addProxyObject(ntwkOff,ntwkOff.getId(),"networkOfferingId");
+    throw ex;
+  }
+  if (pNtwk.getState() != PhysicalNetwork.State.Enabled) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Specified physical network id is" + " in incorrect state:" + pNtwk.getState());
+    ex.addProxyObject("physical_network",pNtwk.getId(),"physicalNetworkId");
+    throw ex;
+  }
+  boolean ipv6=false;
+  if (ip6Gateway != null && ip6Cidr != null) {
+    ipv6=true;
+  }
+  DataCenterVO zone=_dcDao.findById(zoneId);
+  if (zone.getNetworkType() == NetworkType.Basic) {
+    if (ipv6) {
+      throw new InvalidParameterValueException("IPv6 is not supported in Basic zone");
+    }
+    if (aclType == null || aclType != ACLType.Domain) {
+      throw new InvalidParameterValueException("Only AclType=Domain can be specified for network creation in Basic zone");
+    }
+    List<NetworkVO> guestNetworks=_networksDao.listByZoneAndTrafficType(zone.getId(),TrafficType.Guest);
+    if (!guestNetworks.isEmpty()) {
+      throw new InvalidParameterValueException("Can't have more than one Guest network in zone with network type " + NetworkType.Basic);
+    }
+    if (!(ntwkOff.getGuestType() == GuestType.Shared && !_networkModel.areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))) {
+      throw new InvalidParameterValueException("For zone of type " + NetworkType.Basic + " only offerings of "+ "guestType "+ GuestType.Shared+ " with disabled "+ Service.SourceNat.getName()+ " service are allowed");
+    }
+    if (domainId == null || domainId != Domain.ROOT_DOMAIN) {
+      throw new InvalidParameterValueException("Guest network in Basic zone should be dedicated to ROOT domain");
+    }
+    if (subdomainAccess == null) {
+      subdomainAccess=true;
+    }
+ else     if (!subdomainAccess) {
+      throw new InvalidParameterValueException("Subdomain access should be set to true for the" + " guest network in the Basic zone");
+    }
+    if (vlanId == null) {
+      vlanId=Vlan.UNTAGGED;
+    }
+ else {
+      if (!vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
+        throw new InvalidParameterValueException("Only vlan " + Vlan.UNTAGGED + " can be created in "+ "the zone of type "+ NetworkType.Basic);
+      }
+    }
+  }
+ else   if (zone.getNetworkType() == NetworkType.Advanced) {
+    if (zone.isSecurityGroupEnabled()) {
+      if (ipv6) {
+        throw new InvalidParameterValueException("IPv6 is not supported with security group!");
+      }
+      if (ntwkOff.getGuestType() != GuestType.Shared) {
+        throw new InvalidParameterValueException("Only shared guest network can be created in security group enabled zone");
+      }
+      if (_networkModel.areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat)) {
+        throw new InvalidParameterValueException("Service SourceNat is not allowed in security group enabled zone");
+      }
+      if (!(_networkModel.areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SecurityGroup))) {
+        throw new InvalidParameterValueException("network must have SecurityGroup provider in security group enabled zone");
+      }
+    }
+    if (ntwkOff.getElasticIp() || ntwkOff.getElasticLb()) {
+      throw new InvalidParameterValueException("Elastic IP and Elastic LB services are supported in zone of type " + NetworkType.Basic);
+    }
+  }
+  boolean vlanSpecified=(vlanId != null);
+  if (vlanSpecified != ntwkOff.getSpecifyVlan()) {
+    if (vlanSpecified) {
+      throw new InvalidParameterValueException("Can't specify vlan; corresponding offering says specifyVlan=false");
+    }
+ else {
+      throw new InvalidParameterValueException("Vlan has to be specified; corresponding offering says specifyVlan=true");
+    }
+  }
+  if (vlanId != null) {
+    String uri="vlan://" + vlanId;
+    if (ntwkOff.getGuestType() == GuestType.Isolated) {
+      if (_networksDao.countByZoneAndUri(zoneId,uri) > 0) {
+        throw new InvalidParameterValueException("Network with vlan " + vlanId + " already exists in zone "+ zoneId);
+      }
+ else {
+        List<DataCenterVnetVO> dcVnets=_datacenterVnetDao.findVnet(zoneId,vlanId.toString());
+        if (!dcVnets.isEmpty()) {
+          DataCenterVnetVO dcVnet=dcVnets.get(0);
+          if (dcVnet.getAccountGuestVlanMapId() != null) {
+            Long accountGuestVlanMapId=dcVnet.getAccountGuestVlanMapId();
+            AccountGuestVlanMapVO map=_accountGuestVlanMapDao.findById(accountGuestVlanMapId);
+            if (map.getAccountId() != owner.getAccountId()) {
+              throw new InvalidParameterValueException("Vlan " + vlanId + " is dedicated to a different account");
+            }
+          }
+ else {
+            List<AccountGuestVlanMapVO> maps=_accountGuestVlanMapDao.listAccountGuestVlanMapsByAccount(owner.getAccountId());
+            if (maps != null && !maps.isEmpty()) {
+              int vnetsAllocatedToAccount=_datacenterVnetDao.countVnetsAllocatedToAccount(zoneId,owner.getAccountId());
+              int vnetsDedicatedToAccount=_datacenterVnetDao.countVnetsDedicatedToAccount(zoneId,owner.getAccountId());
+              if (vnetsAllocatedToAccount < vnetsDedicatedToAccount) {
+                throw new InvalidParameterValueException("Specified vlan " + vlanId + " doesn't belong"+ " to the vlan range dedicated to the owner "+ owner.getAccountName());
+              }
+            }
+          }
+        }
+      }
+    }
+ else {
+      if (_networksDao.countByZoneUriAndGuestType(zoneId,uri,GuestType.Isolated) > 0 || _networksDao.countByZoneUriAndGuestType(zoneId,uri,GuestType.Shared) > 0) {
+        throw new InvalidParameterValueException("There is a isolated/shared network with vlan id: " + vlanId + " already exists "+ "in zone "+ zoneId);
+      }
+    }
+  }
+  if (_networkModel.areServicesSupportedByNetworkOffering(networkOfferingId,Service.Dns)) {
+    Map<Network.Capability,String> dnsCapabilities=_networkModel.getNetworkOfferingServiceCapabilities(_configMgr.getNetworkOffering(networkOfferingId),Service.Dns);
+    String isUpdateDnsSupported=dnsCapabilities.get(Capability.AllowDnsSuffixModification);
+    if (isUpdateDnsSupported == null || !Boolean.valueOf(isUpdateDnsSupported)) {
+      if (networkDomain != null) {
+        throw new InvalidParameterValueException("Domain name change is not supported by network offering id=" + networkOfferingId + " in zone id="+ zoneId);
+      }
+    }
+ else {
+      if (networkDomain == null) {
+        if (aclType == ACLType.Domain) {
+          networkDomain=_networkModel.getDomainNetworkDomain(domainId,zoneId);
+        }
+ else         if (aclType == ACLType.Account) {
+          networkDomain=_networkModel.getAccountNetworkDomain(owner.getId(),zoneId);
+        }
+        if (networkDomain == null) {
+          networkDomain="cs" + Long.toHexString(owner.getId()) + _configServer.getConfigValue(Config.GuestDomainSuffix.key(),Config.ConfigurationParameterScope.zone.toString(),zoneId);
+        }
+      }
+ else {
+        if (!NetUtils.verifyDomainName(networkDomain)) {
+          throw new InvalidParameterValueException("Invalid network domain. Total length shouldn't exceed 190 chars. Each domain " + "label must be between 1 and 63 characters long, can contain ASCII letters 'a' through 'z', the digits '0' through '9', " + "and the hyphen ('-'); can't start or end with \"-\"");
+        }
+      }
+    }
+  }
+  boolean cidrRequired=zone.getNetworkType() == NetworkType.Advanced && ntwkOff.getTrafficType() == TrafficType.Guest && (ntwkOff.getGuestType() == GuestType.Shared || (ntwkOff.getGuestType() == GuestType.Isolated && !_networkModel.areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat)));
+  if (cidr == null && ip6Cidr == null && cidrRequired) {
+    throw new InvalidParameterValueException("StartIp/endIp/gateway/netmask are required when create network of" + " type " + Network.GuestType.Shared + " and network of type "+ GuestType.Isolated+ " with service "+ Service.SourceNat.getName()+ " disabled");
+  }
+  if (zone.getNetworkType() == NetworkType.Basic && cidr != null) {
+    throw new InvalidParameterValueException("StartIp/endIp/gateway/netmask can't be specified for zone of type " + NetworkType.Basic);
+  }
+  if (cidr != null && ntwkOff.getGuestType() == Network.GuestType.Isolated && ntwkOff.getTrafficType() == TrafficType.Guest) {
+    if (!NetUtils.validateGuestCidr(cidr)) {
+      throw new InvalidParameterValueException("Virtual Guest Cidr " + cidr + " is not RFC1918 compliant");
+    }
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  Long physicalNetworkId=null;
+  if (pNtwk != null) {
+    physicalNetworkId=pNtwk.getId();
+  }
+  DataCenterDeployment plan=new DataCenterDeployment(zoneId,null,null,null,null,physicalNetworkId);
+  NetworkVO userNetwork=new NetworkVO();
+  userNetwork.setNetworkDomain(networkDomain);
+  if (cidr != null && gateway != null) {
+    userNetwork.setCidr(cidr);
+    userNetwork.setGateway(gateway);
+  }
+  if (ip6Cidr != null && ip6Gateway != null) {
+    userNetwork.setIp6Cidr(ip6Cidr);
+    userNetwork.setIp6Gateway(ip6Gateway);
+  }
+  if (vlanId != null) {
+    userNetwork.setBroadcastUri(URI.create("vlan://" + vlanId));
+    userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+    if (!vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
+      userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+    }
+ else {
+      userNetwork.setBroadcastDomainType(BroadcastDomainType.Native);
+    }
+  }
+  List<NetworkVO> networks=setupNetwork(owner,ntwkOff,userNetwork,plan,name,displayText,true,domainId,aclType,subdomainAccess,vpcId,isDisplayNetworkEnabled);
+  Network network=null;
+  if (networks == null || networks.isEmpty()) {
+    throw new CloudRuntimeException("Fail to create a network");
+  }
+ else {
+    if (networks.size() > 0 && networks.get(0).getGuestType() == Network.GuestType.Isolated && networks.get(0).getTrafficType() == TrafficType.Guest) {
+      Network defaultGuestNetwork=networks.get(0);
+      for (      Network nw : networks) {
+        if (nw.getCidr() != null && nw.getCidr().equals(zone.getGuestNetworkCidr())) {
+          defaultGuestNetwork=nw;
+        }
+      }
+      network=defaultGuestNetwork;
+    }
+ else {
+      network=networks.get(0);
+    }
+  }
+  if (updateResourceCount) {
+    _resourceLimitMgr.incrementResourceCount(owner.getId(),ResourceType.network);
+  }
+  txn.commit();
+  UserContext.current().setEventDetails("Network Id: " + network.getId());
+  return network;
+}
