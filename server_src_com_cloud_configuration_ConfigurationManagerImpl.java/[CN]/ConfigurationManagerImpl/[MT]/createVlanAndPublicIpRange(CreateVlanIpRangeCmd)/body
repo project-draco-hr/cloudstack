@@ -3,8 +3,8 @@
   Long podId=cmd.getPodId();
   String startIP=cmd.getStartIp();
   String endIP=cmd.getEndIp();
-  String vlanGateway=cmd.getGateway();
-  String vlanNetmask=cmd.getNetmask();
+  String newVlanGateway=cmd.getGateway();
+  String newVlanNetmask=cmd.getNetmask();
   Long userId=UserContext.current().getCallerUserId();
   String vlanId=cmd.getVlan();
   Boolean forVirtualNetwork=cmd.isForVirtualNetwork();
@@ -146,6 +146,7 @@
       throw new InvalidParameterValueException("Can't create direct vlan for network id=" + networkId + " with type: "+ network.getGuestType());
     }
   }
+  boolean sameSubnet=false;
   if (!network.getSpecifyIpRanges()) {
     throw new InvalidParameterValueException("Network " + network + " doesn't support adding ip ranges");
   }
@@ -155,42 +156,26 @@
         throw new InvalidParameterValueException("Can execute createVLANIpRanges on shared guest network, but type of this guest network " + network.getId() + " is "+ network.getGuestType());
       }
       List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(network.getId());
+      VlanVO vlan=vlans.get(0);
       if (vlans != null && vlans.size() > 0) {
-        VlanVO vlan=vlans.get(0);
         if (vlanId == null) {
           vlanId=vlan.getVlanTag();
         }
  else         if (vlan.getVlanTag() != vlanId) {
           throw new InvalidParameterValueException("there is already one vlan " + vlan.getVlanTag() + " on network :"+ +network.getId()+ ", only one vlan is allowed on guest network");
         }
-        if (ipv4) {
-          vlanGateway=vlan.getVlanGateway();
-          vlanNetmask=vlan.getVlanNetmask();
-          if (!NetUtils.sameSubnet(startIP,vlanGateway,vlanNetmask)) {
-            throw new InvalidParameterValueException("Start ip is not in vlan range!");
-          }
-          if (!NetUtils.sameSubnet(endIP,vlanGateway,vlanNetmask)) {
-            throw new InvalidParameterValueException("End ip is not in vlan range!");
-          }
-        }
-        if (ipv6) {
-          if (ip6Gateway != null && !ip6Gateway.equals(network.getIp6Gateway())) {
-            throw new InvalidParameterValueException("The input gateway " + ip6Gateway + " is not same as network gateway "+ network.getIp6Gateway());
-          }
-          if (ip6Cidr != null && !ip6Cidr.equals(network.getIp6Cidr())) {
-            throw new InvalidParameterValueException("The input cidr " + ip6Cidr + " is not same as network ciddr "+ network.getIp6Cidr());
-          }
-          ip6Gateway=network.getIp6Gateway();
-          ip6Cidr=network.getIp6Cidr();
-          _networkModel.checkIp6Parameters(startIPv6,endIPv6,ip6Gateway,ip6Cidr);
-        }
       }
-    }
- else     if (network.getTrafficType() == TrafficType.Management) {
-      throw new InvalidParameterValueException("Cannot execute createVLANIpRanges on management network");
+      sameSubnet=validateIpRange(startIP,endIP,newVlanGateway,newVlanNetmask,vlans,ipv4,ipv6,ip6Gateway,ip6Cidr,startIPv6,endIPv6,network);
     }
   }
-  if (zoneId == null || (ipv4 && (vlanGateway == null || vlanNetmask == null)) || (ipv6 && (ip6Gateway == null || ip6Cidr == null))) {
+ else   if (network.getTrafficType() == TrafficType.Management) {
+    throw new InvalidParameterValueException("Cannot execute createVLANIpRanges on management network");
+  }
+ else   if (zone.getNetworkType() == NetworkType.Basic) {
+    List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(network.getId());
+    sameSubnet=validateIpRange(startIP,endIP,newVlanGateway,newVlanNetmask,vlans,ipv4,ipv6,ip6Gateway,ip6Cidr,startIPv6,endIPv6,network);
+  }
+  if (zoneId == null || (ipv4 && (newVlanGateway == null || newVlanNetmask == null)) || (ipv6 && (ip6Gateway == null || ip6Cidr == null))) {
     throw new InvalidParameterValueException("Gateway, netmask and zoneId have to be passed in for virtual and direct untagged networks");
   }
   if (forVirtualNetwork) {
@@ -204,7 +189,10 @@
   }
   Transaction txn=Transaction.currentTxn();
   txn.start();
-  Vlan vlan=createVlanAndPublicIpRange(zoneId,networkId,physicalNetworkId,forVirtualNetwork,podId,startIP,endIP,vlanGateway,vlanNetmask,vlanId,vlanOwner,startIPv6,endIPv6,ip6Gateway,ip6Cidr);
+  Vlan vlan=createVlanAndPublicIpRange(zoneId,networkId,physicalNetworkId,forVirtualNetwork,podId,startIP,endIP,newVlanGateway,newVlanNetmask,vlanId,vlanOwner,startIPv6,endIPv6,ip6Gateway,ip6Cidr);
+  if (sameSubnet == false) {
+    s_logger.info("adding a new subnet to the network " + network.getId());
+  }
   txn.commit();
   return vlan;
 }
