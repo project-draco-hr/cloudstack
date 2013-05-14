@@ -1,0 +1,37 @@
+@attr(tags=['advanced', 'basic'])
+def test_06_template_tag(self):
+    ' Test creation, listing and deletion tag on templates\n        '
+    self.debug(('Stopping the virtual machine: %s' % self.vm_1.name))
+    self.vm_1.stop(self.apiclient)
+    timeout = self.services['timeout']
+    time.sleep(self.services['sleep'])
+    while True:
+        list_volume = Volume.list(self.apiclient, virtualmachineid=self.vm_1.id, type='ROOT', listall=True)
+        if isinstance(list_volume, list):
+            break
+        elif (timeout == 0):
+            raise Exception('List volumes failed.')
+        time.sleep(5)
+        timeout = (timeout - 1)
+    self.volume = list_volume[0]
+    self.debug(('Creating template from ROOT disk of virtual machine: %s' % self.vm_1.name))
+    template = Template.create(self.apiclient, self.services['template'], self.volume.id)
+    self.cleanup.append(template)
+    self.debug(('Created the template(%s). Now restarting the userVm: %s' % (template.name, self.vm_1.name)))
+    self.vm_1.start(self.apiclient)
+    self.debug('Creating a tag for the template')
+    tag = Tag.create(self.apiclient, resourceIds=template.id, resourceType='Template', tags={'OS': 'CentOS', })
+    self.debug(('Tag created: %s' % tag.__dict__))
+    tags = Tag.list(self.apiclient, listall=True, resourceType='Template', account=self.account.account.name, domainid=self.account.account.domainid, key='OS', value='CentOS')
+    self.assertEqual(isinstance(tags, list), True, 'List tags should not return empty response')
+    self.assertEqual(tags[0].value, 'CentOS', 'The tag should have original value')
+    templates = Template.list(self.apiclient, templatefilter=self.services['template']['templatefilter'], listall=True, key='OS', value='CentOS')
+    self.debug('Deleting the created tag..')
+    try:
+        tag.delete(self.apiclient, resourceIds=template.id, resourceType='Template', tags={'OS': 'CentOS', })
+    except Exception as e:
+        self.fail(('Failed to delete the tag - %s' % e))
+    self.debug('Verifying if tag is actually deleted!')
+    tags = Tag.list(self.apiclient, listall=True, resourceType='Template', account=self.account.account.name, domainid=self.account.account.domainid, key='OS', value='CentOS')
+    self.assertEqual(tags, None, 'List tags should return empty response')
+    return

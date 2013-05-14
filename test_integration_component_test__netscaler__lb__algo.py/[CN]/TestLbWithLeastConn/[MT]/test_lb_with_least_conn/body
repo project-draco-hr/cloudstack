@@ -1,0 +1,38 @@
+@attr(tags=['advancedns'])
+def test_lb_with_least_conn(self):
+    'Test Create LB rule with least connection algorithm\n        '
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    self.network = Network.create(self.apiclient, self.services['network'], accountid=self.account.account.name, domainid=self.account.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id)
+    self.debug(('Created network with ID: %s' % self.network.id))
+    self.debug(('Deploying VM in account: %s' % self.account.account.name))
+    self.virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(self.network.id)])
+    self.debug(('Deployed VM in network: %s' % self.network.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=self.virtual_machine.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % self.virtual_machine.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    self.debug(('Associating public IP for network: %s' % self.network.id))
+    PublicIPAddress.create(self.apiclient, accountid=self.account.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=self.network.id)
+    ip_with_lb_rule = PublicIPAddress.create(self.apiclient, accountid=self.account.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=self.network.id)
+    self.debug(('Associated %s with network %s' % (ip_with_lb_rule.ipaddress.ipaddress, self.network.id)))
+    self.debug(('Creating LB rule for IP address: %s with round robin algo' % ip_with_lb_rule.ipaddress.ipaddress))
+    self.services['lbrule']['alg'] = 'leastconn'
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=ip_with_lb_rule.ipaddress.id, accountid=self.account.account.name, networkid=self.network.id)
+    lb_rules = LoadBalancerRule.list(self.apiclient, id=lb_rule.id, listall=True)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return a newly created LB rule')
+    self.debug(('Adding %s to the LB rule %s' % (self.virtual_machine.name, lb_rule.name)))
+    lb_rule.assign(self.apiclient, [self.virtual_machine])
+    self.debug('SSH into Netscaler to check whether algorithm is configured properly or not?')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = ('show lb vserver Cloud-VirtualServer-%s-%s' % (ip_with_lb_rule.ipaddress.ipaddress, lb_rule.publicport))
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('Configured Method: LEASTCONNECTION'), 1, "'LEASTCONNECTION' algorithm should be configured on NS")
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

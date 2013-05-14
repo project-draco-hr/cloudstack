@@ -1,0 +1,33 @@
+@attr(tags=['advancedns'])
+def test_05_lbcookie_source_algo(self):
+    'Test Create a "LBCookie" stick policy for a Lb rule with "Source" algorithm\n        '
+    self.debug(('Creating LB rule for IP address: %s with source algo' % self.public_ip.ipaddress.ipaddress))
+    self.services['lbrule']['alg'] = 'source'
+    self.services['lbrule']['publicport'] = 80
+    self.services['lbrule']['privateport'] = 80
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=self.public_ip.ipaddress.id, accountid=self.account.account.name, networkid=self.network.id)
+    self.cleanup.append(lb_rule)
+    self.debug(('Created the load balancing rule for public IP: %s' % self.public_ip.ipaddress.ipaddress))
+    self.debug(('Assigning VM instance: %s to LB rule: %s' % (self.virtual_machine.name, lb_rule.name)))
+    lb_rule.assign(self.apiclient, [self.virtual_machine])
+    self.debug(('Assigned VM instance: %s to lb rule: %s' % (self.virtual_machine.name, lb_rule.name)))
+    self.debug(("Configuring 'SourceBased' Sticky policy on lb rule: %s" % lb_rule.name))
+    try:
+        result = lb_rule.createSticky(self.apiclient, methodname='LbCookie', name='LbCookieSource', param={'holdtime': 20, })
+        self.debug(('Response: %s' % result))
+    except Exception as e:
+        self.fail(('Configure sticky policy failed with exception: %s' % e))
+    self.debug('SSH into Netscaler to check whether sticky policy configured properly or not?')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = ('show lb vserver Cloud-VirtualServer-%s-%s' % (self.public_ip.ipaddress.ipaddress, lb_rule.publicport))
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('Persistence: COOKIEINSERT'), 1, "'LbCookie' sticky policy should be configured on NS")
+        self.assertEqual(result.count('Configured Method: SOURCEIPHASH'), 1, "'SOURCE' algorithm should be configured on NS")
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

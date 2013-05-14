@@ -1,0 +1,47 @@
+@attr(tags=['advancedns', 'multihost'])
+def test_04_migrate_user_vm(self):
+    'Test migrate user VM with LB'
+    hosts = Host.list(self.apiclient, zoneid=self.vm_2.zoneid, type='Routing')
+    self.assertEqual(isinstance(hosts, list), True, 'Check the number of hosts in the zone')
+    self.assertGreaterEqual(len(hosts), 2, 'Atleast 2 hosts should be present in a zone for VM migration')
+    hosts[:] = [host for host in hosts if (host.id != self.vm_2.hostid)]
+    host = hosts[0]
+    self.debug(('Migrating VM-ID: %s to Host: %s' % (self.vm_2.id, host.id)))
+    cmd = migrateVirtualMachine.migrateVirtualMachineCmd()
+    cmd.hostid = host.id
+    cmd.virtualmachineid = self.vm_2.id
+    self.apiclient.migrateVirtualMachine(cmd)
+    list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_2.id)
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.hostid, host.id, 'Check destination hostID of migrated VM')
+    self.debug(('Migrated VM-ID: %s to Host: %s' % (self.vm_2.id, host.id)))
+    try:
+        self.debug('Verifying request served by only running instances')
+        hostnames = []
+        ssh_1 = self.vm_1.get_ssh_client(ipaddress=self.public_ip_1.ipaddress.ipaddress, reconnect=True)
+        self.debug('Command: hostname')
+        result = ssh_1.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        ssh_2 = self.vm_2.get_ssh_client(ipaddress=self.public_ip_1.ipaddress.ipaddress, reconnect=True)
+        self.debug('Command: hostname')
+        result = ssh_2.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        self.debug(('Hostnames: %s' % str(hostnames)))
+        self.assertNotEqual(hostnames[0], hostnames[1], 'Both request should be served by different instances')
+    except Exception as e:
+        self.fail(('Exception occured during SSH: %s - %s' % (self.public_ip_1.ipaddress.ipaddress, e)))
+    self.debug('SSH into Netscaler to rules still persist')
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = 'show server'
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertNotEqual(result.count(self.vm_2.ipaddress), 0, 'The server should be present in netscaler after migrate')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

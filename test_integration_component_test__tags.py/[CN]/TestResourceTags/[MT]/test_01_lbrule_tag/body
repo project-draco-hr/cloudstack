@@ -1,0 +1,40 @@
+@attr(tags=['advanced'])
+def test_01_lbrule_tag(self):
+    ' Test Create tag on LB rule and remove the LB rule\n        '
+    self.debug(('Fetching the network details for account: %s' % self.account.account.name))
+    networks = Network.list(self.apiclient, account=self.account.account.name, domainid=self.account.account.domainid, listall=True)
+    self.assertEqual(isinstance(networks, list), True, 'List networks should not return an empty response')
+    network = networks[0]
+    self.debug(('Network for the account: %s is %s' % (self.account.account.name, network.name)))
+    self.debug(('Associating public IP for network: %s' % network.id))
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=network.id)
+    self.cleanup.append(public_ip)
+    self.debug(('Trying to create LB rule on IP: %s' % public_ip.ipaddress.ipaddress))
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.account.name)
+    lb_rules = LoadBalancerRule.list(self.apiclient, id=lb_rule.id)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return valid list')
+    self.debug(('Assigning the virtual machines (%s, %s) to lb rule: %s' % (self.vm_1.name, self.vm_2.name, lb_rule.name)))
+    lb_rule.assign(self.apiclient, [self.vm_1, self.vm_2])
+    self.debug('Creating a tag for load balancer rule')
+    tag = Tag.create(self.apiclient, resourceIds=lb_rule.id, resourceType='LoadBalancer', tags={'LB': 40, })
+    self.debug(('Tag created: %s' % tag.__dict__))
+    tags = Tag.list(self.apiclient, listall=True, resourceType='LoadBalancer', key='LB', account=self.account.account.name, domainid=self.account.account.domainid, value=40)
+    self.debug(('Tag created: %s' % str(tags)))
+    self.assertEqual(isinstance(tags, list), True, 'List tags should not return empty response')
+    self.assertEqual(int(tags[0].value), 40, 'The tag value should match with the original value')
+    lb_rules = LoadBalancerRule.list(self.apiclient, listall=True, key='FW', value=40)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return valid list')
+    self.debug('Deleting the created tag..')
+    try:
+        tag.delete(self.apiclient, resourceIds=lb_rule.id, resourceType='LoadBalancer', tags={'LB': 40, })
+    except Exception as e:
+        self.fail(('Failed to delete the tag - %s' % e))
+    self.debug('Verifying if tag is actually deleted!')
+    tags = Tag.list(self.apiclient, listall=True, resourceType='LoadBalancer', key='LB', account=self.account.account.name, domainid=self.account.account.domainid)
+    self.assertEqual(tags, None, 'List tags should return empty response')
+    self.debug('Deleting the Load balancer rule')
+    try:
+        lb_rule.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('failed to delete load balancer rule! - %s' % e))
+    return

@@ -1,0 +1,43 @@
+@classmethod
+def setUpClass(cls):
+    cls.apiclient = super(TestVPCRouterOneNetwork, cls).getClsTestClient().getApiClient()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.apiclient, cls.services)
+    cls.zone = get_zone(cls.apiclient, cls.services)
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = cls.template.id
+    cls.service_offering = ServiceOffering.create(cls.apiclient, cls.services['service_offering'])
+    cls.vpc_off = VpcOffering.create(cls.apiclient, cls.services['vpc_offering'])
+    cls.vpc_off.update(cls.apiclient, state='Enabled')
+    cls.account = Account.create(cls.apiclient, cls.services['account'], admin=True, domainid=cls.domain.id)
+    cls._cleanup = [cls.account]
+    cls.services['vpc']['cidr'] = '10.1.1.1/16'
+    cls.vpc = VPC.create(cls.apiclient, cls.services['vpc'], vpcofferingid=cls.vpc_off.id, zoneid=cls.zone.id, account=cls.account.account.name, domainid=cls.account.account.domainid)
+    cls.nw_off = NetworkOffering.create(cls.apiclient, cls.services['network_offering'], conservemode=False)
+    cls.nw_off.update(cls.apiclient, state='Enabled')
+    cls._cleanup.append(cls.nw_off)
+    cls.network_1 = Network.create(cls.apiclient, cls.services['network'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, networkofferingid=cls.nw_off.id, zoneid=cls.zone.id, gateway='10.1.1.1', vpcid=cls.vpc.id)
+    vm_1 = VirtualMachine.create(cls.apiclient, cls.services['virtual_machine'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, serviceofferingid=cls.service_offering.id, networkids=[str(cls.network_1.id)])
+    vm_2 = VirtualMachine.create(cls.apiclient, cls.services['virtual_machine'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, serviceofferingid=cls.service_offering.id, networkids=[str(cls.network_1.id)])
+    vm_3 = VirtualMachine.create(cls.apiclient, cls.services['virtual_machine'], accountid=cls.account.account.name, domainid=cls.account.account.domainid, serviceofferingid=cls.service_offering.id, networkids=[str(cls.network_1.id)])
+    vms = VirtualMachine.list(cls.apiclient, account=cls.account.account.name, domainid=cls.account.account.domainid, listall=True)
+    public_ip_1 = PublicIPAddress.create(cls.apiclient, accountid=cls.account.account.name, zoneid=cls.zone.id, domainid=cls.account.account.domainid, networkid=cls.network_1.id, vpcid=cls.vpc.id)
+    nat_rule = NATRule.create(cls.apiclient, vm_1, cls.services['natrule'], ipaddressid=public_ip_1.ipaddress.id, openfirewall=False, networkid=cls.network_1.id, vpcid=cls.vpc.id)
+    nwacl_nat = NetworkACL.create(cls.apiclient, networkid=cls.network_1.id, services=cls.services['natrule'], traffictype='Ingress')
+    public_ip_2 = PublicIPAddress.create(cls.apiclient, accountid=cls.account.account.name, zoneid=cls.zone.id, domainid=cls.account.account.domainid, networkid=cls.network_1.id, vpcid=cls.vpc.id)
+    try:
+        StaticNATRule.enable(cls.apiclient, ipaddressid=public_ip_2.ipaddress.id, virtualmachineid=vm_2.id, networkid=cls.network_1.id)
+    except Exception as e:
+        cls.fail(('Failed to enable static NAT on IP: %s - %s' % (public_ip_2.ipaddress.ipaddress, e)))
+    public_ips = PublicIPAddress.list(cls.apiclient, networkid=cls.network_1.id, listall=True, isstaticnat=True, account=cls.account.account.name, domainid=cls.account.account.domainid)
+    public_ip_3 = PublicIPAddress.create(cls.apiclient, accountid=cls.account.account.name, zoneid=cls.zone.id, domainid=cls.account.account.domainid, networkid=cls.network_1.id, vpcid=cls.vpc.id)
+    lb_rule = LoadBalancerRule.create(cls.apiclient, cls.services['lbrule'], ipaddressid=public_ip_3.ipaddress.id, accountid=cls.account.account.name, networkid=cls.network_1.id, vpcid=cls.vpc.id, domainid=cls.account.account.domainid)
+    lb_rule.assign(cls.apiclient, [vm_3])
+    nwacl_lb = NetworkACL.create(cls.apiclient, networkid=cls.network_1.id, services=cls.services['lbrule'], traffictype='Ingress')
+    nwacl_internet_1 = NetworkACL.create(cls.apiclient, networkid=cls.network_1.id, services=cls.services['http_rule'], traffictype='Egress')
+    private_gateway = PrivateGateway.create(cls.apiclient, gateway='10.1.3.1', ipaddress='10.1.3.100', netmask='255.255.255.0', vlan=678, vpcid=cls.vpc.id)
+    cls.gateways = PrivateGateway.list(cls.apiclient, id=private_gateway.id, listall=True)
+    static_route = StaticRoute.create(cls.apiclient, cidr='11.1.1.1/24', gatewayid=private_gateway.id)
+    cls.static_routes = StaticRoute.list(cls.apiclient, id=static_route.id, listall=True)
+    cls._cleanup = [cls.service_offering, cls.vpc_off]

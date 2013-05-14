@@ -1,0 +1,62 @@
+@attr(tags=['advanced', 'advancedns', 'ssh'])
+def test_RvR_multicluster(self):
+    'Test RvR with muti clusters\n        '
+    self.debug('Checking if the current zone has 2 active pods in it..')
+    pods = Pod.list(self.apiclient, zoneid=self.zone.id, listall=True, allocationstate='Enabled')
+    self.assertEqual(isinstance(pods, list), True, 'List pods should not return an empty response')
+    enabled_pod = pods[0]
+    self.debug('Cheking if pod has atleast 2 clusters')
+    clusters = Cluster.list(self.apiclient, podid=enabled_pod.id, listall=True)
+    self.assertEqual(isinstance(clusters, list), True, 'List clusters should not return empty response')
+    if (len(clusters) < 2):
+        raise unittest.SkipTest("The env don't have 2 clusters req for test")
+    self.debug('disable all pods except one!')
+    if (len(pods) > 1):
+        for pod in pods:
+            cmd = updatePod.updatePodCmd()
+            cmd.id = pod.id
+            cmd.allocationstate = 'Disabled'
+            self.apiclient.updatePod(cmd)
+        self.debug('Warning: Disabled all pods in zone')
+        cmd = updatePod.updatePodCmd()
+        cmd.id = pods[0].id
+        cmd.allocationstate = 'Enabled'
+        self.apiclient.updatePod(cmd)
+        self.debug('Enabled first pod for testing..')
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.account.name, domainid=self.account.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id)
+    self.debug(('Created network with ID: %s' % network.id))
+    networks = Network.list(self.apiclient, id=network.id, listall=True)
+    self.assertEqual(isinstance(networks, list), True, 'List networks should return a valid response for created network')
+    nw_response = networks[0]
+    self.debug(('Network state: %s' % nw_response.state))
+    self.assertEqual(nw_response.state, 'Allocated', 'The network should be in allocated state after creation')
+    self.debug(('Listing routers for network: %s' % network.name))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(routers, None, 'Routers should not be spawned when network is in allocated state')
+    self.debug(('Deploying VM in account: %s' % self.account.account.name))
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+    self.debug(('Deployed VM in network: %s' % network.id))
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'List Vms should return a valid list')
+    vm = vms[0]
+    self.assertEqual(vm.state, 'Running', 'Vm should be in running state after deployment')
+    self.debug(('Listing routers for network: %s' % network.name))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    self.assertEqual(len(routers), 2, 'Length of the list router should be 2 (Backup & master)')
+    hosts = Host.list(self.apiclient, id=routers[0].hostid, listall=True)
+    self.assertEqual(isinstance(hosts, list), True, 'List host should return a valid data')
+    first_host = hosts[0]
+    hosts = Host.list(self.apiclient, id=routers[1].hostid, listall=True)
+    self.assertEqual(isinstance(hosts, list), True, 'List host should return a valid data')
+    second_host = hosts[0]
+    self.assertNotEqual(first_host.clusterid, second_host.clusterid, 'Both the routers should be in different clusters')
+    self.debug('Enabling remaining pods if any..')
+    pods = Pod.list(self.apiclient, zoneid=self.zone.id, listall=True, allocationstate='Disabled')
+    for pod in pods:
+        cmd = updatePod.updatePodCmd()
+        cmd.id = pod.id
+        cmd.allocationstate = 'Enabled'
+        self.apiclient.updatePod(cmd)
+    return
