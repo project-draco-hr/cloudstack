@@ -1,0 +1,55 @@
+@attr(tags=['advanced', 'advancedns', 'ssh'])
+def test_networkGC_RvR(self):
+    'Test network garbage collection with RVR\n        '
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id)
+    self.debug(('Created network with ID: %s' % network.id))
+    networks = Network.list(self.apiclient, id=network.id, listall=True)
+    self.assertEqual(isinstance(networks, list), True, 'List networks should return a valid response for created network')
+    nw_response = networks[0]
+    self.debug(('Network state: %s' % nw_response.state))
+    self.assertEqual(nw_response.state, 'Allocated', 'The network should be in allocated state after creation')
+    self.debug(('Listing routers for network: %s' % network.name))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(routers, None, 'Routers should not be spawned when network is in allocated state')
+    self.debug(('Deploying VM in account: %s' % self.account.name))
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+    self.debug(('Deployed VM in network: %s' % network.id))
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'List Vms should return a valid list')
+    vm = vms[0]
+    self.assertEqual(vm.state, 'Running', 'Vm should be in running state after deployment')
+    self.debug(('Listing routers for network: %s' % network.name))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    self.assertEqual(len(routers), 2, 'Length of the list router should be 2 (Backup & master)')
+    self.debug(('Stopping the user VM: %s' % virtual_machine.name))
+    try:
+        virtual_machine.stop(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to stop guest Vm: %s - %s' % (virtual_machine.name, e)))
+    interval = list_configurations(self.apiclient, name='network.gc.interval')
+    delay = int(interval[0].value)
+    interval = list_configurations(self.apiclient, name='network.gc.wait')
+    exp = int(interval[0].value)
+    self.debug('Sleeping for network gc wait + interval time')
+    time.sleep(((delay + exp) * 2))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    for router in routers:
+        self.assertEqual(router.state, 'Stopped', 'Router should be in stopped state')
+        self.debug('Starting the stopped router again')
+        cmd = startRouter.startRouterCmd()
+        cmd.id = router.id
+        self.apiclient.startRouter(cmd)
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    for router in routers:
+        self.assertEqual(router.state, 'Running', 'Router should be in running state')
+    self.debug('Sleeping for network gc wait + interval time')
+    time.sleep(((delay + exp) * 2))
+    routers = Router.list(self.apiclient, networkid=network.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    for router in routers:
+        self.assertEqual(router.state, 'Stopped', 'Router should be in stopped state')
+    return

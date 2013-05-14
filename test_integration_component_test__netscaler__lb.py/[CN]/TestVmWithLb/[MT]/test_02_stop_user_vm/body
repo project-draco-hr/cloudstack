@@ -1,0 +1,38 @@
+@attr(tags=['advancedns'])
+def test_02_stop_user_vm(self):
+    'Test stop user VM with LB'
+    self.debug(('Adding instances: %s, %s to LB rule: %s' % (self.vm_1.name, self.vm_2.name, self.lb_rule_1.name)))
+    self.lb_rule_1.assign(self.apiclient, [self.vm_1, self.vm_2])
+    self.debug(('Assigned instances: %s, %s to LB rule: %s' % (self.vm_1.name, self.vm_2.name, self.lb_rule_1.name)))
+    self.debug(('Stopping VM instance: %s' % self.vm_2.name))
+    self.vm_2.stop(self.apiclient)
+    self.debug(('Stopped VM: %s' % self.vm_2.name))
+    try:
+        self.debug('Verifying request served by only running instances')
+        hostnames = []
+        ssh = self.vm_1.get_ssh_client(ipaddress=self.public_ip_1.ipaddress.ipaddress)
+        self.debug('Command: hostname')
+        result = ssh.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        ssh = self.vm_1.get_ssh_client(ipaddress=self.public_ip_1.ipaddress.ipaddress, reconnect=True)
+        self.debug('Command: hostname')
+        result = ssh.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        self.debug(('Hostnames: %s' % str(hostnames)))
+        self.assertEqual(hostnames[0], hostnames[1], 'Hostnames must be same as another VM is stopped')
+    except Exception as e:
+        self.fail(('Exception occured during SSH: %s - %s' % (self.public_ip_1.ipaddress.ipaddress, e)))
+    self.debug('SSH into Netscaler to rules still persist')
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = 'show server'
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertNotEqual(result.count(self.vm_2.ipaddress), 0, 'The server should be present in netscaler after VM stop')
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

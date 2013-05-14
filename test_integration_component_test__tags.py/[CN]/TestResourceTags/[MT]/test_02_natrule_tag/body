@@ -1,0 +1,38 @@
+@attr(tags=['advanced'])
+def test_02_natrule_tag(self):
+    ' Test Create tag on nat rule and remove the nat rule\n        '
+    self.debug(('Fetching the network details for account: %s' % self.account.name))
+    networks = Network.list(self.apiclient, account=self.account.name, domainid=self.account.account.domainid, listall=True)
+    self.assertEqual(isinstance(networks, list), True, 'List networks should not return an empty response')
+    network = networks[0]
+    self.debug(('Network for the account: %s is %s' % (self.account.name, network.name)))
+    self.debug(('Associating public IP for network: %s' % network.id))
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=network.id)
+    self.cleanup.append(public_ip)
+    self.debug(('Trying to create LB rule on IP: %s' % public_ip.ipaddress.ipaddress))
+    self.debug(('Creating PF rule for vm: %s on Ip: %s' % (self.vm_1.name, public_ip.ipaddress.ipaddress)))
+    nat_rule = NATRule.create(self.apiclient, self.vm_1, self.services['natrule'], ipaddressid=public_ip.ipaddress.id)
+    nat_rules = NATRule.list(self.apiclient, id=nat_rule.id)
+    self.assertEqual(isinstance(nat_rules, list), True, 'List NAT rules should return valid list')
+    self.debug('Creating a tag for port forwarding rule')
+    tag = Tag.create(self.apiclient, resourceIds=nat_rule.id, resourceType='portForwardingRule', tags={'PF': 40, })
+    self.debug(('Tag created: %s' % tag.__dict__))
+    tags = Tag.list(self.apiclient, listall=True, resourceType='portForwardingRule', account=self.account.name, domainid=self.account.account.domainid, key='PF', value=40)
+    self.assertEqual(isinstance(tags, list), True, 'List tags should not return empty response')
+    self.assertEqual(int(tags[0].value), 40, 'The tag value should match with the original value')
+    nat_rules = NATRule.list(self.apiclient, listall=True, key='FW', value=40)
+    self.assertEqual(isinstance(nat_rules, list), True, 'List NAT rules should return valid list')
+    self.debug('Deleting the created tag..')
+    try:
+        tag.delete(self.apiclient, resourceIds=nat_rule.id, resourceType='portForwardingRule', tags={'PF': 40, })
+    except Exception as e:
+        self.fail(('Failed to delete the tag - %s' % e))
+    self.debug('Verifying if tag is actually deleted!')
+    tags = Tag.list(self.apiclient, listall=True, resourceType='portForwardingRule', account=self.account.name, domainid=self.account.account.domainid, key='PF', value=40)
+    self.assertEqual(tags, None, 'List tags should return empty response')
+    self.debug('Deleting the port forwarding rule')
+    try:
+        nat_rule.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('failed to delete port forwarding rule! - %s' % e))
+    return

@@ -1,0 +1,30 @@
+@classmethod
+def setUpClass(cls):
+    cls.api_client = super(TestVPCHostMaintenance, cls).getClsTestClient().getApiClient()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client, cls.services)
+    cls.zone = get_zone(cls.api_client, cls.services)
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = cls.template.id
+    cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+    cls.vpc_off = VpcOffering.create(cls.api_client, cls.services['vpc_offering'])
+    cls.vpc_off.update(cls.api_client, state='Enabled')
+    hosts = Host.list(cls.api_client, zoneid=cls.zone.id, listall=True, type='Routing')
+    if isinstance(hosts, list):
+        for host in hosts:
+            Host.enableMaintenance(cls.api_client, id=host.id)
+            timeout = cls.services['timeout']
+            while True:
+                time.sleep(cls.services['sleep'])
+                hosts_states = Host.list(cls.api_client, id=host.id, listall=True)
+                if (hosts_states[0].resourcestate == 'PrepareForMaintenance'):
+                    time.sleep(cls.services['sleep'])
+                elif (hosts_states[0].resourcestate == 'Maintenance'):
+                    time.sleep(cls.services['sleep'])
+                    break
+                elif (timeout == 0):
+                    raise unittest.SkipTest(('Failed to enable maintenance mode on %s' % host.name))
+                timeout = (timeout - 1)
+    cls._cleanup = [cls.service_offering, cls.vpc_off]
+    return

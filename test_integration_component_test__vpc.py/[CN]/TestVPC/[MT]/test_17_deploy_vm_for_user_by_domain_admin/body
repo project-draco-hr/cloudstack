@@ -1,0 +1,27 @@
+@attr(tags=['advanced', 'intervlan'])
+def test_17_deploy_vm_for_user_by_domain_admin(self):
+    ' Test deployment of vm in a network by domain admin for user.\n        '
+    domain = Domain.create(self.api_client, self.services['domain'])
+    domain_admin = Account.create(self.apiclient, self.services['domain_admin'])
+    self.debug(('Created account: %s' % domain_admin.account.name))
+    self.cleanup.append(domain_admin)
+    da_apiclient = self.testClient.createNewApiClient(UserName=domain_admin.account.name, DomainName=domain_admin.account.domain, acctType=2)
+    user = Account.create(self.apiclient, self.services['account'])
+    self.debug(('Created account: %s' % user.account.name))
+    self.cleanup.append(user)
+    self.services['vpc']['cidr'] = '10.1.1.1/16'
+    self.debug(('creating a VPC network in the account: %s' % user.account.name))
+    userapiclient = self.testClient.createNewApiClient(UserName=user.account.name, DomainName=user.account.domain, acctType=0)
+    vpc = VPC.create(da_apiclient, self.services['vpc'], account=user.account.name, domainid=user.account.domainid, vpcofferingid=self.vpc_off.id, zoneid=self.zone.id)
+    self.validate_vpc_network(vpc)
+    self.network_offering = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+    self.network_offering.update(self.apiclient, state='Enabled')
+    self._cleanup.append(self.network_offering)
+    gateway = vpc.cidr.split('/')[0]
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    network = Network.create(userapiclient, self.services['network'], networkofferingid=self.network_offering.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+    self.debug(('Created network with ID: %s' % network.id))
+    virtual_machine = VirtualMachine.create(userapiclient, self.services['virtual_machine'], serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+    self.debug(('Deployed VM in network: %s' % network.id))
+    self.assertNotEqual(virtual_machine, None, 'VM creation in the network failed')
+    return

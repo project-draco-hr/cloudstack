@@ -1,0 +1,21 @@
+def validate_vm_netdomain(self, vm, vpc, network, expected_netdomain):
+    self.debug(('Associating public IP for network: %s' % network.name))
+    src_nat_ip_addr = PublicIPAddress.create(self.apiclient, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.account.domainid, networkid=network.id, vpcid=vpc.id)
+    self.debug(('Associated %s with network %s' % (src_nat_ip_addr.ipaddress.ipaddress, network.id)))
+    self.debug(('Public IP %s' % src_nat_ip_addr.__dict__))
+    nat_rule = NATRule.create(self.apiclient, vm, self.services['natrule'], src_nat_ip_addr.ipaddress.id, openfirewall=False, networkid=network.id, vpcid=vpc.id)
+    list_nat_rule_response = NATRule.list(self.apiclient, id=nat_rule.id)
+    self.assertEqual(isinstance(list_nat_rule_response, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(len(list_nat_rule_response), 0, 'Check Port Forwarding Rule is created')
+    self.assertEqual(list_nat_rule_response[0].id, nat_rule.id, 'Check Correct Port forwarding Rule is returned')
+    self.debug('Adding NetworkACl rules to make NAT rule accessible')
+    nwacl_nat = NetworkACL.create(self.apiclient, networkid=network.id, services=self.services['natrule'], traffictype='Ingress')
+    self.debug(('SSHing into VM with IP address %s with NAT IP %s' % (vm.ipaddress, src_nat_ip_addr.ipaddress.ipaddress)))
+    try:
+        ssh_1 = vm.get_ssh_client(ipaddress=src_nat_ip_addr.ipaddress.ipaddress)
+        self.debug('SSH into VM is successfully')
+        res = ssh_1.execute('cat /etc/resolv.conf')
+    except Exception as e:
+        self.fail(('Failed to SSH into VM - %s, %s' % (vm.ssh_ip, e)))
+    vm_domain = res[1].split(' ')[1]
+    self.assertEqual(vm_domain, expected_netdomain, ('The network domain assigned to virtual machine is %s expected domain was %s' % (vm_domain, expected_netdomain)))

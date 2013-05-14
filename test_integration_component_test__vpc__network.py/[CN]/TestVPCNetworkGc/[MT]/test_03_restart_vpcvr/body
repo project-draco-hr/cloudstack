@@ -1,0 +1,42 @@
+@attr(tags=['advanced', 'intervlan'])
+def test_03_restart_vpcvr(self):
+    ' Test Stop all the Vms that are part of the a Network\n            (Wait for network GC).Restart VPCVR.\n        '
+    self.debug('Starting instances 1 and 2')
+    try:
+        self.vm_1.start(self.apiclient)
+        self.vm_2.start(self.apiclient)
+    except Exception as e:
+        self.fail('Failed to start Virtual machines')
+    self.debug('Waiting for network garbage collection thread to run')
+    wait_for_cleanup(self.apiclient, ['network.gc.interval', 'network.gc.wait'])
+    self.debug(('Finding the VPC virtual router for account: %s' % self.account.name))
+    routers = Router.list(self.apiclient, account=self.account.name, domainid=self.account.account.domainid, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'List routers shall return a valid list')
+    vpcvr = routers[0]
+    self.debug('restarting the VPC virtual router')
+    try:
+        Router.reboot(self.apiclient, id=vpcvr.id)
+    except Exception as e:
+        self.fail(('Failed to reboot the virtual router: %s, %s' % (vpcvr.id, e)))
+    try:
+        ssh_1 = self.vm_1.get_ssh_client(ipaddress=self.public_ip_1.ipaddress.ipaddress, reconnect=True, port=self.services['lbrule']['publicport'])
+        self.debug('SSH into VM is successfully')
+        self.debug('Verifying if we can ping to outside world from VM?')
+        res = ssh_1.execute('ping -c 1 www.google.com')
+    except Exception as e:
+        self.fail(('Failed to SSH into VM - %s, %s' % (self.public_ip_1.ipaddress.ipaddress, e)))
+    result = str(res)
+    self.debug(('Result: %s' % result))
+    self.assertEqual(result.count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    self.debug('Checking if we can SSH into VM_2?')
+    try:
+        ssh_2 = self.vm_1.get_ssh_client(ipaddress=self.public_ip_2.ipaddress.ipaddress, reconnect=True, port=self.services['natrule']['publicport'])
+        self.debug('SSH into VM is successfully')
+        self.debug('Verifying if we can ping to outside world from VM?')
+        res = ssh_2.execute('ping -c 1 www.google.com')
+    except Exception as e:
+        self.fail(('Failed to SSH into VM - %s, %s' % (self.public_ip_2.ipaddress.ipaddress, e)))
+    result = str(res)
+    self.debug(('Result: %s' % result))
+    self.assertEqual(result.count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    return

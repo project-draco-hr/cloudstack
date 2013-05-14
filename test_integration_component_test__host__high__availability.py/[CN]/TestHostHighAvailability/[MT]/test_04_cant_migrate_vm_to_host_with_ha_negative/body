@@ -1,0 +1,29 @@
+@attr(configuration='ha.tag')
+@attr(tags=['advanced', 'advancedns', 'sg', 'basic', 'eip', 'simulator', 'multihost'])
+def test_04_cant_migrate_vm_to_host_with_ha_negative(self):
+    ' Verify you can not migrate VMs to hosts with an ha.tag (negative) '
+    virtual_machine_with_ha = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering_with_ha.id)
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine_with_ha.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'The listVirtualMachines returned invalid object in response.')
+    self.assertNotEqual(len(vms), 0, 'The listVirtualMachines returned empty response.')
+    vm = vms[0]
+    self.debug(('Deployed VM on host: %s' % vm.hostid))
+    list_hosts_response = list_hosts(self.apiclient)
+    self.assertEqual(isinstance(list_hosts_response, list), True, 'listHosts returned invalid object in response.')
+    self.assertNotEqual(len(list_hosts_response), 0, 'listHosts returned empty response.')
+    notSuitableHost = None
+    for host in list_hosts_response:
+        if ((not host.suitableformigration) and (host.hostid != vm.hostid)):
+            notSuitableHost = host
+            break
+    self.assertTrue((notSuitableHost is not None), 'notsuitablehost should not be None')
+    self.debug(('Migrating VM-ID: %s to Host: %s' % (vm.id, notSuitableHost.id)))
+    cmd = migrateVirtualMachine.migrateVirtualMachineCmd()
+    cmd.hostid = notSuitableHost.id
+    cmd.virtualmachineid = vm.id
+    self.apiclient.migrateVirtualMachine(cmd)
+    list_vm_response = list_virtual_machines(self.apiclient, id=vm.id)
+    self.assertEqual(isinstance(list_vm_response, list), True, 'listVirtualMachine returned invalid object in response.')
+    self.assertNotEqual(len(list_vm_response), 0, 'listVirtualMachines returned empty response.')
+    self.assertEqual(list_vm_response[0].id, vm.id, 'Virtual machine id with the virtual machine from listVirtualMachine is not matching.')
+    self.assertEqual(list_vm_response[0].hostid, notSuitableHost.id, 'The detination host id of migrated VM is not matching.')

@@ -1,0 +1,38 @@
+@attr(tags=['advancedns'])
+def test_lb_leastconn_to_source(self):
+    'Test edit LB rule from round robin to source algo\n        '
+    self.debug(('Creating LB rule for IP address: %s with leastconn algo' % self.public_ip.ipaddress.ipaddress))
+    self.services['lbrule']['alg'] = 'leastconn'
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=self.public_ip.ipaddress.id, accountid=self.account.name, networkid=self.network.id)
+    self.cleanup.append(lb_rule)
+    lb_rules = LoadBalancerRule.list(self.apiclient, id=lb_rule.id, listall=True)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return a newly created LB rule')
+    self.debug(('Adding %s to the LB rule %s' % (self.virtual_machine.name, lb_rule.name)))
+    lb_rule.assign(self.apiclient, [self.virtual_machine])
+    self.debug('SSH into Netscaler to check whether algorithm is configured properly or not?')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = ('show lb vserver Cloud-VirtualServer-%s-%s' % (self.public_ip.ipaddress.ipaddress, lb_rule.publicport))
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('Configured Method: LEASTCONNECTION'), 1, "'LEASTCONNECTION' algorithm should be configured on NS")
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    self.debug(('Updating LB rule: %s with new algorithm: %s' % (lb_rule.name, 'source')))
+    lb_rule.update(self.apiclient, algorithm='source')
+    self.debug('SSH into Netscaler to check whether algorithm is configured properly or not?')
+    self.debug(('SSH into netscaler: %s' % self.services['netscaler']['ipaddress']))
+    try:
+        ssh_client = remoteSSHClient(self.services['netscaler']['ipaddress'], self.services['netscaler']['port'], self.services['netscaler']['username'], self.services['netscaler']['password'])
+        cmd = ('show lb vserver Cloud-VirtualServer-%s-%s' % (self.public_ip.ipaddress.ipaddress, lb_rule.publicport))
+        self.debug(('command: %s' % cmd))
+        res = ssh_client.execute(cmd)
+        result = str(res)
+        self.debug(('Output: %s' % result))
+        self.assertEqual(result.count('Configured Method: SOURCEIPHASH'), 1, "'SOURCEIPHASH' algorithm should be configured on NS")
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.services['netscaler']['ipaddress'], e)))
+    return

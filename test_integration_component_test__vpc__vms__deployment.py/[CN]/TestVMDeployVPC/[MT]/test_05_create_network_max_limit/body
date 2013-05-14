@@ -1,0 +1,59 @@
+@attr(tags=['advanced', 'intervlan'])
+def test_05_create_network_max_limit(self):
+    ' Test create networks in VPC upto maximum limit for hypervisor\n        '
+    self.debug('Creating a VPC offering..')
+    vpc_off = VpcOffering.create(self.apiclient, self.services['vpc_offering'])
+    self._cleanup.append(vpc_off)
+    self.validate_vpc_offering(vpc_off)
+    self.debug('Enabling the VPC offering created')
+    vpc_off.update(self.apiclient, state='Enabled')
+    self.debug(('creating a VPC network in the account: %s' % self.account.name))
+    self.services['vpc']['cidr'] = '10.1.1.1/16'
+    vpc = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.account.domainid)
+    self.validate_vpc_network(vpc)
+    nw_off = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+    nw_off.update(self.apiclient, state='Enabled')
+    self._cleanup.append(nw_off)
+    networks = []
+    vms = []
+    self.debug(('Creating network with network offering: %s' % nw_off.id))
+    network_1 = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=nw_off.id, zoneid=self.zone.id, gateway='10.1.0.1', vpcid=vpc.id)
+    self.debug(('Created network with ID: %s' % network_1.id))
+    nw_off_no_lb = NetworkOffering.create(self.apiclient, self.services['network_offering_no_lb'], conservemode=False)
+    nw_off_no_lb.update(self.apiclient, state='Enabled')
+    self._cleanup.append(nw_off)
+    configs = Configurations.list(self.apiclient, name='vpc.max.networks', listall=True)
+    if (not isinstance(configs, list)):
+        raise Exception('Failed to find max network allowed for VPC')
+    self.services['network']['limit'] = int(configs[0].value)
+    for i in range((self.services['network']['limit'] - 1)):
+        self.debug(('Creating network with network offering: %s' % nw_off_no_lb.id))
+        gateway = (('10.1.' + str((i + 1))) + '.1')
+        self.debug(('Gateway for new network: %s' % gateway))
+        network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=nw_off_no_lb.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+        self.debug(('Created network with ID: %s' % network.id))
+        networks.append(network)
+    self.debug(('Trying to create one more network than limit in VPC: %s' % vpc.name))
+    gateway = (('10.1.' + str(self.services['network']['limit'])) + '.1')
+    with self.assertRaises(Exception):
+        Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=nw_off_no_lb.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+    self.debug('Deleting one of the existing networks')
+    try:
+        network_1.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to delete network: %s - %s' % (network_1.name, e)))
+    self.debug(('Creating a new network in VPC: %s' % vpc.name))
+    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=nw_off.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+    self.debug(('Created a new network: %s' % network.name))
+    networks.append(network)
+    self.debug('Deploying VMs in each of the networks created in VPC')
+    for network in networks:
+        self.debug(('deploying VMs in network: %s' % network.name))
+        vm = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+        self.debug(('Deployed VM in network: %s' % network.id))
+        vms.append(vm)
+        self.debug('Check if VM deployed successfully or not?')
+        list_vms = VirtualMachine.list(self.apiclient, id=vm.id, listall=True)
+        self.assertEqual(isinstance(list_vms, list), True, 'List VMs should return a valid response')
+        self.assertEqual(list_vms[0].state, 'Running', 'Vm should be in running state')
+    return
