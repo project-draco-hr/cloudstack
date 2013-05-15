@@ -1,0 +1,31 @@
+@attr(tags=['advanced', 'intervlan'])
+def test_05_vpc_off_without_pf(self):
+    'Test VPC offering without port forwarding service'
+    self.debug(('Creating a VPC offering with Vpn,dhcpdns,UserData,' + 'SourceNat,Static NAT and lb services'))
+    self.services['vpc_offering']['supportedservices'] = 'Vpn,Dhcp,Dns,SourceNat,Lb,UserData,StaticNat,NetworkACL'
+    self.services['network_offering']['supportedservices'] = 'Vpn,Dhcp,Dns,SourceNat,Lb,UserData,StaticNat,NetworkACL'
+    self.services['network_offering']['serviceProviderList'] = {'Vpn': 'VpcVirtualRouter', 'Dhcp': 'VpcVirtualRouter', 'Dns': 'VpcVirtualRouter', 'SourceNat': 'VpcVirtualRouter', 'Lb': 'VpcVirtualRouter', 'UserData': 'VpcVirtualRouter', 'StaticNat': 'VpcVirtualRouter', 'NetworkACL': 'VpcVirtualRouter', }
+    self.network_offering = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+    self.network_offering.update(self.apiclient, state='Enabled')
+    self._cleanup.append(self.network_offering)
+    vpc_off = VpcOffering.create(self.apiclient, self.services['vpc_offering'])
+    self.cleanup.append(vpc_off)
+    self.validate_vpc_offering(vpc_off)
+    self.debug('Enabling the VPC offering created')
+    vpc_off.update(self.apiclient, state='Enabled')
+    self.debug(('creating a VPC network in the account: %s' % self.account.name))
+    vpc = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.account.domainid)
+    self.validate_vpc_network(vpc)
+    gateway = vpc.cidr.split('/')[0]
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+    self.debug(('Deploying virtual machines in network: %s' % vpc.name))
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+    self.debug(('Deployed VM in network: %s' % network.id))
+    self.debug(('Associating public IP for network: %s' % network.name))
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=network.id, vpcid=vpc.id)
+    self.debug(('Associated %s with network %s' % (public_ip.ipaddress.ipaddress, network.id)))
+    self.debug(('Trying to create NAT rule for the IP: %s' % public_ip.ipaddress.ipaddress))
+    with self.assertRaises(Exception):
+        NATRule.create(self.apiclient, virtual_machine, self.services['natrule'], ipaddressid=public_ip.ipaddress.id, openfirewall=True)
+    return

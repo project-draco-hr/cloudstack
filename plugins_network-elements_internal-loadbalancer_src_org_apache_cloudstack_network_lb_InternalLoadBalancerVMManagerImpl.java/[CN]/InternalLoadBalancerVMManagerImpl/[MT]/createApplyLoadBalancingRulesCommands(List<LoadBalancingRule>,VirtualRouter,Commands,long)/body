@@ -1,0 +1,31 @@
+{
+  LoadBalancerTO[] lbs=new LoadBalancerTO[rules.size()];
+  int i=0;
+  boolean inline=false;
+  for (  LoadBalancingRule rule : rules) {
+    boolean revoked=(rule.getState().equals(FirewallRule.State.Revoke));
+    String protocol=rule.getProtocol();
+    String algorithm=rule.getAlgorithm();
+    String uuid=rule.getUuid();
+    String srcIp=rule.getSourceIp().addr();
+    int srcPort=rule.getSourcePortStart();
+    List<LbDestination> destinations=rule.getDestinations();
+    List<LbStickinessPolicy> stickinessPolicies=rule.getStickinessPolicies();
+    LoadBalancerTO lb=new LoadBalancerTO(uuid,srcIp,srcPort,protocol,algorithm,revoked,false,inline,destinations,stickinessPolicies);
+    lbs[i++]=lb;
+  }
+  Network guestNetwork=_ntwkModel.getNetwork(guestNetworkId);
+  Nic guestNic=_nicDao.findByNtwkIdAndInstanceId(guestNetwork.getId(),internalLbVm.getId());
+  NicProfile guestNicProfile=new NicProfile(guestNic,guestNetwork,guestNic.getBroadcastUri(),guestNic.getIsolationUri(),_ntwkModel.getNetworkRate(guestNetwork.getId(),internalLbVm.getId()),_ntwkModel.isSecurityGroupSupportedInNetwork(guestNetwork),_ntwkModel.getNetworkTag(internalLbVm.getHypervisorType(),guestNetwork));
+  LoadBalancerConfigCommand cmd=new LoadBalancerConfigCommand(lbs,guestNic.getIp4Address(),guestNic.getIp4Address(),internalLbVm.getPrivateIpAddress(),_itMgr.toNicTO(guestNicProfile,internalLbVm.getHypervisorType()),internalLbVm.getVpcId());
+  cmd.lbStatsVisibility=_configDao.getValue(Config.NetworkLBHaproxyStatsVisbility.key());
+  cmd.lbStatsUri=_configDao.getValue(Config.NetworkLBHaproxyStatsUri.key());
+  cmd.lbStatsAuth=_configDao.getValue(Config.NetworkLBHaproxyStatsAuth.key());
+  cmd.lbStatsPort=_configDao.getValue(Config.NetworkLBHaproxyStatsPort.key());
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getInternalLbControlIp(internalLbVm.getId()));
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,guestNic.getIp4Address());
+  cmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,internalLbVm.getInstanceName());
+  DataCenterVO dcVo=_dcDao.findById(internalLbVm.getDataCenterId());
+  cmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+  cmds.addCommand(cmd);
+}

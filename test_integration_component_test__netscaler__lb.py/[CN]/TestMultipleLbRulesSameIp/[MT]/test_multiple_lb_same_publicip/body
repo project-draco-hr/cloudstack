@@ -1,0 +1,70 @@
+@attr(tags=['advancedns'])
+def test_multiple_lb_same_publicip(self):
+    'Test Create multiple LB rules using same public Ips on diff ports\n        '
+    self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+    self.network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id)
+    self.debug(('Created network with ID: %s' % self.network.id))
+    self.debug(('Deploying VM in account: %s' % self.account.name))
+    virtual_machine_1 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(self.network.id)])
+    self.debug(('Deployed VM in network: %s' % self.network.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=virtual_machine_1.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % virtual_machine_1.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    self.debug(('Deploying another VM in account: %s' % self.account.name))
+    virtual_machine_2 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(self.network.id)])
+    self.debug(('Deployed VM in network: %s' % self.network.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=virtual_machine_2.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % virtual_machine_2.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    self.debug(('Associating first public IP for network: %s' % self.network.id))
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.account.domainid, networkid=self.network.id)
+    self.debug(('Associated %s with network %s' % (public_ip.ipaddress.ipaddress, self.network.id)))
+    self.debug(('Creating LB rule for IP address: %s with round robin algo' % public_ip.ipaddress.ipaddress))
+    self.services['lbrule']['alg'] = 'roundrobin'
+    lb_rule_1 = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.name, networkid=self.network.id)
+    self.debug(('Trying to create PF rule on IP with LB rule: %s' % public_ip.ipaddress.ipaddress))
+    lb_rules = LoadBalancerRule.list(self.apiclient, id=lb_rule_1.id, listall=True)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return a newly created LB rule')
+    self.debug(('Adding %s, %s to the LB rule %s' % (virtual_machine_1.name, virtual_machine_2.name, lb_rule_1.name)))
+    lb_rule_1.assign(self.apiclient, [virtual_machine_1, virtual_machine_2])
+    self.debug(('Trying to create LB rule on IP: %s with on same ports' % public_ip.ipaddress.ipaddress))
+    with self.assertRaises(Exception):
+        LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.name, networkid=self.network.id)
+    self.debug('Create LB rule on same port failed!')
+    self.debug(('Creating LB rule on IP: %s & public port: %s' % (public_ip.ipaddress.ipaddress, str(2222))))
+    self.services['lbrule']['alg'] = 'roundrobin'
+    self.services['lbrule']['publicport'] = 2222
+    self.services['lbrule']['name'] = 'SSH2'
+    lb_rule_2 = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.name, networkid=self.network.id)
+    lb_rules = LoadBalancerRule.list(self.apiclient, id=lb_rule_2.id, listall=True)
+    self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules should return a newly created LB rule')
+    self.debug(('Adding %s, %s to the LB rule %s' % (virtual_machine_1.name, virtual_machine_2.name, lb_rule_2.name)))
+    lb_rule_2.assign(self.apiclient, [virtual_machine_1, virtual_machine_2])
+    try:
+        self.debug('Verifying VMs are accessible on all LB rules')
+        hostnames = []
+        ssh = virtual_machine_1.get_ssh_client(ipaddress=public_ip.ipaddress.ipaddress, reconnect=True)
+        self.debug('Command: hostname')
+        result = ssh.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        res = str(result[0])
+        self.assertIn(res, [virtual_machine_1.name, virtual_machine_2.name], 'The hostname should match with atleast one of instance name')
+    except Exception as e:
+        self.fail(('Exception occured during SSH: %s - %s' % (public_ip.ipaddress.ipaddress, e)))
+    try:
+        ssh = virtual_machine_1.get_ssh_client(ipaddress=public_ip.ipaddress.ipaddress, reconnect=True, port=self.services['lbrule']['publicport'])
+        self.debug('Command: hostname')
+        result = ssh.execute('hostname')
+        self.debug(('Output: %s' % result))
+        hostnames.append(result)
+        self.debug(('Hostnames: %s' % str(hostnames)))
+        res = str(result[0])
+        self.assertIn(res, [virtual_machine_1.name, virtual_machine_2.name], 'The hostname should match with atleast one of instance name')
+    except Exception as e:
+        self.fail(('Exception occured during SSH: %s - %s' % (public_ip.ipaddress.ipaddress, e)))
+    return

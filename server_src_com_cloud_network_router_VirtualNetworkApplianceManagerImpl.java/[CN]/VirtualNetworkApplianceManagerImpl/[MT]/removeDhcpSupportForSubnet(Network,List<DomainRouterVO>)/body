@@ -1,0 +1,35 @@
+{
+  if (routers == null || routers.isEmpty()) {
+    s_logger.warn("Failed to add/remove VPN users: no router found for account and zone");
+    throw new ResourceUnavailableException("Unable to assign ip addresses, domR doesn't exist for network " + network.getId(),DataCenter.class,network.getDataCenterId());
+  }
+  boolean agentResults=true;
+  for (  DomainRouterVO router : routers) {
+    if (router.getState() != State.Running) {
+      s_logger.warn("Failed to add/remove VPN users: router not in running state");
+      throw new ResourceUnavailableException("Unable to assign ip addresses, domR is not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
+    }
+    Commands cmds=new Commands(OnError.Continue);
+    List<NicIpAliasVO> revokedIpAliasVOs=_nicIpAliasDao.listByNetworkIdAndState(network.getId(),NicIpAlias.state.revoked);
+    s_logger.debug("Found" + revokedIpAliasVOs.size() + "ip Aliases to apply on the router as a part of dhco configuration");
+    List<IpAliasTO> revokedIpAliasTOs=new ArrayList<IpAliasTO>();
+    for (    NicIpAliasVO revokedAliasVO : revokedIpAliasVOs) {
+      revokedIpAliasTOs.add(new IpAliasTO(revokedAliasVO.getIp4Address(),revokedAliasVO.getNetmask(),revokedAliasVO.getAliasCount().toString()));
+    }
+    List<NicIpAliasVO> aliasVOs=_nicIpAliasDao.listByNetworkIdAndState(network.getId(),NicIpAlias.state.active);
+    s_logger.debug("Found" + aliasVOs.size() + "ip Aliases to apply on the router as a part of dhco configuration");
+    List<IpAliasTO> activeIpAliasTOs=new ArrayList<IpAliasTO>();
+    for (    NicIpAliasVO aliasVO : aliasVOs) {
+      activeIpAliasTOs.add(new IpAliasTO(aliasVO.getIp4Address(),aliasVO.getNetmask(),aliasVO.getAliasCount().toString()));
+    }
+    createDeleteIpAliasCommand(router,revokedIpAliasTOs,activeIpAliasTOs,network.getId(),cmds);
+    configDnsMasq(router,network,cmds);
+    boolean result=sendCommandsToRouter(router,cmds);
+    if (result) {
+      for (      NicIpAliasVO revokedAliasVO : revokedIpAliasVOs) {
+        _nicIpAliasDao.expunge(revokedAliasVO.getId());
+      }
+    }
+  }
+  return false;
+}

@@ -1,0 +1,32 @@
+{
+  Vpc vpc=getActiveVpc(vpcId);
+  if (vpc == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find Enabled VPC by id specified");
+    ex.addProxyObject("vpc",vpcId,"VPC");
+    throw ex;
+  }
+  if (physicalNetworkId == null) {
+    List<? extends PhysicalNetwork> pNtwks=_ntwkModel.getPhysicalNtwksSupportingTrafficType(vpc.getZoneId(),TrafficType.Guest);
+    if (pNtwks.isEmpty() || pNtwks.size() != 1) {
+      throw new InvalidParameterValueException("Physical network can't be determined; pass physical network id");
+    }
+    physicalNetworkId=pNtwks.get(0).getId();
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  s_logger.debug("Creating Private gateway for VPC " + vpc);
+  String networkName="vpc-" + vpc.getName() + "-privateNetwork";
+  Network privateNtwk=_ntwkSvc.createPrivateNetwork(networkName,networkName,physicalNetworkId,vlan,ipAddress,null,gateway,netmask,gatewayOwnerId,vpcId,isSourceNat);
+  long networkAclId=NetworkACL.DEFAULT_DENY;
+  if (aclId != null) {
+    if (_networkAclDao.findById(aclId) == null) {
+      throw new InvalidParameterValueException("Invalid network acl id passed ");
+    }
+    networkAclId=aclId;
+  }
+  VpcGatewayVO gatewayVO=new VpcGatewayVO(ipAddress,VpcGateway.Type.Private,vpcId,privateNtwk.getDataCenterId(),privateNtwk.getId(),vlan,gateway,netmask,vpc.getAccountId(),vpc.getDomainId(),isSourceNat,networkAclId);
+  _vpcGatewayDao.persist(gatewayVO);
+  s_logger.debug("Created vpc gateway entry " + gatewayVO);
+  txn.commit();
+  return getVpcPrivateGateway(gatewayVO.getId());
+}
