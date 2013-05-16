@@ -8,7 +8,7 @@
   String providerDnsName=_globalConfigDao.getValue(Config.CloudDnsName.key());
   String gslbFqdn=domainName + "." + providerDnsName;
   GlobalLoadBalancerConfigCommand gslbConfigCmd=new GlobalLoadBalancerConfigCommand(gslbFqdn,lbMethod,persistenceMethod,serviceType,gslbRuleId,revoke);
-  List<Long> gslbSiteIds=new ArrayList<Long>();
+  List<Pair<Long,Long>> gslbSiteIds=new ArrayList<Pair<Long,Long>>();
   Map<Long,SiteLoadBalancerConfig> zoneSiteLoadbalancerMap=new HashMap<Long,SiteLoadBalancerConfig>();
   List<GlobalLoadBalancerLbRuleMapVO> gslbLbMapVos=_gslbLbMapDao.listByGslbRuleId(gslbRuleId);
   assert(gslbLbMapVos != null && !gslbLbMapVos.isEmpty());
@@ -16,23 +16,24 @@
     LoadBalancerVO loadBalancer=_lbDao.findById(gslbLbMapVo.getLoadBalancerId());
     Network network=_networkDao.findById(loadBalancer.getNetworkId());
     long dataCenterId=network.getDataCenterId();
-    gslbSiteIds.add(dataCenterId);
+    long physicalNetworkId=network.getPhysicalNetworkId();
+    gslbSiteIds.add(new Pair<Long,Long>(dataCenterId,physicalNetworkId));
     IPAddressVO ip=_ipAddressDao.findById(loadBalancer.getSourceIpAddressId());
     SiteLoadBalancerConfig siteLb=new SiteLoadBalancerConfig(gslbLbMapVo.isRevoke(),serviceType,ip.getAddress().addr(),Integer.toString(loadBalancer.getDefaultPortStart()),dataCenterId);
-    siteLb.setGslbProviderPublicIp(_gslbProvider.getZoneGslbProviderPublicIp(dataCenterId));
-    siteLb.setGslbProviderPrivateIp(_gslbProvider.getZoneGslbProviderPrivateIp(dataCenterId));
+    siteLb.setGslbProviderPublicIp(_gslbProvider.getZoneGslbProviderPublicIp(dataCenterId,physicalNetworkId));
+    siteLb.setGslbProviderPrivateIp(_gslbProvider.getZoneGslbProviderPrivateIp(dataCenterId,physicalNetworkId));
     zoneSiteLoadbalancerMap.put(network.getDataCenterId(),siteLb);
   }
-  for (  long zoneId : gslbSiteIds) {
+  for (  Pair<Long,Long> zoneId : gslbSiteIds) {
     List<SiteLoadBalancerConfig> slbs=new ArrayList<SiteLoadBalancerConfig>();
-    for (    long innerLoopZoneId : gslbSiteIds) {
-      SiteLoadBalancerConfig siteLb=zoneSiteLoadbalancerMap.get(innerLoopZoneId);
-      siteLb.setLocal(zoneId == innerLoopZoneId);
+    for (    Pair<Long,Long> innerLoopZoneId : gslbSiteIds) {
+      SiteLoadBalancerConfig siteLb=zoneSiteLoadbalancerMap.get(innerLoopZoneId.first());
+      siteLb.setLocal(zoneId.first() == innerLoopZoneId.first());
       slbs.add(siteLb);
     }
     gslbConfigCmd.setSiteLoadBalancers(slbs);
     try {
-      _gslbProvider.applyGlobalLoadBalancerRule(zoneId,gslbConfigCmd);
+      _gslbProvider.applyGlobalLoadBalancerRule(zoneId.first(),zoneId.second(),gslbConfigCmd);
     }
  catch (    ResourceUnavailableException e) {
       s_logger.warn("Failed to configure GSLB rul in the zone " + zoneId + " due to "+ e.getMessage());
