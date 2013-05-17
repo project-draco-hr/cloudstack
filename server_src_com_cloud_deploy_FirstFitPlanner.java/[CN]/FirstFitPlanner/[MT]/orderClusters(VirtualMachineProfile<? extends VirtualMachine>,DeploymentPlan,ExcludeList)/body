@@ -1,0 +1,63 @@
+{
+  VirtualMachine vm=vmProfile.getVirtualMachine();
+  DataCenter dc=_dcDao.findById(vm.getDataCenterId());
+  if (avoid.shouldAvoid(dc)) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("DataCenter id = '" + dc.getId() + "' provided is in avoid set, DeploymentPlanner cannot allocate the VM, returning.");
+    }
+    return null;
+  }
+  List<Long> clusterList=new ArrayList<Long>();
+  if (plan.getClusterId() != null) {
+    Long clusterIdSpecified=plan.getClusterId();
+    s_logger.debug("Searching resources only under specified Cluster: " + clusterIdSpecified);
+    ClusterVO cluster=_clusterDao.findById(plan.getClusterId());
+    if (cluster != null) {
+      if (avoid.shouldAvoid(cluster)) {
+        s_logger.debug("The specified cluster is in avoid set, returning.");
+      }
+ else {
+        clusterList.add(clusterIdSpecified);
+        removeClustersCrossingThreshold(clusterList,avoid,vmProfile,plan);
+      }
+      return clusterList;
+    }
+ else {
+      s_logger.debug("The specified cluster cannot be found, returning.");
+      avoid.addCluster(plan.getClusterId());
+      return null;
+    }
+  }
+ else   if (plan.getPodId() != null) {
+    Long podIdSpecified=plan.getPodId();
+    s_logger.debug("Searching resources only under specified Pod: " + podIdSpecified);
+    HostPodVO pod=_podDao.findById(podIdSpecified);
+    if (pod != null) {
+      if (avoid.shouldAvoid(pod)) {
+        s_logger.debug("The specified pod is in avoid set, returning.");
+      }
+ else {
+        clusterList=scanClustersForDestinationInZoneOrPod(podIdSpecified,false,vmProfile,plan,avoid);
+        if (clusterList == null) {
+          avoid.addPod(plan.getPodId());
+        }
+      }
+      return clusterList;
+    }
+ else {
+      s_logger.debug("The specified Pod cannot be found, returning.");
+      avoid.addPod(plan.getPodId());
+      return null;
+    }
+  }
+ else {
+    s_logger.debug("Searching all possible resources under this Zone: " + plan.getDataCenterId());
+    boolean applyAllocationAtPods=Boolean.parseBoolean(_configDao.getValue(Config.ApplyAllocationAlgorithmToPods.key()));
+    if (applyAllocationAtPods) {
+      return scanPodsForDestination(vmProfile,plan,avoid);
+    }
+ else {
+      return scanClustersForDestinationInZoneOrPod(plan.getDataCenterId(),true,vmProfile,plan,avoid);
+    }
+  }
+}

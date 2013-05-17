@@ -1,0 +1,56 @@
+{
+  Account caller=UserContext.current().getCaller();
+  VMInstanceVO vmInstance=_vmInstanceDao.findById(vmId);
+  if (vmInstance.getHypervisorType() != HypervisorType.XenServer && vmInstance.getHypervisorType() != HypervisorType.VMware) {
+    throw new InvalidParameterValueException("This operation not permitted for this hypervisor of the vm");
+  }
+  if (vmInstance.getState().equals(State.Stopped)) {
+    upgradeStoppedVirtualMachine(vmId,newServiceOfferingId);
+    return true;
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  _itMgr.checkIfCanUpgrade(vmInstance,newServiceOfferingId);
+  ServiceOffering newServiceOffering=_configMgr.getServiceOffering(newServiceOfferingId);
+  ServiceOffering oldServiceOffering=_configMgr.getServiceOffering(vmInstance.getServiceOfferingId());
+  if (newServiceOffering.getSpeed() <= oldServiceOffering.getSpeed() && newServiceOffering.getRamSize() <= oldServiceOffering.getRamSize()) {
+    throw new InvalidParameterValueException("Only scaling up the vm is supported, new service offering should have both cpu and memory greater than the old values");
+  }
+  boolean success=false;
+  if (vmInstance.getState().equals(State.Running)) {
+    int retry=_scaleRetry;
+    while (retry-- != 0) {
+      try {
+        boolean existingHostHasCapacity=_capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),newServiceOffering.getSpeed() - oldServiceOffering.getSpeed(),(newServiceOffering.getRamSize() - oldServiceOffering.getRamSize()) * 1024L * 1024L,false,ApiDBUtils.getCpuOverprovisioningFactor(),1f,false);
+        if (!existingHostHasCapacity) {
+          vmInstance=_itMgr.findHostAndMigrate(vmInstance.getType(),vmInstance,newServiceOfferingId);
+        }
+        _itMgr.upgradeVmDb(vmId,newServiceOfferingId);
+        vmInstance=_vmInstanceDao.findById(vmId);
+        vmInstance=_itMgr.reConfigureVm(vmInstance,oldServiceOffering,existingHostHasCapacity);
+        success=true;
+        return success;
+      }
+ catch (      InsufficientCapacityException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      ResourceUnavailableException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      ConcurrentOperationException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      VirtualMachineMigrationException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      ManagementServerException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+ finally {
+        if (!success) {
+          _itMgr.upgradeVmDb(vmId,oldServiceOffering.getId());
+        }
+      }
+    }
+  }
+  return success;
+}
