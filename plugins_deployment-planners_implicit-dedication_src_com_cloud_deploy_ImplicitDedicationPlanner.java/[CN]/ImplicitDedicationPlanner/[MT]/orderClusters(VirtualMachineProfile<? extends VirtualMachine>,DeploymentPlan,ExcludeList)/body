@@ -1,0 +1,57 @@
+{
+  List<Long> clusterList=super.orderClusters(vmProfile,plan,avoid);
+  Set<Long> hostsToAvoid=avoid.getHostsToAvoid();
+  Account account=vmProfile.getOwner();
+  if (clusterList == null || clusterList.isEmpty()) {
+    return clusterList;
+  }
+  boolean preferred=isServiceOfferingUsingPlannerInPreferredMode(vmProfile.getServiceOfferingId());
+  List<Long> allHosts=new ArrayList<Long>();
+  for (  Long cluster : clusterList) {
+    List<HostVO> hostsInCluster=resourceMgr.listAllHostsInCluster(cluster);
+    for (    HostVO hostVO : hostsInCluster) {
+      allHosts.add(hostVO.getId());
+    }
+  }
+  Set<Long> emptyHosts=new HashSet<Long>();
+  Set<Long> hostRunningVmsOfAccount=new HashSet<Long>();
+  Set<Long> hostRunningStrictImplicitVmsOfOtherAccounts=new HashSet<Long>();
+  Set<Long> allOtherHosts=new HashSet<Long>();
+  for (  Long host : allHosts) {
+    List<UserVmVO> userVms=getVmsOnHost(host);
+    if (userVms == null || userVms.isEmpty()) {
+      emptyHosts.add(host);
+    }
+ else     if (checkHostSuitabilityForImplicitDedication(account.getAccountId(),userVms)) {
+      hostRunningVmsOfAccount.add(host);
+    }
+ else     if (checkIfAllVmsCreatedInStrictMode(account.getAccountId(),userVms)) {
+      hostRunningStrictImplicitVmsOfOtherAccounts.add(host);
+    }
+ else {
+      allOtherHosts.add(host);
+    }
+  }
+  avoid.addHostList(hostRunningStrictImplicitVmsOfOtherAccounts);
+  if (!hostRunningVmsOfAccount.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(hostRunningVmsOfAccount))) {
+    avoid.addHostList(emptyHosts);
+    avoid.addHostList(allOtherHosts);
+    clusterList=getUpdatedClusterList(clusterList,avoid.getHostsToAvoid());
+  }
+ else   if (!emptyHosts.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(emptyHosts))) {
+    avoid.addHostList(allOtherHosts);
+    clusterList=getUpdatedClusterList(clusterList,avoid.getHostsToAvoid());
+  }
+ else   if (!preferred) {
+    clusterList=null;
+  }
+ else {
+    if (!allOtherHosts.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(allOtherHosts))) {
+      clusterList=getUpdatedClusterList(clusterList,avoid.getHostsToAvoid());
+    }
+ else {
+      clusterList=null;
+    }
+  }
+  return clusterList;
+}
