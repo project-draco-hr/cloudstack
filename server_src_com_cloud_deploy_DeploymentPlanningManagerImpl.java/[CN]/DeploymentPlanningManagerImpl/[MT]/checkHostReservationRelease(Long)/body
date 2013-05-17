@@ -1,0 +1,62 @@
+{
+  if (hostId != null) {
+    PlannerHostReservationVO reservationEntry=_plannerHostReserveDao.findByHostId(hostId);
+    if (reservationEntry != null && reservationEntry.getResourceUsage() != null) {
+      List<VMInstanceVO> vms=_vmInstanceDao.listUpByHostId(hostId);
+      if (vms.size() > 0) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Cannot release reservation, Found " + vms.size() + " VMs Running on host "+ hostId);
+        }
+        return false;
+      }
+      List<VMInstanceVO> vmsByLastHostId=_vmInstanceDao.listByLastHostId(hostId);
+      if (vmsByLastHostId.size() > 0) {
+        for (        VMInstanceVO stoppedVM : vmsByLastHostId) {
+          long secondsSinceLastUpdate=(DateUtil.currentGMTTime().getTime() - stoppedVM.getUpdateTime().getTime()) / 1000;
+          if (secondsSinceLastUpdate < _vmCapacityReleaseInterval) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Cannot release reservation, Found VM: " + stoppedVM + " Stopped but reserved on host "+ hostId);
+            }
+            return false;
+          }
+        }
+      }
+      List<VMInstanceVO> vmsStoppingMigratingByHostId=_vmInstanceDao.findByHostInStates(hostId,State.Stopping,State.Migrating,State.Starting);
+      if (vmsStoppingMigratingByHostId.size() > 0) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Cannot release reservation, Found " + vms.size() + " VMs stopping/migrating on host "+ hostId);
+        }
+        return false;
+      }
+      List<VMInstanceVO> vmsStartingNoHost=_vmInstanceDao.listStartingWithNoHostId();
+      if (vmsStartingNoHost.size() > 0) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Cannot release reservation, Found " + vms.size() + " VMs starting as of now and no hostId yet stored");
+        }
+        return false;
+      }
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Host has no VMs associated, releasing the planner reservation for host " + hostId);
+      }
+      long id=reservationEntry.getId();
+      final Transaction txn=Transaction.currentTxn();
+      try {
+        txn.start();
+        final PlannerHostReservationVO lockedEntry=_plannerHostReserveDao.lockRow(id,true);
+        if (lockedEntry == null) {
+          s_logger.error("Unable to lock the host entry for reservation, host: " + hostId);
+          return false;
+        }
+        if (lockedEntry.getResourceUsage() != null) {
+          lockedEntry.setResourceUsage(null);
+          _plannerHostReserveDao.persist(lockedEntry);
+          return true;
+        }
+      }
+  finally {
+        txn.commit();
+      }
+    }
+  }
+  return false;
+}
