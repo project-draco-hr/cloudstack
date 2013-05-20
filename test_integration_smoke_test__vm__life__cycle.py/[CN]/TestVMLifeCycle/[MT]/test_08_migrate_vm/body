@@ -1,20 +1,22 @@
 @attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'sg', 'multihost'])
 def test_08_migrate_vm(self):
     'Test migrate VM\n        '
-    hosts = Host.list(self.apiclient, zoneid=self.medium_virtual_machine.zoneid, type='Routing')
+    hosts = Host.list(self.apiclient, zoneid=self.zone.id, type='Routing')
     self.assertEqual(isinstance(hosts, list), True, 'Check the number of hosts in the zone')
-    self.assertGreaterEqual(len(hosts), 2, 'Atleast 2 hosts should be present in a zone for VM migration')
-    hosts[:] = [host for host in hosts if (host.id != self.medium_virtual_machine.hostid)]
-    host = hosts[0]
-    self.debug(('Migrating VM-ID: %s to Host: %s' % (self.medium_virtual_machine.id, host.id)))
-    cmd = migrateVirtualMachine.migrateVirtualMachineCmd()
-    cmd.hostid = host.id
-    cmd.virtualmachineid = self.medium_virtual_machine.id
-    self.apiclient.migrateVirtualMachine(cmd)
-    list_vm_response = list_virtual_machines(self.apiclient, id=self.medium_virtual_machine.id)
-    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
-    self.assertNotEqual(list_vm_response, None, 'Check virtual machine is listVirtualMachines')
+    self.assertGreaterEqual(len(hosts), 2, 'Atleast 2 hosts should be present for VM migration')
+    clusters = [h.clusterid for h in hosts]
+    clusters = [cluster for (index, cluster) in enumerate(clusters) if (clusters.count(cluster) > 1)]
+    if (len(clusters) <= 1):
+        self.skipTest('Migration needs a cluster with at least two hosts')
+    suitable_hosts = [host for host in hosts if (host.clusterid == clusters[0])]
+    target_host = suitable_hosts[0]
+    migrate_host = suitable_hosts[1]
+    self.vm_to_migrate = VirtualMachine.create(self.api_client, self.services['small'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.small_offering.id, mode=self.services['mode'], hostid=target_host.id)
+    self.debug(('Migrating VM-ID: %s to Host: %s' % (self.vm_to_migrate.id, migrate_host.id)))
+    self.vm_to_migrate.migrate(self.api_client, migrate_host.id)
+    list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_to_migrate.id)
+    self.assertNotEqual(list_vm_response, None, 'Check virtual machine is listed')
     vm_response = list_vm_response[0]
-    self.assertEqual(vm_response.id, self.medium_virtual_machine.id, 'Check virtual machine ID of migrated VM')
-    self.assertEqual(vm_response.hostid, host.id, 'Check destination hostID of migrated VM')
+    self.assertEqual(vm_response.id, self.vm_to_migrate.id, 'Check virtual machine ID of migrated VM')
+    self.assertEqual(vm_response.hostid, migrate_host.id, 'Check destination hostID of migrated VM')
     return
