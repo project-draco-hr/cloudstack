@@ -1,0 +1,49 @@
+{
+  Integer regionId=cmd.getRegionId();
+  String startIP=cmd.getStartIp();
+  String endIP=cmd.getEndIp();
+  String gateway=cmd.getGateway();
+  String netmask=cmd.getNetmask();
+  Long userId=UserContext.current().getCallerUserId();
+  String vlanId=cmd.getVlan();
+  Region region=_regionDao.findById(regionId);
+  if (region == null) {
+    throw new InvalidParameterValueException("Invalid region ID: " + regionId);
+  }
+  if (!NetUtils.isValidIp(startIP) || !NetUtils.isValidIp(endIP) || !NetUtils.validIpRange(startIP,endIP)) {
+    throw new InvalidParameterValueException("Invalid portable ip  range: " + startIP + "-"+ endIP);
+  }
+  if (!NetUtils.sameSubnet(startIP,gateway,netmask)) {
+    throw new InvalidParameterValueException("Please ensure that your start IP is in the same subnet as " + "your portable IP range's gateway and as per the IP range's netmask.");
+  }
+  if (!NetUtils.sameSubnet(endIP,gateway,netmask)) {
+    throw new InvalidParameterValueException("Please ensure that your end IP is in the same subnet as " + "your portable IP range's gateway and as per the IP range's netmask.");
+  }
+  if (checkOverlapPortableIpRange(regionId,startIP,endIP)) {
+    throw new InvalidParameterValueException("Ip  range: " + startIP + "-"+ endIP+ " overlaps with a portable"+ " IP range already configured in the region "+ regionId);
+  }
+  if (vlanId == null) {
+    vlanId=Vlan.UNTAGGED;
+  }
+ else {
+    if (!NetUtils.isValidVlan(vlanId)) {
+      throw new InvalidParameterValueException("Invalid vlan id " + vlanId);
+    }
+  }
+  GlobalLock portableIpLock=GlobalLock.getInternLock("PortablePublicIpRange");
+  portableIpLock.lock(5);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  PortableIpRangeVO portableIpRange=new PortableIpRangeVO(regionId,vlanId,gateway,netmask,startIP,endIP);
+  portableIpRange=_portableIpRangeDao.persist(portableIpRange);
+  long startIpLong=NetUtils.ip2Long(startIP);
+  long endIpLong=NetUtils.ip2Long(endIP);
+  while (startIpLong <= endIpLong) {
+    PortableIpVO portableIP=new PortableIpVO(regionId,portableIpRange.getId(),vlanId,gateway,netmask,NetUtils.long2Ip(startIpLong));
+    _portableIpDao.persist(portableIP);
+    startIpLong++;
+  }
+  txn.commit();
+  portableIpLock.unlock();
+  return portableIpRange;
+}
