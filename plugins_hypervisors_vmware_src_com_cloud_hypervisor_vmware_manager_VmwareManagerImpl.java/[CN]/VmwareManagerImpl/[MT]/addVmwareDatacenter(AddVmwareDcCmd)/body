@@ -1,0 +1,95 @@
+{
+  VmwareDatacenterVO vmwareDc=null;
+  Long zoneId=cmd.getZoneId();
+  String url=cmd.getUrl();
+  String userName=cmd.getUsername();
+  String password=cmd.getPassword();
+  String vmwareDcName=cmd.getName();
+  validateZone(zoneId,"add VMware datacenter to zone");
+  VmwareDatacenterZoneMapVO vmwareDcZoneMap=_vmwareDcZoneMapDao.findByZoneId(zoneId);
+  if (vmwareDcZoneMap != null) {
+    throw new CloudRuntimeException("Zone " + zoneId + " is already associated with a VMware datacenter.");
+  }
+  URI uri=getUri(url);
+  if (userName == null) {
+    throw new InvalidParameterValueException("Invalid parameter username.");
+  }
+  if (password == null) {
+    throw new InvalidParameterValueException("Invalid parameter password.");
+  }
+  if (vmwareDcName == null) {
+    throw new InvalidParameterValueException("Invalid parameter name. Please provide valid VMware datacenter name.");
+  }
+  String vCenterHost=uri.getHost();
+  List<VmwareDatacenterVO> vmwareDcs=_vmwareDcDao.getVmwareDatacenterByNameAndVcenter(vmwareDcName,vCenterHost);
+  if (vmwareDcs != null && vmwareDcs.size() != 0) {
+    throw new ResourceInUseException("This DC is already part of other CloudStack zone(s). Cannot add this DC to more zones.");
+  }
+  VmwareContext context=null;
+  DatacenterMO dcMo=null;
+  String dcCustomFieldValue;
+  boolean addDcCustomFieldDef=false;
+  boolean dcInUse=false;
+  String guid;
+  ManagedObjectReference dcMor;
+  try {
+    context=VmwareContextFactory.create(vCenterHost,userName,password);
+    try {
+      dcMo=new DatacenterMO(context,vmwareDcName);
+    }
+ catch (    Throwable t) {
+      String msg="Unable to find DC " + vmwareDcName + " in vCenter "+ vCenterHost;
+      s_logger.error(msg);
+      throw new DiscoveryException(msg);
+    }
+    assert(dcMo != null);
+    guid=vmwareDcName + "@" + vCenterHost;
+    dcCustomFieldValue=dcMo.getCustomFieldValue(CustomFieldConstants.CLOUD_ZONE);
+    if (dcCustomFieldValue == null) {
+      addDcCustomFieldDef=true;
+    }
+    dcInUse=Boolean.parseBoolean(dcCustomFieldValue);
+    if (dcInUse) {
+      throw new ResourceInUseException("This DC is being managed by other CloudStack deployment. Cannot add this DC to zone.");
+    }
+    vmwareDc=new VmwareDatacenterVO(guid,vmwareDcName,vCenterHost,userName,password);
+    Transaction txn=Transaction.currentTxn();
+    try {
+      txn.start();
+      vmwareDc=_vmwareDcDao.persist(vmwareDc);
+      txn.commit();
+    }
+ catch (    Exception e) {
+      txn.rollback();
+      s_logger.error("Failed to persist VMware datacenter details to database. Exception: " + e.getMessage());
+      throw new CloudRuntimeException(e.getMessage());
+    }
+    vmwareDcZoneMap=new VmwareDatacenterZoneMapVO(zoneId,vmwareDc.getId());
+    txn=Transaction.currentTxn();
+    try {
+      txn.start();
+      vmwareDcZoneMap=_vmwareDcZoneMapDao.persist(vmwareDcZoneMap);
+      txn.commit();
+    }
+ catch (    Exception e) {
+      txn.rollback();
+      s_logger.error("Failed to associate VMware datacenter with zone " + zoneId + ". Exception: "+ e.getMessage());
+      _vmwareDcDao.remove(vmwareDcZoneMap.getId());
+      throw new CloudRuntimeException(e.getMessage());
+    }
+    if (addDcCustomFieldDef) {
+      dcMo.ensureCustomFieldDef(CustomFieldConstants.CLOUD_ZONE);
+    }
+    dcMo.setCustomFieldValue(CustomFieldConstants.CLOUD_ZONE,"true");
+  }
+ catch (  Exception e) {
+    String msg="VMware DC discovery failed due to : " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    throw new CloudRuntimeException(msg);
+  }
+ finally {
+    if (context != null)     context.close();
+    context=null;
+  }
+  return vmwareDc;
+}
