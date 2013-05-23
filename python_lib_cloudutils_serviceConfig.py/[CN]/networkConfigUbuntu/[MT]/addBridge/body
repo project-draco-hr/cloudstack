@@ -4,6 +4,12 @@ def addBridge(self, br, dev):
         match = re.match(('^ *iface %s.*' % dev.name), line)
         if (match is not None):
             dev.method = self.getNetworkMethod(match.group(0))
-            bridgeCfg = ('\niface %s inet manual\n                              auto %s\n                              iface %s inet %s\n                              bridge_ports %s\n' % (dev.name, br, br, dev.method, dev.name))
             cfo = configFileOps(self.netCfgFile, self)
+            if (self.syscfg.env.bridgeType == 'openvswitch'):
+                bridgeCfg = '\n'.join(('', 'iface {device} inet manual', '  ovs_type OVSPort', '  ovs_bridge {bridge}', '', 'auto {bridge}', 'allow-ovs {bridge}', 'iface {bridge} inet {device_method}', '  ovs_type OVSBridge', '  ovs_ports {device}', '')).format(bridge=br, device=dev.name, device_method=dev.method)
+                cfo.replace_line(('^ *auto %s.*' % dev.name), 'allow-{bridge} {device}'.format(bridge=br, device=dev.name))
+            elif (self.syscfg.env.bridgeType == 'native'):
+                bridgeCfg = ('\niface %s inet manual\n                                  auto %s\n                                  iface %s inet %s\n                                  bridge_ports %s\n' % (dev.name, br, br, dev.method, dev.name))
+            else:
+                raise CloudInternalException(('Unknown network.bridge.type %s' % self.syscfg.env.bridgeType))
             cfo.replace_line(('^ *iface %s.*' % dev.name), bridgeCfg)
