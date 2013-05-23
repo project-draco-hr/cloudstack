@@ -1,0 +1,36 @@
+@classmethod
+def setUpClass(cls):
+    cls._cleanup = []
+    cls.api_client = super(TestVMOwnership, cls).getClsTestClient().getApiClient()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client, cls.services)
+    cls.zone = get_zone(cls.api_client, cls.services)
+    cls.services['mode'] = cls.zone.networktype
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = cls.template.id
+
+    def create_domain_account_user(parentDomain=None):
+        domain = Domain.create(cls.api_client, cls.services['domain'], parentdomainid=(parentDomain.id if parentDomain else None))
+        cls._cleanup.append(domain)
+        account = Account.create(cls.api_client, cls.services['account'], domainid=domain.id)
+        cls._cleanup.append(account)
+        user = User.create(cls.api_client, cls.services['user'], account=account.name, domainid=account.domainid)
+        cls._cleanup.append(user)
+        project = Project.create(cls.api_client, cls.services['project'], account=account.name, domainid=account.domainid)
+        cls._cleanup.append(project)
+        volume = Volume.create(cls.api_client, cls.services['volume'], zoneid=cls.zone.id, account=account.name, domainid=account.domainid, diskofferingid=cls.disk_offering.id)
+        cls._cleanup.append(volume)
+        return {'domain': domain, 'account': account, 'user': user, 'project': project, 'volume': volume, }
+    try:
+        cls.disk_offering = DiskOffering.create(cls.api_client, cls.services['disk_offering'])
+        cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+        cls._cleanup = [cls.service_offering]
+        cls.domain_account_user1 = create_domain_account_user()
+        cls.domain_account_user2 = create_domain_account_user()
+        cls.sdomain_account_user1 = create_domain_account_user(cls.domain_account_user1['domain'])
+        cls.sdomain_account_user2 = create_domain_account_user(cls.domain_account_user2['domain'])
+        cls.ssdomain_account_user2 = create_domain_account_user(cls.sdomain_account_user2['domain'])
+    except Exception as e:
+        raise e
+    return
