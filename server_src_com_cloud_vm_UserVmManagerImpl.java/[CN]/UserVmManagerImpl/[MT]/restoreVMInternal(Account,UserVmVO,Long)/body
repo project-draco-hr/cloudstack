@@ -24,20 +24,33 @@
   }
   VolumeVO root=rootVols.get(0);
   Long templateId=root.getTemplateId();
+  boolean isISO=false;
   if (templateId == null) {
-    InvalidParameterValueException ex=new InvalidParameterValueException("Currently there is no support to reset a vm that is deployed using ISO " + vm.getUuid());
-    ex.addProxyObject(vm,vmId,"vmId");
-    throw ex;
+    isISO=true;
+    templateId=vm.getIsoId();
   }
   VMTemplateVO template=null;
   if (newTemplateId != null) {
     template=_templateDao.findById(newTemplateId);
     _accountMgr.checkAccess(caller,null,true,template);
+    if (isISO) {
+      if (!template.getFormat().equals(ImageFormat.ISO)) {
+        throw new InvalidParameterValueException("Invalid ISO id provided to restore the VM ");
+      }
+    }
+ else {
+      if (template.getFormat().equals(ImageFormat.ISO)) {
+        throw new InvalidParameterValueException("Invalid template id provided to restore the VM ");
+      }
+    }
   }
  else {
+    if (isISO && templateId == null) {
+      throw new CloudRuntimeException("Cannot restore the VM since there is no ISO attached to VM");
+    }
     template=_templateDao.findById(templateId);
     if (template == null) {
-      InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template for specified volumeid and vmId");
+      InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template/ISO for specified volumeid and vmId");
       ex.addProxyObject(vm,vmId,"vmId");
       ex.addProxyObject(root,root.getId(),"volumeId");
       throw ex;
@@ -56,10 +69,19 @@
   }
   VolumeVO newVol=null;
   if (newTemplateId != null) {
-    newVol=volumeMgr.allocateDuplicateVolume(root,newTemplateId);
-    vm.setGuestOSId(template.getGuestOSId());
-    vm.setTemplateId(newTemplateId);
-    _vmDao.update(vmId,vm);
+    if (isISO) {
+      newVol=volumeMgr.allocateDuplicateVolume(root,null);
+      vm.setIsoId(newTemplateId);
+      vm.setGuestOSId(template.getGuestOSId());
+      vm.setTemplateId(newTemplateId);
+      _vmDao.update(vmId,vm);
+    }
+ else {
+      newVol=volumeMgr.allocateDuplicateVolume(root,newTemplateId);
+      vm.setGuestOSId(template.getGuestOSId());
+      vm.setTemplateId(newTemplateId);
+      _vmDao.update(vmId,vm);
+    }
   }
  else {
     newVol=volumeMgr.allocateDuplicateVolume(root,null);
