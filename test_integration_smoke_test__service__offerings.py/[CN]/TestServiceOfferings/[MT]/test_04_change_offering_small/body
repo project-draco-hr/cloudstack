@@ -1,0 +1,40 @@
+@attr(tags=['advanced', 'advancedns', 'smoke'])
+def test_04_change_offering_small(self):
+    'Test to change service to a small capacity\n        '
+    self.debug(('Stopping VM - ID: %s' % self.medium_virtual_machine.id))
+    self.medium_virtual_machine.stop(self.apiclient)
+    list_vm_response = list_virtual_machines(self.apiclient, id=self.medium_virtual_machine.id)
+    if isinstance(list_vm_response, list):
+        vm = list_vm_response[0]
+        if (vm.state == 'Stopped'):
+            self.debug(('VM state: %s' % vm.state))
+        else:
+            raise Exception(('Failed to stop VM (ID: %s) in change service offering' % vm.id))
+    self.debug(('Change Service offering VM - ID: %s' % self.medium_virtual_machine.id))
+    cmd = changeServiceForVirtualMachine.changeServiceForVirtualMachineCmd()
+    cmd.id = self.medium_virtual_machine.id
+    cmd.serviceofferingid = self.small_offering.id
+    self.apiclient.changeServiceForVirtualMachine(cmd)
+    self.debug(('Starting VM - ID: %s' % self.medium_virtual_machine.id))
+    self.medium_virtual_machine.start(self.apiclient)
+    list_vm_response = list_virtual_machines(self.apiclient, id=self.medium_virtual_machine.id)
+    if isinstance(list_vm_response, list):
+        vm = list_vm_response[0]
+        if (vm.state == 'Running'):
+            self.debug(('VM state: %s' % vm.state))
+        else:
+            raise Exception(('Failed to start VM (ID: %s) after changing service offering' % vm.id))
+    try:
+        ssh = self.medium_virtual_machine.get_ssh_client()
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.medium_virtual_machine.ipaddress, e)))
+    cpuinfo = ssh.execute('cat /proc/cpuinfo')
+    cpu_cnt = len([i for i in cpuinfo if ('processor' in i)])
+    cpu_speed = [i for i in cpuinfo if ('cpu MHz' in i)][0].split()[3]
+    meminfo = ssh.execute('cat /proc/meminfo')
+    total_mem = [i for i in meminfo if ('MemTotal' in i)][0].split()[1]
+    self.debug(('CPU count: %s, CPU Speed: %s, Mem Info: %s' % (cpu_cnt, cpu_speed, total_mem)))
+    self.assertAlmostEqual(int(cpu_cnt), self.small_offering.cpunumber, 'Check CPU Count for small offering')
+    self.assertAlmostEqual(list_vm_response[0].cpuspeed, self.small_offering.cpuspeed, 'Check CPU Speed for small offering')
+    self.assertAlmostEqual((int(total_mem) / 1024), self.small_offering.memory, 'Check Memory(kb) for small offering')
+    return
