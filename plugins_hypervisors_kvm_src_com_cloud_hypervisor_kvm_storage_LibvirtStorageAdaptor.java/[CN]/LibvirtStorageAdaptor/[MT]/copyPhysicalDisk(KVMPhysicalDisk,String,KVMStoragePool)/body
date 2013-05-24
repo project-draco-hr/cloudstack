@@ -47,25 +47,90 @@
         s_logger.error("Failed to fetch the information of file " + srcFile.getFileName() + " the error was: "+ e.getMessage());
       }
     }
-  }
- else   if ((srcPool.getType() != StoragePoolType.RBD) && (destPool.getType() == StoragePoolType.RBD)) {
-    srcFile=new QemuImgFile(sourcePath,sourceFormat);
-    destFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
-    destFile.setFormat(destFormat);
-  }
- else {
-    srcFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(srcPool.getSourceHost(),srcPool.getSourcePort(),srcPool.getAuthUserName(),srcPool.getAuthSecret(),sourcePath));
-    srcFile.setFormat(sourceFormat);
-    destFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
-    destFile.setFormat(destFormat);
-  }
-  if (srcFile != null && destFile != null) {
     try {
       qemu.convert(srcFile,destFile);
     }
  catch (    QemuImgException e) {
       s_logger.error("Failed to convert " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
     }
+  }
+ else   if ((srcPool.getType() != StoragePoolType.RBD) && (destPool.getType() == StoragePoolType.RBD)) {
+    s_logger.debug("The source image is not RBD, but the destination is. We will convert into RBD format 2");
+    String tmpFile="/tmp/" + name;
+    int rbdFeatures=(1 << 0);
+    int rbdOrder=0;
+    try {
+      srcFile=new QemuImgFile(sourcePath,sourceFormat);
+      destFile=new QemuImgFile(tmpFile);
+      s_logger.debug("Converting " + srcFile.getFileName() + " to "+ tmpFile+ " as a temporary file for RBD conversion");
+      qemu.convert(srcFile,destFile);
+      Rados r=new Rados(destPool.getAuthUserName());
+      r.confSet("mon_host",destPool.getSourceHost() + ":" + destPool.getSourcePort());
+      r.confSet("key",destPool.getAuthSecret());
+      r.connect();
+      s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
+      IoCTX io=r.ioCtxCreate(destPool.getSourceDir());
+      Rbd rbd=new Rbd(io);
+      s_logger.debug("Creating RBD image " + name + " in Ceph pool "+ destPool.getSourceDir()+ " with RBD format 2");
+      rbd.create(name,disk.getVirtualSize(),rbdFeatures,rbdOrder);
+      RbdImage image=rbd.open(name);
+      File fh=new File(tmpFile);
+      BufferedInputStream bis=new BufferedInputStream(new FileInputStream(fh));
+      int chunkSize=4194304;
+      long offset=0;
+      s_logger.debug("Reading temporary file " + tmpFile + " ("+ fh.length()+ " bytes) into RBD image "+ name+ " in chunks of "+ chunkSize+ " bytes");
+      while (true) {
+        byte[] buf=new byte[chunkSize];
+        int bytes=bis.read(buf);
+        if (bytes <= 0) {
+          break;
+        }
+        image.write(buf,offset,bytes);
+        offset+=bytes;
+      }
+      s_logger.debug("Completed writing " + tmpFile + " to RBD image "+ name+ ". Bytes written: "+ offset);
+      bis.close();
+      s_logger.debug("Removing temporary file " + tmpFile);
+      fh.delete();
+      s_logger.debug("Creating RBD snapshot " + this.rbdTemplateSnapName + " on image "+ name);
+      image.snapCreate(this.rbdTemplateSnapName);
+      s_logger.debug("Protecting RBD snapshot " + this.rbdTemplateSnapName + " on image "+ name);
+      image.snapProtect(this.rbdTemplateSnapName);
+      rbd.close(image);
+      r.ioCtxDestroy(io);
+    }
+ catch (    QemuImgException e) {
+      s_logger.error("Failed to do a temp convert from " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
+      newDisk=null;
+    }
+catch (    RadosException e) {
+      s_logger.error("A Ceph RADOS operation failed (" + e.getReturnValue() + "). The error was: "+ e.getMessage());
+      newDisk=null;
+    }
+catch (    RbdException e) {
+      s_logger.error("A Ceph RBD operation failed (" + e.getReturnValue() + "). The error was: "+ e.getMessage());
+      newDisk=null;
+    }
+catch (    IOException e) {
+      s_logger.error("Failed reading the temporary file during the conversion to RBD: " + e.getMessage());
+      newDisk=null;
+    }
+  }
+ else {
+    srcFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(srcPool.getSourceHost(),srcPool.getSourcePort(),srcPool.getAuthUserName(),srcPool.getAuthSecret(),sourcePath));
+    srcFile.setFormat(sourceFormat);
+    destFile=new QemuImgFile(KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPath));
+    destFile.setFormat(destFormat);
+    try {
+      qemu.convert(srcFile,destFile);
+    }
+ catch (    QemuImgException e) {
+      s_logger.error("Failed to convert " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
+      newDisk=null;
+    }
+  }
+  if (newDisk == null) {
+    throw new CloudRuntimeException("Failed to copy " + disk.getPath() + " to "+ name);
   }
   return newDisk;
 }
