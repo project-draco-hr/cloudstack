@@ -1,0 +1,37 @@
+{
+  Transaction txn=Transaction.currentTxn();
+  GlobalLock portableIpLock=GlobalLock.getInternLock("PortablePublicIpRange");
+  PortableIpVO allocatedPortableIp;
+  IPAddressVO ipaddr;
+  try {
+    portableIpLock.lock(5);
+    txn.start();
+    List<PortableIpVO> portableIpVOs=_portableIpDao.listByRegionIdAndState(1,PortableIp.State.Free);
+    if (portableIpVOs == null || portableIpVOs.isEmpty()) {
+      InsufficientAddressCapacityException ex=new InsufficientAddressCapacityException("Unable to find available portable IP addresses",Region.class,new Long(1));
+      throw ex;
+    }
+    allocatedPortableIp=portableIpVOs.get(0);
+    allocatedPortableIp.setAllocatedTime(new Date());
+    allocatedPortableIp.setAllocatedToAccountId(ipOwner.getAccountId());
+    allocatedPortableIp.setAllocatedInDomainId(ipOwner.getDomainId());
+    allocatedPortableIp.setState(PortableIp.State.Allocated);
+    _portableIpDao.update(allocatedPortableIp.getId(),allocatedPortableIp);
+    long physicalNetworkId=_networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(dcId,TrafficType.Public).getId();
+    Network network=_networkModel.getNetwork(physicalNetworkId);
+    String range=allocatedPortableIp.getAddress() + "-" + allocatedPortableIp.getAddress();
+    VlanVO vlan=new VlanVO(VlanType.VirtualNetwork,allocatedPortableIp.getVlan(),allocatedPortableIp.getGateway(),allocatedPortableIp.getNetmask(),dcId,range,network.getId(),network.getId(),null,null,null);
+    vlan=_vlanDao.persist(vlan);
+    ipaddr=new IPAddressVO(new Ip(allocatedPortableIp.getAddress()),dcId,networkId,vpcID,network.getId(),network.getId(),vlan.getId(),true);
+    ipaddr.setState(State.Allocated);
+    ipaddr.setAllocatedTime(new Date());
+    ipaddr.setAllocatedInDomainId(ipOwner.getDomainId());
+    ipaddr.setAllocatedToAccountId(ipOwner.getId());
+    ipaddr=_ipAddressDao.persist(ipaddr);
+    txn.commit();
+  }
+  finally {
+    portableIpLock.unlock();
+  }
+  return ipaddr;
+}
