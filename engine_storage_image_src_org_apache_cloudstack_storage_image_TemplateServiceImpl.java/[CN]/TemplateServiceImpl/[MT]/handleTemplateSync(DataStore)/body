@@ -68,6 +68,15 @@
           VMTemplateVO tmlpt=_templateDao.findById(tmplt.getId());
           tmlpt.setSize(tmpltInfo.getSize());
           _templateDao.update(tmplt.getId(),tmlpt);
+          if (tmplt.getState() != TemplateState.Ready) {
+            try {
+              imageMgr.getStateMachine().transitTo(tmplt,TemplateEvent.CreateRequested,null,_templateDao);
+              imageMgr.getStateMachine().transitTo(tmplt,TemplateEvent.OperationSucceeded,null,_templateDao);
+            }
+ catch (            NoTransitionException e) {
+              s_logger.debug("failed to update template " + tmplt.getUniqueName() + " state to Ready",e);
+            }
+          }
           if (tmpltInfo.getSize() > 0 && tmplt.getUrl() != null) {
             long accountId=tmplt.getAccountId();
             try {
@@ -94,17 +103,23 @@
         tmlpt.setSize(tmpltInfo.getSize());
         _templateDao.update(tmplt.getId(),tmlpt);
         associateTemplateToZone(tmplt.getId(),zoneId);
+        if (tmplt.getState() != TemplateState.Ready) {
+          try {
+            imageMgr.getStateMachine().transitTo(tmplt,TemplateEvent.CreateRequested,null,_templateDao);
+            imageMgr.getStateMachine().transitTo(tmplt,TemplateEvent.OperationSucceeded,null,_templateDao);
+          }
+ catch (          NoTransitionException e) {
+            s_logger.debug("failed to update template " + tmplt.getUniqueName() + " state to Ready",e);
+          }
+        }
       }
-      continue;
     }
-    if (tmpltStore != null && tmpltStore.getDownloadState() != Status.DOWNLOADED) {
-      s_logger.info("Template Sync did not find " + uniqueName + " ready on image store "+ storeId+ ", will request download to start/resume shortly");
-      s_logger.info("Removing template " + uniqueName + " from template store table");
-      _vmTemplateStoreDao.remove(tmpltStore.getId());
-    }
- else     if (tmpltStore == null) {
-      s_logger.info("Template Sync did not find " + uniqueName + " on the image store "+ storeId+ ", will request download shortly");
-      associateTemplateToZone(tmplt.getId(),zoneId);
+ else {
+      if (tmpltStore != null) {
+        s_logger.info("Template Sync did not find " + uniqueName + " on image store "+ storeId+ ", may request download based on available hypervisor types");
+        s_logger.info("Removing leftover template " + uniqueName + " entry from template store table");
+        _vmTemplateStoreDao.remove(tmpltStore.getId());
+      }
     }
   }
   if (toBeDownloaded.size() > 0) {
@@ -118,17 +133,12 @@
       if (tmplt.getUrl() == null) {
         continue;
       }
-      TemplateDataStoreVO tmpltStoreVO=_vmTemplateStoreDao.findByStoreTemplate(storeId,tmplt.getId());
       if (!tmplt.isPublicTemplate() && !tmplt.isFeatured()) {
-        if (tmpltStoreVO == null) {
-          continue;
-        }
+        continue;
       }
       if (availHypers.contains(tmplt.getHypervisorType())) {
-        if (tmpltStoreVO != null && tmpltStoreVO.getDownloadState() == Status.DOWNLOADED) {
-          continue;
-        }
         s_logger.info("Downloading template " + tmplt.getUniqueName() + " to image store "+ store.getName());
+        associateTemplateToZone(tmplt.getId(),zoneId);
         TemplateInfo tmpl=_templateFactory.getTemplate(tmplt.getId(),DataStoreRole.Image);
         createTemplateAsync(tmpl,store,null);
       }
