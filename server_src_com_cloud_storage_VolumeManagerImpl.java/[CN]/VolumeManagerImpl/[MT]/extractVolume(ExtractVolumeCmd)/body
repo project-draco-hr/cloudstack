@@ -65,17 +65,23 @@
       _asyncMgr.updateAsyncJobAttachment(job.getId(),Upload.Type.VOLUME.toString(),volumeId);
       _asyncMgr.updateAsyncJobStatus(job.getId(),AsyncJobResult.STATUS_IN_PROGRESS,resultObj);
     }
-    String value=_configs.get(Config.CopyVolumeWait.toString());
+    String value=this._configDao.getValue(Config.CopyVolumeWait.toString());
     int copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
-    CopyVolumeCommand cvCmd=new CopyVolumeCommand(volume.getId(),volume.getPath(),srcPool,secondaryStorageURL,true,copyvolumewait);
-    CopyVolumeAnswer cvAnswer=null;
+    VolumeInfo srcVol=this.volFactory.getVolume(volume.getId());
+    AsyncCallFuture<VolumeApiResult> cvAnswer=this.volService.copyVolume(srcVol,secStore);
+    VolumeApiResult cvResult=null;
     try {
-      cvAnswer=(CopyVolumeAnswer)_storageMgr.sendToPool(srcPool,cvCmd);
+      cvResult=cvAnswer.get();
     }
- catch (    StorageUnavailableException e) {
-      s_logger.debug("Storage unavailable");
+ catch (    InterruptedException e1) {
+      s_logger.debug("failed copy volume",e1);
+      throw new CloudRuntimeException("Failed to copy volume",e1);
     }
-    if (cvAnswer == null || !cvAnswer.getResult()) {
+catch (    ExecutionException e1) {
+      s_logger.debug("failed copy volume",e1);
+      throw new CloudRuntimeException("Failed to copy volume",e1);
+    }
+    if (cvResult == null || cvResult.isFailed()) {
       String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
       resultObj.setResultString(errorString);
       resultObj.setUploadStatus(UploadVO.Status.COPY_ERROR.toString());
@@ -88,13 +94,15 @@
       _uploadDao.update(uploadJob.getId(),uploadJob);
       throw new CloudRuntimeException(errorString);
     }
-    String volumeLocalPath="volumes/" + volume.getId() + "/"+ cvAnswer.getVolumePath()+ "."+ volume.getFormat().toString().toLowerCase();
+    VolumeInfo vol=cvResult.getVolume();
+    String volumeLocalPath=vol.getPath();
+    String volumeName=StringUtils.substringBeforeLast(StringUtils.substringAfterLast(volumeLocalPath,"/"),".");
     if (getFormatForPool(srcPool) == "ova") {
-      CreateVolumeOVACommand cvOVACmd=new CreateVolumeOVACommand(secondaryStorageURL,volumeLocalPath,cvAnswer.getVolumePath(),srcPool,copyvolumewait);
+      CreateVolumeOVACommand cvOVACmd=new CreateVolumeOVACommand(secondaryStorageURL,volumeLocalPath,volumeName,srcPool,copyvolumewait);
       CreateVolumeOVAAnswer OVAanswer=null;
       try {
         cvOVACmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
-        OVAanswer=(CreateVolumeOVAAnswer)_storageMgr.sendToPool(srcPool,cvOVACmd);
+        OVAanswer=(CreateVolumeOVAAnswer)storageMgr.sendToPool(srcPool,cvOVACmd);
       }
  catch (      StorageUnavailableException e) {
         s_logger.debug("Storage unavailable");
@@ -104,7 +112,36 @@
     uploadJob.setLastUpdated(new Date());
     uploadJob.setInstallPath(volumeLocalPath);
     _uploadDao.update(uploadJob.getId(),uploadJob);
-    _uploadMonitor.createVolumeDownloadURL(volumeId,volumeLocalPath,Upload.Type.VOLUME,zoneId,uploadJob.getId(),volume.getFormat());
+    DataStoreTO volStore=secStore.getTO();
+    if (volStore instanceof SwiftTO) {
+      throw new UnsupportedServiceException("ExtractVolume is not yet supported for Swift image store provider");
+    }
+    if (volStore instanceof S3TO) {
+      S3TO s3=(S3TO)volStore;
+      String key=vol.getPath();
+      try {
+        S3Utils.setObjectAcl(s3,s3.getBucketName(),key,CannedAccessControlList.PublicRead);
+      }
+ catch (      Exception ex) {
+        s_logger.error("Failed to set ACL on S3 object " + key + " to PUBLIC_READ",ex);
+        throw new CloudRuntimeException("Failed to set ACL on S3 object " + key + " to PUBLIC_READ");
+      }
+      StringBuffer s3url=new StringBuffer();
+      s3url.append(s3.isHttps() ? "https://" : "http://");
+      s3url.append(s3.getEndPoint());
+      s3url.append("/");
+      s3url.append(s3.getBucketName());
+      s3url.append("/");
+      s3url.append(key);
+      UploadVO vo=_uploadDao.createForUpdate();
+      vo.setLastUpdated(new Date());
+      vo.setUploadUrl(s3url.toString());
+      vo.setUploadState(Status.DOWNLOAD_URL_CREATED);
+      _uploadDao.update(uploadJob.getId(),vo);
+    }
+ else {
+      _uploadMonitor.createVolumeDownloadURL(volumeId,volumeLocalPath,Upload.Type.VOLUME,zoneId,uploadJob.getId(),volume.getFormat());
+    }
     return uploadJob.getId();
   }
 }
