@@ -1,0 +1,71 @@
+{
+  Long accountId=null;
+  if (accountName != null) {
+    Account caller=UserContext.current().getCaller();
+    Account owner=_accountMgr.finalizeOwner(caller,accountName,domainId,null);
+    accountId=owner.getId();
+  }
+  checkAccountAndDomain(accountId,domainId);
+  HostVO host=_hostDao.findById(hostId);
+  if (host == null) {
+    throw new InvalidParameterValueException("Unable to find host by id " + hostId);
+  }
+ else {
+    if (host.getType() != Host.Type.Routing) {
+      throw new CloudRuntimeException("Invalid host type for host " + host.getName());
+    }
+    DedicatedResourceVO dedicatedHost=_dedicatedDao.findByHostId(hostId);
+    DedicatedResourceVO dedicatedClusterOfHost=_dedicatedDao.findByClusterId(host.getClusterId());
+    DedicatedResourceVO dedicatedPodOfHost=_dedicatedDao.findByPodId(host.getPodId());
+    DedicatedResourceVO dedicatedZoneOfHost=_dedicatedDao.findByZoneId(host.getDataCenterId());
+    if (dedicatedHost != null) {
+      s_logger.error("Host " + host.getName() + " is already dedicated");
+      throw new CloudRuntimeException("Host " + host.getName() + " is already dedicated");
+    }
+    if (dedicatedClusterOfHost != null) {
+      boolean domainIdInChildreanList=getDomainChildIds(dedicatedClusterOfHost.getDomainId()).contains(domainId);
+      if (dedicatedClusterOfHost.getAccountId() != null || (accountId == null && !domainIdInChildreanList) || (accountId != null && !(dedicatedClusterOfHost.getDomainId() == domainId || domainIdInChildreanList))) {
+        ClusterVO cluster=_clusterDao.findById(host.getClusterId());
+        s_logger.error("Host's Cluster " + cluster.getName() + " is already dedicated");
+        throw new CloudRuntimeException("Host's Cluster " + cluster.getName() + " is already dedicated");
+      }
+    }
+    if (dedicatedPodOfHost != null) {
+      boolean domainIdInChildreanList=getDomainChildIds(dedicatedPodOfHost.getDomainId()).contains(domainId);
+      if (dedicatedPodOfHost.getAccountId() != null || (accountId == null && !domainIdInChildreanList) || (accountId != null && !(dedicatedPodOfHost.getDomainId() == domainId || domainIdInChildreanList))) {
+        HostPodVO pod=_podDao.findById(host.getPodId());
+        s_logger.error("Host's Pod " + pod.getName() + " is already dedicated");
+        throw new CloudRuntimeException("Host's Pod " + pod.getName() + " is already dedicated");
+      }
+    }
+    if (dedicatedZoneOfHost != null) {
+      boolean domainIdInChildreanList=getDomainChildIds(dedicatedZoneOfHost.getDomainId()).contains(domainId);
+      if (dedicatedZoneOfHost.getAccountId() != null || (accountId == null && !domainIdInChildreanList) || (accountId != null && !(dedicatedZoneOfHost.getDomainId() == domainId || domainIdInChildreanList))) {
+        DataCenterVO zone=_zoneDao.findById(host.getDataCenterId());
+        s_logger.error("Host's Data Center " + zone.getName() + " is already dedicated");
+        throw new CloudRuntimeException("Host's Data Center " + zone.getName() + " is already dedicated");
+      }
+    }
+  }
+  List<Long> childDomainIds=getDomainChildIds(domainId);
+  childDomainIds.add(domainId);
+  checkHostSuitabilityForExplicitDedication(accountId,childDomainIds,hostId);
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  DedicatedResourceVO dedicatedResource=new DedicatedResourceVO(null,null,null,hostId,null,null);
+  try {
+    dedicatedResource.setDomainId(domainId);
+    if (accountId != null) {
+      dedicatedResource.setAccountId(accountId);
+    }
+    dedicatedResource=_dedicatedDao.persist(dedicatedResource);
+  }
+ catch (  Exception e) {
+    s_logger.error("Unable to dedicate host due to " + e.getMessage(),e);
+    throw new CloudRuntimeException("Failed to dedicate host. Please contact Cloud Support.");
+  }
+  txn.commit();
+  List<DedicatedResourceVO> result=new ArrayList<DedicatedResourceVO>();
+  result.add(dedicatedResource);
+  return result;
+}
