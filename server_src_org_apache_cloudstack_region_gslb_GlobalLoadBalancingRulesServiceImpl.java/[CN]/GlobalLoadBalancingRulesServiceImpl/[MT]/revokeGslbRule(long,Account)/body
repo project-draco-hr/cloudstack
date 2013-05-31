@@ -1,0 +1,40 @@
+{
+  GlobalLoadBalancerRuleVO gslbRule=_gslbRuleDao.findById(gslbRuleId);
+  if (gslbRule == null) {
+    throw new InvalidParameterValueException("Invalid global load balancer rule id: " + gslbRuleId);
+  }
+  _accountMgr.checkAccess(caller,SecurityChecker.AccessType.ModifyEntry,true,gslbRule);
+  if (gslbRule.getState() == GlobalLoadBalancerRule.State.Revoke) {
+    throw new InvalidParameterValueException("global load balancer rule id: " + gslbRuleId + " is already in revoked state");
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  List<GlobalLoadBalancerLbRuleMapVO> gslbLbMapVos=_gslbLbMapDao.listByGslbRuleId(gslbRuleId);
+  if (gslbLbMapVos != null) {
+    for (    GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
+      gslbLbMap.setRevoke(true);
+      _gslbLbMapDao.update(gslbLbMap.getId(),gslbLbMap);
+    }
+  }
+  gslbRule.setState(GlobalLoadBalancerRule.State.Revoke);
+  _gslbRuleDao.update(gslbRuleId,gslbRule);
+  txn.commit();
+  boolean success=false;
+  try {
+    if (gslbLbMapVos != null) {
+      applyGlobalLoadBalancerRuleConfig(gslbRuleId,true);
+    }
+    success=true;
+  }
+ catch (  ResourceUnavailableException e) {
+    throw new CloudRuntimeException("Failed to update the gloabal load balancer");
+  }
+  txn.start();
+  if (gslbLbMapVos != null) {
+    for (    GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
+      _gslbLbMapDao.remove(gslbLbMap.getId());
+    }
+  }
+  _gslbRuleDao.remove(gslbRuleId);
+  txn.commit();
+}
