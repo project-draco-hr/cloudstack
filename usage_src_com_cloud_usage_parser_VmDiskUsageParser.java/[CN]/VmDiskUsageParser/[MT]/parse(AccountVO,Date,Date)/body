@@ -1,0 +1,77 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all Vm Disk usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  SearchCriteria<UsageVmDiskVO> sc=m_usageVmDiskDao.createSearchCriteria();
+  sc.addAnd("accountId",SearchCriteria.Op.EQ,account.getId());
+  sc.addAnd("eventTimeMillis",SearchCriteria.Op.BETWEEN,startDate.getTime(),endDate.getTime());
+  List<UsageVmDiskVO> usageVmDiskVOs=m_usageVmDiskDao.search(sc,null);
+  Map<String,VmDiskInfo> vmDiskUsageByZone=new HashMap<String,VmDiskInfo>();
+  for (  UsageVmDiskVO usageVmDisk : usageVmDiskVOs) {
+    long zoneId=usageVmDisk.getZoneId();
+    String key="" + zoneId;
+    if (usageVmDisk.getVmId() != 0) {
+      key+="-Vm-" + usageVmDisk.getVmId() + "-Disk-"+ usageVmDisk.getVolumeId();
+    }
+    VmDiskInfo vmDiskInfo=vmDiskUsageByZone.get(key);
+    long ioRead=usageVmDisk.getIORead();
+    long ioWrite=usageVmDisk.getIOWrite();
+    long bytesRead=usageVmDisk.getBytesRead();
+    long bytesWrite=usageVmDisk.getBytesWrite();
+    if (vmDiskInfo != null) {
+      ioRead+=vmDiskInfo.getIORead();
+      ioWrite+=vmDiskInfo.getIOWrite();
+      bytesRead+=vmDiskInfo.getBytesRead();
+      bytesWrite+=vmDiskInfo.getBytesWrite();
+    }
+    vmDiskUsageByZone.put(key,new VmDiskInfo(zoneId,usageVmDisk.getVmId(),usageVmDisk.getVolumeId(),ioRead,ioWrite,bytesRead,bytesWrite));
+  }
+  for (  String key : vmDiskUsageByZone.keySet()) {
+    VmDiskInfo vmDiskInfo=vmDiskUsageByZone.get(key);
+    long ioRead=vmDiskInfo.getIORead();
+    long ioWrite=vmDiskInfo.getIOWrite();
+    long bytesRead=vmDiskInfo.getBytesRead();
+    long bytesWrite=vmDiskInfo.getBytesWrite();
+    if ((ioRead > 0L) || (ioWrite > 0L) || (bytesRead > 0L)|| (bytesWrite > 0L)) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Creating vm disk usage record, io read:" + ioRead + ", io write: "+ ioWrite+ "bytes read:"+ bytesRead+ ", bytes write: "+ bytesWrite+ "for account: "+ account.getId()+ " in availability zone "+ vmDiskInfo.getZoneId()+ ", start: "+ startDate+ ", end: "+ endDate);
+      }
+      Long vmId=null;
+      String usageDesc="disk bytes read";
+      if (vmDiskInfo.getVmId() != 0) {
+        vmId=vmDiskInfo.getVmId();
+        usageDesc+=" for Vm: " + vmDiskInfo.getVmId() + " and Volume: "+ vmDiskInfo.getVolumeId();
+      }
+      UsageVO usageRecord=new UsageVO(vmDiskInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,ioRead + " io read",UsageTypes.VM_DISK_IO_READ,new Double(ioRead),vmId,"VirtualMachine",vmDiskInfo.getVolumeId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+      usageDesc="disk bytes write";
+      if (vmDiskInfo.getVmId() != 0) {
+        usageDesc+=" for Vm: " + vmDiskInfo.getVmId() + " and Volume: "+ vmDiskInfo.getVolumeId();
+      }
+      usageRecord=new UsageVO(vmDiskInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,ioWrite + " io write",UsageTypes.VM_DISK_BYTES_WRITE,new Double(ioWrite),vmId,"VirtualMachine",vmDiskInfo.getVolumeId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+      usageDesc="disk bytes read";
+      if (vmDiskInfo.getVmId() != 0) {
+        vmId=vmDiskInfo.getVmId();
+        usageDesc+=" for Vm: " + vmDiskInfo.getVmId() + " and Volume: "+ vmDiskInfo.getVolumeId();
+      }
+      usageRecord=new UsageVO(vmDiskInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,bytesRead + " bytes read",UsageTypes.VM_DISK_BYTES_READ,new Double(bytesRead),vmId,"VirtualMachine",vmDiskInfo.getVolumeId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+      usageDesc="disk bytes write";
+      if (vmDiskInfo.getVmId() != 0) {
+        usageDesc+=" for Vm: " + vmDiskInfo.getVmId() + " and Volume: "+ vmDiskInfo.getVolumeId();
+      }
+      usageRecord=new UsageVO(vmDiskInfo.getZoneId(),account.getId(),account.getDomainId(),usageDesc,bytesWrite + " bytes write",UsageTypes.VM_DISK_BYTES_WRITE,new Double(bytesWrite),vmId,"VirtualMachine",vmDiskInfo.getVolumeId(),startDate,endDate);
+      m_usageDao.persist(usageRecord);
+    }
+ else {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("No vm disk usage record (0 bytes used) generated for account: " + account.getId());
+      }
+    }
+  }
+  return true;
+}

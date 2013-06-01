@@ -1,0 +1,43 @@
+{
+  GlobalLock scanLock=GlobalLock.getInternLock("vm.disk.stats");
+  try {
+    if (scanLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+      ManagementServerHostVO msHost=_msHostDao.findOneInUpState(new Filter(ManagementServerHostVO.class,"id",true,0L,1L));
+      if (msHost == null || (msHost.getMsid() != mgmtSrvrId)) {
+        s_logger.debug("Skipping aggregate disk stats update");
+        scanLock.unlock();
+        return;
+      }
+      Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+      try {
+        txn.start();
+        List<VmDiskStatisticsVO> updatedVmNetStats=_vmDiskStatsDao.listUpdatedStats();
+        for (        VmDiskStatisticsVO stat : updatedVmNetStats) {
+          if (_dailyOrHourly) {
+            stat.setAggBytesRead(stat.getCurrentBytesRead() + stat.getNetBytesRead());
+            stat.setAggBytesWrite(stat.getCurrentBytesWrite() + stat.getNetBytesWrite());
+            stat.setAggIORead(stat.getCurrentIORead() + stat.getNetIORead());
+            stat.setAggIOWrite(stat.getCurrentIOWrite() + stat.getNetIOWrite());
+            _vmDiskStatsDao.update(stat.getId(),stat);
+          }
+        }
+        s_logger.debug("Successfully updated aggregate vm disk stats");
+        txn.commit();
+      }
+ catch (      Exception e) {
+        txn.rollback();
+        s_logger.debug("Failed to update aggregate disk stats",e);
+      }
+ finally {
+        scanLock.unlock();
+        txn.close();
+      }
+    }
+  }
+ catch (  Exception e) {
+    s_logger.debug("Exception while trying to acquire disk stats lock",e);
+  }
+ finally {
+    scanLock.releaseRef();
+  }
+}

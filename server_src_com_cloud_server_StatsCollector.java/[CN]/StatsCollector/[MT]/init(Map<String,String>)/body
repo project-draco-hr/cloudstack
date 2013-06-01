@@ -4,6 +4,7 @@
   hostAndVmStatsInterval=NumbersUtil.parseLong(configs.get("vm.stats.interval"),60000L);
   storageStatsInterval=NumbersUtil.parseLong(configs.get("storage.stats.interval"),60000L);
   volumeStatsInterval=NumbersUtil.parseLong(configs.get("volume.stats.interval"),-1L);
+  vmDiskStatsInterval=NumbersUtil.parseInt(configs.get("vm.disk.stats.interval"),0);
   if (hostStatsInterval > 0) {
     _executor.scheduleWithFixedDelay(new HostCollector(),15000L,hostStatsInterval,TimeUnit.MILLISECONDS);
   }
@@ -13,10 +14,55 @@
   if (storageStatsInterval > 0) {
     _executor.scheduleWithFixedDelay(new StorageCollector(),15000L,storageStatsInterval,TimeUnit.MILLISECONDS);
   }
+  if (vmDiskStatsInterval > 0) {
+    if (vmDiskStatsInterval < 300)     vmDiskStatsInterval=300;
+    _executor.scheduleAtFixedRate(new VmDiskStatsTask(),vmDiskStatsInterval,vmDiskStatsInterval,TimeUnit.SECONDS);
+  }
   if (volumeStatsInterval > 0) {
     _executor.scheduleWithFixedDelay(new VolumeCollector(),15000L,volumeStatsInterval,TimeUnit.MILLISECONDS);
   }
  else {
     s_logger.info("Disabling volume stats collector");
   }
+  _diskStatsUpdateExecutor=Executors.newScheduledThreadPool(1,new NamedThreadFactory("DiskStatsUpdater"));
+  String aggregationRange=configs.get("usage.stats.job.aggregation.range");
+  _usageAggregationRange=NumbersUtil.parseInt(aggregationRange,1440);
+  _usageTimeZone=configs.get("usage.aggregation.timezone");
+  if (_usageTimeZone == null) {
+    _usageTimeZone="GMT";
+  }
+  TimeZone usageTimezone=TimeZone.getTimeZone(_usageTimeZone);
+  Calendar cal=Calendar.getInstance(usageTimezone);
+  cal.setTime(new Date());
+  long endDate=0;
+  int HOURLY_TIME=60;
+  final int DAILY_TIME=60 * 24;
+  if (_usageAggregationRange == DAILY_TIME) {
+    cal.set(Calendar.HOUR_OF_DAY,0);
+    cal.set(Calendar.MINUTE,0);
+    cal.set(Calendar.SECOND,0);
+    cal.set(Calendar.MILLISECOND,0);
+    cal.roll(Calendar.DAY_OF_YEAR,true);
+    cal.add(Calendar.MILLISECOND,-1);
+    endDate=cal.getTime().getTime();
+    _dailyOrHourly=true;
+  }
+ else   if (_usageAggregationRange == HOURLY_TIME) {
+    cal.set(Calendar.MINUTE,0);
+    cal.set(Calendar.SECOND,0);
+    cal.set(Calendar.MILLISECOND,0);
+    cal.roll(Calendar.HOUR_OF_DAY,true);
+    cal.add(Calendar.MILLISECOND,-1);
+    endDate=cal.getTime().getTime();
+    _dailyOrHourly=true;
+  }
+ else {
+    endDate=cal.getTime().getTime();
+    _dailyOrHourly=false;
+  }
+  if (_usageAggregationRange < USAGE_AGGREGATION_RANGE_MIN) {
+    s_logger.warn("Usage stats job aggregation range is to small, using the minimum value of " + USAGE_AGGREGATION_RANGE_MIN);
+    _usageAggregationRange=USAGE_AGGREGATION_RANGE_MIN;
+  }
+  _diskStatsUpdateExecutor.scheduleAtFixedRate(new VmDiskStatsUpdaterTask(),(endDate - System.currentTimeMillis()),(_usageAggregationRange * 60 * 1000),TimeUnit.MILLISECONDS);
 }
