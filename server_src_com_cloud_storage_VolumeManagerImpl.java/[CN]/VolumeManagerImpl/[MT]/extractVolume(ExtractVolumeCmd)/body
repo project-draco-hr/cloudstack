@@ -1,8 +1,6 @@
 {
   Long volumeId=cmd.getId();
-  String url=cmd.getUrl();
   Long zoneId=cmd.getZoneId();
-  AsyncJobVO job=null;
   String mode=cmd.getMode();
   Account account=UserContext.current().getCaller();
   if (!_accountMgr.isRootAdmin(account.getType()) && ApiDBUtils.isExtractionDisabled()) {
@@ -45,103 +43,42 @@
  else {
     extractMode=mode.equals(Upload.Mode.FTP_UPLOAD.toString()) ? Upload.Mode.FTP_UPLOAD : Upload.Mode.HTTP_DOWNLOAD;
   }
-  long accountId=volume.getAccountId();
   StoragePool srcPool=(StoragePool)this.dataStoreMgr.getPrimaryDataStore(volume.getPoolId());
-  DataStore secStore=this.dataStoreMgr.getImageStore(zoneId);
+  ImageStoreEntity secStore=(ImageStoreEntity)this.dataStoreMgr.getImageStore(zoneId);
   String secondaryStorageURL=secStore.getUri();
-  List<UploadVO> extractURLList=_uploadDao.listByTypeUploadStatus(volumeId,Upload.Type.VOLUME,UploadVO.Status.DOWNLOAD_URL_CREATED);
-  if (extractMode == Upload.Mode.HTTP_DOWNLOAD && extractURLList.size() > 0) {
-    return extractURLList.get(0).getId();
+  String value=this._configDao.getValue(Config.CopyVolumeWait.toString());
+  int copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
+  VolumeInfo srcVol=this.volFactory.getVolume(volume.getId());
+  AsyncCallFuture<VolumeApiResult> cvAnswer=this.volService.copyVolume(srcVol,secStore);
+  VolumeApiResult cvResult=null;
+  try {
+    cvResult=cvAnswer.get();
   }
- else {
-    UploadVO uploadJob=_uploadMonitor.createNewUploadEntry(secStore.getId(),volumeId,UploadVO.Status.COPY_IN_PROGRESS,Upload.Type.VOLUME,url,extractMode);
-    s_logger.debug("Extract Mode - " + uploadJob.getMode());
-    uploadJob=_uploadDao.createForUpdate(uploadJob.getId());
-    ExtractResponse resultObj=new ExtractResponse(ApiDBUtils.findVolumeById(volumeId).getUuid(),volume.getName(),ApiDBUtils.findAccountById(accountId).getUuid(),UploadVO.Status.COPY_IN_PROGRESS.toString(),uploadJob.getUuid());
-    resultObj.setResponseName(cmd.getCommandName());
-    AsyncJobExecutor asyncExecutor=BaseAsyncJobExecutor.getCurrentExecutor();
-    if (asyncExecutor != null) {
-      job=asyncExecutor.getJob();
-      _asyncMgr.updateAsyncJobAttachment(job.getId(),Upload.Type.VOLUME.toString(),volumeId);
-      _asyncMgr.updateAsyncJobStatus(job.getId(),AsyncJobResult.STATUS_IN_PROGRESS,resultObj);
-    }
-    String value=this._configDao.getValue(Config.CopyVolumeWait.toString());
-    int copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
-    VolumeInfo srcVol=this.volFactory.getVolume(volume.getId());
-    AsyncCallFuture<VolumeApiResult> cvAnswer=this.volService.copyVolume(srcVol,secStore);
-    VolumeApiResult cvResult=null;
+ catch (  InterruptedException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+catch (  ExecutionException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+  if (cvResult == null || cvResult.isFailed()) {
+    String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
+    throw new CloudRuntimeException(errorString);
+  }
+  VolumeInfo vol=cvResult.getVolume();
+  String volumeLocalPath=vol.getPath();
+  String volumeName=StringUtils.substringBeforeLast(StringUtils.substringAfterLast(volumeLocalPath,"/"),".");
+  if (getFormatForPool(srcPool) == "ova") {
+    CreateVolumeOVACommand cvOVACmd=new CreateVolumeOVACommand(secondaryStorageURL,volumeLocalPath,volumeName,srcPool,copyvolumewait);
+    CreateVolumeOVAAnswer OVAanswer=null;
     try {
-      cvResult=cvAnswer.get();
+      cvOVACmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
+      OVAanswer=(CreateVolumeOVAAnswer)storageMgr.sendToPool(srcPool,cvOVACmd);
     }
- catch (    InterruptedException e1) {
-      s_logger.debug("failed copy volume",e1);
-      throw new CloudRuntimeException("Failed to copy volume",e1);
+ catch (    StorageUnavailableException e) {
+      s_logger.debug("Storage unavailable");
     }
-catch (    ExecutionException e1) {
-      s_logger.debug("failed copy volume",e1);
-      throw new CloudRuntimeException("Failed to copy volume",e1);
-    }
-    if (cvResult == null || cvResult.isFailed()) {
-      String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
-      resultObj.setResultString(errorString);
-      resultObj.setUploadStatus(UploadVO.Status.COPY_ERROR.toString());
-      if (asyncExecutor != null) {
-        _asyncMgr.completeAsyncJob(job.getId(),AsyncJobResult.STATUS_FAILED,0,resultObj);
-      }
-      uploadJob.setUploadState(UploadVO.Status.COPY_ERROR);
-      uploadJob.setErrorString(errorString);
-      uploadJob.setLastUpdated(new Date());
-      _uploadDao.update(uploadJob.getId(),uploadJob);
-      throw new CloudRuntimeException(errorString);
-    }
-    VolumeInfo vol=cvResult.getVolume();
-    String volumeLocalPath=vol.getPath();
-    String volumeName=StringUtils.substringBeforeLast(StringUtils.substringAfterLast(volumeLocalPath,"/"),".");
-    if (getFormatForPool(srcPool) == "ova") {
-      CreateVolumeOVACommand cvOVACmd=new CreateVolumeOVACommand(secondaryStorageURL,volumeLocalPath,volumeName,srcPool,copyvolumewait);
-      CreateVolumeOVAAnswer OVAanswer=null;
-      try {
-        cvOVACmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
-        OVAanswer=(CreateVolumeOVAAnswer)storageMgr.sendToPool(srcPool,cvOVACmd);
-      }
- catch (      StorageUnavailableException e) {
-        s_logger.debug("Storage unavailable");
-      }
-    }
-    uploadJob.setUploadState(UploadVO.Status.COPY_COMPLETE);
-    uploadJob.setLastUpdated(new Date());
-    uploadJob.setInstallPath(volumeLocalPath);
-    _uploadDao.update(uploadJob.getId(),uploadJob);
-    DataStoreTO volStore=secStore.getTO();
-    if (volStore instanceof SwiftTO) {
-      throw new UnsupportedServiceException("ExtractVolume is not yet supported for Swift image store provider");
-    }
-    if (volStore instanceof S3TO) {
-      S3TO s3=(S3TO)volStore;
-      String key=vol.getPath();
-      try {
-        S3Utils.setObjectAcl(s3,s3.getBucketName(),key,CannedAccessControlList.PublicRead);
-      }
- catch (      Exception ex) {
-        s_logger.error("Failed to set ACL on S3 object " + key + " to PUBLIC_READ",ex);
-        throw new CloudRuntimeException("Failed to set ACL on S3 object " + key + " to PUBLIC_READ");
-      }
-      StringBuffer s3url=new StringBuffer();
-      s3url.append(s3.isHttps() ? "https://" : "http://");
-      s3url.append(s3.getEndPoint());
-      s3url.append("/");
-      s3url.append(s3.getBucketName());
-      s3url.append("/");
-      s3url.append(key);
-      UploadVO vo=_uploadDao.createForUpdate();
-      vo.setLastUpdated(new Date());
-      vo.setUploadUrl(s3url.toString());
-      vo.setUploadState(Status.DOWNLOAD_URL_CREATED);
-      _uploadDao.update(uploadJob.getId(),vo);
-    }
- else {
-      _uploadMonitor.createVolumeDownloadURL(volumeId,volumeLocalPath,Upload.Type.VOLUME,zoneId,uploadJob.getId(),volume.getFormat());
-    }
-    return uploadJob.getId();
   }
+  return secStore.createEntityExtractUrl(vol.getPath(),vol.getFormat());
 }
