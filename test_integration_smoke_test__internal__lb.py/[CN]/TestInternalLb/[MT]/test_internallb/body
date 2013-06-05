@@ -1,9 +1,28 @@
-@attr(tags=['advanced'])
+@attr(tags=['smoke', 'advanced'])
 def test_internallb(self):
-    self.createNetworkOffering()
-    self.createNetwork()
-    self.deployVm()
-    self.createInternalLoadBalancer()
-    self.assignToLoadBalancerRule()
-    self.removeFromLoadBalancerRule()
-    self.deleteLoadBalancer()
+    'Test create, delete, assign, remove of internal loadbalancer\n        '
+    self.networkOffering = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+    self.networkOffering.update(self.apiclient, state='Enabled')
+    vpcOffering = VpcOffering.list(self.apiclient)
+    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    self.services['vpc'] = {}
+    self.services['vpc']['name'] = 'vpc-internallb'
+    self.services['vpc']['displaytext'] = 'vpc-internallb'
+    self.services['vpc']['cidr'] = '10.1.1.0/24'
+    vpc = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc.internallb', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    self.assert_((vpc is not None), 'VPC creation failed')
+    self.services['vpcnetwork'] = {}
+    self.services['vpcnetwork']['name'] = 'vpcntwk'
+    self.services['vpcnetwork']['displaytext'] = 'vpcntwk'
+    ntwk = Network.create(apiclient=self.apiclient, services=self.services['vpcnetwork'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=self.networkOffering.id, zoneid=self.zone.id, vpcid=vpc.id, gateway='10.1.1.1', netmask='255.255.255.192')
+    self.assertIsNotNone(ntwk, 'Network failed to create')
+    self.debug(('Network %s created in VPC %s' % (ntwk.id, vpc.id)))
+    self.services['virtual_machine']['networkids'] = ntwk.id
+    vm = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id)
+    self.assert_((vm is not None), 'VM failed to deploy')
+    self.assert_((vm.state == 'Running'), 'VM is not running')
+    self.debug(('VM %s deployed in VPC %s' % (vm.id, vpc.id)))
+    applb = ApplicationLoadBalancer.create(self.apiclient, services=self.services, name='lbrule', sourceport=22, instanceport=22, algorithm='roundrobin', scheme='internal', sourcenetworkid=ntwk.id, networkid=ntwk.id)
+    applb.assign(self.apiclient, vms=[vm.id])
+    applb.remove(self.apiclient, vms=[vm.id])
+    applb.delete(self.apiclient)
