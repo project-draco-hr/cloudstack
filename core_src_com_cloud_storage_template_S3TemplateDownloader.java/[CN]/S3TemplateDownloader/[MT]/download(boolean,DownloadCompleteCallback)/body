@@ -6,7 +6,6 @@ case DOWNLOAD_FINISHED:
     return 0;
 default :
 }
-int bytes=0;
 try {
   int responseCode=HttpStatus.SC_OK;
   if ((responseCode=client.executeMethod(request)) != HttpStatus.SC_OK) {
@@ -34,19 +33,20 @@ try {
   if (remoteSize == 0) {
     remoteSize=remoteSize2;
   }
-  if (remoteSize > MAX_TEMPLATE_SIZE_IN_BYTES) {
-    s_logger.info("Remote size is too large: " + remoteSize + " , max="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+  if (remoteSize > maxTemplateSizeInByte) {
+    s_logger.info("Remote size is too large: " + remoteSize + " , max="+ maxTemplateSizeInByte);
     status=Status.UNRECOVERABLE_ERROR;
     errorString="Download file size is too large";
     return 0;
   }
   if (remoteSize == 0) {
-    remoteSize=MAX_TEMPLATE_SIZE_IN_BYTES;
+    remoteSize=maxTemplateSizeInByte;
   }
   InputStream in=!chunked ? new BufferedInputStream(request.getResponseBodyAsStream()) : new ChunkedInputStream(request.getResponseBodyAsStream());
-  s_logger.info("Starting download from " + getDownloadUrl() + " to s3 bucket "+ s3.getBucketName()+ " remoteSize="+ remoteSize+ " , max size="+ MAX_TEMPLATE_SIZE_IN_BYTES);
+  s_logger.info("Starting download from " + getDownloadUrl() + " to s3 bucket "+ s3.getBucketName()+ " remoteSize="+ remoteSize+ " , max size="+ maxTemplateSizeInByte);
   Date start=new Date();
   s3Key=join(asList(installPath,fileName),S3Utils.SEPARATOR);
+  TransferManager tm=new TransferManager(S3Utils.acquireClient(s3));
   ObjectMetadata metadata=new ObjectMetadata();
   metadata.setContentLength(remoteSize);
   PutObjectRequest putObjectRequest=new PutObjectRequest(s3.getBucketName(),s3Key,in,metadata).withStorageClass(StorageClass.ReducedRedundancy);
@@ -69,9 +69,8 @@ try {
     }
   }
 );
-  S3Utils.putObject(s3,putObjectRequest);
-  while (status != TemplateDownloader.Status.DOWNLOAD_FINISHED && status != TemplateDownloader.Status.UNRECOVERABLE_ERROR && status != TemplateDownloader.Status.ABORTED) {
-  }
+  Upload upload=tm.upload(putObjectRequest);
+  upload.waitForCompletion();
   Date finish=new Date();
   String downloaded="(incomplete download)";
   if (totalBytes >= remoteSize) {
@@ -95,6 +94,10 @@ catch (IOException ioe) {
 catch (AmazonClientException ex) {
   status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
   errorString=ex.getMessage();
+}
+catch (InterruptedException e) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=e.getMessage();
 }
  finally {
   request.releaseConnection();
