@@ -1,0 +1,30 @@
+@attr(tags=['advanced'])
+def test_network_acl(self):
+    'Test network ACL lists and items in VPC'
+    networkOffering = NetworkOffering.list(self.apiclient, name='DefaultIsolatedNetworkOfferingForVpcNetworks')
+    self.assert_(((networkOffering is not None) and (len(networkOffering) > 0)), 'No VPC based network offering')
+    vpcOffering = VpcOffering.list(self.apiclient)
+    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    self.services['vpc'] = {}
+    self.services['vpc']['name'] = 'vpc-networkacl'
+    self.services['vpc']['displaytext'] = 'vpc-networkacl'
+    self.services['vpc']['cidr'] = '10.1.1.0/24'
+    vpc = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc.networkacl', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    self.assert_((vpc is not None), 'VPC creation failed')
+    aclgroup = NetworkACLList.create(apiclient=self.apiclient, services={}, name='acl', description='acl', vpcid=vpc.id)
+    self.assertIsNotNone(aclgroup, 'Failed to create NetworkACL list')
+    self.debug(('Created a network ACL list %s' % aclgroup.name))
+    aclitem = NetworkACL.create(apiclient=self.apiclient, services={}, protocol='TCP', number='10', action='Deny', aclid=aclgroup.id, cidrlist=['0.0.0.0/0'])
+    self.assertIsNotNone(aclitem, 'Network failed to aclItem')
+    self.debug(('Added a network ACL %s to ACL list %s' % (aclitem.id, aclgroup.name)))
+    self.services['vpcnetwork'] = {}
+    self.services['vpcnetwork']['name'] = 'vpcntwk'
+    self.services['vpcnetwork']['displaytext'] = 'vpcntwk'
+    ntwk = Network.create(apiclient=self.apiclient, services=self.services['vpcnetwork'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc.id, aclid=aclgroup.id, gateway='10.1.1.1', netmask='255.255.255.192')
+    self.assertIsNotNone(ntwk, 'Network failed to create')
+    self.debug(('Network %s created in VPC %s' % (ntwk.id, vpc.id)))
+    self.services['virtual_machine']['networkids'] = ntwk.id
+    vm = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id)
+    self.assert_((vm is not None), 'VM failed to deploy')
+    self.assert_((vm.state == 'Running'), 'VM is not running')
+    self.debug(('VM %s deployed in VPC %s' % (vm.id, vpc.id)))
