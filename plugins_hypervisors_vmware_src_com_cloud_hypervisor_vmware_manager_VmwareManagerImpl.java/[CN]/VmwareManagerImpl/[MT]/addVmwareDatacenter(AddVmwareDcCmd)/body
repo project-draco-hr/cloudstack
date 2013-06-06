@@ -1,26 +1,27 @@
 {
   VmwareDatacenterVO vmwareDc=null;
   Long zoneId=cmd.getZoneId();
-  String url=cmd.getUrl();
   String userName=cmd.getUsername();
   String password=cmd.getPassword();
+  String vCenterHost=cmd.getVcenter();
   String vmwareDcName=cmd.getName();
   validateZone(zoneId,"add VMware datacenter to zone");
   VmwareDatacenterZoneMapVO vmwareDcZoneMap=_vmwareDcZoneMapDao.findByZoneId(zoneId);
   if (vmwareDcZoneMap != null) {
     throw new CloudRuntimeException("Zone " + zoneId + " is already associated with a VMware datacenter.");
   }
-  URI uri=getUri(url);
   if (userName == null) {
-    throw new InvalidParameterValueException("Invalid parameter username.");
+    throw new InvalidParameterValueException("Missing or invalid parameter username.");
   }
   if (password == null) {
-    throw new InvalidParameterValueException("Invalid parameter password.");
+    throw new InvalidParameterValueException("Missing or invalid parameter username.");
   }
   if (vmwareDcName == null) {
-    throw new InvalidParameterValueException("Invalid parameter name. Please provide valid VMware datacenter name.");
+    throw new InvalidParameterValueException("Missing or invalid parameter name. Please provide valid VMware datacenter name.");
   }
-  String vCenterHost=uri.getHost();
+  if (vCenterHost == null) {
+    throw new InvalidParameterValueException("Missing or invalid parameter name. " + "Please provide valid VMware vCenter server's IP address or fully qualified domain name.");
+  }
   vmwareDc=_vmwareDcDao.getVmwareDatacenterByGuid(vmwareDcName + "@" + vCenterHost);
   if (vmwareDc != null) {
     throw new ResourceInUseException("This DC is already part of other CloudStack zone(s). Cannot add this DC to more zones.");
@@ -34,15 +35,13 @@
   ManagedObjectReference dcMor;
   try {
     context=VmwareContextFactory.create(vCenterHost,userName,password);
-    try {
-      dcMo=new DatacenterMO(context,vmwareDcName);
-    }
- catch (    Throwable t) {
-      String msg="Unable to find DC " + vmwareDcName + " in vCenter "+ vCenterHost;
+    dcMo=new DatacenterMO(context,vmwareDcName);
+    dcMor=dcMo.getMor();
+    if (dcMor == null) {
+      String msg="Unable to find VMware DC " + vmwareDcName + " in vCenter "+ vCenterHost+ ". ";
       s_logger.error(msg);
-      throw new DiscoveryException(msg);
+      throw new InvalidParameterValueException(msg);
     }
-    assert(dcMo != null);
     guid=vmwareDcName + "@" + vCenterHost;
     dcCustomFieldValue=dcMo.getCustomFieldValue(CustomFieldConstants.CLOUD_ZONE);
     if (dcCustomFieldValue == null) {
@@ -82,9 +81,14 @@
     }
     dcMo.setCustomFieldValue(CustomFieldConstants.CLOUD_ZONE,"true");
   }
- catch (  Exception e) {
-    String msg="VMware DC discovery failed due to : " + VmwareHelper.getExceptionMessage(e);
-    s_logger.error(msg);
+ catch (  Throwable e) {
+    String msg="Failed to add VMware DC to zone ";
+    if (e instanceof RemoteException) {
+      msg="Encountered remote exception at vCenter. " + VmwareHelper.getExceptionMessage(e);
+    }
+ else {
+      msg+="due to : " + e.getMessage();
+    }
     throw new CloudRuntimeException(msg);
   }
  finally {
