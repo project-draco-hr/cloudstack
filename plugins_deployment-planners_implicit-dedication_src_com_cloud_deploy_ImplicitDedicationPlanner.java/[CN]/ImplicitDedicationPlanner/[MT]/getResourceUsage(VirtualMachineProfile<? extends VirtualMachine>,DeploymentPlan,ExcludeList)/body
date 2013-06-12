@@ -1,0 +1,53 @@
+{
+  boolean preferred=isServiceOfferingUsingPlannerInPreferredMode(vmProfile.getServiceOfferingId());
+  if (!preferred) {
+    return PlannerResourceUsage.Dedicated;
+  }
+ else {
+    List<Long> clusterList=super.orderClusters(vmProfile,plan,avoid);
+    Set<Long> hostsToAvoid=avoid.getHostsToAvoid();
+    Account account=vmProfile.getOwner();
+    List<Long> allHosts=new ArrayList<Long>();
+    for (    Long cluster : clusterList) {
+      List<HostVO> hostsInCluster=resourceMgr.listAllHostsInCluster(cluster);
+      for (      HostVO hostVO : hostsInCluster) {
+        allHosts.add(hostVO.getId());
+      }
+    }
+    Set<Long> emptyHosts=new HashSet<Long>();
+    Set<Long> hostRunningVmsOfAccount=new HashSet<Long>();
+    Set<Long> hostRunningStrictImplicitVmsOfOtherAccounts=new HashSet<Long>();
+    Set<Long> allOtherHosts=new HashSet<Long>();
+    for (    Long host : allHosts) {
+      List<VMInstanceVO> vms=getVmsOnHost(host);
+      if (vms == null || vms.isEmpty()) {
+        emptyHosts.add(host);
+      }
+ else       if (checkHostSuitabilityForImplicitDedication(account.getAccountId(),vms)) {
+        hostRunningVmsOfAccount.add(host);
+      }
+ else       if (checkIfAllVmsCreatedInStrictMode(account.getAccountId(),vms)) {
+        hostRunningStrictImplicitVmsOfOtherAccounts.add(host);
+      }
+ else {
+        allOtherHosts.add(host);
+      }
+    }
+    avoid.addHostList(hostRunningStrictImplicitVmsOfOtherAccounts);
+    if (!hostRunningVmsOfAccount.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(hostRunningVmsOfAccount))) {
+      return PlannerResourceUsage.Dedicated;
+    }
+ else     if (!emptyHosts.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(emptyHosts))) {
+      return PlannerResourceUsage.Dedicated;
+    }
+ else     if (!preferred) {
+      return PlannerResourceUsage.Dedicated;
+    }
+ else {
+      if (!allOtherHosts.isEmpty() && (hostsToAvoid == null || !hostsToAvoid.containsAll(allOtherHosts))) {
+        return PlannerResourceUsage.Shared;
+      }
+    }
+    return PlannerResourceUsage.Shared;
+  }
+}

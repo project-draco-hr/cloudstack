@@ -59,21 +59,30 @@
       publicGateways.add(vlanVO.getVlanGateway());
     }
     IpAddress outsideIp=null;
-    try {
-      Account caller=UserContext.current().getCaller();
-      long callerUserId=UserContext.current().getCallerUserId();
-      outsideIp=_networkMgr.allocateIp(owner,false,caller,callerUserId,zone);
+    List<IPAddressVO> publicIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
+    for (    IPAddressVO ip : publicIps) {
+      if (!ip.isSourceNat()) {
+        outsideIp=ip;
+        break;
+      }
     }
- catch (    ResourceAllocationException e) {
-      s_logger.error("Unable to allocate additional public Ip address. Exception details " + e);
-      return false;
-    }
-    try {
-      outsideIp=_networkMgr.associateIPToGuestNetwork(outsideIp.getId(),network.getId(),true);
-    }
- catch (    ResourceAllocationException e) {
-      s_logger.error("Unable to assign allocated additional public Ip " + outsideIp.getAddress().addr() + " to network with vlan "+ vlanId+ ". Exception details "+ e);
-      return false;
+    if (outsideIp == null) {
+      try {
+        Account caller=UserContext.current().getCaller();
+        long callerUserId=UserContext.current().getCallerUserId();
+        outsideIp=_networkMgr.allocateIp(owner,false,caller,callerUserId,zone);
+      }
+ catch (      ResourceAllocationException e) {
+        s_logger.error("Unable to allocate additional public Ip address. Exception details " + e);
+        return false;
+      }
+      try {
+        outsideIp=_networkMgr.associateIPToGuestNetwork(outsideIp.getId(),network.getId(),true);
+      }
+ catch (      ResourceAllocationException e) {
+        s_logger.error("Unable to assign allocated additional public Ip " + outsideIp.getAddress().addr() + " to network with vlan "+ vlanId+ ". Exception details "+ e);
+        return false;
+      }
     }
     String gatewayNetmask=NetUtils.getCidrNetmask(network.getCidr());
     if (!createLogicalEdgeFirewall(vlanId,network.getGateway(),gatewayNetmask,outsideIp.getAddress().addr(),sourceNatIp.getNetmask(),publicGateways,ciscoVnmcHost.getId())) {

@@ -3,12 +3,12 @@
   NetworkVO network=_networksDao.findById(networkId);
   if (network == null) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Specified network id doesn't exist in the system");
-    ex.addProxyObject("networks",networkId,"networkId");
+    ex.addProxyObject(String.valueOf(networkId),"networkId");
     throw ex;
   }
   if (network.getVpcId() != null && networkOfferingId != null) {
     Vpc vpc=_vpcMgr.getVpc(network.getVpcId());
-    _vpcMgr.validateNtwkOffForNtwkInVpc(networkId,networkOfferingId,null,null,vpc,null,_accountMgr.getAccount(network.getAccountId()));
+    _vpcMgr.validateNtwkOffForNtwkInVpc(networkId,networkOfferingId,null,null,vpc,null,_accountMgr.getAccount(network.getAccountId()),null);
   }
   if (network.getState() == Network.State.Destroy) {
     throw new InvalidParameterValueException("Don't allow to update network in state " + Network.State.Destroy);
@@ -43,12 +43,12 @@
   if (networkOfferingId != null) {
     if (networkOffering == null || networkOffering.isSystemOnly()) {
       InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find network offering with specified id");
-      ex.addProxyObject(networkOffering,networkOfferingId,"networkOfferingId");
+      ex.addProxyObject(networkOfferingId.toString(),"networkOfferingId");
       throw ex;
     }
     if (networkOffering.getState() != NetworkOffering.State.Enabled) {
       InvalidParameterValueException ex=new InvalidParameterValueException("Network offering with specified id is not in " + NetworkOffering.State.Enabled + " state, can't upgrade to it");
-      ex.addProxyObject(networkOffering,networkOfferingId,"networkOfferingId");
+      ex.addProxyObject(networkOffering.getUuid(),"networkOfferingId");
       throw ex;
     }
     boolean forVpcNew=_configMgr.isOfferingForVpc(networkOffering);
@@ -66,7 +66,7 @@
       if (changeCidr) {
         if (!checkForNonStoppedVmInNetwork(network.getId())) {
           InvalidParameterValueException ex=new InvalidParameterValueException("All user vm of network of specified id should be stopped before changing CIDR!");
-          ex.addProxyObject(network,networkId,"networkId");
+          ex.addProxyObject(network.getUuid(),"networkId");
           throw ex;
         }
       }
@@ -146,6 +146,16 @@
       }
     }
     if (network.getNetworkCidr() == null) {
+      if (NetUtils.isSameIpRange(guestVmCidr,network.getCidr()) && !guestVmCidr.equals(network.getCidr())) {
+        throw new InvalidParameterValueException("The Start IP and End IP of guestvmcidr: " + guestVmCidr + " and CIDR: "+ network.getCidr()+ " are same, "+ "even though both the cidrs appear to be different. As a precaution no IP Reservation will be applied.");
+      }
+    }
+ else {
+      if (NetUtils.isSameIpRange(guestVmCidr,network.getNetworkCidr()) && !guestVmCidr.equals(network.getNetworkCidr())) {
+        throw new InvalidParameterValueException("The Start IP and End IP of guestvmcidr: " + guestVmCidr + " and Network CIDR: "+ network.getNetworkCidr()+ " are same, "+ "even though both the cidrs appear to be different. As a precaution IP Reservation will not be affected. If you want to reset IP Reservation, "+ "specify guestVmCidr to be: "+ network.getNetworkCidr());
+      }
+    }
+    if (network.getNetworkCidr() == null) {
       network.setNetworkCidr(network.getCidr());
     }
     if (network.getNetworkCidr().equals(guestVmCidr)) {
@@ -165,7 +175,7 @@
         if (!_networkMgr.shutdownNetworkElementsAndResources(context,true,network)) {
           s_logger.warn("Failed to shutdown the network elements and resources as a part of network restart: " + network);
           CloudRuntimeException ex=new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of update to network of specified id");
-          ex.addProxyObject(network,networkId,"networkId");
+          ex.addProxyObject(network.getUuid(),"networkId");
           throw ex;
         }
       }
@@ -179,14 +189,14 @@
         if (!_networkMgr.shutdownNetwork(network.getId(),context,true)) {
           s_logger.warn("Failed to shutdown the network as a part of update to network with specified id");
           CloudRuntimeException ex=new CloudRuntimeException("Failed to shutdown the network as a part of update of specified network id");
-          ex.addProxyObject(network,networkId,"networkId");
+          ex.addProxyObject(network.getUuid(),"networkId");
           throw ex;
         }
       }
     }
  else {
       CloudRuntimeException ex=new CloudRuntimeException("Failed to shutdown the network elements and resources as a part of update to network with specified id; network is in wrong state: " + network.getState());
-      ex.addProxyObject(network,networkId,"networkId");
+      ex.addProxyObject(network.getUuid(),"networkId");
       throw ex;
     }
   }
@@ -194,7 +204,7 @@
   boolean validStateToImplement=(networkState == Network.State.Implemented || networkState == Network.State.Setup || networkState == Network.State.Allocated);
   if (restartNetwork && !validStateToImplement) {
     CloudRuntimeException ex=new CloudRuntimeException("Failed to implement the network elements and resources as a part of update to network with specified id; network is in wrong state: " + networkState);
-    ex.addProxyObject(network,networkId,"networkId");
+    ex.addProxyObject(network.getUuid(),"networkId");
     throw ex;
   }
   if (networkOfferingId != null) {
@@ -241,7 +251,7 @@
  catch (      Exception ex) {
         s_logger.warn("Failed to implement network " + network + " elements and resources as a part of network update due to ",ex);
         CloudRuntimeException e=new CloudRuntimeException("Failed to implement network (with specified id) elements and resources as a part of network update");
-        e.addProxyObject(network,networkId,"networkId");
+        e.addProxyObject(network.getUuid(),"networkId");
         throw e;
       }
     }
@@ -255,7 +265,7 @@
  catch (      Exception ex) {
         s_logger.warn("Failed to implement network " + network + " elements and resources as a part o"+ "f network update due to ",ex);
         CloudRuntimeException e=new CloudRuntimeException("Failed to implement network (with specified" + " id) elements and resources as a part of network update");
-        e.addProxyObject(network,networkId,"networkId");
+        e.addProxyObject(network.getUuid(),"networkId");
         throw e;
       }
     }

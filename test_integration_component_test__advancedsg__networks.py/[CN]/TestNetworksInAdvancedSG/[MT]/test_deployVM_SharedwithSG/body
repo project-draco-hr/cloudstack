@@ -1,0 +1,42 @@
+def test_deployVM_SharedwithSG(self):
+    ' Test VM deployment in shared networks with SecurityProvider '
+    self.admin_account = Account.create(self.api_client, self.services['account'], admin=True, domainid=self.domain.id)
+    self.cleanup_accounts.append(self.admin_account)
+    list_accounts_response = Account.list(self.api_client, id=self.admin_account.account.id, liistall=True)
+    self.assertEqual(isinstance(list_accounts_response, list), True, 'listAccounts returned invalid object in response.')
+    self.assertNotEqual(len(list_accounts_response), 0, 'listAccounts returned empty list.')
+    self.assertEqual(list_accounts_response[0].state, 'enabled', 'The admin account created is not enabled.')
+    self.debug(('Admin type account created: %s' % self.admin_account.name))
+    self.services['shared_network_offering_sg']['specifyVlan'] = 'True'
+    self.services['shared_network_offering_sg']['specifyIpRanges'] = 'True'
+    self.shared_network_offering_sg = NetworkOffering.create(self.api_client, self.services['shared_network_offering_sg'], conservemode=False)
+    self.cleanup.append(self.shared_network_offering_sg)
+    list_network_offerings_response = NetworkOffering.list(self.api_client, id=self.shared_network_offering_sg.id)
+    self.assertEqual(isinstance(list_network_offerings_response, list), True, 'listNetworkOfferings returned invalid object in response.')
+    self.assertNotEqual(len(list_network_offerings_response), 0, 'listNetworkOfferings returned empty list.')
+    self.assertEqual(list_network_offerings_response[0].state, 'Disabled', 'The network offering created should be bydefault disabled.')
+    self.debug(('Shared Network offering created: %s' % self.shared_network_offering_sg.id))
+    network_offering_update_response = NetworkOffering.update(self.shared_network_offering_sg, self.api_client, id=self.shared_network_offering_sg.id, state='enabled')
+    list_network_offerings_response = NetworkOffering.list(self.api_client, id=self.shared_network_offering_sg.id)
+    self.assertEqual(isinstance(list_network_offerings_response, list), True, 'listNetworkOfferings returned invalid object in response.')
+    self.assertNotEqual(len(list_network_offerings_response), 0, 'listNetworkOfferings returned empty list.')
+    self.assertEqual(list_network_offerings_response[0].state, 'Enabled', 'The network offering state should get updated to Enabled.')
+    physical_network = list_physical_networks_response[0]
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.shared_network_sg = Network.create(self.api_client, self.services['shared_network_sg'], domainid=self.admin_account.account.domainid, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(self.shared_network_sg)
+    list_networks_response = Network.list(self.api_client, id=self.shared_network_sg.id)
+    self.assertEqual(isinstance(list_networks_response, list), True, 'listNetworks returned invalid object in response.')
+    self.assertNotEqual(len(list_networks_response), 0, 'listNetworks returned empty list.')
+    self.assertEqual(list_networks_response[0].specifyipranges, True, 'The network is created with ip range but the flag is set to False.')
+    self.debug(('Shared Network created: %s' % self.shared_network_sg.id))
+    self.shared_network_admin_account_virtual_machine = VirtualMachine.create(self.api_client, self.services['virtual_machine'], accountid=self.admin_account.name, domainid=self.admin_account.account.domainid, networkids=self.shared_network_sg.id, serviceofferingid=self.service_offering.id)
+    vms = VirtualMachine.list(self.api_client, id=self.shared_network_admin_account_virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'listVirtualMachines returned invalid object in response.')
+    self.assertNotEqual(len(vms), 0, 'listVirtualMachines returned empty list.')
+    self.debug(('Virtual Machine created: %s' % self.shared_network_admin_account_virtual_machine.id))
+    ip_range = list(netaddr.iter_iprange(unicode(self.services['shared_network_sg']['startip']), unicode(self.services['shared_network_sg']['endip'])))
+    if (netaddr.IPAddress(unicode(vms[0].nic[0].ipaddress)) not in ip_range):
+        self.fail('Virtual machine ip should be from the ip range assigned to network created.')

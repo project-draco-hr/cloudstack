@@ -1,0 +1,59 @@
+{
+  Long zoneId=cmd.getZoneId();
+  validateZone(zoneId,"remove VMware datacenter from zone");
+  VmwareDatacenterZoneMapVO vmwareDcZoneMap;
+  VmwareDatacenterVO vmwareDatacenter;
+  String vmwareDcName;
+  long vmwareDcId;
+  String vCenterHost;
+  String userName;
+  String password;
+  DatacenterMO dcMo=null;
+  Transaction txn;
+  vmwareDcZoneMap=_vmwareDcZoneMapDao.findByZoneId(zoneId);
+  if (vmwareDcZoneMap == null) {
+    throw new CloudRuntimeException("Zone " + zoneId + " is not associated with any VMware datacenter.");
+  }
+  vmwareDcId=vmwareDcZoneMap.getVmwareDcId();
+  vmwareDatacenter=_vmwareDcDao.findById(vmwareDcId);
+  vmwareDcName=vmwareDatacenter.getVmwareDatacenterName();
+  vCenterHost=vmwareDatacenter.getVcenterHost();
+  userName=vmwareDatacenter.getUser();
+  password=vmwareDatacenter.getPassword();
+  txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    _vmwareDcDao.remove(vmwareDcId);
+    _vmwareDcZoneMapDao.remove(vmwareDcZoneMap.getId());
+    txn.commit();
+  }
+ catch (  Exception e) {
+    s_logger.info("Caught exception when trying to delete VMware datacenter record." + e.getMessage());
+    throw new CloudRuntimeException("Failed to delete VMware datacenter.");
+  }
+  VmwareContext context=null;
+  try {
+    context=VmwareContextFactory.create(vCenterHost,userName,password);
+    try {
+      dcMo=new DatacenterMO(context,vmwareDcName);
+    }
+ catch (    Throwable t) {
+      String msg="Unable to find DC " + vmwareDcName + " in vCenter "+ vCenterHost;
+      s_logger.error(msg);
+      throw new DiscoveryException(msg);
+    }
+    assert(dcMo != null);
+    dcMo.setCustomFieldValue(CustomFieldConstants.CLOUD_ZONE,"false");
+    s_logger.info("Sucessfully reset custom field property cloud.zone over DC " + vmwareDcName);
+  }
+ catch (  Exception e) {
+    String msg="Unable to reset custom field property cloud.zone over DC " + vmwareDcName + " due to : "+ VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg);
+    throw new CloudRuntimeException(msg);
+  }
+ finally {
+    if (context != null)     context.close();
+    context=null;
+  }
+  return true;
+}

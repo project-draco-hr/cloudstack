@@ -19,27 +19,40 @@
   List<VolumeVO> rootVols=_volsDao.findByInstanceAndType(vmId,Volume.Type.ROOT);
   if (rootVols.isEmpty()) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Can not find root volume for VM " + vm.getUuid());
-    ex.addProxyObject(vm,vmId,"vmId");
+    ex.addProxyObject(vm.getUuid(),"vmId");
     throw ex;
   }
   VolumeVO root=rootVols.get(0);
   Long templateId=root.getTemplateId();
+  boolean isISO=false;
   if (templateId == null) {
-    InvalidParameterValueException ex=new InvalidParameterValueException("Currently there is no support to reset a vm that is deployed using ISO " + vm.getUuid());
-    ex.addProxyObject(vm,vmId,"vmId");
-    throw ex;
+    isISO=true;
+    templateId=vm.getIsoId();
   }
   VMTemplateVO template=null;
   if (newTemplateId != null) {
     template=_templateDao.findById(newTemplateId);
     _accountMgr.checkAccess(caller,null,true,template);
+    if (isISO) {
+      if (!template.getFormat().equals(ImageFormat.ISO)) {
+        throw new InvalidParameterValueException("Invalid ISO id provided to restore the VM ");
+      }
+    }
+ else {
+      if (template.getFormat().equals(ImageFormat.ISO)) {
+        throw new InvalidParameterValueException("Invalid template id provided to restore the VM ");
+      }
+    }
   }
  else {
+    if (isISO && templateId == null) {
+      throw new CloudRuntimeException("Cannot restore the VM since there is no ISO attached to VM");
+    }
     template=_templateDao.findById(templateId);
     if (template == null) {
-      InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template for specified volumeid and vmId");
-      ex.addProxyObject(vm,vmId,"vmId");
-      ex.addProxyObject(root,root.getId(),"volumeId");
+      InvalidParameterValueException ex=new InvalidParameterValueException("Cannot find template/ISO for specified volumeid and vmId");
+      ex.addProxyObject(vm.getUuid(),"vmId");
+      ex.addProxyObject(root.getUuid(),"volumeId");
       throw ex;
     }
   }
@@ -50,16 +63,25 @@
  catch (    ResourceUnavailableException e) {
       s_logger.debug("Stop vm " + vm.getUuid() + " failed",e);
       CloudRuntimeException ex=new CloudRuntimeException("Stop vm failed for specified vmId");
-      ex.addProxyObject(vm,vmId,"vmId");
+      ex.addProxyObject(vm.getUuid(),"vmId");
       throw ex;
     }
   }
   VolumeVO newVol=null;
   if (newTemplateId != null) {
-    newVol=volumeMgr.allocateDuplicateVolume(root,newTemplateId);
-    vm.setGuestOSId(template.getGuestOSId());
-    vm.setTemplateId(newTemplateId);
-    _vmDao.update(vmId,vm);
+    if (isISO) {
+      newVol=volumeMgr.allocateDuplicateVolume(root,null);
+      vm.setIsoId(newTemplateId);
+      vm.setGuestOSId(template.getGuestOSId());
+      vm.setTemplateId(newTemplateId);
+      _vmDao.update(vmId,vm);
+    }
+ else {
+      newVol=volumeMgr.allocateDuplicateVolume(root,newTemplateId);
+      vm.setGuestOSId(template.getGuestOSId());
+      vm.setTemplateId(newTemplateId);
+      _vmDao.update(vmId,vm);
+    }
   }
  else {
     newVol=volumeMgr.allocateDuplicateVolume(root,null);
@@ -94,7 +116,7 @@
  catch (    Exception e) {
       s_logger.debug("Unable to start VM " + vm.getUuid(),e);
       CloudRuntimeException ex=new CloudRuntimeException("Unable to start VM with specified id" + e.getMessage());
-      ex.addProxyObject(vm,vmId,"vmId");
+      ex.addProxyObject(vm.getUuid(),"vmId");
       throw ex;
     }
   }

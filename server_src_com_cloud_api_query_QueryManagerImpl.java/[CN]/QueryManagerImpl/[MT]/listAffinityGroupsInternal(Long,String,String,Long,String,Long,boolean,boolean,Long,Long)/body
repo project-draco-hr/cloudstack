@@ -1,0 +1,46 @@
+{
+  Account caller=UserContext.current().getCaller();
+  Long accountId=caller.getAccountId();
+  if (vmId != null) {
+    UserVmVO userVM=_userVmDao.findById(vmId);
+    if (userVM == null) {
+      throw new InvalidParameterValueException("Unable to list affinity groups for virtual machine instance " + vmId + "; instance not found.");
+    }
+    _accountMgr.checkAccess(caller,null,true,userVM);
+    return listAffinityGroupsByVM(vmId.longValue(),startIndex,pageSize);
+  }
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(domainId,isRecursive,null);
+  _accountMgr.buildACLSearchParameters(caller,affinityGroupId,accountName,null,permittedAccounts,domainIdRecursiveListProject,listAll,true);
+  domainId=domainIdRecursiveListProject.first();
+  isRecursive=domainIdRecursiveListProject.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  Filter searchFilter=new Filter(AffinityGroupJoinVO.class,"id",true,startIndex,pageSize);
+  SearchBuilder<AffinityGroupJoinVO> groupSearch=_affinityGroupJoinDao.createSearchBuilder();
+  _accountMgr.buildACLViewSearchBuilder(groupSearch,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  groupSearch.select(null,Func.DISTINCT,groupSearch.entity().getId());
+  SearchCriteria<AffinityGroupJoinVO> sc=groupSearch.create();
+  _accountMgr.buildACLViewSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  if (affinityGroupId != null) {
+    sc.addAnd("id",SearchCriteria.Op.EQ,affinityGroupId);
+  }
+  if (affinityGroupName != null) {
+    sc.addAnd("name",SearchCriteria.Op.EQ,affinityGroupName);
+  }
+  if (affinityGroupType != null) {
+    sc.addAnd("type",SearchCriteria.Op.EQ,affinityGroupType);
+  }
+  Pair<List<AffinityGroupJoinVO>,Integer> uniqueGroupsPair=_affinityGroupJoinDao.searchAndCount(sc,searchFilter);
+  Integer count=uniqueGroupsPair.second();
+  if (count.intValue() == 0) {
+    return uniqueGroupsPair;
+  }
+  List<AffinityGroupJoinVO> uniqueGroups=uniqueGroupsPair.first();
+  Long[] vrIds=new Long[uniqueGroups.size()];
+  int i=0;
+  for (  AffinityGroupJoinVO v : uniqueGroups) {
+    vrIds[i++]=v.getId();
+  }
+  List<AffinityGroupJoinVO> vrs=_affinityGroupJoinDao.searchByIds(vrIds);
+  return new Pair<List<AffinityGroupJoinVO>,Integer>(vrs,count);
+}

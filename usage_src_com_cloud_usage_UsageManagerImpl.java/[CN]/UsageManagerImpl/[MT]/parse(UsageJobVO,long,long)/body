@@ -37,6 +37,8 @@
     List<AccountVO> accounts=null;
     List<UserStatisticsVO> userStats=null;
     Map<String,UsageNetworkVO> networkStats=null;
+    List<VmDiskStatisticsVO> vmDiskStats=null;
+    Map<String,UsageVmDiskVO> vmDiskUsages=null;
     Transaction userTxn=Transaction.open(Transaction.CLOUD_DB);
     try {
       Long limit=Long.valueOf(500);
@@ -102,6 +104,34 @@
         offset=new Long(offset.longValue() + limit.longValue());
       }
  while ((userStats != null) && !userStats.isEmpty());
+      offset=Long.valueOf(0);
+      Long lastVmDiskStatsId=m_usageDao.getLastVmDiskStatsId();
+      if (lastVmDiskStatsId == null) {
+        lastVmDiskStatsId=Long.valueOf(0);
+      }
+      SearchCriteria<VmDiskStatisticsVO> sc4=m_vmDiskStatsDao.createSearchCriteria();
+      sc4.addAnd("id",SearchCriteria.Op.LTEQ,lastVmDiskStatsId);
+      do {
+        Filter filter=new Filter(VmDiskStatisticsVO.class,"id",true,offset,limit);
+        vmDiskStats=m_vmDiskStatsDao.search(sc4,filter);
+        if ((vmDiskStats != null) && !vmDiskStats.isEmpty()) {
+          m_usageDao.updateVmDiskStats(vmDiskStats);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((vmDiskStats != null) && !vmDiskStats.isEmpty());
+      offset=Long.valueOf(0);
+      sc4=m_vmDiskStatsDao.createSearchCriteria();
+      sc4.addAnd("id",SearchCriteria.Op.GT,lastVmDiskStatsId);
+      do {
+        Filter filter=new Filter(VmDiskStatisticsVO.class,"id",true,offset,limit);
+        vmDiskStats=m_vmDiskStatsDao.search(sc4,filter);
+        if ((vmDiskStats != null) && !vmDiskStats.isEmpty()) {
+          m_usageDao.saveVmDiskStats(vmDiskStats);
+        }
+        offset=new Long(offset.longValue() + limit.longValue());
+      }
+ while ((vmDiskStats != null) && !vmDiskStats.isEmpty());
     }
   finally {
       userTxn.close();
@@ -149,6 +179,7 @@
       }
  while ((userStats != null) && !userStats.isEmpty());
       int numAcctsProcessed=0;
+      usageNetworks.clear();
       for (      String key : aggregatedStats.keySet()) {
         UsageNetworkVO currentNetworkStats=null;
         if (networkStats != null) {
@@ -157,8 +188,47 @@
         createNetworkHelperEntry(aggregatedStats.get(key),currentNetworkStats,endDateMillis);
         numAcctsProcessed++;
       }
+      m_usageNetworkDao.saveUsageNetworks(usageNetworks);
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("created network stats helper entries for " + numAcctsProcessed + " accts");
+      }
+      vmDiskUsages=m_usageVmDiskDao.getRecentVmDiskStats();
+      Map<String,VmDiskStatisticsVO> aggregatedDiskStats=new HashMap<String,VmDiskStatisticsVO>();
+      startIndex=0;
+      do {
+        vmDiskStats=m_vmDiskStatsDao.listActiveAndRecentlyDeleted(recentlyDeletedDate,startIndex,500);
+        if (vmDiskUsages != null) {
+          for (          VmDiskStatisticsVO vmDiskStat : vmDiskStats) {
+            if (vmDiskStat.getVmId() != null) {
+              String hostKey=vmDiskStat.getDataCenterId() + "-" + vmDiskStat.getAccountId()+ "-Vm-"+ vmDiskStat.getVmId()+ "-Disk-"+ vmDiskStat.getVolumeId();
+              VmDiskStatisticsVO hostAggregatedStat=aggregatedDiskStats.get(hostKey);
+              if (hostAggregatedStat == null) {
+                hostAggregatedStat=new VmDiskStatisticsVO(vmDiskStat.getAccountId(),vmDiskStat.getDataCenterId(),vmDiskStat.getVmId(),vmDiskStat.getVolumeId());
+              }
+              hostAggregatedStat.setAggIORead(hostAggregatedStat.getAggIORead() + vmDiskStat.getAggIORead());
+              hostAggregatedStat.setAggIOWrite(hostAggregatedStat.getAggIOWrite() + vmDiskStat.getAggIOWrite());
+              hostAggregatedStat.setAggBytesRead(hostAggregatedStat.getAggBytesRead() + vmDiskStat.getAggBytesRead());
+              hostAggregatedStat.setAggBytesWrite(hostAggregatedStat.getAggBytesWrite() + vmDiskStat.getAggBytesWrite());
+              aggregatedDiskStats.put(hostKey,hostAggregatedStat);
+            }
+          }
+        }
+        startIndex+=500;
+      }
+ while ((userStats != null) && !userStats.isEmpty());
+      numAcctsProcessed=0;
+      usageVmDisks.clear();
+      for (      String key : aggregatedDiskStats.keySet()) {
+        UsageVmDiskVO currentVmDiskStats=null;
+        if (vmDiskStats != null) {
+          currentVmDiskStats=vmDiskUsages.get(key);
+        }
+        createVmDiskHelperEntry(aggregatedDiskStats.get(key),currentVmDiskStats,endDateMillis);
+        numAcctsProcessed++;
+      }
+      m_usageVmDiskDao.saveUsageVmDisks(usageVmDisks);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("created vm disk stats helper entries for " + numAcctsProcessed + " accts");
       }
       usageTxn.commit();
       usageTxn.start();
