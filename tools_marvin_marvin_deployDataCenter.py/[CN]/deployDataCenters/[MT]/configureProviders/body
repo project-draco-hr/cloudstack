@@ -1,0 +1,64 @@
+def configureProviders(self, phynetwrk, providers):
+    '\n        We will enable the virtualrouter elements for all zones. Other providers \n        like NetScalers, SRX, etc are explicitly added/configured\n        '
+    for provider in providers:
+        pnetprov = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
+        pnetprov.physicalnetworkid = phynetwrk.id
+        pnetprov.state = 'Disabled'
+        pnetprov.name = provider.name
+        pnetprovres = self.apiClient.listNetworkServiceProviders(pnetprov)
+        if (pnetprovres and (len(pnetprovres) > 0)):
+            if ((provider.name == 'VirtualRouter') or (provider.name == 'VpcVirtualRouter')):
+                vrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
+                vrprov.nspid = pnetprovres[0].id
+                vrprovresponse = self.apiClient.listVirtualRouterElements(vrprov)
+                vrprovid = vrprovresponse[0].id
+                vrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
+                vrconfig.enabled = 'true'
+                vrconfig.id = vrprovid
+                self.apiClient.configureVirtualRouterElement(vrconfig)
+                self.enableProvider(pnetprovres[0].id)
+            elif (provider.name == 'InternalLbVm'):
+                internallbprov = listInternalLoadBalancerElements.listInternalLoadBalancerElementsCmd()
+                internallbprov.nspid = pnetprovres[0].id
+                internallbresponse = self.apiClient.listInternalLoadBalancerElements(internallbprov)
+                internallbid = internallbresponse[0].id
+                internallbconfig = configureInternalLoadBalancerElement.configureInternalLoadBalancerElementCmd()
+                internallbconfig.enabled = 'true'
+                internallbconfig.id = internallbid
+                self.apiClient.configureInternalLoadBalancerElement(internallbconfig)
+                self.enableProvider(pnetprovres[0].id)
+            elif (provider.name == 'SecurityGroupProvider'):
+                self.enableProvider(pnetprovres[0].id)
+        elif (provider.name in ['Netscaler', 'JuniperSRX', 'F5BigIp']):
+            netprov = addNetworkServiceProvider.addNetworkServiceProviderCmd()
+            netprov.name = provider.name
+            netprov.physicalnetworkid = phynetwrk.id
+            result = self.apiClient.addNetworkServiceProvider(netprov)
+            for device in provider.devices:
+                if (provider.name == 'Netscaler'):
+                    dev = addNetscalerLoadBalancer.addNetscalerLoadBalancerCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addNetscalerLoadBalancer(dev)
+                elif (provider.name == 'JuniperSRX'):
+                    dev = addSrxFirewall.addSrxFirewallCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addSrxFirewall(dev)
+                elif (provider.name == 'F5BigIp'):
+                    dev = addF5LoadBalancer.addF5LoadBalancerCmd()
+                    dev.username = device.username
+                    dev.password = device.password
+                    dev.networkdevicetype = device.networkdevicetype
+                    dev.url = configGenerator.getDeviceUrl(device)
+                    dev.physicalnetworkid = phynetwrk.id
+                    self.apiClient.addF5LoadBalancer(dev)
+                else:
+                    raise cloudstackException.InvalidParameterException(("Device %s doesn't match any know provider type" % device))
+            self.enableProvider(result.id)
