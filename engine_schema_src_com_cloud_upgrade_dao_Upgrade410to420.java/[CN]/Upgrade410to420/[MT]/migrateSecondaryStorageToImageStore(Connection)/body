@@ -1,0 +1,81 @@
+{
+  PreparedStatement storeInsert=null;
+  PreparedStatement storeDetailInsert=null;
+  PreparedStatement storeQuery=null;
+  PreparedStatement s3Query=null;
+  PreparedStatement swiftQuery=null;
+  PreparedStatement nfsQuery=null;
+  ResultSet rs=null;
+  ResultSet storeInfo=null;
+  Long storeId=null;
+  try {
+    storeQuery=conn.prepareStatement("select id from `cloud`.`image_store` where uuid = ?");
+    storeDetailInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store_details` (store_id, name, value) values(?, ?, ?)");
+    storeInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store` (id, uuid, name, image_provider_name, protocol, url, data_center_id, scope, role, parent, total_size, created) values(?, ?, ?, 'NFS', 'nfs', ?, ?, 'ZONE', 'Image', ?, ?, ?)");
+    nfsQuery=conn.prepareStatement("select id, uuid, url, data_center_id, parent, total_size, created from `cloud`.`host` where type = 'SecondaryStorage' and removed is null");
+    rs=nfsQuery.executeQuery();
+    while (rs.next()) {
+      Long nfs_id=rs.getLong("id");
+      String nfs_uuid=rs.getString("uuid");
+      String nfs_url=rs.getString("url");
+      String nfs_parent=rs.getString("parent");
+      int nfs_dcid=rs.getInt("data_center_id");
+      Long nfs_totalsize=rs.getObject("total_size") != null ? rs.getLong("total_size") : null;
+      Date nfs_created=rs.getDate("created");
+      storeInsert.setLong(1,nfs_id);
+      storeInsert.setString(2,nfs_uuid);
+      storeInsert.setString(3,nfs_uuid);
+      storeInsert.setString(4,nfs_url);
+      storeInsert.setInt(5,nfs_dcid);
+      storeInsert.setString(6,nfs_parent);
+      if (nfs_totalsize != null) {
+        storeInsert.setLong(7,nfs_totalsize);
+      }
+ else {
+        storeInsert.setNull(7,Types.BIGINT);
+      }
+      storeInsert.setDate(8,nfs_created);
+      storeInsert.executeUpdate();
+      storeQuery.setString(1,nfs_uuid);
+      storeInfo=storeQuery.executeQuery();
+      if (storeInfo.next()) {
+        storeId=storeInfo.getLong("id");
+      }
+    }
+  }
+ catch (  SQLException e) {
+    String msg="Unable to migrate secondary storages." + e.getMessage();
+    s_logger.error(msg);
+    throw new CloudRuntimeException(msg,e);
+  }
+ finally {
+    try {
+      if (rs != null) {
+        rs.close();
+      }
+      if (storeInfo != null) {
+        storeInfo.close();
+      }
+      if (storeInsert != null) {
+        storeInsert.close();
+      }
+      if (storeDetailInsert != null) {
+        storeDetailInsert.close();
+      }
+      if (storeQuery != null) {
+        storeQuery.close();
+      }
+      if (swiftQuery != null) {
+        swiftQuery.close();
+      }
+      if (s3Query != null) {
+        s3Query.close();
+      }
+      if (nfsQuery != null) {
+        nfsQuery.close();
+      }
+    }
+ catch (    SQLException e) {
+    }
+  }
+}
