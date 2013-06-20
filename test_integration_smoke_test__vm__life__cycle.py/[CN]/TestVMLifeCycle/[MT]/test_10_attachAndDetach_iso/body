@@ -1,6 +1,6 @@
-@attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'sg'])
+@attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'sg', 'needle'])
 def test_10_attachAndDetach_iso(self):
-    'Test for detach ISO to virtual machine'
+    'Test for attach and detach ISO to virtual machine'
     iso = Iso.create(self.apiclient, self.services['iso'], account=self.account.name, domainid=self.account.domainid)
     self.debug(('Successfully created ISO with ID: %s' % iso.id))
     try:
@@ -22,12 +22,18 @@ def test_10_attachAndDetach_iso(self):
         ssh_client = self.virtual_machine.get_ssh_client()
     except Exception as e:
         self.fail(('SSH failed for virtual machine: %s - %s' % (self.virtual_machine.ipaddress, e)))
-    cmds = [('mkdir -p %s' % self.services['mount_dir']), ('mount -rt iso9660 %s %s' % (self.services['diskdevice'], self.services['mount_dir']))]
-    for c in cmds:
-        res = ssh_client.execute(c)
-        self.assertEqual(res, [], 'Check mount is successful or not')
-        c = ('fdisk -l|grep %s|head -1' % self.services['diskdevice'])
-        res = ssh_client.execute(c)
+    cmds = [('mkdir -p %s' % self.services['mount_dir'])]
+    self.assert_((ssh_client.execute(cmds) == []), 'mkdir failed within guest')
+    for diskdevice in self.services['diskdevice']:
+        res = ssh_client.execute('mount -rt iso9660 {} {}'.format(diskdevice, self.services['mount_dir']))
+        if (res == []):
+            self.services['mount'] = diskdevice
+            break
+    else:
+        self.skipTest('No mount points matched. Mount was unsuccessful')
+    c = ('fdisk -l|grep %s|head -1' % self.services['mount'])
+    res = ssh_client.execute(c)
+    self.debug(('Found a mount point at %s' % res))
     result = []
     for i in res:
         for k in i.split():
@@ -48,6 +54,6 @@ def test_10_attachAndDetach_iso(self):
         res = ssh_client.execute(c)
     except Exception as e:
         self.fail(('SSH failed for virtual machine: %s - %s' % (self.virtual_machine.ipaddress, e)))
-    result = (self.services['diskdevice'] in str(res))
+    result = (self.services['mount'] in str(res))
     self.assertEqual(result, False, 'Check if ISO is detached from virtual machine')
     return
