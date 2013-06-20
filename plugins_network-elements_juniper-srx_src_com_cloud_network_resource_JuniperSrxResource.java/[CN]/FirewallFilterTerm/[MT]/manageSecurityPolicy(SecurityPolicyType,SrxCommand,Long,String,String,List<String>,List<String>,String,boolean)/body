@@ -7,7 +7,7 @@
     securityPolicyName=ipsecVpnName;
     addressBookEntryName=ipsecVpnName;
   }
- else   if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+ else   if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS) || type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS_DEFAULT)) {
     fromZone=_privateZone;
     toZone=_publicZone;
     securityPolicyName=genSecurityPolicyName(type,accountId,username,fromZone,toZone,privateIp);
@@ -44,16 +44,17 @@ return true;
 }
 return false;
 case ADD:
-if (!type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+if (!(type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS) || type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS_DEFAULT))) {
 if (!manageAddressBookEntry(SrxCommand.CHECK_IF_EXISTS,toZone,privateIp,addressBookEntryName)) {
 throw new ExecutionException("No address book entry for policy: " + securityPolicyName);
 }
 }
 String srcAddrs="";
 String dstAddrs="";
+String action="";
 xml=SrxXml.SECURITY_POLICY_ADD.getXml();
 xml=replaceXmlValue(xml,"policy-name",securityPolicyName);
-if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS)) {
+if (type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS) || type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS_DEFAULT)) {
 xml=replaceXmlValue(xml,"from-zone",_privateZone);
 xml=replaceXmlValue(xml,"to-zone",_publicZone);
 if (cidrs == null) {
@@ -67,6 +68,13 @@ srcAddrs+="<source-address>" + genAddressBookEntryName(cidr) + "</source-address
 xml=replaceXmlValue(xml,"src-address",srcAddrs);
 dstAddrs="<destination-address>any</destination-address>";
 xml=replaceXmlValue(xml,"dst-address",dstAddrs);
+if (defaultEgressAction == true) {
+action="<deny></deny>";
+}
+ else {
+action="<permit></permit>";
+}
+xml=replaceXmlValue(xml,"action",action);
 }
  else {
 xml=replaceXmlValue(xml,"from-zone",fromZone);
@@ -77,10 +85,14 @@ dstAddrs="<destination-address>" + addressBookEntryName + "</destination-address
 xml=replaceXmlValue(xml,"dst-address",dstAddrs);
 }
 if (type.equals(SecurityPolicyType.VPN) && ipsecVpnName != null) {
-xml=replaceXmlValue(xml,"tunnel","<tunnel><ipsec-vpn>" + ipsecVpnName + "</ipsec-vpn></tunnel>");
+xml=replaceXmlValue(xml,"tunnel","<permit><tunnel><ipsec-vpn>" + ipsecVpnName + "</ipsec-vpn></tunnel></permit>");
 }
  else {
 xml=replaceXmlValue(xml,"tunnel","");
+if (!(type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS_DEFAULT) || type.equals(SecurityPolicyType.SECURITYPOLICY_EGRESS))) {
+action="<permit></permit>";
+xml=replaceXmlValue(xml,"action",action);
+}
 }
 String applications;
 if (applicationNames == null || applicationNames.size() == 0) {
@@ -100,10 +112,10 @@ throw new ExecutionException("Failed to add security policy for privateIp " + pr
 return true;
 }
 case DELETE:
-if (!manageSecurityPolicy(type,SrxCommand.CHECK_IF_EXISTS,null,null,privateIp,applicationNames,cidrs,ipsecVpnName)) {
+if (!manageSecurityPolicy(type,SrxCommand.CHECK_IF_EXISTS,null,null,privateIp,applicationNames,cidrs,ipsecVpnName,defaultEgressAction)) {
 return true;
 }
-if (manageSecurityPolicy(type,SrxCommand.CHECK_IF_IN_USE,null,null,privateIp,applicationNames,cidrs,ipsecVpnName)) {
+if (manageSecurityPolicy(type,SrxCommand.CHECK_IF_IN_USE,null,null,privateIp,applicationNames,cidrs,ipsecVpnName,defaultEgressAction)) {
 return true;
 }
 xml=SrxXml.SECURITY_POLICY_GETONE.getXml();
