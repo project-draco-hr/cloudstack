@@ -1,0 +1,41 @@
+{
+  VolumeObjectTO volume=(VolumeObjectTO)cmd.getSrcTO();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volume.getDataStore();
+  TemplateObjectTO template=(TemplateObjectTO)cmd.getDestTO();
+  DataStoreTO imageStore=template.getDataStore();
+  if (!(imageStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("unsupported protocol");
+  }
+  NfsTO nfsImageStore=(NfsTO)imageStore;
+  String secondaryStoragePoolURL=nfsImageStore.getUrl();
+  String volumePath=volume.getPath();
+  String details=null;
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(volume.getVmName());
+    if (vmMo == null) {
+      if (s_logger.isDebugEnabled())       s_logger.debug("Unable to find the owner VM for CreatePrivateTemplateFromVolumeCommand on host " + hyperHost.getHyperHostName() + ", try within datacenter");
+      vmMo=hyperHost.findVmOnPeerHyperHost(volume.getVmName());
+      if (vmMo == null) {
+        String msg="Unable to find the owner VM for volume operation. vm: " + volume.getVmName();
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+    Ternary<String,Long,Long> result=createTemplateFromVolume(vmMo,template.getPath(),template.getId(),template.getName(),secondaryStoragePoolURL,volumePath,hostService.getWorkerName(context,cmd,0));
+    TemplateObjectTO newTemplate=new TemplateObjectTO();
+    newTemplate.setPath(template.getName());
+    newTemplate.setFormat(ImageFormat.OVA);
+    newTemplate.setSize(result.third());
+    return new CopyCmdAnswer(newTemplate);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    s_logger.error("Unexpecpted exception ",e);
+    details="CreatePrivateTemplateFromVolumeCommand exception: " + StringUtils.getExceptionStackInfo(e);
+    return new CopyCmdAnswer(details);
+  }
+}

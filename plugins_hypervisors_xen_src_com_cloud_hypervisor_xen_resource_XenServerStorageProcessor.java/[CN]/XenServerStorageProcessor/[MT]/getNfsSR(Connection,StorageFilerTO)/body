@@ -1,0 +1,44 @@
+{
+  Map<String,String> deviceConfig=new HashMap<String,String>();
+  try {
+    String server=pool.getHost();
+    String serverpath=pool.getPath();
+    serverpath=serverpath.replace("//","/");
+    Set<SR> srs=SR.getAll(conn);
+    for (    SR sr : srs) {
+      if (!SRType.NFS.equals(sr.getType(conn))) {
+        continue;
+      }
+      Set<PBD> pbds=sr.getPBDs(conn);
+      if (pbds.isEmpty()) {
+        continue;
+      }
+      PBD pbd=pbds.iterator().next();
+      Map<String,String> dc=pbd.getDeviceConfig(conn);
+      if (dc == null) {
+        continue;
+      }
+      if (dc.get("server") == null) {
+        continue;
+      }
+      if (dc.get("serverpath") == null) {
+        continue;
+      }
+      if (server.equals(dc.get("server")) && serverpath.equals(dc.get("serverpath"))) {
+        throw new CloudRuntimeException("There is a SR using the same configuration server:" + dc.get("server") + ", serverpath:"+ dc.get("serverpath")+ " for pool "+ pool.getUuid()+ "on host:"+ hypervisorResource.getHost().uuid);
+      }
+    }
+    deviceConfig.put("server",server);
+    deviceConfig.put("serverpath",serverpath);
+    Host host=Host.getByUuid(conn,hypervisorResource.getHost().uuid);
+    SR sr=SR.create(conn,host,deviceConfig,new Long(0),pool.getUuid(),Long.toString(pool.getId()),SRType.NFS.toString(),"user",true,new HashMap<String,String>());
+    sr.scan(conn);
+    return sr;
+  }
+ catch (  XenAPIException e) {
+    throw new CloudRuntimeException("Unable to create NFS SR " + pool.toString(),e);
+  }
+catch (  XmlRpcException e) {
+    throw new CloudRuntimeException("Unable to create NFS SR " + pool.toString(),e);
+  }
+}

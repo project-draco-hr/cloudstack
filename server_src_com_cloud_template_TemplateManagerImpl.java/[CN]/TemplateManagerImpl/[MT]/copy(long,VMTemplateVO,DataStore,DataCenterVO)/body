@@ -1,0 +1,48 @@
+{
+  long tmpltId=template.getId();
+  long dstZoneId=dstZone.getId();
+  List<DataStore> dstSecStores=this._dataStoreMgr.getImageStoresByScope(new ZoneScope(dstZoneId));
+  if (dstSecStores == null || dstSecStores.isEmpty()) {
+    throw new StorageUnavailableException("Destination zone is not ready, no image store associated",DataCenter.class,dstZone.getId());
+  }
+  AccountVO account=_accountDao.findById(template.getAccountId());
+  TemplateDataStoreVO srcTmpltStore=this._tmplStoreDao.findByStoreTemplate(srcSecStore.getId(),tmpltId);
+  _resourceLimitMgr.checkResourceLimit(account,ResourceType.template);
+  _resourceLimitMgr.checkResourceLimit(account,ResourceType.secondary_storage,new Long(srcTmpltStore.getSize()));
+  String copyEventType;
+  String createEventType;
+  if (template.getFormat().equals(ImageFormat.ISO)) {
+    copyEventType=EventTypes.EVENT_ISO_COPY;
+    createEventType=EventTypes.EVENT_ISO_CREATE;
+  }
+ else {
+    copyEventType=EventTypes.EVENT_TEMPLATE_COPY;
+    createEventType=EventTypes.EVENT_TEMPLATE_CREATE;
+  }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  TemplateInfo srcTemplate=this._tmplFactory.getTemplate(template.getId(),srcSecStore);
+  for (  DataStore dstSecStore : dstSecStores) {
+    TemplateDataStoreVO dstTmpltStore=this._tmplStoreDao.findByStoreTemplate(dstSecStore.getId(),tmpltId);
+    if (dstTmpltStore != null && dstTmpltStore.getDownloadState() == Status.DOWNLOADED) {
+      return true;
+    }
+    AsyncCallFuture<TemplateApiResult> future=this._tmpltSvr.copyTemplate(srcTemplate,dstSecStore);
+    try {
+      TemplateApiResult result=future.get();
+      if (result.isFailed()) {
+        s_logger.debug("copy template failed for image store " + dstSecStore.getName() + ":"+ result.getResult());
+        continue;
+      }
+      _tmpltDao.addTemplateToZone(template,dstZoneId);
+      if (account.getId() != Account.ACCOUNT_ID_SYSTEM) {
+        UsageEventUtils.publishUsageEvent(copyEventType,account.getId(),dstZoneId,tmpltId,null,null,null,srcTmpltStore.getSize(),template.getClass().getName(),template.getUuid());
+      }
+      return true;
+    }
+ catch (    Exception ex) {
+      s_logger.debug("failed to copy template to image store:" + dstSecStore.getName() + " ,will try next one");
+    }
+  }
+  return false;
+}

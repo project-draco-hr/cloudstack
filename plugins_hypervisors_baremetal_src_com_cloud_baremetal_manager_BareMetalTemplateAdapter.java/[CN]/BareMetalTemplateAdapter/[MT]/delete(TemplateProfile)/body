@@ -3,49 +3,51 @@
   Long templateId=template.getId();
   boolean success=true;
   String zoneName;
-  boolean isAllZone;
   if (!template.isCrossZones() && profile.getZoneId() != null) {
-    isAllZone=false;
     zoneName=profile.getZoneId().toString();
   }
  else {
     zoneName="all zones";
-    isAllZone=true;
   }
   s_logger.debug("Attempting to mark template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
   Account account=_accountDao.findByIdIncludingRemoved(template.getAccountId());
   String eventType=EventTypes.EVENT_TEMPLATE_DELETE;
-  List<VMTemplateHostVO> templateHostVOs=_tmpltHostDao.listByTemplateId(templateId);
-  for (  VMTemplateHostVO vo : templateHostVOs) {
-    VMTemplateHostVO lock=null;
+  List<TemplateDataStoreVO> templateHostVOs=this._tmpltStoreDao.listByTemplate(templateId);
+  for (  TemplateDataStoreVO vo : templateHostVOs) {
+    TemplateDataStoreVO lock=null;
     try {
-      HostVO pxeServer=_hostDao.findById(vo.getHostId());
-      if (!isAllZone && pxeServer.getDataCenterId() != profile.getZoneId()) {
-        continue;
-      }
-      lock=_tmpltHostDao.acquireInLockTable(vo.getId());
+      lock=_tmpltStoreDao.acquireInLockTable(vo.getId());
       if (lock == null) {
-        s_logger.debug("Failed to acquire lock when deleting templateHostVO with ID: " + vo.getId());
+        s_logger.debug("Failed to acquire lock when deleting templateDataStoreVO with ID: " + vo.getId());
         success=false;
         break;
       }
       vo.setDestroyed(true);
-      _tmpltHostDao.update(vo.getId(),vo);
-      VMTemplateZoneVO templateZone=_tmpltZoneDao.findByZoneTemplate(pxeServer.getDataCenterId(),templateId);
-      if (templateZone != null) {
-        _tmpltZoneDao.remove(templateZone.getId());
-      }
-      UsageEventVO usageEvent=new UsageEventVO(eventType,account.getId(),pxeServer.getDataCenterId(),templateId,null);
-      _usageEventDao.persist(usageEvent);
+      _tmpltStoreDao.update(vo.getId(),vo);
     }
   finally {
       if (lock != null) {
-        _tmpltHostDao.releaseFromLockTable(lock.getId());
+        _tmpltStoreDao.releaseFromLockTable(lock.getId());
       }
     }
   }
+  if (profile.getZoneId() != null) {
+    UsageEventVO usageEvent=new UsageEventVO(eventType,account.getId(),profile.getZoneId(),templateId,null);
+    _usageEventDao.persist(usageEvent);
+  }
+ else {
+    List<DataCenterVO> dcs=_dcDao.listAllIncludingRemoved();
+    for (    DataCenterVO dc : dcs) {
+      UsageEventVO usageEvent=new UsageEventVO(eventType,account.getId(),dc.getId(),templateId,null);
+      _usageEventDao.persist(usageEvent);
+    }
+  }
+  VMTemplateZoneVO templateZone=_tmpltZoneDao.findByZoneTemplate(profile.getZoneId(),templateId);
+  if (templateZone != null) {
+    _tmpltZoneDao.remove(templateZone.getId());
+  }
   s_logger.debug("Successfully marked template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
-  if (success && (_tmpltHostDao.listByTemplateId(templateId).size() == 0)) {
+  if (success && (_tmpltStoreDao.listByTemplate(templateId).size() == 0)) {
     long accountId=template.getAccountId();
     VMTemplateVO lock=_tmpltDao.acquireInLockTable(templateId);
     try {

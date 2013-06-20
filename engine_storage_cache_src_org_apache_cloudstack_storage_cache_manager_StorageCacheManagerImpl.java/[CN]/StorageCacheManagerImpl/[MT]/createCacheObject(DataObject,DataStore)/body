@@ -1,0 +1,39 @@
+{
+  DataObjectInStore obj=objectInStoreMgr.findObject(data,store);
+  if (obj != null && obj.getState() == ObjectInDataStoreStateMachine.State.Ready) {
+    s_logger.debug("there is already one in the cache store");
+    DataObject dataObj=objectInStoreMgr.get(data,store);
+    dataObj.incRefCount();
+    return dataObj;
+  }
+  DataObject objOnCacheStore=store.create(data);
+  AsyncCallFuture<CopyCommandResult> future=new AsyncCallFuture<CopyCommandResult>();
+  CopyCommandResult result=null;
+  try {
+    objOnCacheStore.processEvent(Event.CreateOnlyRequested);
+    dataMotionSvr.copyAsync(data,objOnCacheStore,future);
+    result=future.get();
+    if (result.isFailed()) {
+      objOnCacheStore.processEvent(Event.OperationFailed);
+    }
+ else {
+      objOnCacheStore.processEvent(Event.OperationSuccessed,result.getAnswer());
+      objOnCacheStore.incRefCount();
+      return objOnCacheStore;
+    }
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("create cache storage failed: " + e.toString());
+    throw new CloudRuntimeException(e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("create cache storage failed: " + e.toString());
+    throw new CloudRuntimeException(e);
+  }
+ finally {
+    if (result == null) {
+      objOnCacheStore.processEvent(Event.OperationFailed);
+    }
+  }
+  return null;
+}

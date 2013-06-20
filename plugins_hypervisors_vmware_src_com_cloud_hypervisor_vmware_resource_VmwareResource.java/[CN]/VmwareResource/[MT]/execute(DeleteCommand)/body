@@ -1,0 +1,113 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Executing resource DestroyCommand: " + _gson.toJson(cmd));
+  }
+  try {
+    VmwareContext context=getServiceContext();
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    VolumeObjectTO vol=(VolumeObjectTO)cmd.getData();
+    PrimaryDataStoreTO store=(PrimaryDataStoreTO)vol.getDataStore();
+    ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,store.getUuid());
+    if (morDs == null) {
+      String msg="Unable to find datastore based on volume mount point " + store.getPath();
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    DatastoreMO dsMo=new DatastoreMO(context,morDs);
+    ManagedObjectReference morDc=hyperHost.getHyperHostDatacenter();
+    ManagedObjectReference morCluster=hyperHost.getHyperHostCluster();
+    ClusterMO clusterMo=new ClusterMO(context,morCluster);
+    if (vol.getVolumeType() == Volume.Type.ROOT) {
+      String vmName=vol.getVmName();
+      if (vmName != null) {
+        VirtualMachineMO vmMo=clusterMo.findVmOnHyperHost(vmName);
+        if (vmMo != null) {
+          if (s_logger.isInfoEnabled()) {
+            s_logger.info("Destroy root volume and VM itself. vmName " + vmName);
+          }
+          HostMO hostMo=vmMo.getRunningHost();
+          List<NetworkDetails> networks=vmMo.getNetworksWithDetails();
+          if (getVmState(vmMo) != State.Stopped)           vmMo.safePowerOff(_shutdown_waitMs);
+          vmMo.tearDownDevices(new Class<?>[]{VirtualDisk.class,VirtualEthernetCard.class});
+          vmMo.destroy();
+          for (          NetworkDetails netDetails : networks) {
+            if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {
+              if (netDetails.getVMMorsOnNetwork() == null || netDetails.getVMMorsOnNetwork().length == 1) {
+                cleanupNetwork(hostMo,netDetails);
+              }
+            }
+          }
+        }
+        if (s_logger.isInfoEnabled())         s_logger.info("Destroy volume by original name: " + vol.getPath() + ".vmdk");
+        dsMo.deleteFile(vol.getPath() + ".vmdk",morDc,true);
+        if (_fullCloneFlag) {
+          if (s_logger.isInfoEnabled()) {
+            s_logger.info("Destroy volume by derived name: " + vol.getPath() + "-flat.vmdk");
+          }
+          dsMo.deleteFile(vol.getPath() + "-flat.vmdk",morDc,true);
+        }
+ else {
+          if (s_logger.isInfoEnabled()) {
+            s_logger.info("Destroy volume by derived name: " + vol.getPath() + "-delta.vmdk");
+          }
+          dsMo.deleteFile(vol.getPath() + "-delta.vmdk",morDc,true);
+        }
+        return new Answer(cmd,true,"Success");
+      }
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Destroy root volume directly from datastore");
+      }
+    }
+ else {
+      VirtualMachineMO vmMo=clusterMo.findVmOnHyperHost(vol.getPath());
+      if (vmMo != null) {
+        if (s_logger.isInfoEnabled())         s_logger.info("Destroy template volume " + vol.getPath());
+        vmMo.destroy();
+        return new Answer(cmd,true,"Success");
+      }
+    }
+    String chainInfo=vol.getChainInfo();
+    if (chainInfo != null && !chainInfo.isEmpty()) {
+      s_logger.info("Destroy volume by chain info: " + chainInfo);
+      String[] diskChain=_gson.fromJson(chainInfo,String[].class);
+      if (diskChain != null && diskChain.length > 0) {
+        for (        String backingName : diskChain) {
+          if (s_logger.isInfoEnabled()) {
+            s_logger.info("Delete volume backing file: " + backingName);
+          }
+          dsMo.deleteFile(backingName,morDc,true);
+        }
+      }
+ else {
+        if (s_logger.isInfoEnabled()) {
+          s_logger.info("Empty disk chain info, fall back to try to delete by original backing file name");
+        }
+        dsMo.deleteFile(vol.getPath() + ".vmdk",morDc,true);
+        if (s_logger.isInfoEnabled()) {
+          s_logger.info("Destroy volume by derived name: " + vol.getPath() + "-flat.vmdk");
+        }
+        dsMo.deleteFile(vol.getPath() + "-flat.vmdk",morDc,true);
+      }
+    }
+ else {
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Destroy volume by original name: " + vol.getPath() + ".vmdk");
+      }
+      dsMo.deleteFile(vol.getPath() + ".vmdk",morDc,true);
+      if (s_logger.isInfoEnabled()) {
+        s_logger.info("Destroy volume by derived name: " + vol.getPath() + "-flat.vmdk");
+      }
+      dsMo.deleteFile(vol.getPath() + "-flat.vmdk",morDc,true);
+    }
+    return new Answer(cmd,true,"Success");
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+    String msg="DestroyCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg,e);
+    return new Answer(cmd,false,msg);
+  }
+}

@@ -3,7 +3,33 @@
   CreateBaseImageContext<CreateCmdResult> context=new CreateBaseImageContext<CreateCmdResult>(null,volume,dataStore,template,future,templateOnPrimaryStoreObj);
   AsyncCallbackDispatcher<VolumeServiceImpl,CopyCommandResult> caller=AsyncCallbackDispatcher.create(this);
   caller.setCallback(caller.getTarget().copyBaseImageCallback(null,null)).setContext(context);
-  templateOnPrimaryStoreObj.processEvent(Event.CreateOnlyRequested);
+  try {
+    templateOnPrimaryStoreObj.processEvent(Event.CreateOnlyRequested);
+  }
+ catch (  Exception e) {
+    s_logger.info("Got exception in case of multi-thread");
+    try {
+      templateOnPrimaryStoreObj=waitForTemplateDownloaded(dataStore,template);
+    }
+ catch (    Exception e1) {
+      s_logger.debug("wait for template:" + template.getId() + " downloading finished, but failed");
+      VolumeApiResult result=new VolumeApiResult(volume);
+      result.setResult(e1.toString());
+      future.complete(result);
+      return;
+    }
+    if (templateOnPrimaryStoreObj == null) {
+      VolumeApiResult result=new VolumeApiResult(volume);
+      result.setResult("wait for template:" + template.getId() + " downloading finished, but failed");
+      future.complete(result);
+      return;
+    }
+ else {
+      s_logger.debug("waiting for template:" + template.getId() + " downloading finished, success");
+      createVolumeFromBaseImageAsync(volume,templateOnPrimaryStoreObj,dataStore,future);
+      return;
+    }
+  }
   try {
     motionSrv.copyAsync(template,templateOnPrimaryStoreObj,caller);
   }
@@ -12,7 +38,7 @@
     templateOnPrimaryStoreObj.processEvent(Event.OperationFailed);
     VolumeApiResult result=new VolumeApiResult(volume);
     result.setResult(e.toString());
-    caller.complete(result);
+    future.complete(result);
   }
   return;
 }

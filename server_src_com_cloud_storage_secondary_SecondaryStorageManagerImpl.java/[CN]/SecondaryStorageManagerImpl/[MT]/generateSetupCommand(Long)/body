@@ -7,49 +7,33 @@
       s_logger.warn("secondary storage VM " + cssHost.getName() + " doesn't exist");
       return false;
     }
-    List<HostVO> ssHosts=_ssvmMgr.listSecondaryStorageHostsInOneZone(zoneId);
-    for (    HostVO ssHost : ssHosts) {
-      String secUrl=ssHost.getStorageUrl();
+    List<DataStore> ssStores=this._dataStoreMgr.getImageStoresByScope(new ZoneScope(zoneId));
+    for (    DataStore ssStore : ssStores) {
+      if (!(ssStore.getTO() instanceof NfsTO))       continue;
+      String secUrl=ssStore.getUri();
       SecStorageSetupCommand setupCmd=null;
       if (!_useSSlCopy) {
-        setupCmd=new SecStorageSetupCommand(secUrl,null);
+        setupCmd=new SecStorageSetupCommand(ssStore.getTO(),secUrl,null);
       }
  else {
         Certificates certs=_keystoreMgr.getCertificates(ConsoleProxyManager.CERTIFICATE_NAME);
-        setupCmd=new SecStorageSetupCommand(secUrl,certs);
+        setupCmd=new SecStorageSetupCommand(ssStore.getTO(),secUrl,certs);
       }
       Answer answer=_agentMgr.easySend(ssHostId,setupCmd);
       if (answer != null && answer.getResult()) {
         SecStorageSetupAnswer an=(SecStorageSetupAnswer)answer;
-        ssHost.setParent(an.get_dir());
-        _hostDao.update(ssHost.getId(),ssHost);
+        if (an.get_dir() != null) {
+          ImageStoreVO svo=this._imageStoreDao.findById(ssStore.getId());
+          svo.setParent(an.get_dir());
+          _imageStoreDao.update(ssStore.getId(),svo);
+        }
         if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Successfully programmed secondary storage " + ssHost.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
+          s_logger.debug("Successfully programmed secondary storage " + ssStore.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
         }
       }
  else {
         if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Successfully programmed secondary storage " + ssHost.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
-        }
-        return false;
-      }
-    }
-  }
- else   if (cssHost.getType() == Host.Type.SecondaryStorage) {
-    List<SecondaryStorageVmVO> alreadyRunning=_secStorageVmDao.getSecStorageVmListInStates(SecondaryStorageVm.Role.templateProcessor,zoneId,State.Running);
-    String secUrl=cssHost.getStorageUrl();
-    SecStorageSetupCommand setupCmd=new SecStorageSetupCommand(secUrl,null);
-    for (    SecondaryStorageVmVO ssVm : alreadyRunning) {
-      HostVO host=_resourceMgr.findHostByName(ssVm.getInstanceName());
-      Answer answer=_agentMgr.easySend(host.getId(),setupCmd);
-      if (answer != null && answer.getResult()) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Successfully programmed secondary storage " + host.getName() + " in secondary storage VM "+ ssVm.getInstanceName());
-        }
-      }
- else {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Successfully programmed secondary storage " + host.getName() + " in secondary storage VM "+ ssVm.getInstanceName());
+          s_logger.debug("Successfully programmed secondary storage " + ssStore.getName() + " in secondary storage VM "+ secStorageVm.getInstanceName());
         }
         return false;
       }

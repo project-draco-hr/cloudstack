@@ -1,0 +1,78 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  TemplateObjectTO template=(TemplateObjectTO)srcData;
+  DataTO destData=cmd.getDestTO();
+  VolumeObjectTO volume=(VolumeObjectTO)destData;
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volume.getDataStore();
+  PrimaryDataStoreTO srcStore=(PrimaryDataStoreTO)template.getDataStore();
+  try {
+    VmwareContext context=this.hostService.getServiceContext(null);
+    VmwareHypervisorHost hyperHost=this.hostService.getHyperHost(context,null);
+    DatacenterMO dcMo=new DatacenterMO(context,hyperHost.getHyperHostDatacenter());
+    VirtualMachineMO vmMo=null;
+    ManagedObjectReference morDatastore=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+    if (morDatastore == null)     throw new Exception("Unable to find datastore in vSphere");
+    DatastoreMO dsMo=new DatastoreMO(context,morDatastore);
+    String vmdkName=volume.getName() + "-" + volume.getId();
+    if (srcStore == null) {
+      String dummyVmName=this.hostService.getWorkerName(context,cmd,0);
+      try {
+        vmMo=prepareVolumeHostDummyVm(hyperHost,dsMo,dummyVmName);
+        if (vmMo == null) {
+          throw new Exception("Unable to create a dummy VM for volume creation");
+        }
+        String volumeDatastorePath=String.format("[%s] %s.vmdk",dsMo.getName(),vmdkName);
+synchronized (this) {
+          s_logger.info("Delete file if exists in datastore to clear the way for creating the volume. file: " + volumeDatastorePath);
+          VmwareHelper.deleteVolumeVmdkFiles(dsMo,vmdkName,dcMo);
+          vmMo.createDisk(volumeDatastorePath,(int)(volume.getSize() / (1024L * 1024L)),morDatastore,-1);
+          vmMo.detachDisk(volumeDatastorePath,false);
+        }
+        VolumeObjectTO newVol=new VolumeObjectTO();
+        newVol.setPath(vmdkName);
+        return new CopyCmdAnswer(newVol);
+      }
+  finally {
+        vmMo.detachAllDisks();
+        s_logger.info("Destroy dummy VM after volume creation");
+        vmMo.destroy();
+      }
+    }
+ else {
+      String templatePath=template.getPath();
+      VirtualMachineMO vmTemplate=VmwareHelper.pickOneVmOnRunningHost(dcMo.findVmByNameAndLabel(templatePath),true);
+      if (vmTemplate == null) {
+        s_logger.warn("Template host in vSphere is not in connected state, request template reload");
+        return new CopyCmdAnswer("Template host in vSphere is not in connected state, request template reload");
+      }
+      ManagedObjectReference morPool=hyperHost.getHyperHostOwnerResourcePool();
+      ManagedObjectReference morCluster=hyperHost.getHyperHostCluster();
+      if (!_fullCloneFlag) {
+        createVMLinkedClone(vmTemplate,dcMo,dsMo,vmdkName,morDatastore,morPool);
+      }
+ else {
+        createVMFullClone(vmTemplate,dcMo,dsMo,vmdkName,morDatastore,morPool);
+      }
+      vmMo=new ClusterMO(context,morCluster).findVmOnHyperHost(vmdkName);
+      assert(vmMo != null);
+      s_logger.info("detach disks from volume-wrapper VM " + vmdkName);
+      vmMo.detachAllDisks();
+      s_logger.info("destroy volume-wrapper VM " + vmdkName);
+      vmMo.destroy();
+      String srcFile=String.format("[%s] %s/",dsMo.getName(),vmdkName);
+      dsMo.deleteFile(srcFile,dcMo.getMor(),true);
+      VolumeObjectTO newVol=new VolumeObjectTO();
+      newVol.setPath(vmdkName);
+      return new CopyCmdAnswer(newVol);
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      this.hostService.invalidateServiceContext(null);
+    }
+    String msg="CreateCommand failed due to " + VmwareHelper.getExceptionMessage(e);
+    s_logger.error(msg,e);
+    return new CopyCmdAnswer(e.toString());
+  }
+}

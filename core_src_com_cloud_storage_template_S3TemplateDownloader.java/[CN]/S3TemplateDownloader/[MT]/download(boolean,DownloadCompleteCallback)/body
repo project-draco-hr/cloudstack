@@ -1,0 +1,120 @@
+{
+switch (status) {
+case ABORTED:
+case UNRECOVERABLE_ERROR:
+case DOWNLOAD_FINISHED:
+    return 0;
+default :
+}
+try {
+  int responseCode=HttpStatus.SC_OK;
+  if ((responseCode=client.executeMethod(request)) != HttpStatus.SC_OK) {
+    status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+    errorString=" HTTP Server returned " + responseCode + " (expected 200 OK) ";
+    return 0;
+  }
+  Header contentLengthHeader=request.getResponseHeader("Content-Length");
+  boolean chunked=false;
+  long remoteSize2=0;
+  if (contentLengthHeader == null) {
+    Header chunkedHeader=request.getResponseHeader("Transfer-Encoding");
+    if (chunkedHeader == null || !"chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      errorString=" Failed to receive length of download ";
+      return 0;
+    }
+ else     if ("chunked".equalsIgnoreCase(chunkedHeader.getValue())) {
+      chunked=true;
+    }
+  }
+ else {
+    remoteSize2=Long.parseLong(contentLengthHeader.getValue());
+  }
+  if (remoteSize == 0) {
+    remoteSize=remoteSize2;
+  }
+  if (remoteSize > maxTemplateSizeInByte) {
+    s_logger.info("Remote size is too large: " + remoteSize + " , max="+ maxTemplateSizeInByte);
+    status=Status.UNRECOVERABLE_ERROR;
+    errorString="Download file size is too large";
+    return 0;
+  }
+  if (remoteSize == 0) {
+    remoteSize=maxTemplateSizeInByte;
+  }
+  String contentType=null;
+  Header contentTypeHeader=request.getResponseHeader("Content-Type");
+  if (contentTypeHeader != null) {
+    contentType=contentTypeHeader.getValue();
+  }
+  InputStream in=!chunked ? new BufferedInputStream(request.getResponseBodyAsStream()) : new ChunkedInputStream(request.getResponseBodyAsStream());
+  s_logger.info("Starting download from " + getDownloadUrl() + " to s3 bucket "+ s3.getBucketName()+ " remoteSize="+ remoteSize+ " , max size="+ maxTemplateSizeInByte);
+  Date start=new Date();
+  s3Key=join(asList(installPath,fileName),S3Utils.SEPARATOR);
+  TransferManager tm=new TransferManager(S3Utils.acquireClient(s3));
+  ObjectMetadata metadata=new ObjectMetadata();
+  metadata.setContentLength(remoteSize);
+  if (contentType != null) {
+    metadata.setContentType(contentType);
+  }
+  PutObjectRequest putObjectRequest=new PutObjectRequest(s3.getBucketName(),s3Key,in,metadata);
+  if (s3.getEnableRRS()) {
+    putObjectRequest=putObjectRequest.withStorageClass(StorageClass.ReducedRedundancy);
+  }
+  putObjectRequest.setProgressListener(new ProgressListener(){
+    @Override public void progressChanged(    ProgressEvent progressEvent){
+      totalBytes+=progressEvent.getBytesTransfered();
+      if (progressEvent.getEventCode() == ProgressEvent.COMPLETED_EVENT_CODE) {
+        s_logger.info("download completed");
+        status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
+      }
+ else       if (progressEvent.getEventCode() == ProgressEvent.FAILED_EVENT_CODE) {
+        status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+      }
+ else       if (progressEvent.getEventCode() == ProgressEvent.CANCELED_EVENT_CODE) {
+        status=TemplateDownloader.Status.ABORTED;
+      }
+ else {
+        status=TemplateDownloader.Status.IN_PROGRESS;
+      }
+    }
+  }
+);
+  Upload upload=tm.upload(putObjectRequest);
+  upload.waitForCompletion();
+  Date finish=new Date();
+  String downloaded="(incomplete download)";
+  if (totalBytes >= remoteSize) {
+    status=TemplateDownloader.Status.DOWNLOAD_FINISHED;
+    downloaded="(download complete remote=" + remoteSize + "bytes)";
+  }
+ else {
+    errorString="Downloaded " + totalBytes + " bytes "+ downloaded;
+  }
+  downloadTime+=finish.getTime() - start.getTime();
+  return totalBytes;
+}
+ catch (HttpException hte) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=hte.getMessage();
+}
+catch (IOException ioe) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=ioe.getMessage();
+}
+catch (AmazonClientException ex) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=ex.getMessage();
+}
+catch (InterruptedException e) {
+  status=TemplateDownloader.Status.UNRECOVERABLE_ERROR;
+  errorString=e.getMessage();
+}
+ finally {
+  request.releaseConnection();
+  if (callback != null) {
+    callback.downloadComplete(status);
+  }
+}
+return 0;
+}

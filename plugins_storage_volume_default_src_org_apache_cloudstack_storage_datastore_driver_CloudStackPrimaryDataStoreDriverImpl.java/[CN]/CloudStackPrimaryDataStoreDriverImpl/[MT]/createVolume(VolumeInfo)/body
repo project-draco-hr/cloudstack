@@ -2,78 +2,8 @@
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Creating volume: " + volume);
   }
-  DiskOfferingVO offering=diskOfferingDao.findById(volume.getDiskOfferingId());
-  DiskProfile diskProfile=new DiskProfile(volume,offering,null);
-  VMTemplateVO template=null;
-  if (volume.getTemplateId() != null) {
-    template=templateDao.findById(volume.getTemplateId());
-  }
-  StoragePool pool=(StoragePool)volume.getDataStore();
-  VolumeVO vol=volumeDao.findById(volume.getId());
-  if (pool != null) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Trying to create in " + pool);
-    }
-    vol.setPoolId(pool.getId());
-    CreateCommand cmd=null;
-    VMTemplateStoragePoolVO tmpltStoredOn=null;
-    for (int i=0; i < 2; i++) {
-      if (template != null && template.getFormat() != Storage.ImageFormat.ISO) {
-        if (pool.getPoolType() == StoragePoolType.CLVM) {
-          VMTemplateHostVO tmpltHostOn=templateMgr.prepareISOForCreate(template,pool);
-          if (tmpltHostOn == null) {
-            s_logger.debug("cannot find template " + template.getId() + " "+ template.getName());
-            throw new CloudRuntimeException("cannot find template" + template.getId() + template.getName());
-          }
-          HostVO secondaryStorageHost=hostDao.findById(tmpltHostOn.getHostId());
-          String tmpltHostUrl=secondaryStorageHost.getStorageUrl();
-          String fullTmpltUrl=tmpltHostUrl + "/" + tmpltHostOn.getInstallPath();
-          cmd=new CreateCommand(diskProfile,fullTmpltUrl,new StorageFilerTO(pool),_mgmtSrvr.getExecuteInSequence());
-        }
- else {
-          tmpltStoredOn=templateMgr.prepareTemplateForCreate(template,pool);
-          if (tmpltStoredOn == null) {
-            s_logger.debug("Cannot use this pool " + pool + " because we can't propagate template "+ template);
-            throw new CloudRuntimeException("Cannot use this pool " + pool + " because we can't propagate template "+ template);
-          }
-          cmd=new CreateCommand(diskProfile,tmpltStoredOn.getLocalDownloadPath(),new StorageFilerTO(pool),_mgmtSrvr.getExecuteInSequence());
-        }
-      }
- else {
-        if (template != null && Storage.ImageFormat.ISO == template.getFormat()) {
-          VMTemplateHostVO tmpltHostOn=templateMgr.prepareISOForCreate(template,pool);
-          if (tmpltHostOn == null) {
-            throw new CloudRuntimeException("Did not find ISO in secondry storage in zone " + pool.getDataCenterId());
-          }
-        }
-        cmd=new CreateCommand(diskProfile,new StorageFilerTO(pool),_mgmtSrvr.getExecuteInSequence());
-      }
-      Answer answer=storageMgr.sendToPool(pool,null,cmd);
-      if (answer.getResult()) {
-        CreateAnswer createAnswer=(CreateAnswer)answer;
-        vol.setFolder(pool.getPath());
-        vol.setPath(createAnswer.getVolume().getPath());
-        vol.setSize(createAnswer.getVolume().getSize());
-        vol.setPoolType(pool.getPoolType());
-        vol.setPoolId(pool.getId());
-        vol.setPodId(pool.getPodId());
-        this.volumeDao.update(vol.getId(),vol);
-        return true;
-      }
- else {
-        if (tmpltStoredOn != null && (answer instanceof CreateAnswer) && ((CreateAnswer)answer).templateReloadRequested()) {
-          if (!templateMgr.resetTemplateDownloadStateOnPool(tmpltStoredOn.getId())) {
-            break;
-          }
-        }
- else {
-          break;
-        }
-      }
-    }
-  }
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Unable to create volume " + volume.getId());
-  }
-  return false;
+  CreateObjectCommand cmd=new CreateObjectCommand(volume.getTO());
+  EndPoint ep=epSelector.select(volume);
+  Answer answer=ep.sendMessage(cmd);
+  return answer;
 }

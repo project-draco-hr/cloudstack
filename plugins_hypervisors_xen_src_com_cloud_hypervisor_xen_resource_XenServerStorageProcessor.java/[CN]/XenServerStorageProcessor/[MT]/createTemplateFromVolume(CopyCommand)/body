@@ -1,0 +1,62 @@
+{
+  Connection conn=this.hypervisorResource.getConnection();
+  VolumeObjectTO volume=(VolumeObjectTO)cmd.getSrcTO();
+  TemplateObjectTO template=(TemplateObjectTO)cmd.getDestTO();
+  NfsTO destStore=(NfsTO)cmd.getDestTO().getDataStore();
+  int wait=cmd.getWait();
+  String secondaryStoragePoolURL=destStore.getUrl();
+  String volumeUUID=volume.getPath();
+  String userSpecifiedName=template.getName();
+  String details=null;
+  SR tmpltSR=null;
+  boolean result=false;
+  String secondaryStorageMountPath=null;
+  String installPath=null;
+  try {
+    URI uri=new URI(secondaryStoragePoolURL);
+    secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
+    installPath=template.getPath();
+    if (!this.hypervisorResource.createSecondaryStorageFolder(conn,secondaryStorageMountPath,installPath)) {
+      details=" Filed to create folder " + installPath + " in secondary storage";
+      s_logger.warn(details);
+      return new CopyCmdAnswer(details);
+    }
+    VDI vol=getVDIbyUuid(conn,volumeUUID);
+    URI tmpltURI=new URI(secondaryStoragePoolURL + "/" + installPath);
+    tmpltSR=this.hypervisorResource.createNfsSRbyURI(conn,tmpltURI,false);
+    VDI tmpltVDI=this.hypervisorResource.cloudVDIcopy(conn,vol,tmpltSR,wait);
+    tmpltSR.scan(conn);
+    if (userSpecifiedName != null) {
+      tmpltVDI.setNameLabel(conn,userSpecifiedName);
+    }
+    String tmpltUUID=tmpltVDI.getUuid(conn);
+    String tmpltFilename=tmpltUUID + ".vhd";
+    long virtualSize=tmpltVDI.getVirtualSize(conn);
+    long physicalSize=tmpltVDI.getPhysicalUtilisation(conn);
+    String templatePath=secondaryStorageMountPath + "/" + installPath;
+    result=this.hypervisorResource.postCreatePrivateTemplate(conn,templatePath,tmpltFilename,tmpltUUID,userSpecifiedName,null,physicalSize,virtualSize,template.getId());
+    if (!result) {
+      throw new CloudRuntimeException("Could not create the template.properties file on secondary storage dir: " + tmpltURI);
+    }
+    installPath=installPath + "/" + tmpltFilename;
+    this.hypervisorResource.removeSR(conn,tmpltSR);
+    tmpltSR=null;
+    TemplateObjectTO newTemplate=new TemplateObjectTO();
+    newTemplate.setPath(installPath);
+    newTemplate.setFormat(ImageFormat.VHD);
+    newTemplate.setSize(virtualSize);
+    CopyCmdAnswer answer=new CopyCmdAnswer(newTemplate);
+    return answer;
+  }
+ catch (  Exception e) {
+    if (tmpltSR != null) {
+      this.hypervisorResource.removeSR(conn,tmpltSR);
+    }
+    if (secondaryStorageMountPath != null) {
+      this.hypervisorResource.deleteSecondaryStorageFolder(conn,secondaryStorageMountPath,installPath);
+    }
+    details="Creating template from volume " + volumeUUID + " failed due to "+ e.toString();
+    s_logger.error(details,e);
+  }
+  return new CopyCmdAnswer(details);
+}

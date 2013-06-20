@@ -1,7 +1,7 @@
 {
   String errorMsg="Failed to attach volume: " + volume.getName() + " to VM: "+ vm.getHostName();
   boolean sendCommand=(vm.getState() == State.Running);
-  AttachVolumeAnswer answer=null;
+  AttachAnswer answer=null;
   Long hostId=vm.getHostId();
   if (hostId == null) {
     hostId=vm.getLastHostId();
@@ -11,16 +11,11 @@
     }
   }
   if (sendCommand) {
-    StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
-    AttachVolumeCommand cmd=new AttachVolumeCommand(true,vm.getInstanceName(),volume.getPoolType(),volume.getFolder(),volume.getPath(),volume.getName(),deviceId,volume.getChainInfo());
-    cmd.setPoolUuid(volumePool.getUuid());
-    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
-    cmd.setBytesReadRate(storageMgr.getDiskBytesReadRate(null,diskOffering));
-    cmd.setBytesWriteRate(storageMgr.getDiskBytesWriteRate(null,diskOffering));
-    cmd.setIopsReadRate(storageMgr.getDiskIopsReadRate(null,diskOffering));
-    cmd.setIopsWriteRate(storageMgr.getDiskIopsWriteRate(null,diskOffering));
+    DataTO volTO=volFactory.getVolume(volume.getId()).getTO();
+    DiskTO disk=new DiskTO(volTO,deviceId,volume.getVolumeType());
+    AttachCommand cmd=new AttachCommand(disk,vm.getInstanceName());
     try {
-      answer=(AttachVolumeAnswer)_agentMgr.send(hostId,cmd);
+      answer=(AttachAnswer)_agentMgr.send(hostId,cmd);
     }
  catch (    Exception e) {
       throw new CloudRuntimeException(errorMsg + " due to: " + e.getMessage());
@@ -28,7 +23,8 @@
   }
   if (!sendCommand || (answer != null && answer.getResult())) {
     if (sendCommand) {
-      _volsDao.attachVolume(volume.getId(),vm.getId(),answer.getDeviceId());
+      DiskTO disk=answer.getDisk();
+      _volsDao.attachVolume(volume.getId(),vm.getId(),disk.getDiskSeq());
     }
  else {
       _volsDao.attachVolume(volume.getId(),vm.getId(),deviceId);

@@ -1,111 +1,113 @@
 {
   try {
-    List<HostVO> secondaryStorageHosts=_ssvmMgr.listSecondaryStorageHostsInAllZones();
-    for (    HostVO secondaryStorageHost : secondaryStorageHosts) {
+    List<DataStore> imageStores=this.dataStoreMgr.getImageStoresByScope(new ZoneScope(null));
+    for (    DataStore store : imageStores) {
       try {
-        long hostId=secondaryStorageHost.getId();
-        List<VMTemplateHostVO> destroyedTemplateHostVOs=_vmTemplateHostDao.listDestroyed(hostId);
-        s_logger.debug("Secondary storage garbage collector found " + destroyedTemplateHostVOs.size() + " templates to cleanup on secondary storage host: "+ secondaryStorageHost.getName());
-        for (        VMTemplateHostVO destroyedTemplateHostVO : destroyedTemplateHostVOs) {
-          if (!_tmpltMgr.templateIsDeleteable(destroyedTemplateHostVO)) {
+        long storeId=store.getId();
+        List<TemplateDataStoreVO> destroyedTemplateStoreVOs=this._templateStoreDao.listDestroyed(storeId);
+        s_logger.debug("Secondary storage garbage collector found " + destroyedTemplateStoreVOs.size() + " templates to cleanup on secondary storage host: "+ store.getName());
+        for (        TemplateDataStoreVO destroyedTemplateStoreVO : destroyedTemplateStoreVOs) {
+          if (!_tmpltMgr.templateIsDeleteable(destroyedTemplateStoreVO.getTemplateId())) {
             if (s_logger.isDebugEnabled()) {
-              s_logger.debug("Not deleting template at: " + destroyedTemplateHostVO);
+              s_logger.debug("Not deleting template at: " + destroyedTemplateStoreVO);
             }
             continue;
           }
           if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Deleting template host: " + destroyedTemplateHostVO);
+            s_logger.debug("Deleting template store: " + destroyedTemplateStoreVO);
           }
-          String installPath=destroyedTemplateHostVO.getInstallPath();
+          VMTemplateVO destroyedTemplate=this._vmTemplateDao.findById(destroyedTemplateStoreVO.getTemplateId());
+          if (destroyedTemplate == null) {
+            s_logger.error("Cannot find template : " + destroyedTemplateStoreVO.getTemplateId() + " from template table");
+            throw new CloudRuntimeException("Template " + destroyedTemplateStoreVO.getTemplateId() + " is found in secondary storage, but not found in template table");
+          }
+          String installPath=destroyedTemplateStoreVO.getInstallPath();
+          TemplateInfo tmpl=tmplFactory.getTemplate(destroyedTemplateStoreVO.getTemplateId(),store);
           if (installPath != null) {
-            Answer answer=_agentMgr.sendToSecStorage(secondaryStorageHost,new DeleteTemplateCommand(secondaryStorageHost.getStorageUrl(),destroyedTemplateHostVO.getInstallPath()));
+            EndPoint ep=_epSelector.select(store);
+            Command cmd=new DeleteCommand(tmpl.getTO());
+            Answer answer=ep.sendMessage(cmd);
             if (answer == null || !answer.getResult()) {
-              s_logger.debug("Failed to delete " + destroyedTemplateHostVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
+              s_logger.debug("Failed to delete " + destroyedTemplateStoreVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
             }
  else {
-              _vmTemplateHostDao.remove(destroyedTemplateHostVO.getId());
-              s_logger.debug("Deleted template at: " + destroyedTemplateHostVO.getInstallPath());
+              _templateStoreDao.remove(destroyedTemplateStoreVO.getId());
+              s_logger.debug("Deleted template at: " + destroyedTemplateStoreVO.getInstallPath());
             }
           }
  else {
-            _vmTemplateHostDao.remove(destroyedTemplateHostVO.getId());
+            _templateStoreDao.remove(destroyedTemplateStoreVO.getId());
           }
         }
       }
  catch (      Exception e) {
-        s_logger.warn("problem cleaning up templates in secondary storage " + secondaryStorageHost,e);
+        s_logger.warn("problem cleaning up templates in secondary storage store " + store.getName(),e);
       }
     }
-    for (    HostVO secondaryStorageHost : secondaryStorageHosts) {
+    for (    DataStore store : imageStores) {
       try {
-        long hostId=secondaryStorageHost.getId();
-        List<Long> vIDs=findAllVolumeIdInSnapshotTable(hostId);
-        if (vIDs == null) {
-          continue;
-        }
-        for (        Long volumeId : vIDs) {
-          boolean lock=false;
-          try {
-            VolumeVO volume=_volsDao.findByIdIncludingRemoved(volumeId);
-            if (volume.getRemoved() == null) {
-              volume=_volsDao.acquireInLockTable(volumeId,10);
-              if (volume == null) {
-                continue;
-              }
-              lock=true;
-            }
-            List<String> snapshots=findAllSnapshotForVolume(volumeId);
-            if (snapshots == null) {
-              continue;
-            }
-            CleanupSnapshotBackupCommand cmd=new CleanupSnapshotBackupCommand(secondaryStorageHost.getStorageUrl(),secondaryStorageHost.getDataCenterId(),volume.getAccountId(),volumeId,snapshots);
-            Answer answer=_agentMgr.sendToSecStorage(secondaryStorageHost,cmd);
-            if ((answer == null) || !answer.getResult()) {
-              String details="Failed to cleanup snapshots for volume " + volumeId + " due to "+ (answer == null ? "null" : answer.getDetails());
-              s_logger.warn(details);
-            }
+        List<SnapshotDataStoreVO> destroyedSnapshotStoreVOs=_snapshotStoreDao.listDestroyed(store.getId());
+        s_logger.debug("Secondary storage garbage collector found " + destroyedSnapshotStoreVOs.size() + " snapshots to cleanup on secondary storage host: "+ store.getName());
+        for (        SnapshotDataStoreVO destroyedSnapshotStoreVO : destroyedSnapshotStoreVOs) {
+          SnapshotInfo snap=snapshotFactory.getSnapshot(destroyedSnapshotStoreVO.getSnapshotId(),store);
+          if (snap.getChild() != null) {
+            s_logger.debug("Skip snapshot on store: " + destroyedSnapshotStoreVO + " , because it has child");
+            continue;
           }
- catch (          Exception e1) {
-            s_logger.warn("problem cleaning up snapshots in secondary storage " + secondaryStorageHost,e1);
-          }
- finally {
-            if (lock) {
-              _volsDao.releaseFromLockTable(volumeId);
-            }
-          }
-        }
-      }
- catch (      Exception e2) {
-        s_logger.warn("problem cleaning up snapshots in secondary storage " + secondaryStorageHost,e2);
-      }
-    }
-    for (    HostVO secondaryStorageHost : secondaryStorageHosts) {
-      try {
-        long hostId=secondaryStorageHost.getId();
-        List<VolumeHostVO> destroyedVolumeHostVOs=_volumeHostDao.listDestroyed(hostId);
-        s_logger.debug("Secondary storage garbage collector found " + destroyedVolumeHostVOs.size() + " templates to cleanup on secondary storage host: "+ secondaryStorageHost.getName());
-        for (        VolumeHostVO destroyedVolumeHostVO : destroyedVolumeHostVOs) {
           if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Deleting volume host: " + destroyedVolumeHostVO);
+            s_logger.debug("Deleting snapshot on store: " + destroyedSnapshotStoreVO);
           }
-          String installPath=destroyedVolumeHostVO.getInstallPath();
+          String installPath=destroyedSnapshotStoreVO.getInstallPath();
           if (installPath != null) {
-            Answer answer=_agentMgr.sendToSecStorage(secondaryStorageHost,new DeleteVolumeCommand(secondaryStorageHost.getStorageUrl(),destroyedVolumeHostVO.getInstallPath()));
+            EndPoint ep=_epSelector.select(store);
+            DeleteCommand cmd=new DeleteCommand(snap.getTO());
+            Answer answer=ep.sendMessage(cmd);
             if (answer == null || !answer.getResult()) {
-              s_logger.debug("Failed to delete " + destroyedVolumeHostVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
+              s_logger.debug("Failed to delete " + destroyedSnapshotStoreVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
             }
  else {
-              _volumeHostDao.remove(destroyedVolumeHostVO.getId());
-              s_logger.debug("Deleted volume at: " + destroyedVolumeHostVO.getInstallPath());
+              _volumeStoreDao.remove(destroyedSnapshotStoreVO.getId());
+              s_logger.debug("Deleted snapshot at: " + destroyedSnapshotStoreVO.getInstallPath());
             }
           }
  else {
-            _volumeHostDao.remove(destroyedVolumeHostVO.getId());
+            _snapshotStoreDao.remove(destroyedSnapshotStoreVO.getId());
           }
         }
       }
  catch (      Exception e2) {
-        s_logger.warn("problem cleaning up volumes in secondary storage " + secondaryStorageHost,e2);
+        s_logger.warn("problem cleaning up snapshots in secondary storage store " + store.getName(),e2);
+      }
+    }
+    for (    DataStore store : imageStores) {
+      try {
+        List<VolumeDataStoreVO> destroyedStoreVOs=_volumeStoreDao.listDestroyed(store.getId());
+        s_logger.debug("Secondary storage garbage collector found " + destroyedStoreVOs.size() + " volumes to cleanup on secondary storage host: "+ store.getName());
+        for (        VolumeDataStoreVO destroyedStoreVO : destroyedStoreVOs) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Deleting volume on store: " + destroyedStoreVO);
+          }
+          String installPath=destroyedStoreVO.getInstallPath();
+          VolumeInfo vol=this.volFactory.getVolume(destroyedStoreVO.getVolumeId(),store);
+          if (installPath != null) {
+            EndPoint ep=_epSelector.select(store);
+            DeleteCommand cmd=new DeleteCommand(vol.getTO());
+            Answer answer=ep.sendMessage(cmd);
+            if (answer == null || !answer.getResult()) {
+              s_logger.debug("Failed to delete " + destroyedStoreVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
+            }
+ else {
+              _volumeStoreDao.remove(destroyedStoreVO.getId());
+              s_logger.debug("Deleted volume at: " + destroyedStoreVO.getInstallPath());
+            }
+          }
+ else {
+            _volumeStoreDao.remove(destroyedStoreVO.getId());
+          }
+        }
+      }
+ catch (      Exception e2) {
+        s_logger.warn("problem cleaning up volumes in secondary storage store " + store.getName(),e2);
       }
     }
   }

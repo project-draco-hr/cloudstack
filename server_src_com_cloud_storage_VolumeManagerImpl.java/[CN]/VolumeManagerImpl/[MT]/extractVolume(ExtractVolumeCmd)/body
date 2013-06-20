@@ -1,0 +1,84 @@
+{
+  Long volumeId=cmd.getId();
+  Long zoneId=cmd.getZoneId();
+  String mode=cmd.getMode();
+  Account account=UserContext.current().getCaller();
+  if (!_accountMgr.isRootAdmin(account.getType()) && ApiDBUtils.isExtractionDisabled()) {
+    throw new PermissionDeniedException("Extraction has been disabled by admin");
+  }
+  VolumeVO volume=_volumeDao.findById(volumeId);
+  if (volume == null) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find volume with specified volumeId");
+    ex.addProxyObject(volumeId.toString(),"volumeId");
+    throw ex;
+  }
+  _accountMgr.checkAccess(account,null,true,volume);
+  if (_dcDao.findById(zoneId) == null) {
+    throw new InvalidParameterValueException("Please specify a valid zone.");
+  }
+  if (volume.getPoolId() == null) {
+    throw new InvalidParameterValueException("The volume doesnt belong to a storage pool so cant extract it");
+  }
+  if (volume.getInstanceId() != null && ApiDBUtils.findVMInstanceById(volume.getInstanceId()).getState() != State.Stopped) {
+    s_logger.debug("Invalid state of the volume with ID: " + volumeId + ". It should be either detached or the VM should be in stopped state.");
+    PermissionDeniedException ex=new PermissionDeniedException("Invalid state of the volume with specified ID. It should be either detached or the VM should be in stopped state.");
+    ex.addProxyObject(volume.getUuid(),"volumeId");
+    throw ex;
+  }
+  if (volume.getVolumeType() != Volume.Type.DATADISK) {
+    VMTemplateVO template=ApiDBUtils.findTemplateById(volume.getTemplateId());
+    if (template != null) {
+      boolean isExtractable=template.isExtractable() && template.getTemplateType() != Storage.TemplateType.SYSTEM;
+      if (!isExtractable && account != null && account.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+        PermissionDeniedException ex=new PermissionDeniedException("The volume with specified volumeId is not allowed to be extracted");
+        ex.addProxyObject(volume.getUuid(),"volumeId");
+        throw ex;
+      }
+    }
+  }
+  Upload.Mode extractMode;
+  if (mode == null || (!mode.equals(Upload.Mode.FTP_UPLOAD.toString()) && !mode.equals(Upload.Mode.HTTP_DOWNLOAD.toString()))) {
+    throw new InvalidParameterValueException("Please specify a valid extract Mode ");
+  }
+ else {
+    extractMode=mode.equals(Upload.Mode.FTP_UPLOAD.toString()) ? Upload.Mode.FTP_UPLOAD : Upload.Mode.HTTP_DOWNLOAD;
+  }
+  StoragePool srcPool=(StoragePool)this.dataStoreMgr.getPrimaryDataStore(volume.getPoolId());
+  ImageStoreEntity secStore=(ImageStoreEntity)this.dataStoreMgr.getImageStore(zoneId);
+  String secondaryStorageURL=secStore.getUri();
+  String value=this._configDao.getValue(Config.CopyVolumeWait.toString());
+  int copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
+  VolumeInfo srcVol=this.volFactory.getVolume(volume.getId());
+  AsyncCallFuture<VolumeApiResult> cvAnswer=this.volService.copyVolume(srcVol,secStore);
+  VolumeApiResult cvResult=null;
+  try {
+    cvResult=cvAnswer.get();
+  }
+ catch (  InterruptedException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+catch (  ExecutionException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+  if (cvResult == null || cvResult.isFailed()) {
+    String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
+    throw new CloudRuntimeException(errorString);
+  }
+  VolumeInfo vol=cvResult.getVolume();
+  String volumeLocalPath=vol.getPath();
+  String volumeName=StringUtils.substringBeforeLast(StringUtils.substringAfterLast(volumeLocalPath,"/"),".");
+  if (getFormatForPool(srcPool) == "ova") {
+    CreateVolumeOVACommand cvOVACmd=new CreateVolumeOVACommand(secondaryStorageURL,volumeLocalPath,volumeName,srcPool,copyvolumewait);
+    CreateVolumeOVAAnswer OVAanswer=null;
+    try {
+      cvOVACmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
+      OVAanswer=(CreateVolumeOVAAnswer)storageMgr.sendToPool(srcPool,cvOVACmd);
+    }
+ catch (    StorageUnavailableException e) {
+      s_logger.debug("Storage unavailable");
+    }
+  }
+  return secStore.createEntityExtractUrl(vol.getPath(),vol.getFormat());
+}

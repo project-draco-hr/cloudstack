@@ -1,0 +1,33 @@
+{
+  Connection conn=hypervisorResource.getConnection();
+  VolumeObjectTO srcVolume=(VolumeObjectTO)cmd.getSrcTO();
+  VolumeObjectTO destVolume=(VolumeObjectTO)cmd.getDestTO();
+  int wait=cmd.getWait();
+  DataStoreTO destStore=destVolume.getDataStore();
+  if (destStore instanceof NfsTO) {
+    SR secondaryStorage=null;
+    try {
+      NfsTO nfsStore=(NfsTO)destStore;
+      URI uri=new URI(nfsStore.getUrl());
+      if (!hypervisorResource.createSecondaryStorageFolder(conn,uri.getHost() + ":" + uri.getPath(),destVolume.getPath())) {
+        throw new InternalErrorException("Failed to create the volume folder.");
+      }
+      secondaryStorage=hypervisorResource.createNfsSRbyURI(conn,new URI(nfsStore.getUrl() + File.separator + destVolume.getPath()),false);
+      VDI srcVdi=getVDIbyUuid(conn,srcVolume.getPath());
+      VDI destVdi=hypervisorResource.cloudVDIcopy(conn,srcVdi,secondaryStorage,wait);
+      String destVolumeUUID=destVdi.getUuid(conn);
+      VolumeObjectTO newVol=new VolumeObjectTO();
+      newVol.setPath(destVolume.getPath() + File.separator + destVolumeUUID+ ".vhd");
+      newVol.setSize(srcVolume.getSize());
+      return new CopyCmdAnswer(newVol);
+    }
+ catch (    Exception e) {
+      s_logger.debug("Failed to copy volume to secondary: " + e.toString());
+      return new CopyCmdAnswer("Failed to copy volume to secondary: " + e.toString());
+    }
+ finally {
+      hypervisorResource.removeSR(conn,secondaryStorage);
+    }
+  }
+  return new CopyCmdAnswer("unsupported protocol");
+}

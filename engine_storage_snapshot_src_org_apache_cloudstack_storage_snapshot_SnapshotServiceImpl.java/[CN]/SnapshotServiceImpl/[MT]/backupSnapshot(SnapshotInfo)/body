@@ -1,0 +1,45 @@
+{
+  SnapshotObject snapObj=(SnapshotObject)snapshot;
+  AsyncCallFuture<SnapshotResult> future=new AsyncCallFuture<SnapshotResult>();
+  SnapshotResult result=new SnapshotResult(snapshot,null);
+  try {
+    snapObj.processEvent(Snapshot.Event.BackupToSecondary);
+    DataStore imageStore=this.findSnapshotImageStore(snapshot);
+    if (imageStore == null) {
+      throw new CloudRuntimeException("can not find an image stores");
+    }
+    SnapshotInfo snapshotOnImageStore=(SnapshotInfo)imageStore.create(snapshot);
+    snapshotOnImageStore.processEvent(Event.CreateOnlyRequested);
+    CopySnapshotContext<CommandResult> context=new CopySnapshotContext<CommandResult>(null,snapshot,snapshotOnImageStore,future);
+    AsyncCallbackDispatcher<SnapshotServiceImpl,CopyCommandResult> caller=AsyncCallbackDispatcher.create(this);
+    caller.setCallback(caller.getTarget().copySnapshotAsyncCallback(null,null)).setContext(context);
+    this.motionSrv.copyAsync(snapshot,snapshotOnImageStore,caller);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to copy snapshot",e);
+    result.setResult("Failed to copy snapshot:" + e.toString());
+    try {
+      snapObj.processEvent(Snapshot.Event.OperationFailed);
+    }
+ catch (    NoTransitionException e1) {
+      s_logger.debug("Failed to change state: " + e1.toString());
+    }
+    future.complete(result);
+  }
+  try {
+    SnapshotResult res=future.get();
+    if (res.isFailed()) {
+      throw new CloudRuntimeException(res.getResult());
+    }
+    SnapshotInfo destSnapshot=res.getSnashot();
+    return destSnapshot;
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("failed copy snapshot",e);
+    throw new CloudRuntimeException("Failed to copy snapshot",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("Failed to copy snapshot",e);
+    throw new CloudRuntimeException("Failed to copy snapshot",e);
+  }
+}

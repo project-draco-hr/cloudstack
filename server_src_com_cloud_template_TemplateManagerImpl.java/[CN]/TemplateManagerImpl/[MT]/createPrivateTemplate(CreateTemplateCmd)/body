@@ -11,8 +11,7 @@
   SnapshotVO snapshot=null;
   VolumeVO volume=null;
   try {
-    TemplateInfo tmplInfo=this.tmplFactory.getTemplate(templateId);
-    ZoneScope scope=null;
+    TemplateInfo tmplInfo=this._tmplFactory.getTemplate(templateId,DataStoreRole.Image);
     Long zoneId=null;
     if (snapshotId != null) {
       snapshot=_snapshotDao.findById(snapshotId);
@@ -22,19 +21,19 @@
       volume=_volumeDao.findById(volumeId);
       zoneId=volume.getDataCenterId();
     }
-    scope=new ZoneScope(zoneId);
-    List<DataStore> store=this.dataStoreMgr.getImageStores(scope);
+    ZoneScope scope=new ZoneScope(zoneId);
+    List<DataStore> store=this._dataStoreMgr.getImageStoresByScope(scope);
     if (store.size() > 1) {
       throw new CloudRuntimeException("muliple image data store, don't know which one to use");
     }
-    AsyncCallFuture<CommandResult> future=null;
+    AsyncCallFuture<TemplateApiResult> future=null;
     if (snapshotId != null) {
-      SnapshotInfo snapInfo=this.snapshotFactory.getSnapshot(snapshotId);
-      future=this.imageSvr.createTemplateFromSnapshotAsync(snapInfo,tmplInfo,store.get(0));
+      SnapshotInfo snapInfo=this._snapshotFactory.getSnapshot(snapshotId,DataStoreRole.Image);
+      future=this._tmpltSvr.createTemplateFromSnapshotAsync(snapInfo,tmplInfo,store.get(0));
     }
  else     if (volumeId != null) {
-      VolumeInfo volInfo=this.volFactory.getVolume(volumeId);
-      future=this.imageSvr.createTemplateFromVolumeAsync(volInfo,tmplInfo,store.get(0));
+      VolumeInfo volInfo=this._volFactory.getVolume(volumeId);
+      future=this._tmpltSvr.createTemplateFromVolumeAsync(volInfo,tmplInfo,store.get(0));
     }
  else {
       throw new CloudRuntimeException("Creating private Template need to specify snapshotId or volumeId");
@@ -47,6 +46,8 @@
         s_logger.debug("Failed to create template" + result.getResult());
         throw new CloudRuntimeException("Failed to create template" + result.getResult());
       }
+      VMTemplateZoneVO templateZone=new VMTemplateZoneVO(zoneId,templateId,new Date());
+      this._tmpltZoneDao.persist(templateZone);
       privateTemplate=this._tmpltDao.findById(templateId);
       UsageEventVO usageEvent=new UsageEventVO(EventTypes.EVENT_TEMPLATE_CREATE,privateTemplate.getAccountId(),zoneId,privateTemplate.getId(),privateTemplate.getName(),null,privateTemplate.getSourceTemplateId(),privateTemplate.getSize());
       _usageEventDao.persist(usageEvent);
@@ -64,6 +65,8 @@ catch (    ExecutionException e) {
     if (privateTemplate == null) {
       Transaction txn=Transaction.currentTxn();
       txn.start();
+      this._tmplStoreDao.deletePrimaryRecordsForTemplate(templateId);
+      this._tmpltZoneDao.deletePrimaryRecordsForTemplate(templateId);
       this._tmpltDao.expunge(templateId);
       if (accountId != null) {
         _resourceLimitMgr.decrementResourceCount(accountId,ResourceType.template);

@@ -1,6 +1,6 @@
 {
   TemplateProfile profile=super.prepareExtractTemplate(extractcmd);
-  VMTemplateVO template=(VMTemplateVO)profile.getTemplate();
+  VMTemplateVO template=profile.getTemplate();
   Long zoneId=profile.getZoneId();
   Long templateId=template.getId();
   if (template.getHypervisorType() == HypervisorType.VMware) {
@@ -10,46 +10,32 @@
     if (!template.isCrossZones() && zoneId != null) {
       DataCenterVO zone=_dcDao.findById(zoneId);
       zoneName=zone.getName();
-      secondaryStorageHosts=_ssvmMgr.listSecondaryStorageHostsInOneZone(zoneId);
+      List<DataStore> imageStores=this.storeMgr.getImageStoresByScope(new ZoneScope(profile.getZoneId()));
+      if (imageStores == null || imageStores.size() == 0) {
+        throw new CloudRuntimeException("Unable to find image store to download template " + profile.getTemplate());
+      }
       s_logger.debug("Attempting to mark template host refs for template: " + template.getName() + " as destroyed in zone: "+ zoneName);
-      for (      HostVO secondaryStorageHost : secondaryStorageHosts) {
-        long hostId=secondaryStorageHost.getId();
-        List<VMTemplateHostVO> templateHostVOs=_tmpltHostDao.listByHostTemplate(hostId,templateId);
-        for (        VMTemplateHostVO templateHostVO : templateHostVOs) {
-          if (templateHostVO.getDownloadState() == Status.DOWNLOAD_IN_PROGRESS) {
+      for (      DataStore store : imageStores) {
+        long storeId=store.getId();
+        List<TemplateDataStoreVO> templateStoreVOs=_tmpltStoreDao.listByTemplateStore(templateId,storeId);
+        for (        TemplateDataStoreVO templateStoreVO : templateStoreVOs) {
+          if (templateStoreVO.getDownloadState() == Status.DOWNLOAD_IN_PROGRESS) {
             String errorMsg="Please specify a template that is not currently being downloaded.";
-            s_logger.debug("Template: " + template.getName() + " is currently being downloaded to secondary storage host: "+ secondaryStorageHost.getName()+ ".");
+            s_logger.debug("Template: " + template.getName() + " is currently being downloaded to secondary storage host: "+ store.getName()+ ".");
             throw new CloudRuntimeException(errorMsg);
           }
-          String installPath=templateHostVO.getInstallPath();
+          String installPath=templateStoreVO.getInstallPath();
           if (installPath != null) {
-            HostVO ssvmhost=_ssvmMgr.pickSsvmHost(secondaryStorageHost);
-            if (ssvmhost == null) {
-              s_logger.warn("prepareOVAPacking (hyervisorTemplateAdapter): There is no secondary storage VM for secondary storage host " + secondaryStorageHost.getName());
+            EndPoint ep=_epSelector.select(store);
+            if (ep == null) {
+              s_logger.warn("prepareOVAPacking (hyervisorTemplateAdapter): There is no secondary storage VM for secondary storage host " + store.getName());
               throw new CloudRuntimeException("PrepareExtractTemplate: can't locate ssvm for SecStorage Host.");
             }
-            cmd=new PrepareOVAPackingCommand(secondaryStorageHost.getStorageUrl(),installPath);
-            if (cmd == null) {
-              s_logger.debug("Fang: PrepareOVAPacking cmd can't created. cmd is null .");
-              throw new CloudRuntimeException("PrepareExtractTemplate: can't create a new cmd to packing ova.");
-            }
- else {
-              cmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
-            }
-            Answer answer=null;
-            s_logger.debug("Fang: PrepareOVAPAcking cmd, before send out. cmd: " + cmd.toString());
-            try {
-              answer=_agentMgr.send(ssvmhost.getId(),cmd);
-            }
- catch (            AgentUnavailableException e) {
-              s_logger.warn("Unable to packOVA for template: id: " + templateId + ", name "+ ssvmhost.getName(),e);
-            }
-catch (            OperationTimedoutException e) {
-              s_logger.warn("Unable to packOVA for template timeout. template id: " + templateId);
-              e.printStackTrace();
-            }
+            cmd=new PrepareOVAPackingCommand(store.getUri(),installPath);
+            cmd.setContextParam("hypervisor",HypervisorType.VMware.toString());
+            Answer answer=ep.sendMessage(cmd);
             if (answer == null || !answer.getResult()) {
-              s_logger.debug("Failed to create OVA for template " + templateHostVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
+              s_logger.debug("Failed to create OVA for template " + templateStoreVO + " due to "+ ((answer == null) ? "answer is null" : answer.getDetails()));
               throw new CloudRuntimeException("PrepareExtractTemplate: Failed to create OVA for template extraction. ");
             }
           }

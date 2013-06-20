@@ -1,0 +1,50 @@
+{
+  DiskTO disk=cmd.getDisk();
+  DataTO data=disk.getData();
+  DataStoreTO store=data.getDataStore();
+  String isoURL=null;
+  if (store == null) {
+    TemplateObjectTO iso=(TemplateObjectTO)disk.getData();
+    isoURL=iso.getName();
+  }
+ else {
+    if (!(store instanceof NfsTO)) {
+      s_logger.debug("Can't attach a iso which is not created on nfs: ");
+      return new AttachAnswer("Can't attach a iso which is not created on nfs: ");
+    }
+    NfsTO nfsStore=(NfsTO)store;
+    isoURL=nfsStore.getUrl() + File.separator + data.getPath();
+  }
+  try {
+    Connection conn=this.hypervisorResource.getConnection();
+    VM vm=this.hypervisorResource.getVM(conn,cmd.getVmName());
+    String vmUUID=vm.getUuid(conn);
+    VDI isoVDI=this.hypervisorResource.getIsoVDIByURL(conn,cmd.getVmName(),isoURL);
+    SR sr=isoVDI.getSR(conn);
+    Set<VBD> vbds=isoVDI.getVBDs(conn);
+    for (    VBD vbd : vbds) {
+      VM vbdVM=vbd.getVM(conn);
+      String vbdVmUUID=vbdVM.getUuid(conn);
+      if (vbdVmUUID.equals(vmUUID)) {
+        if (!vbd.getEmpty(conn)) {
+          vbd.eject(conn);
+        }
+        break;
+      }
+    }
+    if (!sr.getNameLabel(conn).startsWith("XenServer Tools")) {
+      this.hypervisorResource.removeSR(conn,sr);
+    }
+    return new DettachAnswer(disk);
+  }
+ catch (  XenAPIException e) {
+    String msg="Failed to dettach volume" + " for uuid: " + data.getPath() + "  due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new DettachAnswer(msg);
+  }
+catch (  Exception e) {
+    String msg="Failed to dettach volume" + " for uuid: " + data.getPath() + "  due to "+ e.getMessage();
+    s_logger.warn(msg,e);
+    return new DettachAnswer(msg);
+  }
+}

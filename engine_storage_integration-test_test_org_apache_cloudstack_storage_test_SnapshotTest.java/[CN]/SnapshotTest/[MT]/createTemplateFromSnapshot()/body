@@ -1,0 +1,27 @@
+{
+  VolumeInfo vol=createCopyBaseImage();
+  SnapshotVO snapshotVO=createSnapshotInDb(vol);
+  SnapshotInfo snapshot=this.snapshotFactory.getSnapshot(snapshotVO.getId(),vol.getDataStore());
+  boolean result=false;
+  for (  SnapshotStrategy strategy : this.snapshotStrategies) {
+    if (strategy.canHandle(snapshot)) {
+      snapshot=strategy.takeSnapshot(snapshot);
+      result=true;
+    }
+  }
+  AssertJUnit.assertTrue(result);
+  LocalHostEndpoint ep=new LocalHostEndpoint();
+  ep.setResource(new MockLocalNfsSecondaryStorageResource());
+  Mockito.when(epSelector.select(Matchers.any(DataObject.class),Matchers.any(DataObject.class))).thenReturn(ep);
+  try {
+    VMTemplateVO templateVO=createTemplateInDb();
+    TemplateInfo tmpl=this.templateFactory.getTemplate(templateVO.getId(),DataStoreRole.Image);
+    DataStore imageStore=this.dataStoreMgr.getImageStore(this.dcId);
+    AsyncCallFuture<TemplateApiResult> templateFuture=this.imageService.createTemplateFromSnapshotAsync(snapshot,tmpl,imageStore);
+    TemplateApiResult apiResult=templateFuture.get();
+    Assert.assertTrue(apiResult.isSuccess());
+  }
+  finally {
+    Mockito.when(epSelector.select(Matchers.any(DataObject.class),Matchers.any(DataObject.class))).thenReturn(remoteEp);
+  }
+}

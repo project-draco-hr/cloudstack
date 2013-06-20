@@ -1,0 +1,148 @@
+{
+  if (store == null) {
+    s_logger.warn("Huh? image store is null");
+    return;
+  }
+  long storeId=store.getId();
+  Long zoneId=store.getScope().getScopeId();
+  Map<String,TemplateProp> templateInfos=listTemplate(store);
+  if (templateInfos == null) {
+    return;
+  }
+  Set<VMTemplateVO> toBeDownloaded=new HashSet<VMTemplateVO>();
+  List<VMTemplateVO> allTemplates=null;
+  if (zoneId == null) {
+    allTemplates=_templateDao.listAllActive();
+  }
+ else {
+    allTemplates=_templateDao.listAllInZone(zoneId);
+  }
+  List<VMTemplateVO> rtngTmplts=_templateDao.listAllSystemVMTemplates();
+  List<VMTemplateVO> defaultBuiltin=_templateDao.listDefaultBuiltinTemplates();
+  if (rtngTmplts != null) {
+    for (    VMTemplateVO rtngTmplt : rtngTmplts) {
+      if (!allTemplates.contains(rtngTmplt)) {
+        allTemplates.add(rtngTmplt);
+      }
+    }
+  }
+  if (defaultBuiltin != null) {
+    for (    VMTemplateVO builtinTmplt : defaultBuiltin) {
+      if (!allTemplates.contains(builtinTmplt)) {
+        allTemplates.add(builtinTmplt);
+      }
+    }
+  }
+  toBeDownloaded.addAll(allTemplates);
+  for (  VMTemplateVO tmplt : allTemplates) {
+    String uniqueName=tmplt.getUniqueName();
+    TemplateDataStoreVO tmpltStore=_vmTemplateStoreDao.findByStoreTemplate(storeId,tmplt.getId());
+    if (templateInfos.containsKey(uniqueName)) {
+      TemplateProp tmpltInfo=templateInfos.remove(uniqueName);
+      toBeDownloaded.remove(tmplt);
+      if (tmpltStore != null) {
+        s_logger.info("Template Sync found " + uniqueName + " already in the image store");
+        if (tmpltStore.getDownloadState() != Status.DOWNLOADED) {
+          tmpltStore.setErrorString("");
+        }
+        if (tmpltInfo.isCorrupted()) {
+          tmpltStore.setDownloadState(Status.DOWNLOAD_ERROR);
+          String msg="Template " + tmplt.getName() + ":"+ tmplt.getId()+ " is corrupted on secondary storage "+ tmpltStore.getId();
+          tmpltStore.setErrorString(msg);
+          s_logger.info("msg");
+          if (tmplt.getUrl() == null) {
+            msg="Private Template (" + tmplt + ") with install path "+ tmpltInfo.getInstallPath()+ "is corrupted, please check in image store: "+ tmpltStore.getDataStoreId();
+            s_logger.warn(msg);
+          }
+ else {
+            toBeDownloaded.add(tmplt);
+          }
+        }
+ else {
+          tmpltStore.setDownloadPercent(100);
+          tmpltStore.setDownloadState(Status.DOWNLOADED);
+          tmpltStore.setInstallPath(tmpltInfo.getInstallPath());
+          tmpltStore.setSize(tmpltInfo.getSize());
+          tmpltStore.setPhysicalSize(tmpltInfo.getPhysicalSize());
+          tmpltStore.setLastUpdated(new Date());
+          VMTemplateVO tmlpt=_templateDao.findById(tmplt.getId());
+          tmlpt.setSize(tmpltInfo.getSize());
+          _templateDao.update(tmplt.getId(),tmlpt);
+          if (tmpltInfo.getSize() > 0 && tmplt.getUrl() != null) {
+            long accountId=tmplt.getAccountId();
+            try {
+              _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(accountId),com.cloud.configuration.Resource.ResourceType.secondary_storage,tmpltInfo.getSize() - UriUtils.getRemoteSize(tmplt.getUrl()));
+            }
+ catch (            ResourceAllocationException e) {
+              s_logger.warn(e.getMessage());
+              _alertMgr.sendAlert(AlertManager.ALERT_TYPE_RESOURCE_LIMIT_EXCEEDED,zoneId,null,e.getMessage(),e.getMessage());
+            }
+ finally {
+              _resourceLimitMgr.recalculateResourceCount(accountId,_accountMgr.getAccount(accountId).getDomainId(),com.cloud.configuration.Resource.ResourceType.secondary_storage.getOrdinal());
+            }
+          }
+        }
+        _vmTemplateStoreDao.update(tmpltStore.getId(),tmpltStore);
+      }
+ else {
+        tmpltStore=new TemplateDataStoreVO(storeId,tmplt.getId(),new Date(),100,Status.DOWNLOADED,null,null,null,tmpltInfo.getInstallPath(),tmplt.getUrl());
+        tmpltStore.setSize(tmpltInfo.getSize());
+        tmpltStore.setPhysicalSize(tmpltInfo.getPhysicalSize());
+        tmpltStore.setDataStoreRole(store.getRole());
+        _vmTemplateStoreDao.persist(tmpltStore);
+        VMTemplateVO tmlpt=_templateDao.findById(tmplt.getId());
+        tmlpt.setSize(tmpltInfo.getSize());
+        _templateDao.update(tmplt.getId(),tmlpt);
+        associateTemplateToZone(tmplt.getId(),zoneId);
+      }
+    }
+ else {
+      if (tmpltStore != null) {
+        s_logger.info("Template Sync did not find " + uniqueName + " on image store "+ storeId+ ", may request download based on available hypervisor types");
+        s_logger.info("Removing leftover template " + uniqueName + " entry from template store table");
+        _vmTemplateStoreDao.remove(tmpltStore.getId());
+      }
+    }
+  }
+  if (toBeDownloaded.size() > 0) {
+    List<HypervisorType> availHypers=_clusterDao.getAvailableHypervisorInZone(zoneId);
+    if (availHypers.isEmpty()) {
+      availHypers.add(HypervisorType.KVM);
+    }
+    availHypers.remove(HypervisorType.BareMetal);
+    availHypers.add(HypervisorType.None);
+    for (    VMTemplateVO tmplt : toBeDownloaded) {
+      if (tmplt.getUrl() == null) {
+        continue;
+      }
+      if (!tmplt.isPublicTemplate() && !tmplt.isFeatured()) {
+        continue;
+      }
+      if (availHypers.contains(tmplt.getHypervisorType())) {
+        s_logger.info("Downloading template " + tmplt.getUniqueName() + " to image store "+ store.getName());
+        associateTemplateToZone(tmplt.getId(),zoneId);
+        TemplateInfo tmpl=_templateFactory.getTemplate(tmplt.getId(),DataStoreRole.Image);
+        createTemplateAsync(tmpl,store,null);
+      }
+    }
+  }
+  for (  String uniqueName : templateInfos.keySet()) {
+    TemplateProp tInfo=templateInfos.get(uniqueName);
+    if (_tmpltMgr.templateIsDeleteable(tInfo.getId())) {
+      TemplateObjectTO tmplTO=new TemplateObjectTO();
+      tmplTO.setDataStore(store.getTO());
+      tmplTO.setPath(tInfo.getInstallPath());
+      tmplTO.setId(tInfo.getId());
+      DeleteCommand dtCommand=new DeleteCommand(tmplTO);
+      EndPoint ep=_epSelector.select(store);
+      Answer answer=ep.sendMessage(dtCommand);
+      if (answer == null || !answer.getResult()) {
+        s_logger.info("Failed to deleted template at store: " + store.getName());
+      }
+ else {
+        String description="Deleted template " + tInfo.getTemplateName() + " on secondary storage "+ storeId;
+        s_logger.info(description);
+      }
+    }
+  }
+}

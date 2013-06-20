@@ -1,0 +1,56 @@
+{
+  SnapshotObjectTO snapshotTO=(SnapshotObjectTO)cmd.getData();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)snapshotTO.getDataStore();
+  VolumeObjectTO volume=snapshotTO.getVolume();
+  String snapshotName=UUID.randomUUID().toString();
+  String vmName=volume.getVmName();
+  try {
+    Connect conn=LibvirtConnection.getConnectionByVmName(vmName);
+    DomainInfo.DomainState state=null;
+    Domain vm=null;
+    if (vmName != null) {
+      try {
+        vm=this.resource.getDomain(conn,vmName);
+        state=vm.getInfo().state;
+      }
+ catch (      LibvirtException e) {
+        s_logger.trace("Ignoring libvirt error.",e);
+      }
+    }
+    KVMStoragePool primaryPool=storagePoolMgr.getStoragePool(primaryStore.getPoolType(),primaryStore.getUuid());
+    if (primaryPool.getType() == StoragePoolType.RBD) {
+      s_logger.debug("Snapshots are not supported on RBD volumes");
+      return new CreateObjectAnswer("Snapshots are not supported on RBD volumes");
+    }
+    KVMPhysicalDisk disk=primaryPool.getPhysicalDisk(volume.getPath());
+    if (state == DomainInfo.DomainState.VIR_DOMAIN_RUNNING && !primaryPool.isExternalSnapshot()) {
+      String vmUuid=vm.getUUIDString();
+      Object[] args=new Object[]{snapshotName,vmUuid};
+      String snapshot=SnapshotXML.format(args);
+      s_logger.debug(snapshot);
+      vm.snapshotCreateXML(snapshot);
+      vm=this.resource.getDomain(conn,vmName);
+      state=vm.getInfo().state;
+      if (state == DomainInfo.DomainState.VIR_DOMAIN_PAUSED) {
+        vm.resume();
+      }
+    }
+ else {
+      final Script command=new Script(_manageSnapshotPath,this._cmdsTimeout,s_logger);
+      command.add("-c",disk.getPath());
+      command.add("-n",snapshotName);
+      String result=command.execute();
+      if (result != null) {
+        s_logger.debug("Failed to manage snapshot: " + result);
+        return new CreateObjectAnswer("Failed to manage snapshot: " + result);
+      }
+    }
+    SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
+    newSnapshot.setPath(disk.getPath() + File.separator + snapshotName);
+    return new CreateObjectAnswer(newSnapshot);
+  }
+ catch (  LibvirtException e) {
+    s_logger.debug("Failed to manage snapshot: " + e.toString());
+    return new CreateObjectAnswer("Failed to manage snapshot: " + e.toString());
+  }
+}

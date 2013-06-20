@@ -1,0 +1,33 @@
+{
+  StoragePool storagePool=(StoragePool)volume.getDataStore();
+  ClusterVO cluster=_clusterDao.findById(storagePool.getClusterId());
+  if (cluster != null && cluster.getHypervisorType() == HypervisorType.Ovm) {
+    throw new InvalidParameterValueException("Ovm won't support taking snapshot");
+  }
+  if (volume.getHypervisorType().equals(HypervisorType.KVM)) {
+    List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(cluster.getId());
+    if (hosts != null && !hosts.isEmpty()) {
+      HostVO host=hosts.get(0);
+      if (!hostSupportSnapsthot(host)) {
+        throw new CloudRuntimeException("KVM Snapshot is not supported on cluster: " + host.getId());
+      }
+    }
+  }
+  if (volume.getInstanceId() != null) {
+    UserVmVO userVm=_vmDao.findById(volume.getInstanceId());
+    if (userVm != null) {
+      if (userVm.getState().equals(State.Destroyed) || userVm.getState().equals(State.Expunging)) {
+        throw new CloudRuntimeException("Creating snapshot failed due to volume:" + volume.getId() + " is associated with vm:"+ userVm.getInstanceName()+ " is in "+ userVm.getState().toString()+ " state");
+      }
+      if (userVm.getHypervisorType() == HypervisorType.VMware || userVm.getHypervisorType() == HypervisorType.KVM) {
+        List<SnapshotVO> activeSnapshots=_snapshotDao.listByInstanceId(volume.getInstanceId(),Snapshot.State.Creating,Snapshot.State.CreatedOnPrimary,Snapshot.State.BackingUp);
+        if (activeSnapshots.size() > 1)         throw new CloudRuntimeException("There is other active snapshot tasks on the instance to which the volume is attached, please try again later");
+      }
+      List<VMSnapshotVO> activeVMSnapshots=_vmSnapshotDao.listByInstanceId(userVm.getId(),VMSnapshot.State.Creating,VMSnapshot.State.Reverting,VMSnapshot.State.Expunging);
+      if (activeVMSnapshots.size() > 0) {
+        throw new CloudRuntimeException("There is other active vm snapshot tasks on the instance to which the volume is attached, please try again later");
+      }
+    }
+  }
+  return true;
+}

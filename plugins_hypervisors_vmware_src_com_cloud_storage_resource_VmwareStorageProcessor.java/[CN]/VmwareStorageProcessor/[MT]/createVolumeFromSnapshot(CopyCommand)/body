@@ -1,0 +1,43 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  SnapshotObjectTO snapshot=(SnapshotObjectTO)srcData;
+  DataTO destData=cmd.getDestTO();
+  PrimaryDataStoreTO pool=(PrimaryDataStoreTO)destData.getDataStore();
+  DataStoreTO imageStore=srcData.getDataStore();
+  if (!(imageStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("unsupported protocol");
+  }
+  NfsTO nfsImageStore=(NfsTO)imageStore;
+  String primaryStorageNameLabel=pool.getUuid();
+  String secondaryStorageUrl=nfsImageStore.getUrl();
+  String backedUpSnapshotUuid=snapshot.getPath();
+  int index=backedUpSnapshotUuid.lastIndexOf(File.separator);
+  String backupPath=backedUpSnapshotUuid.substring(0,index);
+  backedUpSnapshotUuid=backedUpSnapshotUuid.substring(index + 1);
+  String details=null;
+  String newVolumeName=UUID.randomUUID().toString().replaceAll("-","");
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    ManagedObjectReference morPrimaryDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStorageNameLabel);
+    if (morPrimaryDs == null) {
+      String msg="Unable to find datastore: " + primaryStorageNameLabel;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    DatastoreMO primaryDsMo=new DatastoreMO(hyperHost.getContext(),morPrimaryDs);
+    Long size=restoreVolumeFromSecStorage(hyperHost,primaryDsMo,newVolumeName,secondaryStorageUrl,backupPath,backedUpSnapshotUuid);
+    VolumeObjectTO newVol=new VolumeObjectTO();
+    newVol.setPath(newVolumeName);
+    newVol.setSize(size);
+    return new CopyCmdAnswer(newVol);
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    s_logger.error("Unexpecpted exception ",e);
+    details="CreateVolumeFromSnapshotCommand exception: " + StringUtils.getExceptionStackInfo(e);
+  }
+  return new CopyCmdAnswer(details);
+}

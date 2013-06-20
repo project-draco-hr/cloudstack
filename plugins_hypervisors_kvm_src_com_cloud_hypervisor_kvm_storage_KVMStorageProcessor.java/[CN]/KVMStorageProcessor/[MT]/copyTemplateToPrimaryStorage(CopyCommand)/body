@@ -1,0 +1,57 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  DataTO destData=cmd.getDestTO();
+  TemplateObjectTO template=(TemplateObjectTO)srcData;
+  DataStoreTO imageStore=template.getDataStore();
+  TemplateObjectTO volume=(TemplateObjectTO)destData;
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volume.getDataStore();
+  if (!(imageStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("unsupported protocol");
+  }
+  NfsTO nfsImageStore=(NfsTO)imageStore;
+  String tmplturl=nfsImageStore.getUrl() + File.separator + template.getPath();
+  int index=tmplturl.lastIndexOf("/");
+  String mountpoint=tmplturl.substring(0,index);
+  String tmpltname=null;
+  if (index < tmplturl.length() - 1) {
+    tmpltname=tmplturl.substring(index + 1);
+  }
+  KVMPhysicalDisk tmplVol=null;
+  KVMStoragePool secondaryPool=null;
+  try {
+    secondaryPool=storagePoolMgr.getStoragePoolByURI(mountpoint);
+    if (tmpltname == null) {
+      secondaryPool.refresh();
+      List<KVMPhysicalDisk> disks=secondaryPool.listPhysicalDisks();
+      if (disks == null || disks.isEmpty()) {
+        return new PrimaryStorageDownloadAnswer("Failed to get volumes from pool: " + secondaryPool.getUuid());
+      }
+      for (      KVMPhysicalDisk disk : disks) {
+        if (disk.getName().endsWith("qcow2")) {
+          tmplVol=disk;
+          break;
+        }
+      }
+      if (tmplVol == null) {
+        return new PrimaryStorageDownloadAnswer("Failed to get template from pool: " + secondaryPool.getUuid());
+      }
+    }
+ else {
+      tmplVol=secondaryPool.getPhysicalDisk(tmpltname);
+    }
+    KVMStoragePool primaryPool=storagePoolMgr.getStoragePool(primaryStore.getPoolType(),primaryStore.getUuid());
+    KVMPhysicalDisk primaryVol=storagePoolMgr.copyPhysicalDisk(tmplVol,UUID.randomUUID().toString(),primaryPool);
+    TemplateObjectTO newTemplate=new TemplateObjectTO();
+    newTemplate.setPath(primaryVol.getName());
+    newTemplate.setFormat(ImageFormat.QCOW2);
+    return new CopyCmdAnswer(newTemplate);
+  }
+ catch (  CloudRuntimeException e) {
+    return new CopyCmdAnswer(e.toString());
+  }
+ finally {
+    if (secondaryPool != null) {
+      secondaryPool.delete();
+    }
+  }
+}

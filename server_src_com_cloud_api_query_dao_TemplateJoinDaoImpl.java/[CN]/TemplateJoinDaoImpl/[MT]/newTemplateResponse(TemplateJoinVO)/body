@@ -1,0 +1,81 @@
+{
+  TemplateResponse templateResponse=new TemplateResponse();
+  templateResponse.setId(template.getUuid());
+  templateResponse.setName(template.getName());
+  templateResponse.setDisplayText(template.getDisplayText());
+  templateResponse.setPublic(template.isPublicTemplate());
+  templateResponse.setCreated(template.getCreatedOnStore());
+  templateResponse.setReady(template.getState() == ObjectInDataStoreStateMachine.State.Ready);
+  templateResponse.setFeatured(template.isFeatured());
+  templateResponse.setExtractable(template.isExtractable() && !(template.getTemplateType() == TemplateType.SYSTEM));
+  templateResponse.setPasswordEnabled(template.isEnablePassword());
+  templateResponse.setSshKeyEnabled(template.isEnableSshKey());
+  templateResponse.setCrossZones(template.isCrossZones());
+  templateResponse.setFormat(template.getFormat());
+  if (template.getTemplateType() != null) {
+    templateResponse.setTemplateType(template.getTemplateType().toString());
+  }
+  templateResponse.setHypervisor(template.getHypervisorType().toString());
+  templateResponse.setOsTypeId(template.getGuestOSUuid());
+  templateResponse.setOsTypeName(template.getGuestOSName());
+  ApiResponseHelper.populateOwner(templateResponse,template);
+  templateResponse.setDomainId(template.getDomainUuid());
+  templateResponse.setDomainName(template.getDomainName());
+  boolean isAdmin=false;
+  Account caller=UserContext.current().getCaller();
+  if ((caller == null) || BaseCmd.isAdmin(caller.getType())) {
+    isAdmin=true;
+  }
+  if (isAdmin || caller.getId() == template.getAccountId()) {
+    if (template.getDownloadState() != Status.DOWNLOADED) {
+      String templateStatus="Processing";
+      if (template.getDownloadState() == VMTemplateHostVO.Status.DOWNLOAD_IN_PROGRESS) {
+        if (template.getDownloadPercent() == 100) {
+          templateStatus="Installing Template";
+        }
+ else {
+          templateStatus=template.getDownloadPercent() + "% Downloaded";
+        }
+      }
+ else {
+        templateStatus=template.getErrorString();
+      }
+      templateResponse.setStatus(templateStatus);
+    }
+ else     if (template.getDownloadState() == VMTemplateHostVO.Status.DOWNLOADED) {
+      templateResponse.setStatus("Download Complete");
+    }
+ else {
+      templateResponse.setStatus("Successfully Installed");
+    }
+  }
+  Long templateSize=template.getSize();
+  if (templateSize > 0) {
+    templateResponse.setSize(templateSize);
+  }
+  templateResponse.setChecksum(template.getChecksum());
+  if (template.getSourceTemplateId() != null) {
+    templateResponse.setSourceTemplateId(template.getSourceTemplateUuid());
+  }
+  templateResponse.setTemplateTag(template.getTemplateTag());
+  if (template.getDataCenterId() > 0) {
+    TemplateZoneResponse tmplZoneResp=new TemplateZoneResponse(template.getDataCenterUuid(),template.getDataCenterName());
+    templateResponse.addZone(tmplZoneResp);
+    templateResponse.setZoneId(template.getDataCenterUuid());
+    templateResponse.setZoneName(template.getDataCenterName());
+  }
+  if (template.getDetailName() != null) {
+    Map<String,String> details=new HashMap<String,String>();
+    details.put(template.getDetailName(),template.getDetailValue());
+    templateResponse.setDetails(details);
+  }
+  long tag_id=template.getTagId();
+  if (tag_id > 0) {
+    ResourceTagJoinVO vtag=ApiDBUtils.findResourceTagViewById(tag_id);
+    if (vtag != null) {
+      templateResponse.addTag(ApiDBUtils.newResourceTagResponse(vtag,false));
+    }
+  }
+  templateResponse.setObjectName("template");
+  return templateResponse;
+}

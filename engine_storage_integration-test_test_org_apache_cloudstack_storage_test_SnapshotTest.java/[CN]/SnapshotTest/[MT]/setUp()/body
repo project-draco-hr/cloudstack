@@ -1,0 +1,75 @@
+{
+  ComponentContext.initComponentsLifeCycle();
+  host=hostDao.findByGuid(this.getHostGuid());
+  if (host != null) {
+    dcId=host.getDataCenterId();
+    clusterId=host.getClusterId();
+    podId=host.getPodId();
+    imageStore=this.imageStoreDao.findByName(imageStoreName);
+  }
+ else {
+    DataCenterVO dc=new DataCenterVO(UUID.randomUUID().toString(),"test","8.8.8.8",null,"10.0.0.1",null,"10.0.0.1/24",null,null,NetworkType.Basic,null,null,true,true,null,null);
+    dc=dcDao.persist(dc);
+    dcId=dc.getId();
+    HostPodVO pod=new HostPodVO(UUID.randomUUID().toString(),dc.getId(),this.getHostGateway(),this.getHostCidr(),8,"test");
+    pod=podDao.persist(pod);
+    podId=pod.getId();
+    ClusterVO cluster=new ClusterVO(dc.getId(),pod.getId(),"devcloud cluster");
+    cluster.setHypervisorType(this.getHypervisor().toString());
+    cluster.setClusterType(ClusterType.CloudManaged);
+    cluster.setManagedState(ManagedState.Managed);
+    cluster=clusterDao.persist(cluster);
+    clusterId=cluster.getId();
+    host=new HostVO(this.getHostGuid());
+    host.setName("devcloud xen host");
+    host.setType(Host.Type.Routing);
+    host.setPrivateIpAddress(this.getHostIp());
+    host.setDataCenterId(dc.getId());
+    host.setVersion("6.0.1");
+    host.setAvailable(true);
+    host.setSetup(true);
+    host.setPodId(podId);
+    host.setLastPinged(0);
+    host.setResourceState(ResourceState.Enabled);
+    host.setHypervisorType(this.getHypervisor());
+    host.setClusterId(cluster.getId());
+    host=hostDao.persist(host);
+    imageStore=new ImageStoreVO();
+    imageStore.setName(imageStoreName);
+    imageStore.setDataCenterId(dcId);
+    imageStore.setProviderName(DataStoreProvider.NFS_IMAGE);
+    imageStore.setRole(DataStoreRole.Image);
+    imageStore.setUrl(this.getSecondaryStorage());
+    imageStore.setUuid(UUID.randomUUID().toString());
+    imageStore.setProtocol("nfs");
+    imageStore=imageStoreDao.persist(imageStore);
+  }
+  image=new VMTemplateVO();
+  image.setTemplateType(TemplateType.USER);
+  image.setUrl(this.getTemplateUrl());
+  image.setUniqueName(UUID.randomUUID().toString());
+  image.setName(UUID.randomUUID().toString());
+  image.setPublicTemplate(true);
+  image.setFeatured(true);
+  image.setRequiresHvm(true);
+  image.setBits(64);
+  image.setFormat(Storage.ImageFormat.VHD);
+  image.setEnablePassword(true);
+  image.setEnableSshKey(true);
+  image.setGuestOSId(1);
+  image.setBootable(true);
+  image.setPrepopulate(true);
+  image.setCrossZones(true);
+  image.setExtractable(true);
+  image=imageDataDao.persist(image);
+  DataStore store=this.dataStoreMgr.getDataStore(imageStore.getId(),DataStoreRole.Image);
+  TemplateInfo template=templateFactory.getTemplate(image.getId(),DataStoreRole.Image);
+  DataObject templateOnStore=store.create(template);
+  TemplateObjectTO to=new TemplateObjectTO();
+  to.setPath(this.getImageInstallPath());
+  to.setFormat(ImageFormat.VHD);
+  to.setSize(1000L);
+  CopyCmdAnswer answer=new CopyCmdAnswer(to);
+  templateOnStore.processEvent(Event.CreateOnlyRequested);
+  templateOnStore.processEvent(Event.OperationSuccessed,answer);
+}

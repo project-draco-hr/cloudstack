@@ -4,12 +4,6 @@
   Long sourceZoneId=cmd.getSourceZoneId();
   Long destZoneId=cmd.getDestinationZoneId();
   Account caller=UserContext.current().getCaller();
-  if (_swiftMgr.isSwiftEnabled()) {
-    throw new CloudRuntimeException("copytemplate API is disabled in Swift setup, templates in Swift can be accessed by all Zones");
-  }
-  if (_s3Mgr.isS3Enabled()) {
-    throw new CloudRuntimeException("copytemplate API is disabled in S3 setup -- S3 templates are accessible in all zones.");
-  }
   if (sourceZoneId.equals(destZoneId)) {
     throw new InvalidParameterValueException("Please specify different source and destination zones.");
   }
@@ -25,17 +19,21 @@
   if (template == null || template.getRemoved() != null) {
     throw new InvalidParameterValueException("Unable to find template with id");
   }
-  HostVO dstSecHost=getSecondaryStorageHost(destZoneId,templateId);
-  if (dstSecHost != null) {
-    s_logger.debug("There is template " + templateId + " in secondary storage "+ dstSecHost.getId()+ " in zone "+ destZoneId+ " , don't need to copy");
+  DataStore dstSecStore=getImageStore(destZoneId,templateId);
+  if (dstSecStore != null) {
+    s_logger.debug("There is template " + templateId + " in secondary storage "+ dstSecStore.getName()+ " in zone "+ destZoneId+ " , don't need to copy");
     return template;
   }
-  HostVO srcSecHost=getSecondaryStorageHost(sourceZoneId,templateId);
-  if (srcSecHost == null) {
+  DataStore srcSecStore=getImageStore(sourceZoneId,templateId);
+  if (srcSecStore == null) {
     throw new InvalidParameterValueException("There is no template " + templateId + " in zone "+ sourceZoneId);
   }
+  if (srcSecStore.getScope().getScopeType() == ScopeType.REGION) {
+    s_logger.debug("Template " + templateId + " is in region-wide secondary storage "+ dstSecStore.getName()+ " , don't need to copy");
+    return template;
+  }
   _accountMgr.checkAccess(caller,AccessType.ModifyEntry,true,template);
-  boolean success=copy(userId,template,srcSecHost,sourceZone,dstZone);
+  boolean success=copy(userId,template,srcSecStore,dstZone);
   if (success) {
     return template;
   }

@@ -1,0 +1,55 @@
+{
+  String desc=Upload.Type.TEMPLATE.toString();
+  if (isISO) {
+    desc=Upload.Type.ISO.toString();
+  }
+  eventId=eventId == null ? 0 : eventId;
+  if (!_accountMgr.isRootAdmin(caller.getType()) && _disableExtraction) {
+    throw new PermissionDeniedException("Extraction has been disabled by admin");
+  }
+  VMTemplateVO template=_tmpltDao.findById(templateId);
+  if (template == null || template.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find " + desc + " with id "+ templateId);
+  }
+  if (template.getTemplateType() == Storage.TemplateType.SYSTEM) {
+    throw new InvalidParameterValueException("Unable to extract the " + desc + " "+ template.getName()+ " as it is a default System template");
+  }
+ else   if (template.getTemplateType() == Storage.TemplateType.PERHOST) {
+    throw new InvalidParameterValueException("Unable to extract the " + desc + " "+ template.getName()+ " as it resides on host and not on SSVM");
+  }
+  if (isISO) {
+    if (template.getFormat() != ImageFormat.ISO) {
+      throw new InvalidParameterValueException("Unsupported format, could not extract the ISO");
+    }
+  }
+ else {
+    if (template.getFormat() == ImageFormat.ISO) {
+      throw new InvalidParameterValueException("Unsupported format, could not extract the template");
+    }
+  }
+  if (zoneId != null && _dcDao.findById(zoneId) == null) {
+    throw new IllegalArgumentException("Please specify a valid zone.");
+  }
+  if (!_accountMgr.isRootAdmin(caller.getType()) && !template.isExtractable()) {
+    throw new InvalidParameterValueException("Unable to extract template id=" + templateId + " as it's not extractable");
+  }
+  _accountMgr.checkAccess(caller,AccessType.ModifyEntry,true,template);
+  List<DataStore> ssStores=this._dataStoreMgr.getImageStoresByScope(new ZoneScope(zoneId));
+  TemplateDataStoreVO tmpltStoreRef=null;
+  ImageStoreEntity tmpltStore=null;
+  if (ssStores != null) {
+    for (    DataStore store : ssStores) {
+      tmpltStoreRef=this._tmplStoreDao.findByStoreTemplate(store.getId(),templateId);
+      if (tmpltStoreRef != null) {
+        if (tmpltStoreRef.getDownloadState() == com.cloud.storage.VMTemplateStorageResourceAssoc.Status.DOWNLOADED) {
+          tmpltStore=(ImageStoreEntity)store;
+          break;
+        }
+      }
+    }
+  }
+  if (tmpltStoreRef == null) {
+    throw new InvalidParameterValueException("The " + desc + " has not been downloaded ");
+  }
+  return tmpltStore.createEntityExtractUrl(tmpltStoreRef.getInstallPath(),template.getFormat());
+}

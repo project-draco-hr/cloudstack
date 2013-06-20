@@ -1,0 +1,47 @@
+{
+  String value=configDao.getValue(Config.CopyVolumeWait.key());
+  int _copyvolumewait=NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
+  Scope destScope=getZoneScope(destData.getDataStore().getScope());
+  DataStore cacheStore=cacheMgr.getCacheStorage(destScope);
+  if (cacheStore == null) {
+    ImageStoreEntity imageStore=(ImageStoreEntity)this.dataStoreMgr.getImageStore(destScope.getScopeId());
+    if (!imageStore.getProtocol().equalsIgnoreCase("nfs")) {
+      s_logger.debug("can't find a nfs image store");
+      return null;
+    }
+    DataObject objOnImageStore=imageStore.create(srcData);
+    objOnImageStore.processEvent(Event.CreateOnlyRequested);
+    Answer answer=this.copyObject(srcData,objOnImageStore);
+    if (answer == null || !answer.getResult()) {
+      if (answer != null) {
+        s_logger.debug("copy to image store failed: " + answer.getDetails());
+      }
+      objOnImageStore.processEvent(Event.OperationFailed);
+      imageStore.delete(objOnImageStore);
+      return answer;
+    }
+    objOnImageStore.processEvent(Event.OperationSuccessed,answer);
+    objOnImageStore.processEvent(Event.CopyingRequested);
+    CopyCommand cmd=new CopyCommand(objOnImageStore.getTO(),destData.getTO(),_copyvolumewait);
+    EndPoint ep=selector.select(objOnImageStore,destData);
+    answer=ep.sendMessage(cmd);
+    if (answer == null || !answer.getResult()) {
+      if (answer != null) {
+        s_logger.debug("copy to primary store failed: " + answer.getDetails());
+      }
+      objOnImageStore.processEvent(Event.OperationFailed);
+      imageStore.delete(objOnImageStore);
+      return answer;
+    }
+    objOnImageStore.processEvent(Event.OperationSuccessed);
+    imageStore.delete(objOnImageStore);
+    return answer;
+  }
+ else {
+    DataObject cacheData=cacheMgr.createCacheObject(srcData,destScope);
+    CopyCommand cmd=new CopyCommand(cacheData.getTO(),destData.getTO(),_copyvolumewait);
+    EndPoint ep=selector.select(cacheData,destData);
+    Answer answer=ep.sendMessage(cmd);
+    return answer;
+  }
+}

@@ -1,0 +1,57 @@
+{
+  UUID uuid=UUID.randomUUID();
+  String jobId=uuid.toString();
+  String tmpDir=installPathPrefix;
+  try {
+    if (!_storage.mkdirs(tmpDir)) {
+      s_logger.warn("Unable to create " + tmpDir);
+      return "Unable to create " + tmpDir;
+    }
+    File file=ResourceType.TEMPLATE == resourceType ? _storage.getFile(tmpDir + File.separator + TemplateLocation.Filename) : _storage.getFile(tmpDir + File.separator + "volume.properties");
+    if (file.exists()) {
+      file.delete();
+    }
+    if (!file.createNewFile()) {
+      s_logger.warn("Unable to create new file: " + file.getAbsolutePath());
+      return "Unable to create new file: " + file.getAbsolutePath();
+    }
+    URI uri;
+    try {
+      uri=new URI(url);
+    }
+ catch (    URISyntaxException e) {
+      throw new CloudRuntimeException("URI is incorrect: " + url);
+    }
+    TemplateDownloader td;
+    if ((uri != null) && (uri.getScheme() != null)) {
+      if (uri.getScheme().equalsIgnoreCase("http") || uri.getScheme().equalsIgnoreCase("https")) {
+        td=new HttpTemplateDownloader(_storage,url,tmpDir,new Completion(jobId),maxTemplateSizeInBytes,user,password,proxy,resourceType);
+      }
+ else       if (uri.getScheme().equalsIgnoreCase("file")) {
+        td=new LocalTemplateDownloader(_storage,url,tmpDir,maxTemplateSizeInBytes,new Completion(jobId));
+      }
+ else       if (uri.getScheme().equalsIgnoreCase("scp")) {
+        td=new ScpTemplateDownloader(_storage,url,tmpDir,maxTemplateSizeInBytes,new Completion(jobId));
+      }
+ else       if (uri.getScheme().equalsIgnoreCase("nfs")) {
+        td=null;
+        throw new CloudRuntimeException("Scheme is not supported " + url);
+      }
+ else {
+        throw new CloudRuntimeException("Scheme is not supported " + url);
+      }
+    }
+ else {
+      throw new CloudRuntimeException("Unable to download from URL: " + url);
+    }
+    DownloadJob dj=new DownloadJob(td,jobId,id,name,format,hvm,accountId,descr,cksum,installPathPrefix,resourceType);
+    dj.setTmpltPath(templatePath);
+    jobs.put(jobId,dj);
+    threadPool.execute(td);
+    return jobId;
+  }
+ catch (  IOException e) {
+    s_logger.warn("Unable to download to " + tmpDir,e);
+    return null;
+  }
+}

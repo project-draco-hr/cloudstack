@@ -1,0 +1,52 @@
+{
+  DiskTO disk=cmd.getDisk();
+  DataTO data=disk.getData();
+  DataStoreTO store=data.getDataStore();
+  String isoURL=null;
+  if (store == null) {
+    TemplateObjectTO iso=(TemplateObjectTO)disk.getData();
+    isoURL=iso.getName();
+  }
+ else {
+    if (!(store instanceof NfsTO)) {
+      s_logger.debug("Can't attach a iso which is not created on nfs: ");
+      return new AttachAnswer("Can't attach a iso which is not created on nfs: ");
+    }
+    NfsTO nfsStore=(NfsTO)store;
+    isoURL=nfsStore.getUrl() + File.separator + data.getPath();
+  }
+  String vmName=cmd.getVmName();
+  try {
+    Connection conn=this.hypervisorResource.getConnection();
+    VBD isoVBD=null;
+    VM vm=this.hypervisorResource.getVM(conn,vmName);
+    VDI isoVDI=this.hypervisorResource.getIsoVDIByURL(conn,vmName,isoURL);
+    Set<VBD> vbds=vm.getVBDs(conn);
+    for (    VBD vbd : vbds) {
+      String userDevice=vbd.getUserdevice(conn);
+      Types.VbdType type=vbd.getType(conn);
+      if (userDevice.equals("3") && type == Types.VbdType.CD) {
+        isoVBD=vbd;
+        break;
+      }
+    }
+    if (isoVBD == null) {
+      throw new CloudRuntimeException("Unable to find CD-ROM VBD for VM: " + vmName);
+    }
+ else {
+      if (isoVBD.getEmpty(conn) == false) {
+        isoVBD.eject(conn);
+      }
+      isoVBD.insert(conn,isoVDI);
+    }
+    return new AttachAnswer(disk);
+  }
+ catch (  XenAPIException e) {
+    s_logger.warn("Failed to attach iso" + ": " + e.toString(),e);
+    return new AttachAnswer(e.toString());
+  }
+catch (  Exception e) {
+    s_logger.warn("Failed to attach iso" + ": " + e.toString(),e);
+    return new AttachAnswer(e.toString());
+  }
+}
