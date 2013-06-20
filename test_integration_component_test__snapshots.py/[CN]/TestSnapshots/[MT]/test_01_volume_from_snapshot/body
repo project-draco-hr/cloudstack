@@ -1,0 +1,57 @@
+@attr(speed='slow')
+@attr(tags=['advanced', 'advancedns', 'basic', 'sg'])
+def test_01_volume_from_snapshot(self):
+    'Test Creating snapshot from volume having spaces in name(KVM)\n        '
+    random_data_0 = random_gen(100)
+    random_data_1 = random_gen(100)
+    volume = Volume.create(self.apiclient, self.services['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    self.debug(('Created volume with ID: %s' % volume.id))
+    self.virtual_machine.attach_volume(self.apiclient, volume)
+    self.debug(('Attach volume: %s to VM: %s' % (volume.id, self.virtual_machine.id)))
+    try:
+        ssh_client = self.virtual_machine.get_ssh_client()
+    except Exception as e:
+        self.fail(('SSH failed for VM: %s' % self.virtual_machine.ipaddress))
+    self.debug(('Formatting volume: %s to ext3' % volume.id))
+    format_volume_to_ext3(ssh_client, self.services['volume']['diskdevice'])
+    cmds = [('mkdir -p %s' % self.services['paths']['mount_dir']), ('mount %s1 %s' % (self.services['volume']['diskdevice'], self.services['paths']['mount_dir'])), ('mkdir -p %s/%s/{%s,%s} ' % (self.services['paths']['mount_dir'], self.services['paths']['sub_dir'], self.services['paths']['sub_lvl_dir1'], self.services['paths']['sub_lvl_dir2'])), ('echo %s > %s/%s/%s/%s' % (random_data_0, self.services['paths']['mount_dir'], self.services['paths']['sub_dir'], self.services['paths']['sub_lvl_dir1'], self.services['paths']['random_data'])), ('echo %s > %s/%s/%s/%s' % (random_data_1, self.services['paths']['mount_dir'], self.services['paths']['sub_dir'], self.services['paths']['sub_lvl_dir2'], self.services['paths']['random_data']))]
+    for c in cmds:
+        self.debug(('Command: %s' % c))
+        ssh_client.execute(c)
+    cmds = [('umount %s' % self.services['paths']['mount_dir'])]
+    for c in cmds:
+        self.debug(('Command: %s' % c))
+        ssh_client.execute(c)
+    list_volume_response = Volume.list(self.apiclient, virtualmachineid=self.virtual_machine.id, type='DATADISK', listall=True)
+    self.assertEqual(isinstance(list_volume_response, list), True, 'Check list volume response for valid data')
+    volume_response = list_volume_response[0]
+    snapshot = Snapshot.create(self.apiclient, volume_response.id, account=self.account.name, domainid=self.account.domainid)
+    self.debug(('Created snapshot: %s' % snapshot.id))
+    volume_from_snapshot = Volume.create_from_snapshot(self.apiclient, snapshot.id, self.services['volume'], account=self.account.name, domainid=self.account.domainid)
+    self.debug(('Created Volume: %s from Snapshot: %s' % (volume_from_snapshot.id, snapshot.id)))
+    volumes = Volume.list(self.apiclient, id=volume_from_snapshot.id)
+    self.assertEqual(isinstance(volumes, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(len(volumes), None, 'Check Volume list Length')
+    self.assertEqual(volumes[0].id, volume_from_snapshot.id, 'Check Volume in the List Volumes')
+    new_virtual_machine = VirtualMachine.create(self.apiclient, self.services['server_without_disk'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.services['mode'])
+    self.debug(('Deployed new VM for account: %s' % self.account.name))
+    self.cleanup.append(new_virtual_machine)
+    self.debug(('Attaching volume: %s to VM: %s' % (volume_from_snapshot.id, new_virtual_machine.id)))
+    self.new_virtual_machine.attach_volume(self.apiclient, volume_from_snapshot)
+    try:
+        ssh = new_virtual_machine.get_ssh_client()
+        cmds = [('mkdir -p %s' % self.services['paths']['mount_dir']), ('mount %s1 %s' % (self.services['volume']['diskdevice'], self.services['paths']['mount_dir']))]
+        for c in cmds:
+            self.debug(('Command: %s' % c))
+            ssh.execute(c)
+        returned_data_0 = ssh.execute(('cat %s/%s/%s/%s' % (self.services['paths']['mount_dir'], self.services['paths']['sub_dir'], self.services['paths']['sub_lvl_dir1'], self.services['paths']['random_data'])))
+        returned_data_1 = ssh.execute(('cat %s/%s/%s/%s' % (self.services['paths']['mount_dir'], self.services['paths']['sub_dir'], self.services['paths']['sub_lvl_dir2'], self.services['paths']['random_data'])))
+    except Exception as e:
+        self.fail(('SSH access failed for VM: %s' % new_virtual_machine.ipaddress))
+    self.assertEqual(random_data_0, returned_data_0[0], 'Verify newly attached volume contents with existing one')
+    self.assertEqual(random_data_1, returned_data_1[0], 'Verify newly attached volume contents with existing one')
+    cmds = [('umount %s' % self.services['paths']['mount_dir'])]
+    for c in cmds:
+        self.debug(('Command: %s' % c))
+        ssh_client.execute(c)
+    return
