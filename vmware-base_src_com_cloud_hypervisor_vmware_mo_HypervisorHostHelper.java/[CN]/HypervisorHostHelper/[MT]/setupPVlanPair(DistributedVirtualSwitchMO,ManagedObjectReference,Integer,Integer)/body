@@ -1,0 +1,38 @@
+{
+  Map<Integer,HypervisorHostHelper.PvlanType> vlanmap=dvSwitchMo.retrieveVlanPvlan(vid,spvlanid,morDvSwitch);
+  if (vlanmap.size() != 0) {
+    if (vlanmap.containsKey(vid) && vlanmap.get(vid) != HypervisorHostHelper.PvlanType.promiscuous) {
+      String msg="VLAN ID " + vid + " is already in use as a "+ vlanmap.get(vid).toString()+ " VLAN on the DVSwitch";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    if ((vid != spvlanid) && vlanmap.containsKey(spvlanid) && vlanmap.get(spvlanid) != HypervisorHostHelper.PvlanType.isolated) {
+      String msg="PVLAN ID " + spvlanid + " is already in use as a "+ vlanmap.get(spvlanid).toString()+ " VLAN in the DVSwitch";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+  }
+  VMwareDVSConfigSpec dvsSpec=new VMwareDVSConfigSpec();
+  if (!vlanmap.containsKey(vid)) {
+    VMwareDVSPvlanConfigSpec ppvlanConfigSpec=createDVPortPvlanConfigSpec(vid,vid,PvlanType.promiscuous,PvlanOperation.add);
+    dvsSpec.getPvlanConfigSpec().add(ppvlanConfigSpec);
+  }
+  if (!vid.equals(spvlanid) && !vlanmap.containsKey(spvlanid)) {
+    VMwareDVSPvlanConfigSpec spvlanConfigSpec=createDVPortPvlanConfigSpec(vid,spvlanid,PvlanType.isolated,PvlanOperation.add);
+    dvsSpec.getPvlanConfigSpec().add(spvlanConfigSpec);
+  }
+  if (dvsSpec.getPvlanConfigSpec().size() > 0) {
+    String dvsConfigVersion=dvSwitchMo.getDVSConfigVersion(morDvSwitch);
+    dvsSpec.setConfigVersion(dvsConfigVersion);
+    try {
+      dvSwitchMo.updateVMWareDVSwitchGetTask(morDvSwitch,dvsSpec);
+    }
+ catch (    AlreadyExistsFaultMsg e) {
+      s_logger.info("Specified vlan id (" + vid + ") private vlan id ("+ spvlanid+ ") tuple already configured on VMWare DVSwitch");
+    }
+catch (    Exception e) {
+      s_logger.error("Failed to configure vlan/pvlan tuple on VMware DVSwitch: " + vid + "/"+ spvlanid+ ", failure message: ",e);
+      throw e;
+    }
+  }
+}

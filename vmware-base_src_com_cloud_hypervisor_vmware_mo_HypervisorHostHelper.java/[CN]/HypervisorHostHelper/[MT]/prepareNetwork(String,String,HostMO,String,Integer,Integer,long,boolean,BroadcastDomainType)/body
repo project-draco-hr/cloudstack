@@ -13,11 +13,21 @@
   boolean createGCTag=false;
   String networkName;
   Integer vid=null;
-  if (vlanId != null && !UNTAGGED_VLAN_NAME.equalsIgnoreCase(vlanId)) {
-    createGCTag=true;
-    vid=Integer.parseInt(vlanId);
+  BroadcastDomainType[] supportedBroadcastTypes=new BroadcastDomainType[]{BroadcastDomainType.Lswitch,BroadcastDomainType.LinkLocal,BroadcastDomainType.Native,BroadcastDomainType.Pvlan,BroadcastDomainType.Storage,BroadcastDomainType.UnDecided,BroadcastDomainType.Vlan};
+  if (!Arrays.asList(supportedBroadcastTypes).contains(broadcastDomainType)) {
+    throw new InvalidParameterException("BroadcastDomainType " + broadcastDomainType + " it not supported on a VMWare hypervisor at this time.");
   }
-  networkName=composeCloudNetworkName(namePrefix,vlanId,null,networkRateMbps,vSwitchName);
+  if (broadcastDomainType == BroadcastDomainType.Lswitch) {
+    networkName="br-int";
+    vid=null;
+  }
+ else {
+    networkName=composeCloudNetworkName(namePrefix,vlanId,null,networkRateMbps,vSwitchName);
+    if (vlanId != null && !UNTAGGED_VLAN_NAME.equalsIgnoreCase(vlanId)) {
+      createGCTag=true;
+      vid=Integer.parseInt(vlanId);
+    }
+  }
   HostNetworkSecurityPolicy secPolicy=null;
   if (namePrefix.equalsIgnoreCase("cloud.private")) {
     secPolicy=new HostNetworkSecurityPolicy();
@@ -34,15 +44,23 @@
     shapingPolicy.setBurstSize(5 * shapingPolicy.getAverageBandwidth() / 8);
   }
   boolean bWaitPortGroupReady=false;
-  if (!hostMo.hasPortGroup(vSwitch,networkName)) {
-    hostMo.createPortGroup(vSwitch,networkName,vid,secPolicy,shapingPolicy);
-    bWaitPortGroupReady=true;
+  if (broadcastDomainType == BroadcastDomainType.Lswitch) {
+    if (!hostMo.hasPortGroup(vSwitch,networkName)) {
+      throw new InvalidParameterException("Unable to find port-group " + networkName + " on dvSwitch "+ vSwitchName);
+    }
+    bWaitPortGroupReady=false;
   }
  else {
-    HostPortGroupSpec spec=hostMo.getPortGroupSpec(networkName);
-    if (!isSpecMatch(spec,vid,shapingPolicy)) {
-      hostMo.updatePortGroup(vSwitch,networkName,vid,secPolicy,shapingPolicy);
+    if (!hostMo.hasPortGroup(vSwitch,networkName)) {
+      hostMo.createPortGroup(vSwitch,networkName,vid,secPolicy,shapingPolicy);
       bWaitPortGroupReady=true;
+    }
+ else {
+      HostPortGroupSpec spec=hostMo.getPortGroupSpec(networkName);
+      if (!isSpecMatch(spec,vid,shapingPolicy)) {
+        hostMo.updatePortGroup(vSwitch,networkName,vid,secPolicy,shapingPolicy);
+        bWaitPortGroupReady=true;
+      }
     }
   }
   ManagedObjectReference morNetwork;
@@ -71,7 +89,7 @@
                   HostMO otherHostMo=new HostMO(hostMo.getContext(),otherHost);
                   try {
                     if (s_logger.isDebugEnabled())                     s_logger.debug("Prepare network on other host, vlan: " + vlanId + ", host: "+ otherHostMo.getHostName());
-                    prepareNetwork(vSwitchName,namePrefix,otherHostMo,vlanId,networkRateMbps,networkRateMulticastMbps,timeOutMs,false);
+                    prepareNetwork(vSwitchName,namePrefix,otherHostMo,vlanId,networkRateMbps,networkRateMulticastMbps,timeOutMs,false,broadcastDomainType);
                   }
  catch (                  Exception e) {
                     s_logger.warn("Unable to prepare network on other host, vlan: " + vlanId + ", host: "+ otherHostMo.getHostName());

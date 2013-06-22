@@ -1,0 +1,121 @@
+{
+  ManagedObjectReference morNetwork=null;
+  VmwareContext context=hostMo.getContext();
+  ManagedObjectReference dcMor=hostMo.getHyperHostDatacenter();
+  DatacenterMO dataCenterMo=new DatacenterMO(context,dcMor);
+  DistributedVirtualSwitchMO dvSwitchMo=null;
+  ManagedObjectReference morEthernetPortProfile=null;
+  String ethPortProfileName=null;
+  ManagedObjectReference morDvSwitch=null;
+  String dvSwitchName=null;
+  boolean bWaitPortGroupReady=false;
+  boolean createGCTag=false;
+  String vcApiVersion;
+  String minVcApiVersionSupportingAutoExpand;
+  boolean autoExpandSupported;
+  String networkName;
+  Integer vid=null;
+  Integer spvlanid=null;
+  BroadcastDomainType[] supportedBroadcastTypes=new BroadcastDomainType[]{BroadcastDomainType.Lswitch,BroadcastDomainType.LinkLocal,BroadcastDomainType.Native,BroadcastDomainType.Pvlan,BroadcastDomainType.Storage,BroadcastDomainType.UnDecided,BroadcastDomainType.Vlan};
+  if (!Arrays.asList(supportedBroadcastTypes).contains(broadcastDomainType)) {
+    throw new InvalidParameterException("BroadcastDomainType " + broadcastDomainType + " it not supported on a VMWare hypervisor at this time.");
+  }
+  if (broadcastDomainType == BroadcastDomainType.Lswitch) {
+    if (vSwitchType == VirtualSwitchType.NexusDistributedVirtualSwitch) {
+      throw new InvalidParameterException("Nexus Distributed Virtualswitch is not supported with BroadcastDomainType " + broadcastDomainType);
+    }
+    networkName="br-int";
+    vid=null;
+  }
+ else {
+    networkName=composeCloudNetworkName(namePrefix,vlanId,secondaryvlanId,networkRateMbps,physicalNetwork);
+    if (vlanId != null && !UNTAGGED_VLAN_NAME.equalsIgnoreCase(vlanId)) {
+      createGCTag=true;
+      vid=Integer.parseInt(vlanId);
+    }
+    if (secondaryvlanId != null) {
+      spvlanid=Integer.parseInt(secondaryvlanId);
+    }
+  }
+  if (vSwitchType == VirtualSwitchType.VMwareDistributedVirtualSwitch) {
+    DVSTrafficShapingPolicy shapingPolicy;
+    DVSSecurityPolicy secPolicy;
+    vcApiVersion=getVcenterApiVersion(context);
+    minVcApiVersionSupportingAutoExpand="5.0";
+    autoExpandSupported=isFeatureSupportedInVcenterApiVersion(vcApiVersion,minVcApiVersionSupportingAutoExpand);
+    dvSwitchName=physicalNetwork;
+    if (dvSwitchName == null) {
+      s_logger.warn("Detected null dvSwitch. Defaulting to dvSwitch0");
+      dvSwitchName="dvSwitch0";
+    }
+    morDvSwitch=dataCenterMo.getDvSwitchMor(dvSwitchName);
+    if (morDvSwitch == null) {
+      String msg="Unable to find distributed vSwitch " + morDvSwitch;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+ else {
+      s_logger.info("Found distributed vSwitch " + morDvSwitch);
+    }
+    if (broadcastDomainType == BroadcastDomainType.Lswitch) {
+      if (!dataCenterMo.hasDvPortGroup(networkName)) {
+        throw new InvalidParameterException("Unable to find port-group " + networkName + " on dvSwitch "+ dvSwitchName);
+      }
+      bWaitPortGroupReady=false;
+    }
+ else {
+      dvSwitchMo=new DistributedVirtualSwitchMO(context,morDvSwitch);
+      shapingPolicy=getDVSShapingPolicy(networkRateMbps);
+      secPolicy=createDVSSecurityPolicy();
+      if (vid != null && spvlanid != null) {
+        setupPVlanPair(dvSwitchMo,morDvSwitch,vid,spvlanid);
+      }
+      createPortGroup(physicalNetwork,networkName,vid,spvlanid,dataCenterMo,shapingPolicy,secPolicy,dvSwitchMo,numPorts,autoExpandSupported);
+      bWaitPortGroupReady=true;
+    }
+  }
+ else   if (vSwitchType == VirtualSwitchType.NexusDistributedVirtualSwitch) {
+    ethPortProfileName=physicalNetwork;
+    if (ethPortProfileName == null) {
+      s_logger.warn("Detected null ethrenet port profile. Defaulting to epp0.");
+      ethPortProfileName="epp0";
+    }
+    morEthernetPortProfile=dataCenterMo.getDvPortGroupMor(ethPortProfileName);
+    if (morEthernetPortProfile == null) {
+      String msg="Unable to find Ethernet port profile " + ethPortProfileName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+ else {
+      s_logger.info("Found Ethernet port profile " + ethPortProfileName);
+    }
+    long averageBandwidth=0L;
+    if (networkRateMbps != null && networkRateMbps.intValue() > 0) {
+      averageBandwidth=(long)(networkRateMbps.intValue() * 1024L * 1024L);
+    }
+    long peakBandwidth=(long)(averageBandwidth * 1.5);
+    long burstSize=5 * averageBandwidth / 8;
+    if (!dataCenterMo.hasDvPortGroup(networkName)) {
+      s_logger.info("Port profile " + networkName + " not found.");
+      createPortProfile(context,physicalNetwork,networkName,vid,networkRateMbps,peakBandwidth,burstSize,gateway,configureVServiceInNexus);
+      bWaitPortGroupReady=true;
+    }
+ else {
+      s_logger.info("Port profile " + networkName + " found.");
+      updatePortProfile(context,physicalNetwork,networkName,vid,networkRateMbps,peakBandwidth,burstSize);
+    }
+  }
+  if (bWaitPortGroupReady)   morNetwork=waitForDvPortGroupReady(dataCenterMo,networkName,timeOutMs);
+ else   morNetwork=dataCenterMo.getDvPortGroupMor(networkName);
+  if (morNetwork == null) {
+    String msg="Failed to create guest network " + networkName;
+    s_logger.error(msg);
+    throw new Exception(msg);
+  }
+  if (createGCTag) {
+    NetworkMO networkMo=new NetworkMO(hostMo.getContext(),morNetwork);
+    networkMo.setCustomFieldValue(CustomFieldConstants.CLOUD_GC_DVP,"true");
+    s_logger.debug("Added custom field : " + CustomFieldConstants.CLOUD_GC_DVP);
+  }
+  return new Pair<ManagedObjectReference,String>(morNetwork,networkName);
+}
