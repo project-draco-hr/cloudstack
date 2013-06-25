@@ -1,0 +1,50 @@
+{
+  if (context == null) {
+    s_logger.error("ReservationContext was null for " + nic + " "+ network);
+    return false;
+  }
+  String reservationId=context.getReservationId();
+  SspUuidVO deleteTarget=null;
+  SspUuidVO remainingTarget=null;
+  List<SspUuidVO> tenantPortUuidVos=_sspUuidDao.listUUidVoByNicProfile(nic);
+  for (  SspUuidVO tenantPortUuidVo : tenantPortUuidVos) {
+    if (reservationId.equals(tenantPortUuidVo.getReservationId())) {
+      deleteTarget=tenantPortUuidVo;
+    }
+ else {
+      remainingTarget=tenantPortUuidVo;
+    }
+  }
+  if (deleteTarget != null) {
+    String tenantPortUuid=deleteTarget.getUuid();
+    boolean processed=false;
+    for (    SspClient client : fetchSspClients(network.getPhysicalNetworkId(),network.getDataCenterId(),true)) {
+      SspClient.TenantPort sspPort=client.updateTenantVifBinding(tenantPortUuid,null);
+      if (sspPort != null) {
+        processed=true;
+        break;
+      }
+    }
+    if (!processed) {
+      s_logger.warn("Ssp api nic detach failed " + nic.toString());
+    }
+    processed=false;
+    for (    SspClient client : fetchSspClients(network.getPhysicalNetworkId(),network.getDataCenterId(),true)) {
+      if (client.deleteTenantPort(tenantPortUuid)) {
+        _sspUuidDao.removeUuid(tenantPortUuid);
+        processed=true;
+        break;
+      }
+    }
+    if (!processed) {
+      s_logger.warn("Ssp api tenant port deletion failed " + nic.toString());
+    }
+    _sspUuidDao.removeUuid(tenantPortUuid);
+  }
+  if (remainingTarget != null) {
+    NicVO nicVo=_nicDao.findById(nic.getId());
+    nicVo.setReservationId(remainingTarget.getReservationId());
+    _nicDao.persist(nicVo);
+  }
+  return true;
+}

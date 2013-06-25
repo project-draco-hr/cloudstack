@@ -1,0 +1,69 @@
+{
+  SspClient client=new SspClient(cmd.getUrl(),cmd.getUsername(),cmd.getPassword());
+  if (!client.login()) {
+    throw new CloudRuntimeException("Ssp login failed.");
+  }
+  long zoneId=cmd.getZoneId();
+  SspCredentialVO credential=_sspCredentialDao.findByZone(zoneId);
+  if (credential == null) {
+    if (cmd.getUsername() == null || cmd.getPassword() == null) {
+      throw new InvalidParameterValueException("Initial credential required for zone: " + zoneId);
+    }
+    credential=new SspCredentialVO();
+    credential.setZoneId(zoneId);
+    credential.setUsername(cmd.getUsername());
+    credential.setPassword(cmd.getPassword());
+    _sspCredentialDao.persist(credential);
+  }
+ else {
+    if (cmd.getUsername() != null || cmd.getPassword() != null) {
+      s_logger.warn("Tenant credential already configured for zone:" + zoneId);
+    }
+  }
+  String tenantUuid=_sspTenantDao.findUuidByZone(zoneId);
+  if (tenantUuid == null) {
+    if (cmd.getTenantUuid() == null) {
+      throw new InvalidParameterValueException("Initial tenant uuid required for zone: " + zoneId);
+    }
+    SspTenantVO tenant=new SspTenantVO();
+    tenant.setZoneId(zoneId);
+    tenant.setUuid(cmd.getTenantUuid());
+    _sspTenantDao.persist(tenant);
+  }
+ else {
+    if (cmd.getTenantUuid() != null) {
+      s_logger.warn("Tenant uuid already configured for zone:" + zoneId);
+    }
+  }
+  String normalizedUrl=null;
+  String hostname=null;
+  try {
+    URL url=new URL(cmd.getUrl());
+    normalizedUrl=url.toString();
+    hostname=url.getHost();
+  }
+ catch (  MalformedURLException e1) {
+    throw new CloudRuntimeException("Invalid url " + cmd.getUrl());
+  }
+  List<HostVO> hosts=_resourceMgr.listAllHostsInOneZoneByType(Host.Type.L2Networking,zoneId);
+  for (  HostVO host : hosts) {
+    assert(credential != null);
+    _hostDao.loadDetails(host);
+    if ("v1Api".equals(host.getDetail("sspHost"))) {
+      if (normalizedUrl.equals(host.getDetail("url"))) {
+        s_logger.warn("Ssp host already registered " + normalizedUrl);
+        return host;
+      }
+    }
+  }
+  HostVO host=new HostVO(UUID.randomUUID().toString());
+  host.setDataCenterId(zoneId);
+  host.setType(Host.Type.L2Networking);
+  host.setPrivateIpAddress(hostname);
+  host.setVersion("1");
+  host.setName(cmd.getName());
+  host.setDetails(new HashMap<String,String>());
+  host.setDetail("sspHost","v1Api");
+  host.setDetail("url",normalizedUrl);
+  return _hostDao.persist(host);
+}

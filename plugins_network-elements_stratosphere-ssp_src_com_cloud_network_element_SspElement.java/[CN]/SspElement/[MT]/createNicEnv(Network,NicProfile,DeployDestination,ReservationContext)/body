@@ -1,0 +1,46 @@
+{
+  String tenantNetworkUuid=_sspUuidDao.findUuidByNetwork(network);
+  if (tenantNetworkUuid == null) {
+    s_logger.debug("Skipping #createNicEnv() for nic on " + network.toString());
+    return true;
+  }
+  String reservationId=context.getReservationId();
+  List<SspUuidVO> tenantPortUuidVos=_sspUuidDao.listUUidVoByNicProfile(nic);
+  for (  SspUuidVO tenantPortUuidVo : tenantPortUuidVos) {
+    if (reservationId.equals(tenantPortUuidVo.getReservationId())) {
+      s_logger.info("Skipping because reservation found " + reservationId);
+      return true;
+    }
+  }
+  String tenantPortUuid=null;
+  for (  SspClient client : fetchSspClients(network.getPhysicalNetworkId(),network.getDataCenterId(),true)) {
+    SspClient.TenantPort sspPort=client.createTenantPort(tenantNetworkUuid);
+    if (sspPort != null) {
+      tenantPortUuid=sspPort.uuid;
+      nic.setReservationId(reservationId);
+      SspUuidVO uuid=new SspUuidVO();
+      uuid.setUuid(tenantPortUuid);
+      uuid.setObjClass(SspUuidVO.objClassNicProfile);
+      uuid.setObjId(nic.getId());
+      uuid.setReservationId(reservationId);
+      _sspUuidDao.persist(uuid);
+      break;
+    }
+  }
+  if (tenantPortUuid == null) {
+    s_logger.debug("#createNicEnv() failed for nic on " + network.toString());
+    return false;
+  }
+  for (  SspClient client : fetchSspClients(network.getPhysicalNetworkId(),network.getDataCenterId(),true)) {
+    SspClient.TenantPort sspPort=client.updateTenantVifBinding(tenantPortUuid,dest.getHost().getPrivateIpAddress());
+    if (sspPort != null) {
+      if (sspPort.vlanId != null) {
+        nic.setBroadcastType(BroadcastDomainType.Vlan);
+        nic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(String.valueOf(sspPort.vlanId)));
+      }
+      return true;
+    }
+  }
+  s_logger.error("Updating vif failed " + nic.toString());
+  return false;
+}
