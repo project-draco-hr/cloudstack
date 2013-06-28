@@ -1,0 +1,77 @@
+{
+  VmwareContext context=getServiceContext();
+  ManagedObjectReference morCluster=hyperHost.getHyperHostCluster();
+  ClusterMO cluster=new ClusterMO(context,morCluster);
+  List<Pair<ManagedObjectReference,String>> lstHosts=cluster.getClusterHosts();
+  HostInternetScsiHbaStaticTarget target=new HostInternetScsiHbaStaticTarget();
+  target.setAddress(storageIpAddress);
+  target.setPort(storagePortNumber);
+  target.setIScsiName(iqn);
+  HostInternetScsiHbaAuthenticationProperties auth=new HostInternetScsiHbaAuthenticationProperties();
+  String strAuthType="chapRequired";
+  auth.setChapAuthEnabled(true);
+  auth.setChapInherited(false);
+  auth.setChapAuthenticationType(strAuthType);
+  auth.setChapName(chapName);
+  auth.setChapSecret(chapSecret);
+  auth.setMutualChapInherited(false);
+  auth.setMutualChapAuthenticationType(strAuthType);
+  auth.setMutualChapName(mutualChapName);
+  auth.setMutualChapSecret(mutualChapSecret);
+  target.setAuthenticationProperties(auth);
+  final List<HostInternetScsiHbaStaticTarget> lstTargets=new ArrayList<HostInternetScsiHbaStaticTarget>();
+  lstTargets.add(target);
+  HostDatastoreSystemMO hostDatastoreSystem=null;
+  HostStorageSystemMO hostStorageSystem=null;
+  final List<Thread> threads=new ArrayList<Thread>();
+  final List<Exception> exceptions=new ArrayList<Exception>();
+  for (  Pair<ManagedObjectReference,String> hostPair : lstHosts) {
+    HostMO host=new HostMO(context,hostPair.first());
+    hostDatastoreSystem=host.getHostDatastoreSystemMO();
+    hostStorageSystem=host.getHostStorageSystemMO();
+    boolean iScsiHbaConfigured=false;
+    for (    HostHostBusAdapter hba : hostStorageSystem.getStorageDeviceInfo().getHostBusAdapter()) {
+      if (hba instanceof HostInternetScsiHba) {
+        iScsiHbaConfigured=true;
+        final String iScsiHbaDevice=hba.getDevice();
+        final HostStorageSystemMO hss=hostStorageSystem;
+        threads.add(new Thread(){
+          public void run(){
+            try {
+              hss.addInternetScsiStaticTargets(iScsiHbaDevice,lstTargets);
+              hss.rescanHba(iScsiHbaDevice);
+            }
+ catch (            Exception ex) {
+synchronized (exceptions) {
+                exceptions.add(ex);
+              }
+            }
+          }
+        }
+);
+      }
+    }
+    if (!iScsiHbaConfigured) {
+      throw new Exception("An iSCSI HBA must be configured before a host can use iSCSI storage.");
+    }
+  }
+  for (  Thread thread : threads) {
+    thread.start();
+  }
+  for (  Thread thread : threads) {
+    thread.join();
+  }
+  if (exceptions.size() > 0) {
+    throw new Exception(exceptions.get(0).getMessage());
+  }
+  ManagedObjectReference morDs=hostDatastoreSystem.findDatastore(iqn);
+  if (morDs != null) {
+    return morDs;
+  }
+  List<HostScsiDisk> lstHostScsiDisks=hostDatastoreSystem.queryAvailableDisksForVmfs();
+  HostScsiDisk hostScsiDisk=getHostScsiDisk(hostStorageSystem.getStorageDeviceInfo().getScsiTopology(),lstHostScsiDisks,iqn);
+  if (hostScsiDisk == null) {
+    throw new Exception("A relevant SCSI disk could not be located to use to create a datastore.");
+  }
+  return hostDatastoreSystem.createVmfsDatastore(datastoreName,hostScsiDisk);
+}

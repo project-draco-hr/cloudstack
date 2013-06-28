@@ -1,0 +1,124 @@
+{
+synchronized (srNameLabel.intern()) {
+    Map<String,String> deviceConfig=new HashMap<String,String>();
+    try {
+      if (path.endsWith("/")) {
+        path=path.substring(0,path.length() - 1);
+      }
+      String tmp[]=path.split("/");
+      if (tmp.length != 3) {
+        String msg="Wrong iscsi path " + path + " it should be /targetIQN/LUN";
+        s_logger.warn(msg);
+        throw new CloudRuntimeException(msg);
+      }
+      String targetiqn=tmp[1].trim();
+      String lunid=tmp[2].trim();
+      String scsiid="";
+      Set<SR> srs=SR.getByNameLabel(conn,srNameLabel);
+      for (      SR sr : srs) {
+        if (!SRType.LVMOISCSI.equals(sr.getType(conn))) {
+          continue;
+        }
+        Set<PBD> pbds=sr.getPBDs(conn);
+        if (pbds.isEmpty()) {
+          continue;
+        }
+        PBD pbd=pbds.iterator().next();
+        Map<String,String> dc=pbd.getDeviceConfig(conn);
+        if (dc == null) {
+          continue;
+        }
+        if (dc.get("target") == null) {
+          continue;
+        }
+        if (dc.get("targetIQN") == null) {
+          continue;
+        }
+        if (dc.get("lunid") == null) {
+          continue;
+        }
+        if (target.equals(dc.get("target")) && targetiqn.equals(dc.get("targetIQN")) && lunid.equals(dc.get("lunid"))) {
+          throw new CloudRuntimeException("There is a SR using the same configuration target:" + dc.get("target") + ",  targetIQN:"+ dc.get("targetIQN")+ ", lunid:"+ dc.get("lunid")+ " for pool "+ srNameLabel+ "on host:"+ _host.uuid);
+        }
+      }
+      deviceConfig.put("target",target);
+      deviceConfig.put("targetIQN",targetiqn);
+      if (StringUtils.isNotBlank(chapInitiatorUsername) && StringUtils.isNotBlank(chapInitiatorPassword)) {
+        deviceConfig.put("chapuser",chapInitiatorUsername);
+        deviceConfig.put("chappassword",chapInitiatorPassword);
+      }
+      Host host=Host.getByUuid(conn,_host.uuid);
+      Map<String,String> smConfig=new HashMap<String,String>();
+      String type=SRType.LVMOISCSI.toString();
+      SR sr=null;
+      try {
+        sr=SR.create(conn,host,deviceConfig,new Long(0),srNameLabel,srNameLabel,type,"user",true,smConfig);
+      }
+ catch (      XenAPIException e) {
+        String errmsg=e.toString();
+        if (errmsg.contains("SR_BACKEND_FAILURE_107")) {
+          String lun[]=errmsg.split("<LUN>");
+          boolean found=false;
+          for (int i=1; i < lun.length; i++) {
+            int blunindex=lun[i].indexOf("<LUNid>") + 7;
+            int elunindex=lun[i].indexOf("</LUNid>");
+            String ilun=lun[i].substring(blunindex,elunindex);
+            ilun=ilun.trim();
+            if (ilun.equals(lunid)) {
+              int bscsiindex=lun[i].indexOf("<SCSIid>") + 8;
+              int escsiindex=lun[i].indexOf("</SCSIid>");
+              scsiid=lun[i].substring(bscsiindex,escsiindex);
+              scsiid=scsiid.trim();
+              found=true;
+              break;
+            }
+          }
+          if (!found) {
+            String msg="can not find LUN " + lunid + " in "+ errmsg;
+            s_logger.warn(msg);
+            throw new CloudRuntimeException(msg);
+          }
+        }
+ else {
+          String msg="Unable to create Iscsi SR  " + deviceConfig + " due to  "+ e.toString();
+          s_logger.warn(msg,e);
+          throw new CloudRuntimeException(msg,e);
+        }
+      }
+      deviceConfig.put("SCSIid",scsiid);
+      String result=SR.probe(conn,host,deviceConfig,type,smConfig);
+      String pooluuid=null;
+      if (result.indexOf("<UUID>") != -1) {
+        pooluuid=result.substring(result.indexOf("<UUID>") + 6,result.indexOf("</UUID>")).trim();
+      }
+      if (pooluuid == null || pooluuid.length() != 36) {
+        sr=SR.create(conn,host,deviceConfig,new Long(0),srNameLabel,srNameLabel,type,"user",true,smConfig);
+        created[0]=true;
+      }
+ else {
+        sr=SR.introduce(conn,pooluuid,srNameLabel,srNameLabel,type,"user",true,smConfig);
+        Set<Host> setHosts=Host.getAll(conn);
+        for (        Host currentHost : setHosts) {
+          PBD.Record rec=new PBD.Record();
+          rec.deviceConfig=deviceConfig;
+          rec.host=currentHost;
+          rec.SR=sr;
+          PBD pbd=PBD.create(conn,rec);
+          pbd.plug(conn);
+        }
+      }
+      sr.scan(conn);
+      return sr;
+    }
+ catch (    XenAPIException e) {
+      String msg="Unable to create Iscsi SR  " + deviceConfig + " due to  "+ e.toString();
+      s_logger.warn(msg,e);
+      throw new CloudRuntimeException(msg,e);
+    }
+catch (    Exception e) {
+      String msg="Unable to create Iscsi SR  " + deviceConfig + " due to  "+ e.getMessage();
+      s_logger.warn(msg,e);
+      throw new CloudRuntimeException(msg,e);
+    }
+  }
+}

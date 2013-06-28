@@ -1,5 +1,5 @@
 {
-  String errorMsg="Failed to attach volume: " + volume.getName() + " to VM: "+ vm.getHostName();
+  String errorMsg="Failed to attach volume: " + volumeToAttach.getName() + " to VM: "+ vm.getHostName();
   boolean sendCommand=(vm.getState() == State.Running);
   AttachAnswer answer=null;
   Long hostId=vm.getHostId();
@@ -10,10 +10,26 @@
       sendCommand=true;
     }
   }
+  StoragePoolVO volumeToAttachStoragePool=null;
   if (sendCommand) {
-    DataTO volTO=volFactory.getVolume(volume.getId()).getTO();
-    DiskTO disk=new DiskTO(volTO,deviceId,volume.getVolumeType());
+    volumeToAttachStoragePool=_storagePoolDao.findById(volumeToAttach.getPoolId());
+    long storagePoolId=volumeToAttachStoragePool.getId();
+    DataTO volTO=volFactory.getVolume(volumeToAttach.getId()).getTO();
+    DiskTO disk=new DiskTO(volTO,deviceId,null,volumeToAttach.getVolumeType());
     AttachCommand cmd=new AttachCommand(disk,vm.getInstanceName());
+    cmd.setManaged(volumeToAttachStoragePool.isManaged());
+    cmd.setStorageHost(volumeToAttachStoragePool.getHostAddress());
+    cmd.setStoragePort(volumeToAttachStoragePool.getPort());
+    cmd.set_iScsiName(volumeToAttach.get_iScsiName());
+    VolumeInfo volumeInfo=volFactory.getVolume(volumeToAttach.getId());
+    DataStore dataStore=dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
+    ChapInfo chapInfo=volService.getChapInfo(volumeInfo,dataStore);
+    if (chapInfo != null) {
+      cmd.setChapInitiatorUsername(chapInfo.getInitiatorUsername());
+      cmd.setChapInitiatorPassword(chapInfo.getInitiatorSecret());
+      cmd.setChapTargetUsername(chapInfo.getTargetUsername());
+      cmd.setChapTargetPassword(chapInfo.getTargetSecret());
+    }
     try {
       answer=(AttachAnswer)_agentMgr.send(hostId,cmd);
     }
@@ -24,17 +40,22 @@
   if (!sendCommand || (answer != null && answer.getResult())) {
     if (sendCommand) {
       DiskTO disk=answer.getDisk();
-      _volsDao.attachVolume(volume.getId(),vm.getId(),disk.getDiskSeq());
+      _volsDao.attachVolume(volumeToAttach.getId(),vm.getId(),disk.getDiskSeq());
+      volumeToAttach=_volsDao.findById(volumeToAttach.getId());
+      if (volumeToAttachStoragePool.isManaged() && volumeToAttach.getPath() == null) {
+        volumeToAttach.setPath(answer.getDisk().getVdiUuid());
+        _volsDao.update(volumeToAttach.getId(),volumeToAttach);
+      }
     }
  else {
-      _volsDao.attachVolume(volume.getId(),vm.getId(),deviceId);
+      _volsDao.attachVolume(volumeToAttach.getId(),vm.getId(),deviceId);
     }
-    VmDiskStatisticsVO diskstats=_vmDiskStatsDao.findBy(vm.getAccountId(),vm.getDataCenterId(),vm.getId(),volume.getId());
+    VmDiskStatisticsVO diskstats=_vmDiskStatsDao.findBy(vm.getAccountId(),vm.getDataCenterId(),vm.getId(),volumeToAttach.getId());
     if (diskstats == null) {
-      diskstats=new VmDiskStatisticsVO(vm.getAccountId(),vm.getDataCenterId(),vm.getId(),volume.getId());
+      diskstats=new VmDiskStatisticsVO(vm.getAccountId(),vm.getDataCenterId(),vm.getId(),volumeToAttach.getId());
       _vmDiskStatsDao.persist(diskstats);
     }
-    return _volsDao.findById(volume.getId());
+    return _volsDao.findById(volumeToAttach.getId());
   }
  else {
     if (answer != null) {

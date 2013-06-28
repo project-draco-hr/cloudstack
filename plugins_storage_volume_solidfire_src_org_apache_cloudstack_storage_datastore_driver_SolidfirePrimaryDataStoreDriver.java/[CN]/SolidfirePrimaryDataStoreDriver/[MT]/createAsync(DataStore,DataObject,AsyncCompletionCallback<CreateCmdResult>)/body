@@ -1,0 +1,48 @@
+{
+  String iqn=null;
+  String errMsg=null;
+  if (dataObject.getType() == DataObjectType.VOLUME) {
+    try {
+      VolumeInfo volumeInfo=(VolumeInfo)dataObject;
+      AccountVO account=_accountDao.findById(volumeInfo.getAccountId());
+      String sfAccountName=getSfAccountName(account.getUuid(),account.getAccountId());
+      long storagePoolId=dataStore.getId();
+      SolidFireConnection sfConnection=getSolidFireConnection(storagePoolId);
+      if (!sfAccountExists(sfAccountName,sfConnection)) {
+        SolidFireUtil.SolidFireAccount sfAccount=createSolidFireAccount(sfAccountName,sfConnection);
+        updateCsDbWithAccountInfo(account.getId(),sfAccount);
+      }
+      SolidFireUtil.SolidFireVolume sfVolume=createSolidFireVolume(volumeInfo,sfConnection);
+      iqn=sfVolume.getIqn();
+      VolumeVO volume=this._volumeDao.findById(volumeInfo.getId());
+      volume.set_iScsiName(iqn);
+      volume.setFolder(String.valueOf(sfVolume.getId()));
+      volume.setPoolType(StoragePoolType.IscsiLUN);
+      volume.setPoolId(storagePoolId);
+      _volumeDao.update(volume.getId(),volume);
+      StoragePoolVO storagePool=_storagePoolDao.findById(dataStore.getId());
+      long capacityBytes=storagePool.getCapacityBytes();
+      long usedBytes=storagePool.getUsedBytes();
+      usedBytes+=volumeInfo.getSize();
+      if (usedBytes > capacityBytes) {
+        usedBytes=capacityBytes;
+      }
+      storagePool.setUsedBytes(usedBytes);
+      _storagePoolDao.update(storagePoolId,storagePool);
+    }
+ catch (    StorageUnavailableException e) {
+      s_logger.error("Failed to create volume (StorageUnavailableException)",e);
+      errMsg=e.toString();
+    }
+catch (    Exception e) {
+      s_logger.error("Failed to create volume (Exception)",e);
+      errMsg=e.toString();
+    }
+  }
+ else {
+    errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to createAsync";
+  }
+  CreateCmdResult result=new CreateCmdResult(iqn,new Answer(null,errMsg == null,errMsg));
+  result.setResult(errMsg);
+  callback.complete(result);
+}
