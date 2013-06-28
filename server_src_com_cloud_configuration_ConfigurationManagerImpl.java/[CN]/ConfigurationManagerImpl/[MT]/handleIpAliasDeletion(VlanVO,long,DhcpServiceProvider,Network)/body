@@ -1,5 +1,4 @@
 {
-  boolean result_final=false;
   Transaction txn=Transaction.currentTxn();
   txn.start();
   IPAddressVO ip=null;
@@ -8,77 +7,43 @@
     Integer allocIpCount=0;
     allocIpCount=_publicIpAddressDao.countIPs(vlanRange.getDataCenterId(),vlanDbId,true);
     if (allocIpCount > 1) {
-      throw new InvalidParameterValueException("cannot delete this range as some of the vlans are in use.");
+      throw new InvalidParameterValueException("Cannot delete this range as some of the vlans are in use.");
     }
-    if (allocIpCount == 0) {
-      result_final=true;
+ else     if (allocIpCount == 0) {
+      deleteVLANFromDb(vlanDbId);
     }
  else {
       ipAlias=_nicIpAliasDao.findByGatewayAndNetworkIdAndState(vlanRange.getVlanGateway(),vlanRange.getNetworkId(),NicIpAlias.state.active);
-      ipAlias.setState(NicIpAlias.state.revoked);
-      _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
       ip=_publicIpAddressDao.findByIpAndVlanId(ipAlias.getIp4Address(),vlanDbId);
       if (ip != null && ip.getState() == IpAddress.State.Allocated) {
         List<VlanVO> vlanRanges=_vlanDao.listVlansByNetworkIdAndGateway(vlanRange.getNetworkId(),vlanRange.getVlanGateway());
         if (vlanRanges.size() == 1) {
-          boolean result=dhcpServiceProvider.removeDhcpSupportForSubnet(network);
-          if (result == false) {
-            result_final=false;
+          ipAlias.setState(NicIpAlias.state.revoked);
+          _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
+          if (!dhcpServiceProvider.removeDhcpSupportForSubnet(network)) {
             s_logger.debug("Failed to delete the vlan range as we could not free the ip used to provide the dhcp service.");
+            ipAlias.setState(NicIpAlias.state.active);
+            _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
           }
  else {
             _publicIpAddressDao.unassignIpAddress(ip.getId());
-            result_final=true;
+            deleteVLANFromDb(vlanDbId);
           }
         }
  else {
-          List<Long> vlanDbIdList=new ArrayList<Long>();
-          for (          VlanVO vlanrange : vlanRanges) {
-            if (vlanrange.getId() != vlanDbId) {
-              vlanDbIdList.add(vlanrange.getId());
-            }
-          }
-          s_logger.info("vlan Range" + vlanRange.getId() + " id being deleted, one of the Ips in this range is used to provide the dhcp service, trying to free this ip and allocate a new one.");
-          for (          VlanVO vlanrange : vlanRanges) {
-            if (vlanrange.getId() != vlanDbId) {
-              long freeIpsInsubnet=_publicIpAddressDao.countFreeIpsInVlan(vlanrange.getId());
-              if (freeIpsInsubnet > 0) {
-                boolean result=false;
-                PublicIp routerPublicIP=_networkMgr.assignPublicIpAddressFromVlans(network.getDataCenterId(),null,_accountDao.findById(Account.ACCOUNT_ID_SYSTEM),Vlan.VlanType.DirectAttached,vlanDbIdList,network.getId(),null,false);
-                s_logger.info("creating a db entry for the new ip alias.");
-                NicIpAliasVO newipAlias=new NicIpAliasVO(ipAlias.getNicId(),routerPublicIP.getAddress().addr(),ipAlias.getVmId(),ipAlias.getAccountId(),network.getDomainId(),network.getId(),ipAlias.getGateway(),ipAlias.getNetmask());
-                newipAlias.setAliasCount(routerPublicIP.getIpMacAddress());
-                _nicIpAliasDao.persist(newipAlias);
-                s_logger.info("removing the old ip alias on router");
-                result=dhcpServiceProvider.removeDhcpSupportForSubnet(network);
-                if (result == false) {
-                  s_logger.debug("could't delete the ip alias on the router");
-                  result_final=false;
-                }
- else {
-                  _publicIpAddressDao.unassignIpAddress(ip.getId());
-                  result_final=true;
-                }
-              }
-            }
-          }
+          s_logger.info("vlan Range" + vlanRange.getId() + " id being deleted, one of the Ips in this range is used to provide the dhcp service, will free the rest of the IPs in range.");
+          _publicIpAddressDao.deletePublicIPRangeExceptAliasIP(vlanDbId,ipAlias.getIp4Address());
+          VlanVO vlan=_vlanDao.findById(vlanDbId);
+          vlan.setIpRange(ipAlias.getIp4Address() + "-" + ipAlias.getIp4Address());
+          _vlanDao.update(vlan.getId(),vlan);
         }
       }
     }
   }
- catch (  InsufficientAddressCapacityException e) {
-    throw new InvalidParameterValueException("cannot delete  vlan range" + vlanRange.getId() + "one of the ips in this range is benig used to provide dhcp service. Cannot use some other ip as there are no free ips in this subnet");
+ catch (  CloudRuntimeException e) {
+    txn.rollback();
+    throw e;
   }
- finally {
-    if (result_final) {
-      if (!removeFromDb(vlanDbId)) {
-        txn.rollback();
-      }
- else {
-        txn.commit();
-      }
-      txn.close();
-    }
-  }
-  return result_final;
+  txn.commit();
+  return true;
 }
