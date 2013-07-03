@@ -30,21 +30,26 @@
   boolean success=false;
   if (vmInstance.getState().equals(State.Running)) {
     int retry=_scaleRetry;
+    ExcludeList excludes=new ExcludeList();
     boolean enableDynamicallyScaleVm=Boolean.parseBoolean(_configServer.getConfigValue(Config.EnableDynamicallyScaleVm.key(),Config.ConfigurationParameterScope.zone.toString(),vmInstance.getDataCenterId()));
     if (!enableDynamicallyScaleVm) {
       throw new PermissionDeniedException("Dynamically scaling virtual machines is disabled for this zone, please contact your admin");
     }
-    if (newCpu > currentCpu) {
-      _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
-    }
-    if (newMemory > currentMemory) {
-      _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
-    }
     while (retry-- != 0) {
       try {
-        boolean existingHostHasCapacity=_capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),newServiceOffering.getSpeed() - currentServiceOffering.getSpeed(),(newServiceOffering.getRamSize() - currentServiceOffering.getRamSize()) * 1024L * 1024L,false,ApiDBUtils.getCpuOverprovisioningFactor(),1f,false);
+        boolean existingHostHasCapacity=false;
+        if (newCpu > currentCpu) {
+          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
+        }
+        if (newMemory > currentMemory) {
+          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+        }
+        if (!excludes.shouldAvoid(ApiDBUtils.findHostById(vmInstance.getHostId()))) {
+          existingHostHasCapacity=_capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),newServiceOffering.getSpeed() - currentServiceOffering.getSpeed(),(newServiceOffering.getRamSize() - currentServiceOffering.getRamSize()) * 1024L * 1024L,false,ApiDBUtils.getCpuOverprovisioningFactor(),1f,false);
+          excludes.addHost(vmInstance.getHostId());
+        }
         if (!existingHostHasCapacity) {
-          vmInstance=_itMgr.findHostAndMigrate(vmInstance.getType(),vmInstance,newServiceOfferingId);
+          vmInstance=_itMgr.findHostAndMigrate(vmInstance.getType(),vmInstance,newServiceOfferingId,excludes);
         }
         _itMgr.upgradeVmDb(vmId,newServiceOfferingId);
         vmInstance=_vmInstanceDao.findById(vmId);
@@ -65,6 +70,9 @@ catch (      VirtualMachineMigrationException e) {
         s_logger.warn("Received exception while scaling ",e);
       }
 catch (      ManagementServerException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      Exception e) {
         s_logger.warn("Received exception while scaling ",e);
       }
  finally {
