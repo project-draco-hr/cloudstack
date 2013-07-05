@@ -1,27 +1,18 @@
 {
   List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
-  List<PublicIp> publicIps=new ArrayList<PublicIp>();
-  if (userIps != null && !userIps.isEmpty()) {
-    for (    IPAddressVO userIp : userIps) {
-      PublicIp publicIp=PublicIp.createFromAddrAndVlan(userIp,_vlanDao.findById(userIp.getVlanId()));
-      publicIps.add(publicIp);
+  boolean success=true;
+  for (  IPAddressVO addr : userIps) {
+    if (addr.getState() == IpAddress.State.Allocating) {
+      addr.setAssociatedWithNetworkId(network.getId());
+      markPublicIpAsAllocated(addr);
     }
-  }
-  boolean success=applyIpAssociations(network,false,continueOnError,publicIps);
-  if (success) {
-    for (    IPAddressVO addr : userIps) {
-      if (addr.getState() == IpAddress.State.Allocating) {
-        markPublicIpAsAllocated(addr);
+ else     if (addr.getState() == IpAddress.State.Releasing) {
+      if (cleanupIpResources(addr.getId(),Account.ACCOUNT_ID_SYSTEM,_accountMgr.getSystemAccount())) {
+        _ipAddressDao.unassignIpAddress(addr.getId());
       }
- else       if (addr.getState() == IpAddress.State.Releasing) {
-        if (cleanupIpResources(addr.getId(),Account.ACCOUNT_ID_SYSTEM,_accountMgr.getSystemAccount())) {
-          s_logger.debug("Unassiging ip address " + addr);
-          _ipAddressDao.unassignIpAddress(addr.getId());
-        }
  else {
-          success=false;
-          s_logger.warn("Failed to release resources for ip address id=" + addr.getId());
-        }
+        success=false;
+        s_logger.warn("Failed to release resources for ip address id=" + addr.getId());
       }
     }
   }
