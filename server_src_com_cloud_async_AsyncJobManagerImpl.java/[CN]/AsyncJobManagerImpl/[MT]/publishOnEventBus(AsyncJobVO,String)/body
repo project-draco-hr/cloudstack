@@ -1,0 +1,47 @@
+{
+  EventBus eventBus=null;
+  try {
+    eventBus=ComponentContext.getComponent(EventBus.class);
+  }
+ catch (  NoSuchBeanDefinitionException nbe) {
+    return;
+  }
+  String info=job.getCmdInfo();
+  String cmdEventType;
+  if (info == null) {
+    cmdEventType="unknown";
+  }
+ else {
+    String marker="\"cmdEventType\"";
+    int begin=info.indexOf(marker);
+    cmdEventType=info.substring(begin + marker.length() + 2,info.indexOf(",",begin) - 1);
+  }
+  org.apache.cloudstack.framework.events.Event event=new org.apache.cloudstack.framework.events.Event(ManagementServer.Name,EventCategory.ASYNC_JOB_CHANGE_EVENT.getName(),jobEvent,(job.getInstanceType() != null ? job.getInstanceType().toString() : "unknown"),null);
+  User userJobOwner=_accountMgr.getUserIncludingRemoved(job.getUserId());
+  Account jobOwner=_accountMgr.getAccount(userJobOwner.getAccountId());
+  Map<String,String> eventDescription=new HashMap<String,String>();
+  eventDescription.put("command",job.getCmd());
+  eventDescription.put("user",userJobOwner.getUuid());
+  eventDescription.put("account",jobOwner.getUuid());
+  eventDescription.put("processStatus","" + job.getProcessStatus());
+  eventDescription.put("resultCode","" + job.getResultCode());
+  eventDescription.put("instanceUuid",ApiDBUtils.findJobInstanceUuid(job));
+  eventDescription.put("instanceType",(job.getInstanceType() != null ? job.getInstanceType().toString() : "unknown"));
+  eventDescription.put("commandEventType",cmdEventType);
+  eventDescription.put("jobId",job.getUuid());
+  Map<String,String> configs=_configDao.getConfiguration("management-server",new HashMap<String,String>());
+  if (Boolean.valueOf(configs.get("event.accountinfo"))) {
+    DomainVO domain=_domainDao.findById(jobOwner.getDomainId());
+    eventDescription.put("username",userJobOwner.getUsername());
+    eventDescription.put("domainname",domain.getName());
+  }
+  event.setDescription(eventDescription);
+  try {
+    eventBus.publish(event);
+  }
+ catch (  EventBusException evx) {
+    String errMsg="Failed to publish async job event on the the event bus.";
+    s_logger.warn(errMsg,evx);
+    throw new CloudRuntimeException(errMsg);
+  }
+}
