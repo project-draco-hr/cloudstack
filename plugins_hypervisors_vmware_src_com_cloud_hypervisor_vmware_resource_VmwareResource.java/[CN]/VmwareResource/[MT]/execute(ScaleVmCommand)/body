@@ -6,8 +6,23 @@
     VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(cmd.getVmName());
     VirtualMachineConfigSpec vmConfigSpec=new VirtualMachineConfigSpec();
     int ramMb=(int)(vmSpec.getMinRam() / (1024 * 1024));
+    long hotaddIncrementSizeInMb;
+    long hotaddMemoryLimitInMb;
+    long requestedMaxMemoryInMb=vmSpec.getMaxRam() / (1024 * 1024);
+    if (getVmState(vmMo) != State.Running) {
+      throw new CloudRuntimeException("Found that the VM " + vmMo.getVmName() + " is not running. Unable to scale-up this VM");
+    }
+    hotaddIncrementSizeInMb=vmMo.getHotAddMemoryIncrementSizeInMb();
+    hotaddMemoryLimitInMb=vmMo.getHotAddMemoryLimitInMb();
+    if (requestedMaxMemoryInMb > hotaddMemoryLimitInMb) {
+      throw new CloudRuntimeException("Memory of VM " + vmMo.getVmName() + " cannot be scaled to "+ requestedMaxMemoryInMb+ "MB."+ " Requested memory limit is beyond the hotadd memory limit for this VM at the moment is "+ hotaddMemoryLimitInMb+ "MB.");
+    }
+    long reminder=requestedMaxMemoryInMb % hotaddIncrementSizeInMb;
+    if (reminder != 0) {
+      requestedMaxMemoryInMb=requestedMaxMemoryInMb + hotaddIncrementSizeInMb - reminder;
+    }
     VmwareHelper.isFeatureLicensed(hyperHost,FeatureKeyConstants.HOTPLUG);
-    VmwareHelper.setVmScaleUpConfig(vmConfigSpec,vmSpec.getCpus(),vmSpec.getMaxSpeed(),vmSpec.getMinSpeed(),(int)(vmSpec.getMaxRam() / (1024 * 1024)),ramMb,vmSpec.getLimitCpuUse());
+    VmwareHelper.setVmScaleUpConfig(vmConfigSpec,vmSpec.getCpus(),vmSpec.getMaxSpeed(),vmSpec.getMinSpeed(),(int)requestedMaxMemoryInMb,ramMb,vmSpec.getLimitCpuUse());
     if (!vmMo.configureVm(vmConfigSpec)) {
       throw new Exception("Unable to execute ScaleVmCommand");
     }
