@@ -7,14 +7,16 @@
     long ownerId=domain.getAccountId();
     if ((cleanup != null) && cleanup.booleanValue()) {
       if (!cleanupDomain(domain.getId(),ownerId)) {
+        rollBackState=true;
         CloudRuntimeException e=new CloudRuntimeException("Failed to clean up domain resources and sub domains, delete failed on domain " + domain.getName() + " (id: "+ domain.getId()+ ").");
         e.addProxyObject(domain.getUuid(),"domainId");
         throw e;
       }
     }
  else {
+      List<Long> networkIds=_networkDomainDao.listNetworkIdsByDomain(domain.getId());
       List<AccountVO> accountsForCleanup=_accountDao.findCleanupsForRemovedAccounts(domain.getId());
-      if (accountsForCleanup.isEmpty()) {
+      if (accountsForCleanup.isEmpty() && networkIds.isEmpty()) {
         if (!_domainDao.remove(domain.getId())) {
           rollBackState=true;
           CloudRuntimeException e=new CloudRuntimeException("Delete failed on domain " + domain.getName() + " (id: "+ domain.getId()+ "); Please make sure all users and sub domains have been removed from the domain before deleting");
@@ -35,7 +37,14 @@
       }
  else {
         rollBackState=true;
-        CloudRuntimeException e=new CloudRuntimeException("Can't delete the domain yet because it has " + accountsForCleanup.size() + "accounts that need a cleanup");
+        String msg=null;
+        if (!accountsForCleanup.isEmpty()) {
+          msg=accountsForCleanup.size() + " accounts to cleanup";
+        }
+ else         if (!networkIds.isEmpty()) {
+          msg=networkIds.size() + " non-removed networks";
+        }
+        CloudRuntimeException e=new CloudRuntimeException("Can't delete the domain yet because it has " + msg);
         e.addProxyObject(domain.getUuid(),"domainId");
         throw e;
       }
