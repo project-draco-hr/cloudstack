@@ -1,50 +1,16 @@
 {
+  GlobalLock gcLock=GlobalLock.getInternLock("Network.GC.Lock");
   try {
-    List<Long> shutdownList=new ArrayList<Long>();
-    long currentTime=System.currentTimeMillis() / 1000;
-    HashMap<Long,Long> stillFree=new HashMap<Long,Long>();
-    List<Long> networkIds=_networksDao.findNetworksToGarbageCollect();
-    for (    Long networkId : networkIds) {
-      if (!_networkModel.isNetworkReadyForGc(networkId)) {
-        continue;
+    if (gcLock.lock(3)) {
+      try {
+        reallyRun();
       }
-      Long time=_lastNetworkIdsToFree.remove(networkId);
-      if (time == null) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("We found network " + networkId + " to be free for the first time.  Adding it to the list: "+ currentTime);
-        }
-        stillFree.put(networkId,currentTime);
-      }
- else       if (time > (currentTime - _networkGcWait)) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Network " + networkId + " is still free but it's not time to shutdown yet: "+ time);
-        }
-        stillFree.put(networkId,time);
-      }
- else {
-        shutdownList.add(networkId);
-      }
-    }
-    _lastNetworkIdsToFree=stillFree;
-    for (    Long networkId : shutdownList) {
-      if (_networksDao.findById(networkId) == null) {
-        s_logger.debug("Network id=" + networkId + " is removed, so clearing up corresponding gc check");
-        _networksDao.clearCheckForGc(networkId);
-      }
- else {
-        try {
-          User caller=_accountMgr.getSystemUser();
-          Account owner=_accountMgr.getAccount(_networksDao.findById(networkId).getAccountId());
-          ReservationContext context=new ReservationContextImpl(null,null,caller,owner);
-          shutdownNetwork(networkId,context,false);
-        }
- catch (        Exception e) {
-          s_logger.warn("Unable to shutdown network: " + networkId);
-        }
+  finally {
+        gcLock.unlock();
       }
     }
   }
- catch (  Exception e) {
-    s_logger.warn("Caught exception while running network gc: ",e);
+  finally {
+    gcLock.releaseRef();
   }
 }
