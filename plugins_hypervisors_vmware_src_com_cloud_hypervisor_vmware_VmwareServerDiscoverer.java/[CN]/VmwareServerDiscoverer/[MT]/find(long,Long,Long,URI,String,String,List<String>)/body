@@ -11,11 +11,35 @@
   }
   Map<String,String> clusterDetails=_clusterDetailsDao.findDetails(clusterId);
   boolean legacyZone=_vmwareMgr.isLegacyZone(dcId);
+  boolean usernameNotProvided=(username == null || username.isEmpty());
+  boolean passwordNotProvided=(password == null || password.isEmpty());
   if (!legacyZone) {
-    String updatedInventoryPath=validateCluster(dcId,url,username,password);
+    VmwareDatacenterVO vmwareDc=fetchVmwareDatacenterByZone(dcId);
+    if (usernameNotProvided || passwordNotProvided) {
+      s_logger.info("Username and/or Password not provided while adding cluster to cloudstack zone. " + "Hence using both username & password provided while adding VMware DC to CloudStack zone.");
+      username=vmwareDc.getUser();
+      password=vmwareDc.getPassword();
+      clusterDetails.put("username",username);
+      clusterDetails.put("password",password);
+      _clusterDetailsDao.persist(clusterId,clusterDetails);
+    }
+    String updatedInventoryPath=validateCluster(url,vmwareDc);
     if (url.getPath() != updatedInventoryPath) {
       clusterDetails.put("url",url.getScheme() + "://" + url.getHost()+ updatedInventoryPath);
       _clusterDetailsDao.persist(clusterId,clusterDetails);
+    }
+  }
+ else {
+    if (usernameNotProvided) {
+      if (passwordNotProvided) {
+        throw new InvalidParameterValueException("Please provide username & password to add this cluster to zone");
+      }
+ else {
+        throw new InvalidParameterValueException("Please provide username to add this cluster to zone");
+      }
+    }
+ else     if (passwordNotProvided) {
+      throw new InvalidParameterValueException("Please provide password to add this cluster to zone");
     }
   }
   List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(clusterId);
