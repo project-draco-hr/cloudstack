@@ -2,15 +2,31 @@
   String errorString="";
   boolean success=false;
   Type type=(template.getFormat() == ImageFormat.ISO) ? Type.ISO : Type.TEMPLATE;
+  DataStore store=this.storeMgr.getDataStore(vmTemplateHost.getDataStoreId(),DataStoreRole.Image);
+  EndPoint ep=_epSelector.select(store);
   List<UploadVO> extractURLList=_uploadDao.listByTypeUploadStatus(template.getId(),type,UploadVO.Status.DOWNLOAD_URL_CREATED);
   if (extractURLList.size() > 0) {
-    return extractURLList.get(0);
+    UploadVO upload=extractURLList.get(0);
+    String uploadUrl=extractURLList.get(0).getUploadUrl();
+    String[] token=uploadUrl.split("/");
+    String hostname=ep.getPublicAddr().replace(".","-") + ".";
+    if ((token != null) && (token.length == 5) && (token[2].equals(hostname + _ssvmUrlDomain)))     return extractURLList.get(0);
+ else     if ((token != null) && (token.length == 5) && (token[2].startsWith(hostname))) {
+      String uuid=token[4];
+      uploadUrl=generateCopyUrl(ep.getPublicAddr(),uuid);
+      UploadVO vo=_uploadDao.createForUpdate();
+      vo.setLastUpdated(new Date());
+      vo.setUploadUrl(uploadUrl);
+      _uploadDao.update(upload.getId(),vo);
+      return _uploadDao.findById(upload.getId(),true);
+    }
+ else {
+      return null;
+    }
   }
   UploadVO uploadTemplateObj=new UploadVO(vmTemplateHost.getDataStoreId(),template.getId(),new Date(),Status.DOWNLOAD_URL_NOT_CREATED,0,type,Mode.HTTP_DOWNLOAD);
   uploadTemplateObj.setInstallPath(vmTemplateHost.getInstallPath());
   _uploadDao.persist(uploadTemplateObj);
-  DataStore store=this.storeMgr.getDataStore(vmTemplateHost.getDataStoreId(),DataStoreRole.Image);
-  EndPoint ep=_epSelector.select(store);
   try {
     String path=vmTemplateHost.getInstallPath();
     String uuid=UUID.randomUUID().toString() + "." + template.getFormat().getFileExtension();
