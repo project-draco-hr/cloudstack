@@ -29,30 +29,42 @@
       }
     }
   }
-  DeployDestination dest;
-  try {
-    dest=_dpMgr.planDeployment(vmProfile,plan,exclude);
-  }
- catch (  AffinityConflictException e) {
-    throw new CloudRuntimeException("Unable to create deployment, affinity rules associted to the VM conflict");
-  }
-  if (dest != null) {
-    VMReservationVO vmReservation=new VMReservationVO(vm.getId(),dest.getDataCenter().getId(),dest.getPod().getId(),dest.getCluster().getId(),dest.getHost().getId());
-    Map<Long,Long> volumeReservationMap=new HashMap<Long,Long>();
-    if (vm.getHypervisorType() != HypervisorType.BareMetal) {
-      for (      Volume vo : dest.getStorageForDisks().keySet()) {
-        volumeReservationMap.put(vo.getId(),dest.getStorageForDisks().get(vo).getId());
-      }
-      vmReservation.setVolumeReservation(volumeReservationMap);
+  while (true) {
+    DeployDestination dest=null;
+    try {
+      dest=_dpMgr.planDeployment(vmProfile,plan,exclude);
     }
-    vmEntityVO.setVmReservation(vmReservation);
-    _vmEntityDao.persist(vmEntityVO);
-    return vmReservation.getUuid();
-  }
- else   if (planChangedByReadyVolume) {
-    return UUID.randomUUID().toString();
-  }
+ catch (    AffinityConflictException e) {
+      throw new CloudRuntimeException("Unable to create deployment, affinity rules associted to the VM conflict");
+    }
+    if (dest != null) {
+      if (_dpMgr.finalizeReservation(dest,vmProfile,plan,exclude)) {
+        VMReservationVO vmReservation=new VMReservationVO(vm.getId(),dest.getDataCenter().getId(),dest.getPod().getId(),dest.getCluster().getId(),dest.getHost().getId());
+        Map<Long,Long> volumeReservationMap=new HashMap<Long,Long>();
+        if (vm.getHypervisorType() != HypervisorType.BareMetal) {
+          for (          Volume vo : dest.getStorageForDisks().keySet()) {
+            volumeReservationMap.put(vo.getId(),dest.getStorageForDisks().get(vo).getId());
+          }
+          vmReservation.setVolumeReservation(volumeReservationMap);
+        }
+        vmEntityVO.setVmReservation(vmReservation);
+        _vmEntityDao.persist(vmEntityVO);
+        return vmReservation.getUuid();
+      }
  else {
-    throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId(),areAffinityGroupsAssociated(vmProfile));
+        try {
+          Thread.sleep(10000);
+        }
+ catch (        final InterruptedException e) {
+        }
+        continue;
+      }
+    }
+ else     if (planChangedByReadyVolume) {
+      return UUID.randomUUID().toString();
+    }
+ else {
+      throw new InsufficientServerCapacityException("Unable to create a deployment for " + vmProfile,DataCenter.class,plan.getDataCenterId(),areAffinityGroupsAssociated(vmProfile));
+    }
   }
 }
