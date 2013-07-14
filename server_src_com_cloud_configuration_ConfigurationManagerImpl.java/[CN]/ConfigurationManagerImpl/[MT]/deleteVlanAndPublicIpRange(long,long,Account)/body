@@ -36,36 +36,31 @@
         if (!success) {
           s_logger.warn("Some ip addresses failed to be released as a part of vlan " + vlanDbId + " removal");
         }
+ else {
+          for (          IPAddressVO ip : ips) {
+            UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_RELEASE,acctVln.get(0).getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlanRange.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
+          }
+        }
       }
   finally {
         _vlanDao.releaseFromLockTable(vlanDbId);
       }
     }
-  }
-  if (success) {
-    if (isAccountSpecific) {
-      for (      IPAddressVO ip : ips) {
-        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_RELEASE,acctVln.get(0).getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlanRange.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
-      }
-    }
-    try {
-      if (_networkModel.areServicesSupportedInNetwork(vlanRange.getNetworkId(),Service.Dhcp)) {
-        Network network=_networkDao.findById(vlanRange.getNetworkId());
-        DhcpServiceProvider dhcpServiceProvider=_networkMgr.getDhcpServiceProvider(network);
-        if (!dhcpServiceProvider.getProvider().getName().equalsIgnoreCase(Provider.VirtualRouter.getName())) {
-          deleteVLANFromDb(vlanDbId);
-        }
  else {
-          return handleIpAliasDeletion(vlanRange,vlanDbId,dhcpServiceProvider,network);
-        }
+      NicIpAliasVO ipAlias=_nicIpAliasDao.findByGatewayAndNetworkIdAndState(vlanRange.getVlanGateway(),vlanRange.getNetworkId(),NicIpAlias.state.active);
+      if (ipAlias != null && vlanDbId == _publicIpAddressDao.findByIpAndSourceNetworkId(vlanRange.getNetworkId(),ipAlias.getIp4Address()).getVlanId()) {
+        throw new InvalidParameterValueException("Cannot delete vlan range " + vlanDbId + " as "+ ipAlias.getIp4Address()+ "is being used for providing dhcp service in this subnet. Delete all VMs in this subnet and try again");
       }
- else {
-        deleteVLANFromDb(vlanDbId);
+      allocIpCount=_publicIpAddressDao.countIPs(vlanRange.getDataCenterId(),vlanDbId,true);
+      if (allocIpCount > 0) {
+        throw new InvalidParameterValueException(allocIpCount + "  Ips are in use. Cannot delete this vlan");
       }
-    }
- catch (    SQLException e) {
-      throw new CloudRuntimeException(e.getMessage());
     }
   }
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  _publicIpAddressDao.deletePublicIPRange(vlanDbId);
+  _vlanDao.expunge(vlanDbId);
+  txn.commit();
   return true;
 }

@@ -4,27 +4,31 @@
   }
   DataCenterVO dcVo=_dcDao.findById(router.getDataCenterId());
   List<NicIpAliasVO> ipAliasVOList=_nicIpAliasDao.listByNetworkIdAndState(network.getId(),NicIpAlias.state.active);
-  List<DnsmasqTO> ipList=new ArrayList<DnsmasqTO>();
+  List<DhcpTO> ipList=new ArrayList<DhcpTO>();
   NicVO router_guest_nic=_nicDao.findByNtwkIdAndInstanceId(network.getId(),router.getId());
   String cidr=NetUtils.getCidrFromGatewayAndNetmask(router_guest_nic.getGateway(),router_guest_nic.getNetmask());
   String[] cidrPair=cidr.split("\\/");
   String cidrAddress=cidrPair[0];
   long cidrSize=Long.parseLong(cidrPair[1]);
   String startIpOfSubnet=NetUtils.getIpRangeStartIpFromCidr(cidrAddress,cidrSize);
-  ipList.add(new DnsmasqTO(router_guest_nic.getIp4Address(),router_guest_nic.getGateway(),router_guest_nic.getNetmask(),startIpOfSubnet));
+  ipList.add(new DhcpTO(router_guest_nic.getIp4Address(),router_guest_nic.getGateway(),router_guest_nic.getNetmask(),startIpOfSubnet));
   for (  NicIpAliasVO ipAliasVO : ipAliasVOList) {
-    DnsmasqTO dnsmasqTO=new DnsmasqTO(ipAliasVO.getIp4Address(),ipAliasVO.getGateway(),ipAliasVO.getNetmask(),ipAliasVO.getStartIpOfSubnet());
+    DhcpTO DhcpTO=new DhcpTO(ipAliasVO.getIp4Address(),ipAliasVO.getGateway(),ipAliasVO.getNetmask(),ipAliasVO.getStartIpOfSubnet());
     if (s_logger.isTraceEnabled()) {
-      s_logger.trace("configDnsMasq : adding ip {" + dnsmasqTO.getGateway() + ", "+ dnsmasqTO.getNetmask()+ ", "+ dnsmasqTO.getRouterIp()+ ", "+ dnsmasqTO.getStartIpOfSubnet()+ "}");
+      s_logger.trace("configDnsMasq : adding ip {" + DhcpTO.getGateway() + ", "+ DhcpTO.getNetmask()+ ", "+ DhcpTO.getRouterIp()+ ", "+ DhcpTO.getStartIpOfSubnet()+ "}");
     }
-    ipList.add(dnsmasqTO);
+    ipList.add(DhcpTO);
     ipAliasVO.setVmId(router.getId());
   }
   DataCenterVO dcvo=_dcDao.findById(router.getDataCenterId());
+  boolean dnsProvided=_networkModel.isProviderSupportServiceInNetwork(network.getId(),Service.Dns,Provider.VirtualRouter);
+  String domain_suffix=dcvo.getDetail(ZoneConfig.DnsSearchOrder.getName());
   DnsMasqConfigCommand dnsMasqConfigCmd=new DnsMasqConfigCommand(network.getNetworkDomain(),ipList,dcvo.getDns1(),dcvo.getDns2(),dcvo.getInternalDns1(),dcvo.getInternalDns2());
   dnsMasqConfigCmd.setAccessDetail(NetworkElementCommand.ROUTER_IP,getRouterControlIp(router.getId()));
   dnsMasqConfigCmd.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
   dnsMasqConfigCmd.setAccessDetail(NetworkElementCommand.ROUTER_GUEST_IP,getRouterIpInNetwork(network.getId(),router.getId()));
   dnsMasqConfigCmd.setAccessDetail(NetworkElementCommand.ZONE_NETWORK_TYPE,dcVo.getNetworkType().toString());
+  dnsMasqConfigCmd.setDomainSuffix(domain_suffix);
+  dnsMasqConfigCmd.setIfDnsProvided(dnsProvided);
   cmds.addCommand("dnsMasqConfig",dnsMasqConfigCmd);
 }
