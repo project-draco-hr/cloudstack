@@ -1,13 +1,37 @@
 {
   VirtualMachine vm=vmProfile.getVirtualMachine();
   long vmGroupCount=_affinityGroupVMMapDao.countAffinityGroupsForVm(vm.getId());
-  DataCenter dc=_dcDao.findById(vm.getDataCenterId());
-  if (vmGroupCount > 0) {
-    for (    AffinityGroupProcessor processor : _affinityProcessors) {
-      if (!processor.check(vmProfile,plannedDestination)) {
-        return false;
+  boolean saveReservation=true;
+  final Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    if (vmGroupCount > 0) {
+      List<Long> groupIds=_affinityGroupVMMapDao.listAffinityGroupIdsByVmId(vm.getId());
+      SearchCriteria<AffinityGroupVO> criteria=_affinityGroupDao.createSearchCriteria();
+      criteria.addAnd("id",SearchCriteria.Op.IN,groupIds.toArray(new Object[groupIds.size()]));
+      List<AffinityGroupVO> groups=_affinityGroupDao.lockRows(criteria,null,true);
+      for (      AffinityGroupProcessor processor : _affinityProcessors) {
+        if (!processor.check(vmProfile,plannedDestination)) {
+          saveReservation=false;
+          break;
+        }
       }
     }
+    if (saveReservation) {
+      VMReservationVO vmReservation=new VMReservationVO(vm.getId(),plannedDestination.getDataCenter().getId(),plannedDestination.getPod().getId(),plannedDestination.getCluster().getId(),plannedDestination.getHost().getId());
+      Map<Long,Long> volumeReservationMap=new HashMap<Long,Long>();
+      if (vm.getHypervisorType() != HypervisorType.BareMetal) {
+        for (        Volume vo : plannedDestination.getStorageForDisks().keySet()) {
+          volumeReservationMap.put(vo.getId(),plannedDestination.getStorageForDisks().get(vo).getId());
+        }
+        vmReservation.setVolumeReservation(volumeReservationMap);
+      }
+      _reservationDao.persist(vmReservation);
+      return vmReservation.getUuid();
+    }
   }
-  return true;
+  finally {
+    txn.commit();
+  }
+  return null;
 }
