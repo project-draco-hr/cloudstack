@@ -6,7 +6,6 @@
   set_vms.addAll(_vmDao.listLHByClusterId(clusterId));
   for (  VMInstanceVO vm : set_vms) {
     AgentVmInfo info=infos.remove(vm.getId());
-    VMInstanceVO castedVm=null;
     List<VMSnapshotVO> vmSnapshotsInExpungingStates=_vmSnapshotDao.listByInstanceId(vm.getId(),VMSnapshot.State.Expunging,VMSnapshot.State.Creating,VMSnapshot.State.Reverting);
     if (vmSnapshotsInExpungingStates.size() > 0) {
       s_logger.info("Found vm " + vm.getInstanceName() + " in state. "+ vm.getState()+ ", needs to sync VM snapshot state");
@@ -26,7 +25,7 @@
     }
     if ((info == null && (vm.getState() == State.Running || vm.getState() == State.Starting)) || (info != null && (info.state == State.Running && vm.getState() == State.Starting))) {
       s_logger.info("Found vm " + vm.getInstanceName() + " in inconsistent state. "+ vm.getState()+ " on CS while "+ (info == null ? "Stopped" : "Running")+ " on agent");
-      info=new AgentVmInfo(vm.getInstanceName(),getVmGuru(vm),vm,State.Stopped);
+      info=new AgentVmInfo(vm.getInstanceName(),vm,State.Stopped);
       ItWorkVO work=_workDao.findByOutstandingWork(vm.getId(),vm.getState());
       if (work != null) {
         if (s_logger.isDebugEnabled()) {
@@ -42,12 +41,11 @@
         work.setStep(Step.Done);
         _workDao.update(work.getId(),work);
       }
-      castedVm=info.guru.findById(vm.getId());
       try {
         Host host=_hostDao.findByGuid(info.getHostUuid());
         long hostId=host == null ? (vm.getHostId() == null ? vm.getLastHostId() : vm.getHostId()) : host.getId();
-        HypervisorGuru hvGuru=_hvGuruMgr.getGuru(castedVm.getHypervisorType());
-        Command command=compareState(hostId,castedVm,info,true,hvGuru.trackVmHostChange());
+        HypervisorGuru hvGuru=_hvGuruMgr.getGuru(vm.getHypervisorType());
+        Command command=compareState(hostId,vm,info,true,hvGuru.trackVmHostChange());
         if (command != null) {
           Answer answer=_agentMgr.send(hostId,command);
           if (!answer.getResult()) {
