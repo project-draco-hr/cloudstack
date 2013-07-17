@@ -54,6 +54,7 @@
     String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
     DataStoreTO destStore=destData.getDataStore();
     String folder=destPath;
+    String finalPath=null;
     if (fullbackup) {
       if (!hypervisorResource.createSecondaryStorageFolder(conn,secondaryStorageMountPath,folder)) {
         details=" Filed to create folder " + folder + " in secondary storage";
@@ -68,8 +69,10 @@
         snapshotBackupUuid=backedVdi.getUuid(conn);
         if (destStore instanceof SwiftTO) {
           try {
-            hypervisorResource.swiftBackupSnapshot(conn,(SwiftTO)destStore,snapshotSr.getUuid(conn),snapshotBackupUuid,"S-" + snapshotTO.getVolume().getVolumeId().toString(),false,wait);
-            snapshotBackupUuid=snapshotBackupUuid + ".vhd";
+            String container="S-" + snapshotTO.getVolume().getVolumeId().toString();
+            snapshotBackupUuid=swiftBackupSnapshot(conn,(SwiftTO)destStore,snapshotSr.getUuid(conn),snapshotBackupUuid,container,false,wait);
+            String swiftPath=container + File.separator + snapshotBackupUuid;
+            finalPath=container + File.separator + swiftPath;
           }
   finally {
             deleteSnapshotBackup(conn,folder,secondaryStorageMountPath,snapshotBackupUuid);
@@ -83,6 +86,10 @@
   finally {
             deleteSnapshotBackup(conn,folder,secondaryStorageMountPath,snapshotBackupUuid);
           }
+          finalPath=folder + File.separator + snapshotBackupUuid;
+        }
+ else {
+          finalPath=folder + File.separator + snapshotBackupUuid;
         }
       }
   finally {
@@ -94,25 +101,23 @@
  else {
       String primaryStorageSRUuid=primaryStorageSR.getUuid(conn);
       if (destStore instanceof SwiftTO) {
-        swiftBackupSnapshot(conn,(SwiftTO)destStore,primaryStorageSRUuid,snapshotPaUuid,"S-" + snapshotTO.getVolume().getVolumeId().toString(),isISCSI,wait);
-        if (isISCSI) {
-          snapshotBackupUuid="VHD-" + snapshotPaUuid;
-        }
- else {
-          snapshotBackupUuid=snapshotPaUuid + ".vhd";
-        }
+        String container="S-" + snapshotTO.getVolume().getVolumeId().toString();
+        snapshotBackupUuid=swiftBackupSnapshot(conn,(SwiftTO)destStore,primaryStorageSRUuid,snapshotPaUuid,"S-" + snapshotTO.getVolume().getVolumeId().toString(),isISCSI,wait);
+        finalPath=container + File.separator + snapshotBackupUuid;
       }
  else       if (destStore instanceof S3TO) {
         backupSnapshotToS3(conn,(S3TO)destStore,primaryStorageSRUuid,snapshotPaUuid,isISCSI,wait);
+        finalPath=folder + File.separator + snapshotPaUuid;
       }
  else {
         snapshotBackupUuid=backupSnapshot(conn,primaryStorageSRUuid,folder + File.separator + UUID.nameUUIDFromBytes(secondaryStorageMountPath.getBytes()),secondaryStorageMountPath,snapshotUuid,prevBackupUuid,isISCSI,wait);
+        finalPath=folder + File.separator + snapshotBackupUuid;
       }
     }
     String volumeUuid=snapshotTO.getVolume().getPath();
     destroySnapshotOnPrimaryStorageExceptThis(conn,volumeUuid,snapshotUuid);
     SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
-    newSnapshot.setPath(folder + File.separator + snapshotBackupUuid);
+    newSnapshot.setPath(finalPath);
     if (fullbackup) {
       newSnapshot.setParentSnapshotPath(null);
     }
