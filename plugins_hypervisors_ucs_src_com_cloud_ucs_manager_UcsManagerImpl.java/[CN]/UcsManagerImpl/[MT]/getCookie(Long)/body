@@ -1,16 +1,31 @@
 {
   try {
-    String cookie=cookies.get(ucsMgrId);
-    if (cookie == null) {
-      UcsManagerVO mgrvo=ucsDao.findById(ucsMgrId);
-      UcsHttpClient client=new UcsHttpClient(mgrvo.getUrl());
-      String login=UcsCommands.loginCmd(mgrvo.getUsername(),mgrvo.getPassword());
-      String ret=client.call(login);
-      XmlObject xo=XmlObjectParser.parseFromString(ret);
-      cookie=xo.get("outCookie");
-      cookies.put(ucsMgrId,cookie);
+    UcsCookie ucsCookie=cookies.get(ucsMgrId);
+    long currentTime=System.currentTimeMillis();
+    UcsManagerVO mgrvo=ucsDao.findById(ucsMgrId);
+    UcsHttpClient client=new UcsHttpClient(mgrvo.getUrl());
+    String cmd=null;
+    if (ucsCookie == null) {
+      cmd=UcsCommands.loginCmd(mgrvo.getUsername(),mgrvo.getPassword());
     }
-    return cookie;
+ else {
+      String cookie=ucsCookie.getCookie();
+      long cookieStartTime=ucsCookie.getStartTime();
+      if (currentTime - cookieStartTime > COOKIE_TTL) {
+        cmd=UcsCommands.loginCmd(mgrvo.getUsername(),mgrvo.getPassword());
+      }
+ else       if (currentTime - cookieStartTime > COOKIE_REFRESH_TTL) {
+        cmd=UcsCommands.refreshCmd(mgrvo.getUsername(),mgrvo.getPassword(),cookie);
+      }
+    }
+    if (!(cmd == null)) {
+      String ret=client.call(cmd);
+      XmlObject xo=XmlObjectParser.parseFromString(ret);
+      String cookie=xo.get("outCookie");
+      ucsCookie=new UcsCookie(cookie,currentTime);
+      cookies.put(ucsMgrId,ucsCookie);
+    }
+    return ucsCookie.getCookie();
   }
  catch (  Exception e) {
     throw new CloudRuntimeException("Cannot get cookie",e);
