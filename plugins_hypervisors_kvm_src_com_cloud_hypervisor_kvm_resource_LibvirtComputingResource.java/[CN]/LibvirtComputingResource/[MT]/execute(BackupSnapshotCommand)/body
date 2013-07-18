@@ -16,15 +16,63 @@
     snapshotDestPath=ssPmountPath + File.separator + "snapshots"+ File.separator+ dcId+ File.separator+ accountId+ File.separator+ volumeId;
     KVMStoragePool primaryPool=_storagePoolMgr.getStoragePool(cmd.getPool().getType(),cmd.getPrimaryStoragePoolNameLabel());
     KVMPhysicalDisk snapshotDisk=primaryPool.getPhysicalDisk(cmd.getVolumePath());
-    Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
-    command.add("-b",snapshotDisk.getPath());
-    command.add("-n",snapshotName);
-    command.add("-p",snapshotDestPath);
-    command.add("-t",snapshotName);
-    String result=command.execute();
-    if (result != null) {
-      s_logger.debug("Failed to backup snaptshot: " + result);
-      return new BackupSnapshotAnswer(cmd,false,result,null,true);
+    if (primaryPool.getType() == StoragePoolType.RBD) {
+      try {
+        Rados r=new Rados(primaryPool.getAuthUserName());
+        r.confSet("mon_host",primaryPool.getSourceHost() + ":" + primaryPool.getSourcePort());
+        r.confSet("key",primaryPool.getAuthSecret());
+        r.connect();
+        s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
+        IoCTX io=r.ioCtxCreate(primaryPool.getSourceDir());
+        Rbd rbd=new Rbd(io);
+        RbdImage image=rbd.open(snapshotDisk.getName(),snapshotName);
+        long startTime=System.currentTimeMillis() / 1000;
+        File fh=new File(snapshotDestPath);
+        BufferedOutputStream bos=new BufferedOutputStream(new FileOutputStream(fh));
+        int chunkSize=4194304;
+        long offset=0;
+        s_logger.debug("Backuping up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath);
+        while (true) {
+          byte[] buf=new byte[chunkSize];
+          int bytes=image.read(offset,buf,chunkSize);
+          if (bytes <= 0) {
+            break;
+          }
+          bos.write(buf,0,bytes);
+          offset+=bytes;
+        }
+        s_logger.debug("Completed backing up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath+ ". Bytes written: "+ offset);
+        bos.close();
+        r.ioCtxDestroy(io);
+      }
+ catch (      RadosException e) {
+        s_logger.error("A RADOS operation failed. The error was: " + e.getMessage());
+        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+      }
+catch (      RbdException e) {
+        s_logger.error("A RBD operation on " + snapshotDisk.getName() + " failed. The error was: "+ e.getMessage());
+        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+      }
+catch (      FileNotFoundException e) {
+        s_logger.error("Failed to open " + snapshotDestPath + ". The error was: "+ e.getMessage());
+        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+      }
+catch (      IOException e) {
+        s_logger.debug("An I/O error occured during a snapshot operation on " + snapshotDestPath);
+        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+      }
+    }
+ else {
+      Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
+      command.add("-b",snapshotDisk.getPath());
+      command.add("-n",snapshotName);
+      command.add("-p",snapshotDestPath);
+      command.add("-t",snapshotName);
+      String result=command.execute();
+      if (result != null) {
+        s_logger.debug("Failed to backup snaptshot: " + result);
+        return new BackupSnapshotAnswer(cmd,false,result,null,true);
+      }
     }
     DomainInfo.DomainState state=null;
     Domain vm=null;
@@ -52,10 +100,10 @@
       }
     }
  else {
-      command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
+      Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
       command.add("-d",snapshotDisk.getPath());
       command.add("-n",snapshotName);
-      result=command.execute();
+      String result=command.execute();
       if (result != null) {
         s_logger.debug("Failed to backup snapshot: " + result);
         return new BackupSnapshotAnswer(cmd,false,"Failed to backup snapshot: " + result,null,true);

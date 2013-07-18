@@ -16,10 +16,6 @@
       }
     }
     KVMStoragePool primaryPool=_storagePoolMgr.getStoragePool(cmd.getPool().getType(),cmd.getPool().getUuid());
-    if (primaryPool.getType() == StoragePoolType.RBD) {
-      s_logger.debug("Snapshots are not supported on RBD volumes");
-      return new ManageSnapshotAnswer(cmd,false,"Snapshots are not supported on RBD volumes");
-    }
     KVMPhysicalDisk disk=primaryPool.getPhysicalDisk(cmd.getVolumePath());
     if (state == DomainInfo.DomainState.VIR_DOMAIN_RUNNING && !primaryPool.isExternalSnapshot()) {
       String vmUuid=vm.getUUIDString();
@@ -40,18 +36,45 @@
       }
     }
  else {
-      final Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
-      if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
-        command.add("-c",disk.getPath());
+      if (primaryPool.getType() == StoragePoolType.RBD) {
+        try {
+          Rados r=new Rados(primaryPool.getAuthUserName());
+          r.confSet("mon_host",primaryPool.getSourceHost() + ":" + primaryPool.getSourcePort());
+          r.confSet("key",primaryPool.getAuthSecret());
+          r.connect();
+          s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
+          IoCTX io=r.ioCtxCreate(primaryPool.getSourceDir());
+          Rbd rbd=new Rbd(io);
+          RbdImage image=rbd.open(disk.getName());
+          if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
+            s_logger.debug("Attempting to create RBD snapshot " + disk.getName() + "@"+ snapshotName);
+            image.snapCreate(snapshotName);
+          }
+ else {
+            s_logger.debug("Attempting to remove RBD snapshot " + disk.getName() + "@"+ snapshotName);
+            image.snapRemove(snapshotName);
+          }
+          rbd.close(image);
+          r.ioCtxDestroy(io);
+        }
+ catch (        Exception e) {
+          s_logger.error("A RBD snapshot operation on " + disk.getName() + " failed. The error was: "+ e.getMessage());
+        }
       }
  else {
-        command.add("-d",snapshotPath);
-      }
-      command.add("-n",snapshotName);
-      String result=command.execute();
-      if (result != null) {
-        s_logger.debug("Failed to manage snapshot: " + result);
-        return new ManageSnapshotAnswer(cmd,false,"Failed to manage snapshot: " + result);
+        final Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
+        if (cmd.getCommandSwitch().equalsIgnoreCase(ManageSnapshotCommand.CREATE_SNAPSHOT)) {
+          command.add("-c",disk.getPath());
+        }
+ else {
+          command.add("-d",snapshotPath);
+        }
+        command.add("-n",snapshotName);
+        String result=command.execute();
+        if (result != null) {
+          s_logger.debug("Failed to manage snapshot: " + result);
+          return new ManageSnapshotAnswer(cmd,false,"Failed to manage snapshot: " + result);
+        }
       }
     }
     return new ManageSnapshotAnswer(cmd,cmd.getSnapshotId(),disk.getPath() + File.separator + snapshotName,true,null);
