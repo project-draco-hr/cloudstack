@@ -2,5 +2,38 @@
   if (srcData.getHypervisorType() == HypervisorType.XenServer) {
     return copySnapshotToTemplateFromNfsToNfsXenserver(cmd,srcData,srcDataStore,destData,destDataStore);
   }
+ else   if (srcData.getHypervisorType() == HypervisorType.KVM) {
+    File srcFile=getFile(srcData.getPath(),srcDataStore.getUrl());
+    File destFile=getFile(destData.getPath(),destDataStore.getUrl());
+    s_logger.debug("copy snapshot to template");
+    Script.runSimpleBashScript("cp " + srcFile.getAbsolutePath() + " "+ destFile.getAbsolutePath());
+    QCOW2Processor processor=new QCOW2Processor();
+    Map<String,Object> params=new HashMap<String,Object>();
+    params.put(StorageLayer.InstanceConfigKey,_storage);
+    try {
+      processor.configure("qcow2 processor",params);
+      String destPath=destFile.getAbsolutePath();
+      String templateName=srcFile.getName();
+      FormatInfo info=processor.process(destPath,null,templateName);
+      TemplateLocation loc=new TemplateLocation(_storage,destPath);
+      loc.create(1,true,srcFile.getName());
+      loc.addFormat(info);
+      loc.save();
+      TemplateProp prop=loc.getTemplateInfo();
+      TemplateObjectTO newTemplate=new TemplateObjectTO();
+      newTemplate.setPath(destData.getPath() + File.separator + templateName);
+      newTemplate.setFormat(ImageFormat.VHD);
+      newTemplate.setSize(prop.getSize());
+      return new CopyCmdAnswer(newTemplate);
+    }
+ catch (    ConfigurationException e) {
+      s_logger.debug("Failed to create template:" + e.toString());
+      return new CopyCmdAnswer(e.toString());
+    }
+catch (    IOException e) {
+      s_logger.debug("Failed to create template:" + e.toString());
+      return new CopyCmdAnswer(e.toString());
+    }
+  }
   return new CopyCmdAnswer("");
 }
