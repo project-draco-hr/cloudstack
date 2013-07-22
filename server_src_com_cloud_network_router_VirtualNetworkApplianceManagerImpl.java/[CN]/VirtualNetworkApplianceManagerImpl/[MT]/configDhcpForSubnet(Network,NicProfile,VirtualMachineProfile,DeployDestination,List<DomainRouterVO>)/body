@@ -1,0 +1,70 @@
+{
+  UserVmVO vm=_userVmDao.findById(profile.getId());
+  _userVmDao.loadDetails(vm);
+  final boolean isZoneBasic=(dest.getDataCenter().getNetworkType() == NetworkType.Basic);
+  final Long podId=isZoneBasic ? dest.getPod().getId() : null;
+  DomainRouterVO router=routers.get(0);
+  if (router.getState() != State.Running) {
+    s_logger.warn("Failed to configure dhcp: router not in running state");
+    throw new ResourceUnavailableException("Unable to assign ip addresses, domR is not in right state " + router.getState(),DataCenter.class,network.getDataCenterId());
+  }
+  NicVO domr_guest_nic=_nicDao.findByInstanceIdAndIpAddressAndVmtype(router.getId(),_nicDao.getIpAddress(nic.getNetworkId(),router.getId()),VirtualMachine.Type.DomainRouter);
+  if (!NetUtils.sameSubnet(domr_guest_nic.getIp4Address(),nic.getIp4Address(),nic.getNetmask())) {
+    List<NicIpAliasVO> aliasIps=_nicIpAliasDao.listByNetworkIdAndState(domr_guest_nic.getNetworkId(),NicIpAlias.state.active);
+    boolean ipInVmsubnet=false;
+    for (    NicIpAliasVO alias : aliasIps) {
+      if (NetUtils.sameSubnet(alias.getIp4Address(),nic.getIp4Address(),nic.getNetmask())) {
+        ipInVmsubnet=true;
+        break;
+      }
+    }
+    PublicIp routerPublicIP=null;
+    String routerAliasIp=null;
+    DataCenter dc=_dcDao.findById(router.getDataCenterId());
+    if (ipInVmsubnet == false) {
+      try {
+        if (network.getTrafficType() == TrafficType.Guest && network.getGuestType() == GuestType.Shared) {
+          Pod pod=_podDao.findById(vm.getPodIdToDeployIn());
+          Account caller=CallContext.current().getCallingAccount();
+          List<VlanVO> vlanList=_vlanDao.listVlansByNetworkIdAndGateway(network.getId(),nic.getGateway());
+          List<Long> vlanDbIdList=new ArrayList<Long>();
+          for (          VlanVO vlan : vlanList) {
+            vlanDbIdList.add(vlan.getId());
+          }
+          if (dc.getNetworkType() == NetworkType.Basic) {
+            routerPublicIP=_networkMgr.assignPublicIpAddressFromVlans(router.getDataCenterId(),vm.getPodIdToDeployIn(),caller,Vlan.VlanType.DirectAttached,vlanDbIdList,nic.getNetworkId(),null,false);
+          }
+ else {
+            routerPublicIP=_networkMgr.assignPublicIpAddressFromVlans(router.getDataCenterId(),null,caller,Vlan.VlanType.DirectAttached,vlanDbIdList,nic.getNetworkId(),null,false);
+          }
+          routerAliasIp=routerPublicIP.getAddress().addr();
+        }
+      }
+ catch (      InsufficientAddressCapacityException e) {
+        s_logger.info(e.getMessage());
+        s_logger.info("unable to configure dhcp for this VM.");
+        return false;
+      }
+      NicIpAliasVO alias=new NicIpAliasVO(domr_guest_nic.getId(),routerAliasIp,router.getId(),CallContext.current().getCallingAccountId(),network.getDomainId(),nic.getNetworkId(),nic.getGateway(),nic.getNetmask());
+      alias.setAliasCount((routerPublicIP.getIpMacAddress()));
+      _nicIpAliasDao.persist(alias);
+      List<IpAliasTO> ipaliasTo=new ArrayList<IpAliasTO>();
+      ipaliasTo.add(new IpAliasTO(routerAliasIp,alias.getNetmask(),alias.getAliasCount().toString()));
+      Commands cmds=new Commands(OnError.Stop);
+      createIpAlias(router,ipaliasTo,alias.getNetworkId(),cmds);
+      configDnsMasq(router,network,cmds);
+      boolean result=sendCommandsToRouter(router,cmds);
+      if (result == false) {
+        NicIpAliasVO ipAliasVO=_nicIpAliasDao.findByInstanceIdAndNetworkId(network.getId(),router.getId());
+        Transaction txn=Transaction.currentTxn();
+        txn.start();
+        _nicIpAliasDao.expunge(ipAliasVO.getId());
+        _ipAddressDao.unassignIpAddress(routerPublicIP.getId());
+        txn.commit();
+        throw new CloudRuntimeException("failed to configure ip alias on the router as a part of dhcp config");
+      }
+    }
+    return true;
+  }
+  return true;
+}

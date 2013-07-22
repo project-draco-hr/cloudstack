@@ -1,0 +1,24 @@
+{
+  final UserVmVO vm=_userVmDao.findById(profile.getId());
+  _userVmDao.loadDetails(vm);
+  final VirtualMachineProfile updatedProfile=profile;
+  final boolean isZoneBasic=(dest.getDataCenter().getNetworkType() == NetworkType.Basic);
+  final Long podId=isZoneBasic ? dest.getPod().getId() : null;
+  boolean podLevelException=false;
+  if (isZoneBasic && podId != null && updatedProfile.getVirtualMachine().getType() == VirtualMachine.Type.User && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Shared) {
+    podLevelException=true;
+  }
+  return applyRules(network,routers,"userdata and password entry",podLevelException,podId,false,new RuleApplier(){
+    @Override public boolean execute(    Network network,    VirtualRouter router) throws ResourceUnavailableException {
+      Commands cmds=new Commands(OnError.Stop);
+      if (!(isZoneBasic && router.getPodIdToDeployIn().longValue() != podId.longValue())) {
+        NicVO nicVo=_nicDao.findById(nic.getId());
+        createPasswordCommand(router,updatedProfile,nicVo,cmds);
+        createVmDataCommand(router,vm,nicVo,vm.getDetail("SSH.PublicKey"),cmds);
+        return sendCommandsToRouter(router,cmds);
+      }
+      return true;
+    }
+  }
+);
+}

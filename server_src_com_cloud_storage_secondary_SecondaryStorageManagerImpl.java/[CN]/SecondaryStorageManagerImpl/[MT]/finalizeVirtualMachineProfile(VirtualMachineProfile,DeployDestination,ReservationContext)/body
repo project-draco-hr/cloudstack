@@ -1,0 +1,87 @@
+{
+  SecondaryStorageVmVO vm=_secStorageVmDao.findById(profile.getId());
+  Map<String,String> details=_vmDetailsDao.findDetails(vm.getId());
+  vm.setDetails(details);
+  DataStore secStore=_dataStoreMgr.getImageStore(dest.getDataCenter().getId());
+  assert(secStore != null);
+  StringBuilder buf=profile.getBootArgsBuilder();
+  buf.append(" template=domP type=secstorage");
+  buf.append(" host=").append(_mgmt_host);
+  buf.append(" port=").append(_mgmt_port);
+  buf.append(" name=").append(profile.getVirtualMachine().getHostName());
+  buf.append(" zone=").append(dest.getDataCenter().getId());
+  buf.append(" pod=").append(dest.getPod().getId());
+  buf.append(" guid=").append(profile.getVirtualMachine().getHostName());
+  if (_configDao.isPremium()) {
+    if (profile.getHypervisorType() == HypervisorType.VMware) {
+      s_logger.debug("VmWare hypervisor configured, telling the ssvm to load the PremiumSecondaryStorageResource");
+      buf.append(" resource=com.cloud.storage.resource.PremiumSecondaryStorageResource");
+    }
+ else {
+      s_logger.debug("Telling the ssvm to load the NfsSecondaryStorageResource");
+      buf.append(" resource=org.apache.cloudstack.storage.resource.NfsSecondaryStorageResource");
+    }
+  }
+ else {
+    buf.append(" resource=org.apache.cloudstack.storage.resource.NfsSecondaryStorageResource");
+  }
+  buf.append(" instance=SecStorage");
+  buf.append(" sslcopy=").append(Boolean.toString(_useSSlCopy));
+  buf.append(" role=").append(vm.getRole().toString());
+  buf.append(" mtu=").append(_secStorageVmMtuSize);
+  boolean externalDhcp=false;
+  String externalDhcpStr=_configDao.getValue("direct.attach.network.externalIpAllocator.enabled");
+  if (externalDhcpStr != null && externalDhcpStr.equalsIgnoreCase("true")) {
+    externalDhcp=true;
+  }
+  if (Boolean.valueOf(_configDao.getValue("system.vm.random.password"))) {
+    buf.append(" vmpassword=").append(_configDao.getValue("system.vm.password"));
+  }
+  for (  NicProfile nic : profile.getNics()) {
+    int deviceId=nic.getDeviceId();
+    if (nic.getIp4Address() == null) {
+      buf.append(" eth").append(deviceId).append("mask=").append("0.0.0.0");
+      buf.append(" eth").append(deviceId).append("ip=").append("0.0.0.0");
+    }
+ else {
+      buf.append(" eth").append(deviceId).append("ip=").append(nic.getIp4Address());
+      buf.append(" eth").append(deviceId).append("mask=").append(nic.getNetmask());
+    }
+    if (nic.isDefaultNic()) {
+      buf.append(" gateway=").append(nic.getGateway());
+    }
+    if (nic.getTrafficType() == TrafficType.Management) {
+      String mgmt_cidr=_configDao.getValue(Config.ManagementNetwork.key());
+      if (NetUtils.isValidCIDR(mgmt_cidr)) {
+        buf.append(" mgmtcidr=").append(mgmt_cidr);
+      }
+      buf.append(" localgw=").append(dest.getPod().getGateway());
+      buf.append(" private.network.device=").append("eth").append(deviceId);
+    }
+ else     if (nic.getTrafficType() == TrafficType.Public) {
+      buf.append(" public.network.device=").append("eth").append(deviceId);
+    }
+ else     if (nic.getTrafficType() == TrafficType.Storage) {
+      buf.append(" storageip=").append(nic.getIp4Address());
+      buf.append(" storagenetmask=").append(nic.getNetmask());
+      buf.append(" storagegateway=").append(nic.getGateway());
+    }
+  }
+  if (externalDhcp) {
+    buf.append(" bootproto=dhcp");
+  }
+  DataCenterVO dc=_dcDao.findById(profile.getVirtualMachine().getDataCenterId());
+  buf.append(" internaldns1=").append(dc.getInternalDns1());
+  if (dc.getInternalDns2() != null) {
+    buf.append(" internaldns2=").append(dc.getInternalDns2());
+  }
+  buf.append(" dns1=").append(dc.getDns1());
+  if (dc.getDns2() != null) {
+    buf.append(" dns2=").append(dc.getDns2());
+  }
+  String bootArgs=buf.toString();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Boot Args for " + profile + ": "+ bootArgs);
+  }
+  return true;
+}
