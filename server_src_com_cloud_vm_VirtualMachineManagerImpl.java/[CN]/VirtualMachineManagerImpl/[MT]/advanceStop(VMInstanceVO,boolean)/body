@@ -4,13 +4,13 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is already stopped: " + vm);
     }
-    return true;
+    return;
   }
   if (state == State.Destroyed || state == State.Expunging || state == State.Error) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Stopped called on " + vm + " but the state is "+ state);
     }
-    return true;
+    return;
   }
   ItWorkVO work=_workDao.findByOutstandingWork(vm.getId(),vm.getState());
   if (work != null) {
@@ -20,11 +20,11 @@
   }
   Long hostId=vm.getHostId();
   if (hostId == null) {
-    if (!forced) {
+    if (!cleanUpEvenIfUnableToStop) {
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("HostId is null but this is not a forced stop, cannot stop vm " + vm + " with state:"+ vm.getState());
       }
-      return false;
+      throw new CloudRuntimeException("Unable to stop " + vm);
     }
     try {
       stateTransitTo(vm,Event.AgentReportStopped,null,null);
@@ -39,7 +39,7 @@
       work.setStep(Step.Done);
       _workDao.update(work.getId(),work);
     }
-    return true;
+    return;
   }
   VirtualMachineGuru vmGuru=getVmGuru(vm);
   VirtualMachineProfile profile=new VirtualMachineProfileImpl(vm);
@@ -49,7 +49,7 @@
     }
   }
  catch (  NoTransitionException e1) {
-    if (!forced) {
+    if (!cleanUpEvenIfUnableToStop) {
       throw new CloudRuntimeException("We cannot stop " + vm + " when it is in state "+ vm.getState());
     }
     boolean doCleanup=false;
@@ -71,16 +71,18 @@
       doCleanup=true;
     }
     if (doCleanup) {
-      if (cleanup(vmGuru,new VirtualMachineProfileImpl(vm),work,Event.StopRequested,forced,user,account)) {
+      if (cleanup(vmGuru,new VirtualMachineProfileImpl(vm),work,Event.StopRequested,cleanUpEvenIfUnableToStop)) {
         try {
           if (s_logger.isDebugEnabled()) {
             s_logger.debug("Updating work item to Done, id:" + work.getId());
           }
-          return changeState(vm,Event.AgentReportStopped,null,work,Step.Done);
+          if (!changeState(vm,Event.AgentReportStopped,null,work,Step.Done)) {
+            throw new CloudRuntimeException("Unable to stop " + vm);
+          }
         }
  catch (        NoTransitionException e) {
           s_logger.warn("Unable to cleanup " + vm);
-          return false;
+          throw new CloudRuntimeException("Unable to stop " + vm,e);
         }
       }
  else {
@@ -127,7 +129,7 @@ catch (  OperationTimedoutException e) {
   }
  finally {
     if (!stopped) {
-      if (!forced) {
+      if (!cleanUpEvenIfUnableToStop) {
         s_logger.warn("Unable to stop vm " + vm);
         try {
           stateTransitTo(vm,Event.OperationFailed,vm.getHostId());
@@ -135,7 +137,7 @@ catch (  OperationTimedoutException e) {
  catch (        NoTransitionException e) {
           s_logger.warn("Unable to transition the state " + vm);
         }
-        return false;
+        throw new CloudRuntimeException("Unable to stop " + vm);
       }
  else {
         s_logger.warn("Unable to actually stop " + vm + " but continue with release because it's a force stop");
@@ -147,7 +149,7 @@ catch (  OperationTimedoutException e) {
     s_logger.debug(vm + " is stopped on the host.  Proceeding to release resource held.");
   }
   try {
-    _networkMgr.release(profile,forced);
+    _networkMgr.release(profile,cleanUpEvenIfUnableToStop);
     s_logger.debug("Successfully released network resources for the vm " + vm);
   }
  catch (  Exception e) {
@@ -170,10 +172,12 @@ catch (  OperationTimedoutException e) {
       work.setStep(Step.Done);
       _workDao.update(work.getId(),work);
     }
-    return stateTransitTo(vm,Event.OperationSucceeded,null);
+    if (!stateTransitTo(vm,Event.OperationSucceeded,null)) {
+      throw new CloudRuntimeException("unable to stop " + vm);
+    }
   }
  catch (  NoTransitionException e) {
     s_logger.warn(e.getMessage());
-    return false;
+    throw new CloudRuntimeException("Unable to stop " + vm);
   }
 }
