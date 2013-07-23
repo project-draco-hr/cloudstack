@@ -1,0 +1,86 @@
+{
+  HostVO srcHost=_hostDao.findById(srcHostId);
+  HostVO destHost=_hostDao.findById(destHostId);
+  boolean srcExplDedicated=checkIfHostIsDedicated(srcHost);
+  boolean destExplDedicated=checkIfHostIsDedicated(destHost);
+  if (srcExplDedicated && !destExplDedicated) {
+    String msg="VM is being migrated from a explicitly dedicated host " + srcHost.getName() + " to non-dedicated host "+ destHost.getName();
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+    s_logger.warn(msg);
+  }
+  if (!srcExplDedicated && destExplDedicated) {
+    String msg="VM is being migrated from a non dedicated host " + srcHost.getName() + " to a explicitly dedicated host "+ destHost.getName();
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+    s_logger.warn(msg);
+  }
+  if (srcExplDedicated && destExplDedicated) {
+    if ((accountOfDedicatedHost(srcHost) != null) && (accountOfDedicatedHost(srcHost) != accountOfDedicatedHost(destHost))) {
+      String msg="VM is being migrated from host " + srcHost.getName() + " explicitly dedicated to account "+ accountOfDedicatedHost(srcHost)+ " to host "+ destHost.getName()+ " explicitly dedicated to account "+ accountOfDedicatedHost(destHost);
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+      s_logger.warn(msg);
+    }
+    if ((domainOfDedicatedHost(srcHost) != null) && (domainOfDedicatedHost(srcHost) != domainOfDedicatedHost(destHost))) {
+      String msg="VM is being migrated from host " + srcHost.getName() + " explicitly dedicated to domain "+ domainOfDedicatedHost(srcHost)+ " to host "+ destHost.getName()+ " explicitly dedicated to domain "+ domainOfDedicatedHost(destHost);
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+      s_logger.warn(msg);
+    }
+  }
+  ServiceOfferingVO deployPlanner=_offeringDao.findById(vm.getServiceOfferingId());
+  if (deployPlanner.getDeploymentPlanner() != null && deployPlanner.getDeploymentPlanner().equals("ImplicitDedicationPlanner")) {
+    long accountOfVm=vm.getAccountId();
+    String msg="VM of account " + accountOfVm + " with implicit deployment planner being migrated to host "+ destHost.getName();
+    boolean emptyDestination=false;
+    List<VMInstanceVO> vmsOnDest=getVmsOnHost(destHostId);
+    if (vmsOnDest == null || vmsOnDest.isEmpty()) {
+      emptyDestination=true;
+    }
+    if (!emptyDestination) {
+      if (!isServiceOfferingUsingPlannerInPreferredMode(vm.getServiceOfferingId())) {
+        if (!checkIfAllVmsCreatedInStrictMode(accountOfVm,vmsOnDest)) {
+          msg="VM of account " + accountOfVm + " with strict implicit deployment planner being migrated to host "+ destHost.getName()+ " not having all vms strict implicitly dedicated to account "+ accountOfVm;
+        }
+      }
+ else {
+        for (        VMInstanceVO vmsDest : vmsOnDest) {
+          ServiceOfferingVO destPlanner=_offeringDao.findById(vmsDest.getServiceOfferingId());
+          if (!((destPlanner.getDeploymentPlanner() != null && destPlanner.getDeploymentPlanner().equals("ImplicitDedicationPlanner")) && vmsDest.getAccountId() == accountOfVm)) {
+            msg="VM of account " + accountOfVm + " with preffered implicit deployment planner being migrated to host "+ destHost.getName()+ " not having all vms implicitly dedicated to account "+ accountOfVm;
+          }
+        }
+      }
+    }
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+    s_logger.warn(msg);
+  }
+ else {
+    List<PlannerHostReservationVO> reservedHosts=_plannerHostReservationDao.listAllDedicatedHosts();
+    boolean srcImplDedicated=false;
+    boolean destImplDedicated=false;
+    String msg=null;
+    for (    PlannerHostReservationVO reservedHost : reservedHosts) {
+      if (reservedHost.getHostId() == srcHostId) {
+        srcImplDedicated=true;
+      }
+      if (reservedHost.getHostId() == destHostId) {
+        destImplDedicated=true;
+      }
+    }
+    if (srcImplDedicated) {
+      if (destImplDedicated) {
+        msg="VM is being migrated from implicitly dedicated host " + srcHost.getName() + " to another implicitly dedicated host "+ destHost.getName();
+      }
+ else {
+        msg="VM is being migrated from implicitly dedicated host " + srcHost.getName() + " to shared host "+ destHost.getName();
+      }
+      _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+      s_logger.warn(msg);
+    }
+ else {
+      if (destImplDedicated) {
+        msg="VM is being migrated from shared host " + srcHost.getName() + " to implicitly dedicated host "+ destHost.getName();
+        _alertMgr.sendAlert(AlertManager.ALERT_TYPE_USERVM,vm.getDataCenterId(),vm.getPodIdToDeployIn(),msg,msg);
+        s_logger.warn(msg);
+      }
+    }
+  }
+}

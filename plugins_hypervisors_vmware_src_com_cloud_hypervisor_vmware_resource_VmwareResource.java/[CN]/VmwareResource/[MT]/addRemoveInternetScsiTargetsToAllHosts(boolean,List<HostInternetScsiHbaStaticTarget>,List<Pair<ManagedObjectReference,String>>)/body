@@ -1,0 +1,47 @@
+{
+  VmwareContext context=getServiceContext();
+  ExecutorService executorService=Executors.newFixedThreadPool(lstHosts.size());
+  final List<Exception> exceptions=new ArrayList<Exception>();
+  for (  Pair<ManagedObjectReference,String> hostPair : lstHosts) {
+    HostMO host=new HostMO(context,hostPair.first());
+    HostStorageSystemMO hostStorageSystem=host.getHostStorageSystemMO();
+    boolean iScsiHbaConfigured=false;
+    for (    HostHostBusAdapter hba : hostStorageSystem.getStorageDeviceInfo().getHostBusAdapter()) {
+      if (hba instanceof HostInternetScsiHba) {
+        iScsiHbaConfigured=true;
+        final String iScsiHbaDevice=hba.getDevice();
+        final HostStorageSystemMO hss=hostStorageSystem;
+        executorService.submit(new Thread(){
+          @Override public void run(){
+            try {
+              if (add) {
+                hss.addInternetScsiStaticTargets(iScsiHbaDevice,lstTargets);
+              }
+ else {
+                hss.removeInternetScsiStaticTargets(iScsiHbaDevice,lstTargets);
+              }
+              hss.rescanHba(iScsiHbaDevice);
+              hss.rescanVmfs();
+            }
+ catch (            Exception ex) {
+synchronized (exceptions) {
+                exceptions.add(ex);
+              }
+            }
+          }
+        }
+);
+      }
+    }
+    if (!iScsiHbaConfigured) {
+      throw new Exception("An iSCSI HBA must be configured before a host can use iSCSI storage.");
+    }
+  }
+  executorService.shutdown();
+  if (!executorService.awaitTermination(Long.MAX_VALUE,TimeUnit.MINUTES)) {
+    throw new Exception("The system timed out before completing the task 'rescanAllHosts'.");
+  }
+  if (exceptions.size() > 0) {
+    throw new Exception(exceptions.get(0).getMessage());
+  }
+}
