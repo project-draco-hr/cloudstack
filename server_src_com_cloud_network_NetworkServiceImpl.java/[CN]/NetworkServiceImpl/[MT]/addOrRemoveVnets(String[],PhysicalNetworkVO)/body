@@ -1,0 +1,47 @@
+{
+  List<String> addVnets=null;
+  List<String> removeVnets=null;
+  HashSet<String> tempVnets=new HashSet<String>();
+  HashSet<String> vnetsInDb=new HashSet<String>();
+  List<Pair<Integer,Integer>> vnetranges=null;
+  String comaSeperatedStingOfVnetRanges=null;
+  int i=0;
+  if (listOfRanges.length != 0) {
+    _physicalNetworkDao.acquireInLockTable(network.getId(),10);
+    vnetranges=validateVlanRange(network,listOfRanges);
+    removeVnets=getVnetsToremove(network,vnetranges);
+    vnetsInDb.addAll(_datacneter_vnet.listVnetsByPhysicalNetworkAndDataCenter(network.getDataCenterId(),network.getId()));
+    tempVnets.addAll(vnetsInDb);
+    for (    Pair<Integer,Integer> vlan : vnetranges) {
+      for (i=vlan.first(); i <= vlan.second(); i++) {
+        tempVnets.add(Integer.toString(i));
+      }
+    }
+    tempVnets.removeAll(vnetsInDb);
+    if (removeVnets != null && removeVnets.size() != 0) {
+      vnetsInDb.removeAll(removeVnets);
+    }
+    if (tempVnets.size() != 0) {
+      addVnets=new ArrayList<String>();
+      addVnets.addAll(tempVnets);
+      vnetsInDb.addAll(tempVnets);
+    }
+    if (vnetsInDb.size() != 0) {
+      comaSeperatedStingOfVnetRanges=generateVnetString(new ArrayList<String>(vnetsInDb));
+    }
+    network.setVnet(comaSeperatedStingOfVnetRanges);
+    Transaction txn=Transaction.currentTxn();
+    txn.start();
+    if (addVnets != null) {
+      s_logger.debug("Adding vnet range " + addVnets.toString() + " for the physicalNetwork id= "+ network.getId()+ " and zone id="+ network.getDataCenterId()+ " as a part of updatePhysicalNetwork call");
+      _dcDao.addVnet(network.getDataCenterId(),network.getId(),addVnets);
+    }
+    if (removeVnets != null) {
+      s_logger.debug("removing vnet range " + removeVnets.toString() + " for the physicalNetwork id= "+ network.getId()+ " and zone id="+ network.getDataCenterId()+ " as a part of updatePhysicalNetwork call");
+      _datacneter_vnet.deleteVnets(txn,network.getDataCenterId(),network.getId(),removeVnets);
+    }
+    _physicalNetworkDao.update(network.getId(),network);
+    txn.commit();
+    _physicalNetworkDao.releaseFromLockTable(network.getId());
+  }
+}

@@ -1,0 +1,43 @@
+{
+  int i;
+  List<String> removeVnets=new ArrayList<String>();
+  HashSet<String> vnetsInDb=new HashSet<String>();
+  vnetsInDb.addAll(_datacneter_vnet.listVnetsByPhysicalNetworkAndDataCenter(network.getDataCenterId(),network.getId()));
+  if (vnetRanges.size() == 0) {
+    removeVnets.addAll(vnetsInDb);
+    return removeVnets;
+  }
+  for (  Pair<Integer,Integer> vlan : vnetRanges) {
+    for (i=vlan.first(); i <= vlan.second(); i++) {
+      vnetsInDb.remove(Integer.toString(i));
+    }
+  }
+  String vnetRange=null;
+  if (vnetsInDb.size() != 0) {
+    removeVnets.addAll(vnetsInDb);
+    vnetRange=generateVnetString(removeVnets);
+  }
+ else {
+    return removeVnets;
+  }
+  for (  String vnet : vnetRange.split(",")) {
+    String[] range=vnet.split("-");
+    Integer start=Integer.parseInt(range[0]);
+    Integer end=Integer.parseInt(range[1]);
+    _datacneter_vnet.lockRange(network.getDataCenterId(),network.getId(),start,end);
+    List<DataCenterVnetVO> result=_datacneter_vnet.listAllocatedVnetsInRange(network.getDataCenterId(),network.getId(),start,end);
+    if (!result.isEmpty()) {
+      throw new InvalidParameterValueException("Some of the vnets from this range are allocated, can only remove a range which has no allocated vnets");
+    }
+    List<AccountGuestVlanMapVO> maps=_accountGuestVlanMapDao.listAccountGuestVlanMapsByPhysicalNetwork(network.getId());
+    for (    AccountGuestVlanMapVO map : maps) {
+      String[] vlans=map.getGuestVlanRange().split("-");
+      Integer dedicatedStartVlan=Integer.parseInt(vlans[0]);
+      Integer dedicatedEndVlan=Integer.parseInt(vlans[1]);
+      if ((start >= dedicatedStartVlan && start <= dedicatedEndVlan) || (end >= dedicatedStartVlan && end <= dedicatedEndVlan)) {
+        throw new InvalidParameterValueException("Vnet range " + map.getGuestVlanRange() + " is dedicated"+ " to an account. The specified range "+ start+ "-"+ end+ " overlaps with the dedicated range "+ " Please release the overlapping dedicated range before deleting the range");
+      }
+    }
+  }
+  return removeVnets;
+}
