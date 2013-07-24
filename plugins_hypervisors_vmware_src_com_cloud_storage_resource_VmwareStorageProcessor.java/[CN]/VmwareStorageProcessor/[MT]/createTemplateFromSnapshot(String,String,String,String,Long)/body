@@ -1,0 +1,104 @@
+{
+  String[] tokens=snapshotPath.split(File.separator);
+  String backupSSUuid=tokens[tokens.length - 1];
+  String snapshotFolder=StringUtils.join(tokens,File.separator,0,tokens.length - 1);
+  String secondaryMountPoint=mountService.getMountPoint(secStorageUrl);
+  String installFullPath=secondaryMountPoint + "/" + installPath;
+  String installFullOVAName=installFullPath + "/" + templateUniqueName+ ".ova";
+  String snapshotRoot=secondaryMountPoint + "/" + snapshotFolder;
+  String snapshotFullOVAName=snapshotRoot + "/" + backupSSUuid+ ".ova";
+  String snapshotFullOvfName=snapshotRoot + "/" + backupSSUuid+ ".ovf";
+  String result;
+  Script command;
+  String templateVMDKName="";
+  String snapshotFullVMDKName=snapshotRoot + "/" + backupSSUuid+ "/";
+synchronized (installPath.intern()) {
+    command=new Script(false,"mkdir",_timeout,s_logger);
+    command.add("-p");
+    command.add(installFullPath);
+    result=command.execute();
+    if (result != null) {
+      String msg="unable to prepare template directory: " + installPath + ", storage: "+ secStorageUrl+ ", error msg: "+ result;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+  }
+  try {
+    if (new File(snapshotFullOVAName).exists()) {
+      command=new Script(false,"cp",_timeout,s_logger);
+      command.add(snapshotFullOVAName);
+      command.add(installFullOVAName);
+      result=command.execute();
+      if (result != null) {
+        String msg="unable to copy snapshot " + snapshotFullOVAName + " to "+ installFullPath;
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+      command=new Script("tar",0,s_logger);
+      command.add("--no-same-owner");
+      command.add("-xf",installFullOVAName);
+      command.setWorkDir(installFullPath);
+      s_logger.info("Executing command: " + command.toString());
+      result=command.execute();
+      if (result != null) {
+        String msg="unable to untar snapshot " + snapshotFullOVAName + " to "+ installFullPath;
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+ else {
+      if (new File(snapshotFullOvfName).exists()) {
+        command=new Script(false,"cp",_timeout,s_logger);
+        command.add(snapshotFullOvfName);
+        command.add(installFullPath);
+        result=command.execute();
+        if (result != null) {
+          String msg="unable to copy snapshot " + snapshotFullOvfName + " to "+ installFullPath;
+          s_logger.error(msg);
+          throw new Exception(msg);
+        }
+        s_logger.info("vmdkfile parent dir: " + snapshotFullVMDKName);
+        File snapshotdir=new File(snapshotFullVMDKName);
+        File[] ssfiles=snapshotdir.listFiles();
+        for (int i=0; i < ssfiles.length; i++) {
+          String vmdkfile=ssfiles[i].getName();
+          s_logger.info("vmdk file name: " + vmdkfile);
+          if (vmdkfile.toLowerCase().startsWith(backupSSUuid) && vmdkfile.toLowerCase().endsWith(".vmdk")) {
+            snapshotFullVMDKName+=vmdkfile;
+            templateVMDKName+=vmdkfile;
+            break;
+          }
+        }
+        if (snapshotFullVMDKName != null) {
+          command=new Script(false,"cp",_timeout,s_logger);
+          command.add(snapshotFullVMDKName);
+          command.add(installFullPath);
+          result=command.execute();
+          s_logger.info("Copy VMDK file: " + snapshotFullVMDKName);
+          if (result != null) {
+            String msg="unable to copy snapshot vmdk file " + snapshotFullVMDKName + " to "+ installFullPath;
+            s_logger.error(msg);
+            throw new Exception(msg);
+          }
+        }
+      }
+ else {
+        String msg="unable to find any snapshot ova/ovf files" + snapshotFullOVAName + " to "+ installFullPath;
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+    }
+    long physicalSize=new File(installFullPath + "/" + templateVMDKName).length();
+    VmdkProcessor processor=new VmdkProcessor();
+    Map<String,Object> params=new HashMap<String,Object>();
+    params.put(StorageLayer.InstanceConfigKey,_storage);
+    processor.configure("VMDK Processor",params);
+    long virtualSize=processor.getTemplateVirtualSize(installFullPath,templateUniqueName);
+    postCreatePrivateTemplate(installFullPath,templateId,templateUniqueName,physicalSize,virtualSize);
+    writeMetaOvaForTemplate(installFullPath,backupSSUuid + File.separator + backupSSUuid+ ".ovf",templateVMDKName,templateUniqueName,physicalSize);
+    return new Ternary<String,Long,Long>(installPath + "/" + templateUniqueName+ ".ova",physicalSize,virtualSize);
+  }
+ catch (  Exception e) {
+    throw e;
+  }
+}
