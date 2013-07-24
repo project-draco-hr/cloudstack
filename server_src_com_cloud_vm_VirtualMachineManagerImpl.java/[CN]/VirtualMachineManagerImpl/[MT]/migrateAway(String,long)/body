@@ -1,14 +1,14 @@
 {
-  VMInstanceVO vm=_vmDao.findById(vmId);
+  VMInstanceVO vm=_vmDao.findByUuid(vmUuid);
   if (vm == null) {
-    s_logger.debug("Unable to find a VM for " + vmId);
-    return true;
+    s_logger.debug("Unable to find a VM for " + vmUuid);
+    throw new CloudRuntimeException("Unable to find " + vmUuid);
   }
   VirtualMachineProfile profile=new VirtualMachineProfileImpl(vm);
   Long hostId=vm.getHostId();
   if (hostId == null) {
     s_logger.debug("Unable to migrate because the VM doesn't have a host id: " + vm);
-    return true;
+    throw new CloudRuntimeException("Unable to migrate " + vmUuid);
   }
   Host host=_hostDao.findById(hostId);
   DataCenterDeployment plan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),null,null,null);
@@ -35,9 +35,9 @@
       throw new InsufficientServerCapacityException("Unable to find a server to migrate to.",host.getClusterId());
     }
     excludes.addHost(dest.getHost().getId());
-    VMInstanceVO vmInstance=null;
     try {
-      vmInstance=migrate(vm,srcHostId,dest);
+      migrate(vm,srcHostId,dest);
+      return;
     }
  catch (    ResourceUnavailableException e) {
       s_logger.debug("Unable to migrate to unavailable " + dest);
@@ -45,35 +45,21 @@
 catch (    ConcurrentOperationException e) {
       s_logger.debug("Unable to migrate VM due to: " + e.getMessage());
     }
-catch (    ManagementServerException e) {
-      s_logger.debug("Unable to migrate VM: " + e.getMessage());
-    }
-catch (    VirtualMachineMigrationException e) {
-      s_logger.debug("Got VirtualMachineMigrationException, Unable to migrate: " + e.getMessage());
-      if (vm.getState() == State.Starting) {
-        s_logger.debug("VM seems to be still Starting, we should retry migration later");
-        throw e;
-      }
- else {
-        s_logger.debug("Unable to migrate VM, VM is not in Running or even Starting state, current state: " + vm.getState().toString());
-      }
-    }
-    if (vmInstance != null) {
-      return true;
-    }
     try {
       advanceStop(vm,true);
-      return true;
+      throw new CloudRuntimeException("Unable to migrate " + vm);
     }
  catch (    ResourceUnavailableException e) {
       s_logger.debug("Unable to stop VM due to " + e.getMessage());
+      throw new CloudRuntimeException("Unable to migrate " + vm);
     }
 catch (    ConcurrentOperationException e) {
       s_logger.debug("Unable to stop VM due to " + e.getMessage());
+      throw new CloudRuntimeException("Unable to migrate " + vm);
     }
 catch (    OperationTimedoutException e) {
       s_logger.debug("Unable to stop VM due to " + e.getMessage());
+      throw new CloudRuntimeException("Unable to migrate " + vm);
     }
-    return false;
   }
 }
