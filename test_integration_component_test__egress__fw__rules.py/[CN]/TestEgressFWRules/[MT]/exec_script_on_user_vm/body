@@ -1,0 +1,46 @@
+def exec_script_on_user_vm(self, script, exec_cmd_params, expected_result, negative_test=False):
+    try:
+        if (self.apiclient.hypervisor.lower() == 'vmware'):
+            sourceip = self.apiclient.connection.mgtSvr
+        else:
+            hosts = list_hosts(self.apiclient, id=self.virtual_machine.hostid)
+            self.assertEqual(isinstance(hosts, list), True, 'Check list response returns a valid list')
+            host = hosts[0]
+            sourceip = host.ipaddress
+        vm_network_id = self.virtual_machine.nic[0].networkid
+        vm_ipaddress = self.virtual_machine.nic[0].ipaddress
+        list_routers_response = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid, networkid=vm_network_id)
+        self.assertEqual(isinstance(list_routers_response, list), True, 'Check for list routers response return valid data')
+        router = list_routers_response[0]
+        if (self.apiclient.hypervisor.lower() == 'vmware'):
+            key_file = ' -i /var/cloudstack/management/.ssh/id_rsa '
+        else:
+            key_file = ' -i /root/.ssh/id_rsa.cloud '
+        ssh_cmd = 'ssh -o UserKnownHostsFile=/dev/null  -o StrictHostKeyChecking=no -o LogLevel=quiet'
+        expect_script = (((((('#!/usr/bin/expect\n' + ('spawn %s %s -p 3922 root@%s\n' % (ssh_cmd, key_file, router.linklocalip))) + ('expect "root@%s:~#"\n' % router.name)) + ('send "%s root@%s %s; exit $?\r"\n' % (ssh_cmd, vm_ipaddress, script))) + ('expect "root@%s\'s password: "\n' % vm_ipaddress)) + 'send "password\r"\n') + 'interact\n')
+        self.debug(('expect_script>>\n%s<<expect_script' % expect_script))
+        script_file = '/tmp/expect_script.exp'
+        fd = open(script_file, 'w')
+        fd.write(expect_script)
+        fd.close()
+        ssh = remoteSSHClient(host=sourceip, port=22, user='root', passwd=self.services['host_password'])
+        self.debug(('SSH client to : %s obtained' % sourceip))
+        ssh.scp(script_file, script_file)
+        ssh.execute(('chmod +x %s' % script_file))
+        self.debug(('%s %s' % (script_file, exec_cmd_params)))
+        self.debug(('sleep %s seconds for egress rule to affect on Router.' % self.services['sleep']))
+        time.sleep(self.services['sleep'])
+        result = ssh.execute(('%s %s' % (script_file, exec_cmd_params)))
+        self.debug(('Result is=%s' % result))
+        exec_success = False
+        if (str(result).strip() == expected_result):
+            self.debug('script executed succesfully exec_success=True')
+            exec_success = True
+        ssh.execute(('rm -rf %s' % script_file))
+        if negative_test:
+            self.assertEqual(exec_success, True, ('Script result is %s matching with %s' % (result, expected_result)))
+        else:
+            self.assertEqual(exec_success, True, ('Script result is %s is not matching with %s' % (result, expected_result)))
+    except Exception as e:
+        self.debug(('Error=%s' % e))
+        raise e

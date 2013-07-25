@@ -1,0 +1,28 @@
+@attr(tags=['advanced'])
+@log_test_exceptions
+def test_13_1_egress_fr13(self):
+    'Test Redundant Router : Master failover\n        '
+    self.create_vm(RR=True, egress_policy=False)
+    self.createEgressRule()
+    vm_network_id = self.virtual_machine.nic[0].networkid
+    self.debug(('Listing routers for network: %s' % vm_network_id))
+    routers = Router.list(self.apiclient, networkid=vm_network_id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    self.assertEqual(len(routers), 2, 'Length of the list router should be 2 (Backup & master)')
+    if (routers[0].redundantstate == 'MASTER'):
+        master_router = routers[0]
+        backup_router = routers[1]
+    else:
+        master_router = routers[1]
+        backup_router = routers[0]
+    self.debug(('Redundant states: %s, %s' % (master_router.redundantstate, backup_router.redundantstate)))
+    self.debug('Stopping the Master router')
+    try:
+        Router.stop(self.apiclient, id=master_router.id)
+    except Exception as e:
+        self.fail(('Failed to stop master router: %s' % e))
+    time.sleep(60)
+    self.debug(('Checking state of the master router in %s' % self.network.name))
+    routers = Router.list(self.apiclient, id=master_router.id, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'list router should return Master and backup routers')
+    self.exec_script_on_user_vm('ping -c 1 www.google.com', "| grep -oP '\\d+(?=% packet loss)'", "['0']", negative_test=False)
