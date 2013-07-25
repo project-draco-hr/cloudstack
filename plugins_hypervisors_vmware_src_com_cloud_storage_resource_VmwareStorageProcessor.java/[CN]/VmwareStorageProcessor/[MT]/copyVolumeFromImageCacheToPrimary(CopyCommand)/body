@@ -1,3 +1,31 @@
 {
-  return null;
+  VolumeObjectTO srcVolume=(VolumeObjectTO)cmd.getSrcTO();
+  VolumeObjectTO destVolume=(VolumeObjectTO)cmd.getDestTO();
+  VmwareContext context=hostService.getServiceContext(cmd);
+  try {
+    NfsTO srcStore=(NfsTO)srcVolume.getDataStore();
+    PrimaryDataStoreTO destStore=(PrimaryDataStoreTO)destVolume.getDataStore();
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
+    String uuid=destStore.getUuid();
+    ManagedObjectReference morDatastore=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,uuid);
+    if (morDatastore == null) {
+      morDatastore=hyperHost.mountDatastore(false,destStore.getHost(),0,destStore.getPath(),destStore.getUuid().replace("-",""));
+      if (morDatastore == null) {
+        throw new Exception("Unable to mount storage pool on host. storeUrl: " + destStore.getHost() + ":/"+ destStore.getPath());
+      }
+    }
+    Pair<String,String> result=copyVolumeFromSecStorage(hyperHost,srcVolume.getPath(),new DatastoreMO(context,morDatastore),srcStore.getUrl());
+    deleteVolumeDirOnSecondaryStorage(result.first(),srcStore.getUrl());
+    VolumeObjectTO newVolume=new VolumeObjectTO();
+    newVolume.setPath(result.second());
+    return new CopyCmdAnswer(newVolume);
+  }
+ catch (  Throwable t) {
+    if (t instanceof RemoteException) {
+      hostService.invalidateServiceContext(context);
+    }
+    String msg="Unable to execute CopyVolumeCommand due to exception";
+    s_logger.error(msg,t);
+    return new CopyCmdAnswer("CopyVolumeCommand failed due to exception: " + t.toString());
+  }
 }

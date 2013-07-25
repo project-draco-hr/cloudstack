@@ -1,0 +1,53 @@
+{
+  VirtualMachineMO workerVm=null;
+  VirtualMachineMO vmMo=null;
+  String exportName=UUID.randomUUID().toString();
+  try {
+    ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,poolId);
+    if (morDs == null) {
+      String msg="Unable to find volumes's storage pool for copy volume operation";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null) {
+      DatastoreMO dsMo=new DatastoreMO(hyperHost.getContext(),morDs);
+      VirtualMachineConfigSpec vmConfig=new VirtualMachineConfigSpec();
+      vmConfig.setName(workerVmName);
+      vmConfig.setMemoryMB((long)4);
+      vmConfig.setNumCPUs(1);
+      vmConfig.setGuestId(VirtualMachineGuestOsIdentifier.OTHER_GUEST.value());
+      VirtualMachineFileInfo fileInfo=new VirtualMachineFileInfo();
+      fileInfo.setVmPathName(String.format("[%s]",dsMo.getName()));
+      vmConfig.setFiles(fileInfo);
+      VirtualLsiLogicController scsiController=new VirtualLsiLogicController();
+      scsiController.setSharedBus(VirtualSCSISharing.NO_SHARING);
+      scsiController.setBusNumber(0);
+      scsiController.setKey(1);
+      VirtualDeviceConfigSpec scsiControllerSpec=new VirtualDeviceConfigSpec();
+      scsiControllerSpec.setDevice(scsiController);
+      scsiControllerSpec.setOperation(VirtualDeviceConfigSpecOperation.ADD);
+      vmConfig.getDeviceChange().add(scsiControllerSpec);
+      hyperHost.createVm(vmConfig);
+      workerVm=hyperHost.findVmOnHyperHost(workerVmName);
+      if (workerVm == null) {
+        String msg="Unable to create worker VM to execute CopyVolumeCommand";
+        s_logger.error(msg);
+        throw new Exception(msg);
+      }
+      String datastoreVolumePath=getVolumePathInDatastore(dsMo,volumePath + ".vmdk");
+      workerVm.attachDisk(new String[]{datastoreVolumePath},morDs);
+      vmMo=workerVm;
+    }
+    vmMo.createSnapshot(exportName,"Temporary snapshot for copy-volume command",false,false);
+    exportVolumeToSecondaryStroage(vmMo,volumePath,secStorageUrl,destVolumePath,exportName,hostService.getWorkerName(hyperHost.getContext(),cmd,1));
+    return new Pair<String,String>(destVolumePath,exportName);
+  }
+  finally {
+    vmMo.removeSnapshot(exportName,false);
+    if (workerVm != null) {
+      workerVm.detachAllDisks();
+      workerVm.destroy();
+    }
+  }
+}
