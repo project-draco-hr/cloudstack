@@ -34,21 +34,25 @@
       }
       VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
       for (int i=0; i < vdisks.length; i++) {
-        @SuppressWarnings("deprecation") List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
+        List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
         for (        Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
           String vmdkName=fileItem.first().split(" ")[1];
           if (vmdkName.endsWith(".vmdk")) {
             vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
           }
-          String[] s=vmdkName.split("-");
-          mapNewDisk.put(s[0],vmdkName);
+          String baseName=extractSnapshotBaseFileName(vmdkName);
+          mapNewDisk.put(baseName,vmdkName);
         }
       }
       for (      VolumeTO volumeTO : volumeTOs) {
-        String parentUUID=volumeTO.getPath();
-        String[] s=parentUUID.split("-");
-        String key=s[0];
-        volumeTO.setPath(mapNewDisk.get(key));
+        String baseName=extractSnapshotBaseFileName(volumeTO.getPath());
+        String newPath=mapNewDisk.get(baseName);
+        long size=getVMSnapshotChainSize(context,hyperHost,baseName + "*.vmdk",volumeTO.getPoolUuid(),newPath);
+        if (volumeTO.getType() == Volume.Type.ROOT) {
+          size=size + getVMSnapshotChainSize(context,hyperHost,cmd.getVmName() + "*.vmsn",volumeTO.getPoolUuid(),null);
+        }
+        volumeTO.setChainSize(size);
+        volumeTO.setPath(newPath);
       }
       return new CreateVMSnapshotAnswer(cmd,cmd.getTarget(),volumeTOs);
     }
