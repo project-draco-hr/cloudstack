@@ -1,0 +1,37 @@
+{
+  s_logger.trace("Agent Monitor is started.");
+  try {
+    List<Long> behindAgents=findAgentsBehindOnPing();
+    for (    Long agentId : behindAgents) {
+      SearchCriteriaService<HostVO,HostVO> sc=SearchCriteria2.create(HostVO.class);
+      sc.addAnd(sc.getEntity().getId(),Op.EQ,agentId);
+      HostVO h=sc.find();
+      if (h != null) {
+        ResourceState resourceState=h.getResourceState();
+        if (resourceState == ResourceState.Disabled || resourceState == ResourceState.Maintenance || resourceState == ResourceState.ErrorInMaintenance) {
+          status_logger.debug("Ping timeout but host " + agentId + " is in resource state of "+ resourceState+ ", so no investigation");
+          disconnectWithoutInvestigation(agentId,Event.ShutdownRequested);
+        }
+ else {
+          status_logger.debug("Ping timeout for host " + agentId + ", do invstigation");
+          disconnectWithInvestigation(agentId,Event.PingTimeout);
+        }
+      }
+    }
+    SearchCriteriaService<HostVO,HostVO> sc=SearchCriteria2.create(HostVO.class);
+    sc.addAnd(sc.getEntity().getResourceState(),Op.IN,ResourceState.PrepareForMaintenance,ResourceState.ErrorInMaintenance);
+    List<HostVO> hosts=sc.list();
+    for (    HostVO host : hosts) {
+      long hostId=host.getId();
+      DataCenterVO dcVO=_dcDao.findById(host.getDataCenterId());
+      HostPodVO podVO=_podDao.findById(host.getPodId());
+      String hostDesc="name: " + host.getName() + " (id:"+ hostId+ "), availability zone: "+ dcVO.getName()+ ", pod: "+ podVO.getName();
+      if (host.getType() != Host.Type.Storage) {
+      }
+    }
+  }
+ catch (  Throwable th) {
+    s_logger.error("Caught the following exception: ",th);
+  }
+  s_logger.trace("Agent Monitor is leaving the building!");
+}
