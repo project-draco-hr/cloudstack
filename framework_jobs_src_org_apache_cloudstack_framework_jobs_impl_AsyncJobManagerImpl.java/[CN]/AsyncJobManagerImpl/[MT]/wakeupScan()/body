@@ -1,0 +1,25 @@
+{
+  Date cutDate=DateUtil.currentGMTTime();
+  Transaction txn=Transaction.currentTxn();
+  SearchCriteria<Long> sc=JoinJobTimeSearch.create();
+  sc.setParameters("beginTime",cutDate);
+  sc.setParameters("endTime",cutDate);
+  List<Long> result=_joinMapDao.customSearch(sc,null);
+  txn.start();
+  if (result.size() > 0) {
+    Collections.sort(result);
+    Long[] ids=result.toArray(new Long[result.size()]);
+    AsyncJobVO job=_jobDao.createForUpdate();
+    job.setPendingSignals(AsyncJob.Constants.SIGNAL_MASK_WAKEUP);
+    SearchCriteria<AsyncJobVO> sc2=JobIdsSearch.create("ids",ids);
+    SearchCriteria<SyncQueueItemVO> queueItemsSC=QueueJobIdsSearch.create("contentIds",ids);
+    _jobDao.update(job,sc2);
+    SyncQueueItemVO item=_queueItemDao.createForUpdate();
+    item.setLastProcessNumber(null);
+    item.setLastProcessMsid(null);
+    _queueItemDao.update(item,queueItemsSC);
+  }
+  List<Long> wakupIds=_joinMapDao.findJobsToWakeBetween(cutDate);
+  txn.commit();
+  return wakupIds;
+}

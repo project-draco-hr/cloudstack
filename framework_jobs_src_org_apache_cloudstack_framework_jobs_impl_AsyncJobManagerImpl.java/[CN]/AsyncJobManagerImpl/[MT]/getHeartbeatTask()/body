@@ -1,0 +1,35 @@
+{
+  return new Runnable(){
+    @Override public void run(){
+      Transaction txn=Transaction.open("AsyncJobManagerImpl.getHeartbeatTask");
+      try {
+        List<SyncQueueItemVO> l=_queueMgr.dequeueFromAny(getMsid(),MAX_ONETIME_SCHEDULE_SIZE);
+        if (l != null && l.size() > 0) {
+          for (          SyncQueueItemVO item : l) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Execute sync-queue item: " + item.toString());
+            }
+            executeQueueItem(item,false);
+          }
+        }
+        List<Long> standaloneWakeupJobs=wakeupScan();
+        for (        Long jobId : standaloneWakeupJobs) {
+          AsyncJobVO job=_jobDao.findById(jobId);
+          if (job != null && (job.getPendingSignals() & AsyncJob.Constants.SIGNAL_MASK_WAKEUP) != 0)           scheduleExecution(job,false);
+        }
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception when trying to execute queue item, ",e);
+      }
+ finally {
+        try {
+          txn.close();
+        }
+ catch (        Throwable e) {
+          s_logger.error("Unexpected exception",e);
+        }
+      }
+    }
+  }
+;
+}

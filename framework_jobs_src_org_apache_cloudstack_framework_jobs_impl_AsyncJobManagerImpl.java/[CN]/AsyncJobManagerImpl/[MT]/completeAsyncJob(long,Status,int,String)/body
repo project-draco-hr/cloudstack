@@ -1,0 +1,46 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Complete async job-" + jobId + ", jobStatus: "+ jobStatus+ ", resultCode: "+ resultCode+ ", result: "+ resultObject);
+  }
+  Transaction txn=Transaction.currentTxn();
+  try {
+    txn.start();
+    AsyncJobVO job=_jobDao.findById(jobId);
+    if (job == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("job-" + jobId + " no longer exists, we just log completion info here. "+ jobStatus+ ", resultCode: "+ resultCode+ ", result: "+ resultObject);
+      }
+      txn.rollback();
+      return;
+    }
+    if (job.getStatus() != JobInfo.Status.IN_PROGRESS) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("job-" + jobId + " is already completed.");
+      }
+      txn.rollback();
+      return;
+    }
+    job.setCompleteMsid(getMsid());
+    job.setStatus(jobStatus);
+    job.setResultCode(resultCode);
+    job.setInstanceType(null);
+    job.setInstanceId(null);
+    if (resultObject != null) {
+      job.setResult(resultObject);
+    }
+    job.setLastUpdated(DateUtil.currentGMTTime());
+    _jobDao.update(jobId,job);
+    List<Long> wakeupList=wakeupByJoinedJobCompletion(jobId);
+    _joinMapDao.disjoinAllJobs(jobId);
+    txn.commit();
+    for (    Long id : wakeupList) {
+      AsyncJobVO jobToWakeup=_jobDao.findById(id);
+      if (jobToWakeup != null && (jobToWakeup.getPendingSignals() & AsyncJob.Constants.SIGNAL_MASK_WAKEUP) != 0)       scheduleExecution(jobToWakeup,false);
+    }
+    _messageBus.publish(null,AsyncJob.Topics.JOB_STATE,PublishScope.GLOBAL,jobId);
+  }
+ catch (  Exception e) {
+    s_logger.error("Unexpected exception while completing async job-" + jobId,e);
+    txn.rollback();
+  }
+}
