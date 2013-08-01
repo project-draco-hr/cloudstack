@@ -1,6 +1,12 @@
 {
   Account owner=_accountMgr.getAccount(networkOwnerId);
-  NetworkOfferingVO ntwkOff=findSystemNetworkOffering(NetworkOffering.SystemPrivateGatewayNetworkOffering);
+  NetworkOfferingVO ntwkOff=null;
+  if (networkOfferingId != null) {
+    ntwkOff=_networkOfferingDao.findById(networkOfferingId);
+  }
+  if (ntwkOff == null) {
+    ntwkOff=findSystemNetworkOffering(NetworkOffering.SystemPrivateGatewayNetworkOffering);
+  }
   PhysicalNetwork pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
   if (pNtwk == null) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Unable to find a physical network" + " having the given id");
@@ -24,18 +30,24 @@
     throw new InvalidParameterValueException("Invalid netmask");
   }
   cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
+  URI uri=BroadcastDomainType.fromString(broadcastUriString);
+  String uriString=uri.toString();
+  BroadcastDomainType tiep=BroadcastDomainType.getSchemeValue(uri);
+  if (!(tiep == BroadcastDomainType.Vlan || tiep == BroadcastDomainType.Lswitch)) {
+    throw new InvalidParameterValueException("unsupported type of broadcastUri specified: " + broadcastUriString);
+  }
   Transaction txn=Transaction.currentTxn();
   txn.start();
   DataCenterVO dc=_dcDao.lockRow(pNtwk.getDataCenterId(),true);
-  Network privateNetwork=_networksDao.getPrivateNetwork(BroadcastDomainType.Vlan.toUri(vlan).toString(),cidr,networkOwnerId,pNtwk.getDataCenterId());
+  Network privateNetwork=_networksDao.getPrivateNetwork(uriString,cidr,networkOwnerId,pNtwk.getDataCenterId(),null);
   if (privateNetwork == null) {
-    privateNetwork=_networkMgr.createGuestNetwork(ntwkOff.getId(),networkName,displayText,gateway,cidr,vlan,null,owner,null,pNtwk,pNtwk.getDataCenterId(),ACLType.Account,null,vpcId,null,null,true,null);
+    privateNetwork=_networkMgr.createGuestNetwork(ntwkOff.getId(),networkName,displayText,gateway,cidr,uriString,null,owner,null,pNtwk,pNtwk.getDataCenterId(),ACLType.Account,null,vpcId,null,null,true,null);
     s_logger.debug("Created private network " + privateNetwork);
   }
  else {
     s_logger.debug("Private network already exists: " + privateNetwork);
     if (vpcId.equals(privateNetwork.getVpcId())) {
-      throw new InvalidParameterValueException("Private network for the vlan: " + vlan + " and cidr  "+ cidr+ "  already exists "+ "for Vpc "+ vpcId+ " in zone "+ _entityMgr.findById(DataCenter.class,pNtwk.getDataCenterId()).getName());
+      throw new InvalidParameterValueException("Private network for the vlan: " + uriString + " and cidr  "+ cidr+ "  already exists "+ "for Vpc "+ vpcId+ " in zone "+ _entityMgr.findById(DataCenter.class,pNtwk.getDataCenterId()).getName());
     }
   }
   PrivateIpVO privateIp=_privateIpDao.findByIpAndSourceNetworkIdAndVpcId(privateNetwork.getId(),startIp,vpcId);
