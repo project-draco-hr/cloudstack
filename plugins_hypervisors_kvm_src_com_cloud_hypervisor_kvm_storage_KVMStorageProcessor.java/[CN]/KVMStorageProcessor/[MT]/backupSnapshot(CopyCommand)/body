@@ -25,15 +25,68 @@
     snapshotDestPath=ssPmountPath + File.separator + snapshotRelPath;
     KVMStoragePool primaryPool=storagePoolMgr.getStoragePool(primaryStore.getPoolType(),primaryStore.getUuid());
     KVMPhysicalDisk snapshotDisk=primaryPool.getPhysicalDisk(volumePath);
-    Script command=new Script(_manageSnapshotPath,cmd.getWait() * 1000,s_logger);
-    command.add("-b",snapshotDisk.getPath());
-    command.add("-n",snapshotName);
-    command.add("-p",snapshotDestPath);
-    command.add("-t",snapshotName);
-    String result=command.execute();
-    if (result != null) {
-      s_logger.debug("Failed to backup snaptshot: " + result);
-      return new CopyCmdAnswer(result);
+    if (primaryPool.getType() == StoragePoolType.RBD) {
+      try {
+        Rados r=new Rados(primaryPool.getAuthUserName());
+        r.confSet("mon_host",primaryPool.getSourceHost() + ":" + primaryPool.getSourcePort());
+        r.confSet("key",primaryPool.getAuthSecret());
+        r.connect();
+        s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
+        IoCTX io=r.ioCtxCreate(primaryPool.getSourceDir());
+        Rbd rbd=new Rbd(io);
+        RbdImage image=rbd.open(snapshotDisk.getName(),snapshotName);
+        long startTime=System.currentTimeMillis() / 1000;
+        File snapDir=new File(snapshotDestPath);
+        s_logger.debug("Attempting to create " + snapDir.getAbsolutePath() + " recursively");
+        FileUtils.forceMkdir(snapDir);
+        File snapFile=new File(snapshotDestPath + "/" + snapshotName);
+        s_logger.debug("Backing up RBD snapshot to " + snapFile.getAbsolutePath());
+        BufferedOutputStream bos=new BufferedOutputStream(new FileOutputStream(snapFile));
+        int chunkSize=4194304;
+        long offset=0;
+        while (true) {
+          byte[] buf=new byte[chunkSize];
+          int bytes=image.read(offset,buf,chunkSize);
+          if (bytes <= 0) {
+            break;
+          }
+          bos.write(buf,0,bytes);
+          offset+=bytes;
+        }
+        s_logger.debug("Completed backing up RBD snapshot " + snapshotName + " to  "+ snapFile.getAbsolutePath()+ ". Bytes written: "+ offset);
+        bos.close();
+        s_logger.debug("Attempting to remove snapshot RBD " + snapshotName + " from image "+ snapshotDisk.getName());
+        image.snapRemove(snapshotName);
+        r.ioCtxDestroy(io);
+      }
+ catch (      RadosException e) {
+        s_logger.error("A RADOS operation failed. The error was: " + e.getMessage());
+        return new CopyCmdAnswer(e.toString());
+      }
+catch (      RbdException e) {
+        s_logger.error("A RBD operation on " + snapshotDisk.getName() + " failed. The error was: "+ e.getMessage());
+        return new CopyCmdAnswer(e.toString());
+      }
+catch (      FileNotFoundException e) {
+        s_logger.error("Failed to open " + snapshotDestPath + ". The error was: "+ e.getMessage());
+        return new CopyCmdAnswer(e.toString());
+      }
+catch (      IOException e) {
+        s_logger.debug("An I/O error occured during a snapshot operation on " + snapshotDestPath);
+        return new CopyCmdAnswer(e.toString());
+      }
+    }
+ else {
+      Script command=new Script(_manageSnapshotPath,cmd.getWait() * 1000,s_logger);
+      command.add("-b",snapshotDisk.getPath());
+      command.add("-n",snapshotName);
+      command.add("-p",snapshotDestPath);
+      command.add("-t",snapshotName);
+      String result=command.execute();
+      if (result != null) {
+        s_logger.debug("Failed to backup snaptshot: " + result);
+        return new CopyCmdAnswer(result);
+      }
     }
     DomainInfo.DomainState state=null;
     Domain vm=null;
@@ -57,13 +110,15 @@
       }
     }
  else {
-      command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
-      command.add("-d",snapshotDisk.getPath());
-      command.add("-n",snapshotName);
-      result=command.execute();
-      if (result != null) {
-        s_logger.debug("Failed to backup snapshot: " + result);
-        return new CopyCmdAnswer("Failed to backup snapshot: " + result);
+      if (primaryPool.getType() != StoragePoolType.RBD) {
+        Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
+        command.add("-d",snapshotDisk.getPath());
+        command.add("-n",snapshotName);
+        String result=command.execute();
+        if (result != null) {
+          s_logger.debug("Failed to backup snapshot: " + result);
+          return new CopyCmdAnswer("Failed to backup snapshot: " + result);
+        }
       }
     }
     SnapshotObjectTO newSnapshot=new SnapshotObjectTO();

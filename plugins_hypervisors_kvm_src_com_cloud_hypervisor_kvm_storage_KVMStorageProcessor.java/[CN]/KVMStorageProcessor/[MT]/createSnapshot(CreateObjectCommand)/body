@@ -18,10 +18,6 @@
       }
     }
     KVMStoragePool primaryPool=storagePoolMgr.getStoragePool(primaryStore.getPoolType(),primaryStore.getUuid());
-    if (primaryPool.getType() == StoragePoolType.RBD) {
-      s_logger.debug("Snapshots are not supported on RBD volumes");
-      return new CreateObjectAnswer("Snapshots are not supported on RBD volumes");
-    }
     KVMPhysicalDisk disk=primaryPool.getPhysicalDisk(volume.getPath());
     if (state == DomainInfo.DomainState.VIR_DOMAIN_RUNNING && !primaryPool.isExternalSnapshot()) {
       String vmUuid=vm.getUUIDString();
@@ -36,13 +32,34 @@
       }
     }
  else {
-      final Script command=new Script(_manageSnapshotPath,this._cmdsTimeout,s_logger);
-      command.add("-c",disk.getPath());
-      command.add("-n",snapshotName);
-      String result=command.execute();
-      if (result != null) {
-        s_logger.debug("Failed to manage snapshot: " + result);
-        return new CreateObjectAnswer("Failed to manage snapshot: " + result);
+      if (primaryPool.getType() == StoragePoolType.RBD) {
+        try {
+          Rados r=new Rados(primaryPool.getAuthUserName());
+          r.confSet("mon_host",primaryPool.getSourceHost() + ":" + primaryPool.getSourcePort());
+          r.confSet("key",primaryPool.getAuthSecret());
+          r.connect();
+          s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
+          IoCTX io=r.ioCtxCreate(primaryPool.getSourceDir());
+          Rbd rbd=new Rbd(io);
+          RbdImage image=rbd.open(disk.getName());
+          s_logger.debug("Attempting to create RBD snapshot " + disk.getName() + "@"+ snapshotName);
+          image.snapCreate(snapshotName);
+          rbd.close(image);
+          r.ioCtxDestroy(io);
+        }
+ catch (        Exception e) {
+          s_logger.error("A RBD snapshot operation on " + disk.getName() + " failed. The error was: "+ e.getMessage());
+        }
+      }
+ else {
+        final Script command=new Script(_manageSnapshotPath,this._cmdsTimeout,s_logger);
+        command.add("-c",disk.getPath());
+        command.add("-n",snapshotName);
+        String result=command.execute();
+        if (result != null) {
+          s_logger.debug("Failed to manage snapshot: " + result);
+          return new CreateObjectAnswer("Failed to manage snapshot: " + result);
+        }
       }
     }
     SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
