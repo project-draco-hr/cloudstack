@@ -15,18 +15,19 @@
       throw new Exception("Unable to find datastore in vSphere");
     }
     DatastoreMO dsMo=new DatastoreMO(context,morDatastore);
-    String vmdkName=volume.getName() + "-" + volume.getId();
+    String vmdkName=volume.getName();
     if (srcStore == null) {
       String dummyVmName=this.hostService.getWorkerName(context,cmd,0);
       try {
-        vmMo=prepareVolumeHostDummyVm(hyperHost,dsMo,dummyVmName);
+        vmMo=HypervisorHostHelper.createWorkerVM(hyperHost,dsMo,dummyVmName);
         if (vmMo == null) {
           throw new Exception("Unable to create a dummy VM for volume creation");
         }
-        String volumeDatastorePath=String.format("[%s] %s.vmdk",dsMo.getName(),vmdkName);
+        String vmdkFilePair[]=VmwareStorageLayoutHelper.getVmdkFilePairDatastorePath(dsMo,null,vmdkName,VmwareStorageLayoutType.CLOUDSTACK_LEGACY,true);
+        String volumeDatastorePath=vmdkFilePair[0];
 synchronized (this) {
           s_logger.info("Delete file if exists in datastore to clear the way for creating the volume. file: " + volumeDatastorePath);
-          VmwareHelper.deleteVolumeVmdkFiles(dsMo,vmdkName,dcMo);
+          VmwareStorageLayoutHelper.deleteVolumeVmdkFiles(dsMo,vmdkName,dcMo);
           vmMo.createDisk(volumeDatastorePath,(int)(volume.getSize() / (1024L * 1024L)),morDatastore,-1);
           vmMo.detachDisk(volumeDatastorePath,false);
         }
@@ -62,7 +63,7 @@ synchronized (this) {
       vmMo.detachAllDisks();
       s_logger.info("destroy volume-wrapper VM " + vmdkName);
       vmMo.destroy();
-      String srcFile=String.format("[%s] %s/",dsMo.getName(),vmdkName);
+      String srcFile=dsMo.getDatastorePath(vmdkName,true);
       dsMo.deleteFile(srcFile,dcMo.getMor(),true);
       VolumeObjectTO newVol=new VolumeObjectTO();
       newVol.setPath(vmdkName);

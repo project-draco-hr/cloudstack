@@ -12,15 +12,16 @@
     DatastoreMO dsMo=new DatastoreMO(context,morDatastore);
     VirtualMachineMO vmMo=null;
     String volumeUuid=UUID.randomUUID().toString().replace("-","");
-    String volumeDatastorePath=String.format("[%s] %s.vmdk",dsMo.getName(),volumeUuid);
+    String volumeDatastorePath=dsMo.getDatastorePath(volumeUuid + ".vmdk");
     String dummyVmName=this.hostService.getWorkerName(context,cmd,0);
     try {
-      vmMo=prepareVolumeHostDummyVm(hyperHost,dsMo,dummyVmName);
+      s_logger.info("Create worker VM " + dummyVmName);
+      vmMo=HypervisorHostHelper.createWorkerVM(hyperHost,dsMo,dummyVmName);
       if (vmMo == null) {
         throw new Exception("Unable to create a dummy VM for volume creation");
       }
 synchronized (this) {
-        VmwareHelper.deleteVolumeVmdkFiles(dsMo,volumeUuid.toString(),dcMo);
+        VmwareStorageLayoutHelper.deleteVolumeVmdkFiles(dsMo,volumeUuid.toString(),dcMo);
         vmMo.createDisk(volumeDatastorePath,(int)(volume.getSize() / (1024L * 1024L)),morDatastore,vmMo.getScsiDeviceControllerKey());
         vmMo.detachDisk(volumeDatastorePath,false);
       }
@@ -31,8 +32,10 @@ synchronized (this) {
     }
   finally {
       s_logger.info("Destroy dummy VM after volume creation");
-      vmMo.detachAllDisks();
-      vmMo.destroy();
+      if (vmMo != null) {
+        vmMo.detachAllDisks();
+        vmMo.destroy();
+      }
     }
   }
  catch (  Throwable e) {
