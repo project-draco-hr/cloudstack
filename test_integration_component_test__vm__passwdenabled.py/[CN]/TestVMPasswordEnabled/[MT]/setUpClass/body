@@ -6,11 +6,18 @@ def setUpClass(cls):
     zone = get_zone(cls.api_client, cls.services)
     cls.services['mode'] = zone.networktype
     template = get_template(cls.api_client, zone.id, cls.services['ostype'])
-    cls.services['service_offerings']['small']['zoneid'] = zone.id
-    cls.services['service_offerings']['small']['template'] = template.id
+    cls.services['small']['zoneid'] = zone.id
+    cls.services['small']['template'] = template.id
     cls.account = Account.create(cls.api_client, cls.services['account'], domainid=domain.id)
     cls.small_offering = ServiceOffering.create(cls.api_client, cls.services['service_offerings']['small'])
     cls.virtual_machine = VirtualMachine.create(cls.api_client, cls.services['small'], accountid=cls.account.name, domainid=cls.account.domainid, serviceofferingid=cls.small_offering.id, mode=cls.services['mode'])
+    networkid = cls.virtual_machine.nic[0].networkid
+    EgressFireWallRule.create(cls.api_client, networkid=networkid, protocol=cls.services['egress']['protocol'], startport=cls.services['egress']['startport'], endport=cls.services['egress']['endport'], cidrlist=cls.services['egress']['cidrlist'])
+    cls.virtual_machine.password = cls.services['small']['password']
+    ssh = cls.virtual_machine.get_ssh_client()
+    cmds = ['cd /etc/init.d;wget http://10.147.40.145/cloud-set-guest-password', 'chmod +x /etc/init.d/cloud-set-guest-password', 'chkconfig --add cloud-set-guest-password']
+    for c in cmds:
+        result = ssh.execute(c)
     cls.virtual_machine.stop(cls.api_client)
     timeout = cls.services['timeout']
     while True:
@@ -21,13 +28,13 @@ def setUpClass(cls):
             if (vm.state == 'Stopped'):
                 break
         if (timeout == 0):
-            raise Exception(('Failed to stop VM (ID: %s) in change service offering' % vm.id))
+            raise Exception(('Failed to stop VM (ID: %s) ' % vm.id))
         timeout = (timeout - 1)
     list_volume = list_volumes(cls.api_client, virtualmachineid=cls.virtual_machine.id, type='ROOT', listall=True)
     if isinstance(list_volume, list):
         cls.volume = list_volume[0]
     else:
-        raise Exception(('Exception: Unable to find root volume foe VM: %s' % cls.virtual_machine.id))
+        raise Exception(('Exception: Unable to find root volume for VM: %s' % cls.virtual_machine.id))
     cls.services['template']['ostype'] = cls.services['ostype']
     cls.pw_enabled_template = Template.create(cls.api_client, cls.services['template'], cls.volume.id, account=cls.account.name, domainid=cls.account.domainid)
     cls.virtual_machine.delete(cls.api_client)
