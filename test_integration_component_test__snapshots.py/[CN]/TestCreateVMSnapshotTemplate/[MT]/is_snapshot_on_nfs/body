@@ -1,0 +1,32 @@
+def is_snapshot_on_nfs(self, snapshot_id):
+    '\n        Checks whether a snapshot with id (not UUID) `snapshot_id` is present on the nfs storage\n\n        @param snapshot_id: id of the snapshot (not uuid)\n        @return: True if snapshot is found, False otherwise\n        '
+    secondaryStores = ImageStore.list(self.apiclient, zoneid=self.zone.id)
+    self.assertTrue(isinstance(secondaryStores, list), 'Not a valid response for listImageStores')
+    self.assertNotEqual(len(secondaryStores), 0, ('No image stores found in zone %s' % self.zone.id))
+    secondaryStore = secondaryStores[0]
+    if (str(secondaryStore.providername).lower() != 'nfs'):
+        self.skipTest(('TODO: %s test works only against nfs secondary storage' % self._testMethodName))
+    qresultset = self.dbclient.execute(("select install_path from snapshot_store_ref where snapshot_id='%s' and store_role='Image';" % snapshot_id))
+    self.assertEqual(isinstance(qresultset, list), True, ('Invalid db query response for snapshot %s' % snapshot_id))
+    self.assertNotEqual(len(qresultset), 0, ('No such snapshot %s found in the cloudstack db' % snapshot_id))
+    snapshotPath = qresultset[0][0]
+    nfsurl = secondaryStore.url
+    from urllib2 import urlparse
+    parse_url = urlparse.urlsplit(nfsurl, scheme='nfs')
+    (host, path) = (parse_url.netloc, parse_url.path)
+    snapshots = []
+    try:
+        ssh_client = remoteSSHClient(self.config.mgtSvr[0].mgtSvrIp, 22, self.config.mgtSvr[0].user, self.config.mgtSvr[0].passwd)
+        cmds = [('mkdir -p %s' % self.services['paths']['mount_dir']), ('mount -t %s %s/%s %s' % ('nfs', host, path, self.services['paths']['mount_dir'])), ('ls %s' % snapshotPath)]
+        for c in cmds:
+            self.debug(('command: %s' % c))
+            result = ssh_client.execute(c)
+            self.debug(('Result: %s' % result))
+        snapshots.extend(result)
+        cmds = [('umount %s' % self.services['paths']['mount_dir'])]
+        for c in cmds:
+            ssh_client.execute(c)
+    except Exception as e:
+        self.fail(('SSH failed for management server: %s - %s' % (self.services['mgmt_server']['ipaddress'], e)))
+    res = str(snapshots)
+    return (res.count(snapshot_id) == 1)
