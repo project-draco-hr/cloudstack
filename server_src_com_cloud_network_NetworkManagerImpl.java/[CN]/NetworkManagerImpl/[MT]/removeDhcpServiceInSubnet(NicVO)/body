@@ -1,0 +1,22 @@
+{
+  Network network=_networksDao.findById(nic.getNetworkId());
+  DhcpServiceProvider dhcpServiceProvider=getDhcpServiceProvider(network);
+  try {
+    NicIpAliasVO ipAlias=_nicIpAliasDao.findByGatewayAndNetworkIdAndState(nic.getGateway(),network.getId(),NicIpAlias.state.active);
+    if (ipAlias != null) {
+      ipAlias.setState(NicIpAlias.state.revoked);
+      Transaction txn=Transaction.currentTxn();
+      txn.start();
+      _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
+      IPAddressVO aliasIpaddressVo=_publicIpAddressDao.findByIpAndSourceNetworkId(ipAlias.getNetworkId(),ipAlias.getIp4Address());
+      _publicIpAddressDao.unassignIpAddress(aliasIpaddressVo.getId());
+      txn.commit();
+      if (!dhcpServiceProvider.removeDhcpSupportForSubnet(network)) {
+        s_logger.warn("Failed to remove the ip alias on the router, marking it as removed in db and freed the allocated ip " + ipAlias.getIp4Address());
+      }
+    }
+  }
+ catch (  ResourceUnavailableException e) {
+    s_logger.info("Unable to delete the ip alias due to unable to contact the virtualrouter.");
+  }
+}
