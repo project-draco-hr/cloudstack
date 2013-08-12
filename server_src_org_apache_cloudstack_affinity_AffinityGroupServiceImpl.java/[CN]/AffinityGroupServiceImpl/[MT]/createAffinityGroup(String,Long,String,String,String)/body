@@ -10,55 +10,8 @@
     throw new InvalidParameterValueException("Unable to create affinity group, no Affinity Group Types configured");
   }
   AffinityGroupProcessor processor=typeProcessorMap.get(affinityGroupType);
-  if (processor.isAdminControlledGroup() && !_accountMgr.isRootAdmin(caller.getType())) {
+  if (processor.isAdminControlledGroup()) {
     throw new PermissionDeniedException("Cannot create the affinity group");
   }
-  ControlledEntity.ACLType aclType=null;
-  Account owner=null;
-  boolean domainLevel=false;
-  if (account != null && domainId != null) {
-    owner=_accountMgr.finalizeOwner(caller,account,domainId,null);
-    aclType=ControlledEntity.ACLType.Account;
-  }
- else   if (domainId != null && account == null) {
-    if (!_accountMgr.isRootAdmin(caller.getType())) {
-      throw new InvalidParameterValueException("Unable to create affinity group, account name must be passed with the domainId");
-    }
- else     if (!processor.canBeSharedDomainWide()) {
-      throw new InvalidParameterValueException("Unable to create affinity group, account name is needed");
-    }
-    DomainVO domain=_domainDao.findById(domainId);
-    if (domain == null) {
-      throw new InvalidParameterValueException("Unable to find domain by specified id");
-    }
-    _accountMgr.checkAccess(caller,domain);
-    owner=_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
-    aclType=ControlledEntity.ACLType.Domain;
-    domainLevel=true;
-  }
- else {
-    owner=caller;
-    aclType=ControlledEntity.ACLType.Account;
-  }
-  if (_affinityGroupDao.isNameInUse(owner.getAccountId(),owner.getDomainId(),affinityGroupName)) {
-    throw new InvalidParameterValueException("Unable to create affinity group, a group with name " + affinityGroupName + " already exisits.");
-  }
-  if (domainLevel && _affinityGroupDao.findDomainLevelGroupByName(domainId,affinityGroupName) != null) {
-    throw new InvalidParameterValueException("Unable to create affinity group, a group with name " + affinityGroupName + " already exisits under the domain.");
-  }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  AffinityGroupVO group=new AffinityGroupVO(affinityGroupName,affinityGroupType,description,owner.getDomainId(),owner.getId(),aclType);
-  _affinityGroupDao.persist(group);
-  if (domainId != null && aclType == ACLType.Domain) {
-    boolean subDomainAccess=false;
-    subDomainAccess=processor.subDomainAccess();
-    AffinityGroupDomainMapVO domainMap=new AffinityGroupDomainMapVO(group.getId(),domainId,subDomainAccess);
-    _affinityGroupDomainMapDao.persist(domainMap);
-  }
-  txn.commit();
-  if (s_logger.isDebugEnabled()) {
-    s_logger.debug("Created affinity group =" + affinityGroupName);
-  }
-  return group;
+  return createAffinityGroupInternal(account,domainId,affinityGroupName,affinityGroupType,description);
 }
