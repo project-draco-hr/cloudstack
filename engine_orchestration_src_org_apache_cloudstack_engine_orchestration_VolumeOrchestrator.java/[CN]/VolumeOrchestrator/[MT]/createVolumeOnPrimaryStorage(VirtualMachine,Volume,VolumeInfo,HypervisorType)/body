@@ -1,0 +1,24 @@
+{
+  VirtualMachineTemplate rootDiskTmplt=_entityMgr.findById(VirtualMachineTemplate.class,vm.getTemplateId());
+  DataCenter dcVO=_entityMgr.findById(DataCenter.class,vm.getDataCenterId());
+  Pod pod=_entityMgr.findById(Pod.class,vm.getPodIdToDeployIn());
+  StoragePoolVO rootDiskPool=_storagePoolDao.findById(rootVolumeOfVm.getPoolId());
+  ServiceOffering svo=_entityMgr.findById(ServiceOffering.class,vm.getServiceOfferingId());
+  DiskOffering diskVO=_entityMgr.findById(DiskOffering.class,volume.getDiskOfferingId());
+  Long clusterId=(rootDiskPool == null ? null : rootDiskPool.getClusterId());
+  VolumeInfo vol=null;
+  if (volume.getState() == Volume.State.Allocated) {
+    vol=createVolume(volume,vm,rootDiskTmplt,dcVO,pod,clusterId,svo,diskVO,new ArrayList<StoragePool>(),volume.getSize(),rootDiskHyperType);
+  }
+ else   if (volume.getState() == Volume.State.Uploaded) {
+    vol=copyVolume(rootDiskPool,volume,vm,rootDiskTmplt,dcVO,pod,diskVO,svo,rootDiskHyperType);
+    if (vol != null) {
+      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.secondary_storage,new Long(volume.getSize()));
+      _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
+    }
+  }
+  VolumeVO volVO=_volsDao.findById(vol.getId());
+  volVO.setFormat(getSupportedImageFormatForCluster(rootDiskHyperType));
+  _volsDao.update(volVO.getId(),volVO);
+  return volFactory.getVolume(volVO.getId());
+}
