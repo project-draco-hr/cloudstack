@@ -1,0 +1,60 @@
+{
+  VolumeVO volume=_volsDao.findById(volumeId);
+  if (volume == null) {
+    throw new InvalidParameterValueException("Unable to aquire volume with ID: " + volumeId);
+  }
+  if (!_snapshotMgr.canOperateOnVolume(volume)) {
+    throw new InvalidParameterValueException("There are snapshot creating on it, Unable to delete the volume");
+  }
+  _accountMgr.checkAccess(caller,null,true,volume);
+  if (volume.getInstanceId() != null) {
+    throw new InvalidParameterValueException("Please specify a volume that is not attached to any VM.");
+  }
+  if (volume.getState() == Volume.State.UploadOp) {
+    VolumeDataStoreVO volumeStore=_volumeStoreDao.findByVolume(volume.getId());
+    if (volumeStore.getDownloadState() == VMTemplateStorageResourceAssoc.Status.DOWNLOAD_IN_PROGRESS) {
+      throw new InvalidParameterValueException("Please specify a volume that is not uploading");
+    }
+  }
+  try {
+    if (volume.getState() != Volume.State.Destroy && volume.getState() != Volume.State.Expunging && volume.getState() != Volume.State.Expunging) {
+      Long instanceId=volume.getInstanceId();
+      if (!volService.destroyVolume(volume.getId())) {
+        return false;
+      }
+      VMInstanceVO vmInstance=_vmInstanceDao.findById(instanceId);
+      if (instanceId == null || (vmInstance.getType().equals(VirtualMachine.Type.User))) {
+        _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.volume);
+        if (volume.getFolder() != null || volume.getPath() != null || volume.getState() == Volume.State.Allocated) {
+          _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
+        }
+ else {
+          _resourceLimitMgr.recalculateResourceCount(volume.getAccountId(),volume.getDomainId(),ResourceType.secondary_storage.getOrdinal());
+        }
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),Volume.class.getName(),volume.getUuid());
+      }
+    }
+    if (volume.getState() == Volume.State.Allocated) {
+      _volsDao.remove(volumeId);
+      stateTransitTo(volume,Volume.Event.DestroyRequested);
+      return true;
+    }
+    VolumeInfo volOnPrimary=volFactory.getVolume(volume.getId(),DataStoreRole.Primary);
+    if (volOnPrimary != null) {
+      s_logger.info("Expunging volume " + volume.getId() + " from primary data store");
+      AsyncCallFuture<VolumeApiResult> future=volService.expungeVolumeAsync(volOnPrimary);
+      future.get();
+    }
+    VolumeInfo volOnSecondary=volFactory.getVolume(volume.getId(),DataStoreRole.Image);
+    if (volOnSecondary != null) {
+      s_logger.info("Expunging volume " + volume.getId() + " from secondary data store");
+      AsyncCallFuture<VolumeApiResult> future2=volService.expungeVolumeAsync(volOnSecondary);
+      future2.get();
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Failed to expunge volume:",e);
+    return false;
+  }
+  return true;
+}
