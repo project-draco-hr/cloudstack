@@ -1,67 +1,72 @@
 {
-  HashMap<String,State> newStates=sync();
-  if (newStates == null) {
-    return null;
-  }
   try {
-    VmwareContext context=getServiceContext();
-    VmwareHypervisorHost hyperHost=getHyperHost(context);
-    VmwareManager mgr=hyperHost.getContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
-    if (hyperHost.isHyperHostConnected()) {
-      mgr.gcLeftOverVMs(context);
-      if (_recycleHungWorker) {
-        s_logger.info("Scan hung worker VM to recycle");
-        ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","config.template","runtime.powerState","runtime.bootTime"});
-        if (ocs != null) {
-          for (          ObjectContent oc : ocs) {
-            List<DynamicProperty> props=oc.getPropSet();
-            if (props != null) {
-              String vmName=null;
-              String internalName=null;
-              boolean template=false;
-              VirtualMachinePowerState powerState=VirtualMachinePowerState.POWERED_OFF;
-              GregorianCalendar bootTime=null;
-              for (              DynamicProperty prop : props) {
-                if (prop.getName().equals("name"))                 vmName=prop.getVal().toString();
- else                 if (prop.getName().equals("config.template"))                 template=(Boolean)prop.getVal();
- else                 if (prop.getName().equals("runtime.powerState"))                 powerState=(VirtualMachinePowerState)prop.getVal();
- else                 if (prop.getName().equals("runtime.bootTime"))                 bootTime=(GregorianCalendar)prop.getVal();
-              }
-              VirtualMachineMO vmMo=new VirtualMachineMO(hyperHost.getContext(),oc.getObj());
-              internalName=vmMo.getCustomFieldValue(CustomFieldConstants.CLOUD_VM_INTERNAL_NAME);
-              String name=null;
-              if (internalName != null) {
-                name=internalName;
-              }
+    HashMap<String,State> newStates=sync();
+    if (newStates == null) {
+      return null;
+    }
+    try {
+      VmwareContext context=getServiceContext();
+      VmwareHypervisorHost hyperHost=getHyperHost(context);
+      VmwareManager mgr=hyperHost.getContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+      if (hyperHost.isHyperHostConnected()) {
+        mgr.gcLeftOverVMs(context);
+        if (_recycleHungWorker) {
+          s_logger.info("Scan hung worker VM to recycle");
+          ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","config.template","runtime.powerState","runtime.bootTime"});
+          if (ocs != null) {
+            for (            ObjectContent oc : ocs) {
+              List<DynamicProperty> props=oc.getPropSet();
+              if (props != null) {
+                String vmName=null;
+                String internalName=null;
+                boolean template=false;
+                VirtualMachinePowerState powerState=VirtualMachinePowerState.POWERED_OFF;
+                GregorianCalendar bootTime=null;
+                for (                DynamicProperty prop : props) {
+                  if (prop.getName().equals("name"))                   vmName=prop.getVal().toString();
+ else                   if (prop.getName().equals("config.template"))                   template=(Boolean)prop.getVal();
+ else                   if (prop.getName().equals("runtime.powerState"))                   powerState=(VirtualMachinePowerState)prop.getVal();
+ else                   if (prop.getName().equals("runtime.bootTime"))                   bootTime=(GregorianCalendar)prop.getVal();
+                }
+                VirtualMachineMO vmMo=new VirtualMachineMO(hyperHost.getContext(),oc.getObj());
+                internalName=vmMo.getCustomFieldValue(CustomFieldConstants.CLOUD_VM_INTERNAL_NAME);
+                String name=null;
+                if (internalName != null) {
+                  name=internalName;
+                }
  else {
-                name=vmName;
-              }
-              if (!template && name.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
-                boolean recycle=false;
-                if (powerState == VirtualMachinePowerState.POWERED_OFF)                 recycle=true;
- else                 if (bootTime != null && (new Date().getTime() - bootTime.getTimeInMillis() > 10 * 3600 * 1000))                 recycle=true;
-                if (recycle) {
-                  s_logger.info("Recycle pending worker VM: " + name);
-                  vmMo.powerOff();
-                  vmMo.destroy();
+                  name=vmName;
+                }
+                if (!template && name.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) {
+                  boolean recycle=false;
+                  if (powerState == VirtualMachinePowerState.POWERED_OFF)                   recycle=true;
+ else                   if (bootTime != null && (new Date().getTime() - bootTime.getTimeInMillis() > 10 * 3600 * 1000))                   recycle=true;
+                  if (recycle) {
+                    s_logger.info("Recycle pending worker VM: " + name);
+                    vmMo.powerOff();
+                    vmMo.destroy();
+                  }
                 }
               }
             }
           }
         }
       }
-    }
  else {
-      s_logger.error("Host is no longer connected.");
-      return null;
+        s_logger.error("Host is no longer connected.");
+        return null;
+      }
     }
-  }
- catch (  Throwable e) {
-    if (e instanceof RemoteException) {
-      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
-      invalidateServiceContext();
-      return null;
+ catch (    Throwable e) {
+      if (e instanceof RemoteException) {
+        s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+        invalidateServiceContext();
+        return null;
+      }
     }
+    return new PingRoutingCommand(getType(),id,newStates);
   }
-  return new PingRoutingCommand(getType(),id,newStates);
+  finally {
+    recycleServiceContext();
+  }
 }

@@ -1,39 +1,44 @@
 {
-  String hostApiVersion="4.1";
-  VmwareContext context=getServiceContext();
   try {
-    VmwareHypervisorHost hyperHost=getHyperHost(context);
-    assert(hyperHost instanceof HostMO);
-    if (!((HostMO)hyperHost).isHyperHostConnected()) {
-      s_logger.info("Host " + hyperHost.getHyperHostName() + " is not in connected state");
+    String hostApiVersion="4.1";
+    VmwareContext context=getServiceContext();
+    try {
+      VmwareHypervisorHost hyperHost=getHyperHost(context);
+      assert(hyperHost instanceof HostMO);
+      if (!((HostMO)hyperHost).isHyperHostConnected()) {
+        s_logger.info("Host " + hyperHost.getHyperHostName() + " is not in connected state");
+        return null;
+      }
+      ((HostMO)hyperHost).enableVncOnHostFirewall();
+      AboutInfo aboutInfo=((HostMO)hyperHost).getHostAboutInfo();
+      hostApiVersion=aboutInfo.getApiVersion();
+    }
+ catch (    Exception e) {
+      String msg="VmwareResource intialize() failed due to : " + VmwareHelper.getExceptionMessage(e);
+      s_logger.error(msg);
+      invalidateServiceContext();
       return null;
     }
-    ((HostMO)hyperHost).enableVncOnHostFirewall();
-    AboutInfo aboutInfo=((HostMO)hyperHost).getHostAboutInfo();
-    hostApiVersion=aboutInfo.getApiVersion();
-  }
- catch (  Exception e) {
-    String msg="VmwareResource intialize() failed due to : " + VmwareHelper.getExceptionMessage(e);
-    s_logger.error(msg);
-    invalidateServiceContext();
-    return null;
-  }
-  StartupRoutingCommand cmd=new StartupRoutingCommand();
-  fillHostInfo(cmd);
-  Map<String,State> changes=null;
+    StartupRoutingCommand cmd=new StartupRoutingCommand();
+    fillHostInfo(cmd);
+    Map<String,State> changes=null;
 synchronized (_vms) {
-    _vms.clear();
-    changes=sync();
+      _vms.clear();
+      changes=sync();
+    }
+    cmd.setHypervisorType(HypervisorType.VMware);
+    cmd.setStateChanges(changes);
+    cmd.setCluster(_cluster);
+    cmd.setHypervisorVersion(hostApiVersion);
+    List<StartupStorageCommand> storageCmds=initializeLocalStorage();
+    StartupCommand[] answerCmds=new StartupCommand[1 + storageCmds.size()];
+    answerCmds[0]=cmd;
+    for (int i=0; i < storageCmds.size(); i++) {
+      answerCmds[i + 1]=storageCmds.get(i);
+    }
+    return answerCmds;
   }
-  cmd.setHypervisorType(HypervisorType.VMware);
-  cmd.setStateChanges(changes);
-  cmd.setCluster(_cluster);
-  cmd.setHypervisorVersion(hostApiVersion);
-  List<StartupStorageCommand> storageCmds=initializeLocalStorage();
-  StartupCommand[] answerCmds=new StartupCommand[1 + storageCmds.size()];
-  answerCmds[0]=cmd;
-  for (int i=0; i < storageCmds.size(); i++) {
-    answerCmds[i + 1]=storageCmds.get(i);
+  finally {
+    recycleServiceContext();
   }
-  return answerCmds;
 }
