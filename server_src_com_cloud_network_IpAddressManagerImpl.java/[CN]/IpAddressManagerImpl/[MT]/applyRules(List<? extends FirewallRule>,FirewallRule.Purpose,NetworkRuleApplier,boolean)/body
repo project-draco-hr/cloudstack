@@ -1,0 +1,36 @@
+{
+  if (rules == null || rules.size() == 0) {
+    s_logger.debug("There are no rules to forward to the network elements");
+    return true;
+  }
+  boolean success=true;
+  Network network=_networksDao.findById(rules.get(0).getNetworkId());
+  FirewallRuleVO.TrafficType trafficType=rules.get(0).getTrafficType();
+  List<PublicIp> publicIps=new ArrayList<PublicIp>();
+  if (!(rules.get(0).getPurpose() == FirewallRule.Purpose.Firewall && trafficType == FirewallRule.TrafficType.Egress)) {
+    List<IPAddressVO> userIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),null);
+    if (userIps != null && !userIps.isEmpty()) {
+      for (      IPAddressVO userIp : userIps) {
+        PublicIp publicIp=PublicIp.createFromAddrAndVlan(userIp,_vlanDao.findById(userIp.getVlanId()));
+        publicIps.add(publicIp);
+      }
+    }
+  }
+  if (checkIfIpAssocRequired(network,false,publicIps)) {
+    applyIpAssociations(network,false,continueOnError,publicIps);
+  }
+  try {
+    applier.applyRules(network,purpose,rules);
+  }
+ catch (  ResourceUnavailableException e) {
+    if (!continueOnError) {
+      throw e;
+    }
+    s_logger.warn("Problems with applying " + purpose + " rules but pushing on",e);
+    success=false;
+  }
+  if (checkIfIpAssocRequired(network,true,publicIps)) {
+    applyIpAssociations(network,true,continueOnError,publicIps);
+  }
+  return success;
+}

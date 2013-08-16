@@ -1,0 +1,56 @@
+{
+  boolean ipv4=false;
+  Transaction txn=Transaction.currentTxn();
+  txn.start();
+  if (network.getGateway() != null) {
+    if (nic.getIp4Address() == null) {
+      ipv4=true;
+      PublicIp ip=null;
+      if (requestedIpv4 != null && vm.getType() == VirtualMachine.Type.DomainRouter) {
+        Nic placeholderNic=_networkModel.getPlaceholderNicForRouter(network,null);
+        if (placeholderNic != null) {
+          IPAddressVO userIp=_ipAddressDao.findByIpAndSourceNetworkId(network.getId(),placeholderNic.getIp4Address());
+          ip=PublicIp.createFromAddrAndVlan(userIp,_vlanDao.findById(userIp.getVlanId()));
+          s_logger.debug("Nic got an ip address " + placeholderNic.getIp4Address() + " stored in placeholder nic for the network "+ network);
+        }
+      }
+      if (ip == null) {
+        ip=assignPublicIpAddress(dc.getId(),null,vm.getOwner(),VlanType.DirectAttached,network.getId(),requestedIpv4,false);
+      }
+      nic.setIp4Address(ip.getAddress().toString());
+      nic.setGateway(ip.getGateway());
+      nic.setNetmask(ip.getNetmask());
+      nic.setIsolationUri(IsolationType.Vlan.toUri(ip.getVlanTag()));
+      nic.setBroadcastType(network.getBroadcastDomainType());
+      nic.setBroadcastUri(network.getBroadcastUri());
+      nic.setFormat(AddressFormat.Ip4);
+      nic.setReservationId(String.valueOf(ip.getVlanTag()));
+      nic.setMacAddress(ip.getMacAddress());
+    }
+    nic.setDns1(dc.getDns1());
+    nic.setDns2(dc.getDns2());
+  }
+  if (network.getIp6Gateway() != null) {
+    if (nic.getIp6Address() == null) {
+      UserIpv6Address ip=_ipv6Mgr.assignDirectIp6Address(dc.getId(),vm.getOwner(),network.getId(),requestedIpv6);
+      Vlan vlan=_vlanDao.findById(ip.getVlanId());
+      nic.setIp6Address(ip.getAddress().toString());
+      nic.setIp6Gateway(vlan.getIp6Gateway());
+      nic.setIp6Cidr(vlan.getIp6Cidr());
+      if (ipv4) {
+        nic.setFormat(AddressFormat.DualStack);
+      }
+ else {
+        nic.setIsolationUri(IsolationType.Vlan.toUri(vlan.getVlanTag()));
+        nic.setBroadcastType(BroadcastDomainType.Vlan);
+        nic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(vlan.getVlanTag()));
+        nic.setFormat(AddressFormat.Ip6);
+        nic.setReservationId(String.valueOf(vlan.getVlanTag()));
+        nic.setMacAddress(ip.getMacAddress());
+      }
+    }
+    nic.setIp6Dns1(dc.getIp6Dns1());
+    nic.setIp6Dns2(dc.getIp6Dns2());
+  }
+  txn.commit();
+}
