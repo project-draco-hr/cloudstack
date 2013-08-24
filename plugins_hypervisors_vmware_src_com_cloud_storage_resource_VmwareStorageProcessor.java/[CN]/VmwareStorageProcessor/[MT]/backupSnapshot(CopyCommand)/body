@@ -19,12 +19,15 @@
   String details=null;
   boolean success=false;
   String snapshotBackupUuid=null;
+  boolean hasOwnerVm=false;
+  Ternary<String,String,String[]> backupResult=null;
   VmwareContext context=hostService.getServiceContext(cmd);
   VirtualMachineMO vmMo=null;
   String vmName=srcSnapshot.getVmName();
   try {
     VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
     morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,primaryStore.getUuid());
+    CopyCmdAnswer answer=null;
     try {
       vmMo=hyperHost.findVmOnHyperHost(vmName);
       if (vmMo == null) {
@@ -43,21 +46,30 @@
           String datastoreVolumePath=dsMo.getDatastorePath(volumePath + ".vmdk");
           vmMo.attachDisk(new String[]{datastoreVolumePath},morDs);
         }
+ else {
+          s_logger.info("Using owner VM " + vmName + " for snapshot operation");
+          hasOwnerVm=true;
+        }
+      }
+ else {
+        s_logger.info("Using owner VM " + vmName + " for snapshot operation");
+        hasOwnerVm=true;
       }
       if (!vmMo.createSnapshot(snapshotUuid,"Snapshot taken for " + srcSnapshot.getName(),false,false)) {
         throw new Exception("Failed to take snapshot " + srcSnapshot.getName() + " on vm: "+ vmName);
       }
-      snapshotBackupUuid=backupSnapshotToSecondaryStorage(vmMo,destSnapshot.getPath(),srcSnapshot.getVolume().getPath(),snapshotUuid,secondaryStorageUrl,prevSnapshotUuid,prevBackupUuid,hostService.getWorkerName(context,cmd,1));
+      backupResult=backupSnapshotToSecondaryStorage(vmMo,destSnapshot.getPath(),srcSnapshot.getVolume().getPath(),snapshotUuid,secondaryStorageUrl,prevSnapshotUuid,prevBackupUuid,hostService.getWorkerName(context,cmd,1));
+      snapshotBackupUuid=backupResult.first();
       success=(snapshotBackupUuid != null);
       if (!success) {
         details="Failed to backUp the snapshot with uuid: " + snapshotUuid + " to secondary storage.";
-        return new CopyCmdAnswer(details);
+        answer=new CopyCmdAnswer(details);
       }
  else {
         details="Successfully backedUp the snapshot with Uuid: " + snapshotUuid + " to secondary storage.";
         SnapshotObjectTO newSnapshot=new SnapshotObjectTO();
         newSnapshot.setPath(destSnapshot.getPath() + "/" + snapshotBackupUuid);
-        return new CopyCmdAnswer(newSnapshot);
+        answer=new CopyCmdAnswer(newSnapshot);
       }
     }
   finally {
@@ -65,6 +77,45 @@
         ManagedObjectReference snapshotMor=vmMo.getSnapshotMor(snapshotUuid);
         if (snapshotMor != null) {
           vmMo.removeSnapshot(snapshotUuid,false);
+          if (backupResult != null && hasOwnerVm) {
+            s_logger.info("Check if we have disk consolidation after snapshot operation");
+            boolean chainConsolidated=false;
+            for (            String vmdkDsFilePath : backupResult.third()) {
+              s_logger.info("Validate disk chain file:" + vmdkDsFilePath);
+              if (vmMo.getDiskDevice(vmdkDsFilePath,false) == null) {
+                s_logger.info("" + vmdkDsFilePath + " no longer exists, consolidation detected");
+                chainConsolidated=true;
+                break;
+              }
+ else {
+                s_logger.info("" + vmdkDsFilePath + " is found still in chain");
+              }
+            }
+            if (chainConsolidated) {
+              String topVmdkFilePath=null;
+              try {
+                topVmdkFilePath=vmMo.getDiskCurrentTopBackingFileInChain(backupResult.second());
+              }
+ catch (              Exception e) {
+                s_logger.error("Unexpected exception",e);
+              }
+              s_logger.info("Disk has been consolidated, top VMDK is now: " + topVmdkFilePath);
+              if (topVmdkFilePath != null) {
+                DatastoreFile file=new DatastoreFile(topVmdkFilePath);
+                SnapshotObjectTO snapshotInfo=(SnapshotObjectTO)answer.getNewData();
+                VolumeObjectTO vol=new VolumeObjectTO();
+                vol.setUuid(srcSnapshot.getVolume().getUuid());
+                vol.setPath(file.getFileBaseName());
+                snapshotInfo.setVolume(vol);
+              }
+ else {
+                s_logger.error("Disk has been consolidated, but top VMDK is not found ?!");
+              }
+            }
+          }
+        }
+ else {
+          s_logger.error("Can not find the snapshot we just used ?!");
         }
       }
       try {
@@ -77,6 +128,7 @@
         s_logger.warn("Failed to destroy worker VM: " + workerVMName);
       }
     }
+    return answer;
   }
  catch (  Throwable e) {
     if (e instanceof RemoteException) {
