@@ -1,0 +1,82 @@
+{
+  int nicIndex=0;
+  for (  NicTO nicTo : sortNicsByDeviceId(vmSpec.getNics())) {
+    if (nicTo.getBroadcastType() == BroadcastDomainType.Lswitch) {
+      s_logger.trace("Nic " + nicTo.toString() + " is connected to an NVP logicalswitch");
+      VirtualDevice nicVirtualDevice=vmMo.getNicDeviceByIndex(nicIndex);
+      if (nicVirtualDevice == null) {
+        throw new Exception("Failed to find a VirtualDevice for nic " + nicIndex);
+      }
+      VirtualDeviceBackingInfo backing=nicVirtualDevice.getBacking();
+      if (backing instanceof VirtualEthernetCardDistributedVirtualPortBackingInfo) {
+        VirtualEthernetCardDistributedVirtualPortBackingInfo portInfo=(VirtualEthernetCardDistributedVirtualPortBackingInfo)backing;
+        DistributedVirtualSwitchPortConnection port=portInfo.getPort();
+        String portKey=port.getPortKey();
+        String portGroupKey=port.getPortgroupKey();
+        String dvSwitchUuid=port.getSwitchUuid();
+        s_logger.debug("NIC " + nicTo.toString() + " is connected to dvSwitch "+ dvSwitchUuid+ " pg "+ portGroupKey+ " port "+ portKey);
+        ManagedObjectReference dvSwitchManager=vmMo.getContext().getVimClient().getServiceContent().getDvSwitchManager();
+        ManagedObjectReference dvSwitch=vmMo.getContext().getVimClient().getService().queryDvsByUuid(dvSwitchManager,dvSwitchUuid);
+        DistributedVirtualSwitchPortCriteria criteria=new DistributedVirtualSwitchPortCriteria();
+        criteria.setInside(true);
+        criteria.getPortgroupKey().add(portGroupKey);
+        List<DistributedVirtualPort> dvPorts=vmMo.getContext().getVimClient().getService().fetchDVPorts(dvSwitch,criteria);
+        DistributedVirtualPort vmDvPort=null;
+        List<Integer> usedVlans=new ArrayList<Integer>();
+        for (        DistributedVirtualPort dvPort : dvPorts) {
+          if (portKey.equals(dvPort.getKey())) {
+            vmDvPort=dvPort;
+          }
+          VMwareDVSPortSetting settings=(VMwareDVSPortSetting)dvPort.getConfig().getSetting();
+          VmwareDistributedVirtualSwitchVlanIdSpec vlanId=(VmwareDistributedVirtualSwitchVlanIdSpec)settings.getVlan();
+          s_logger.trace("Found port " + dvPort.getKey() + " with vlan "+ vlanId.getVlanId());
+          if (vlanId.getVlanId() > 0 && vlanId.getVlanId() < 4095) {
+            usedVlans.add(vlanId.getVlanId());
+          }
+        }
+        if (vmDvPort == null) {
+          throw new Exception("Empty port list from dvSwitch for nic " + nicTo.toString());
+        }
+        DVPortConfigInfo dvPortConfigInfo=vmDvPort.getConfig();
+        VMwareDVSPortSetting settings=(VMwareDVSPortSetting)dvPortConfigInfo.getSetting();
+        VmwareDistributedVirtualSwitchVlanIdSpec vlanId=(VmwareDistributedVirtualSwitchVlanIdSpec)settings.getVlan();
+        BoolPolicy blocked=settings.getBlocked();
+        if (blocked.isValue() == Boolean.TRUE) {
+          s_logger.trace("Port is blocked, set a vlanid and unblock");
+          DVPortConfigSpec dvPortConfigSpec=new DVPortConfigSpec();
+          VMwareDVSPortSetting edittedSettings=new VMwareDVSPortSetting();
+          blocked.setValue(Boolean.FALSE);
+          blocked.setInherited(Boolean.FALSE);
+          edittedSettings.setBlocked(blocked);
+          int i;
+          for (i=1; i < 4095; i++) {
+            if (!usedVlans.contains(i))             break;
+          }
+          vlanId.setVlanId(i);
+          vlanId.setInherited(false);
+          edittedSettings.setVlan(vlanId);
+          dvPortConfigSpec.setSetting(edittedSettings);
+          dvPortConfigSpec.setOperation("edit");
+          dvPortConfigSpec.setKey(portKey);
+          List<DVPortConfigSpec> dvPortConfigSpecs=new ArrayList<DVPortConfigSpec>();
+          dvPortConfigSpecs.add(dvPortConfigSpec);
+          ManagedObjectReference task=vmMo.getContext().getVimClient().getService().reconfigureDVPortTask(dvSwitch,dvPortConfigSpecs);
+          if (!vmMo.getContext().getVimClient().waitForTask(task)) {
+            throw new Exception("Failed to configure the dvSwitch port for nic " + nicTo.toString());
+          }
+          s_logger.debug("NIC " + nicTo.toString() + " connected to vlan "+ i);
+        }
+ else {
+          s_logger.trace("Port already configured and set to vlan " + vlanId.getVlanId());
+        }
+      }
+ else       if (backing instanceof VirtualEthernetCardNetworkBackingInfo) {
+      }
+ else {
+        s_logger.error("nic device backing is of type " + backing.getClass().getName());
+        throw new Exception("Incompatible backing for a VirtualDevice for nic " + nicIndex);
+      }
+    }
+    nicIndex++;
+  }
+}
