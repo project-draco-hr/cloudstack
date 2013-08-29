@@ -1,0 +1,45 @@
+@attr(tags=['advanced', 'advancedns', 'simulator'])
+def test_01_multiple_child_domains(self):
+    'Test memory limits with multiple child domains'
+    self.debug('Creating service offering with 2 GB RAM')
+    self.services['service_offering']['memory'] = 2048
+    self.service_offering = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.cleanup.append(self.service_offering)
+    self.debug('Setting up account and domain hierarchy')
+    self.setupAccounts()
+    api_client_cadmin_1 = self.testClient.createUserApiClient(UserName=self.cadmin_1.name, DomainName=self.cadmin_1.domain)
+    api_client_cadmin_2 = self.testClient.createUserApiClient(UserName=self.cadmin_2.name, DomainName=self.cadmin_2.domain)
+    self.debug(('Creating an instance with service offering: %s' % self.service_offering.name))
+    vm_1 = self.createInstance(account=self.cadmin_1, service_off=self.service_offering, api_client=api_client_cadmin_1)
+    vm_2 = self.createInstance(account=self.cadmin_2, service_off=self.service_offering, api_client=api_client_cadmin_2)
+    account_list = Account.list(self.apiclient, id=self.cadmin_1.id)
+    self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+    resource_count_cadmin_1 = account_list[0].memorytotal
+    self.debug(resource_count_cadmin_1)
+    account_list = Account.list(self.apiclient, id=self.cadmin_2.id)
+    self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+    resource_count_cadmin_2 = account_list[0].memorytotal
+    self.debug(resource_count_cadmin_2)
+    self.debug('Creating instance when Memory limit is fully used in parent domain')
+    with self.assertRaises(Exception):
+        self.createInstance(account=self.cadmin_1, service_off=self.service_offering, api_client=api_client_cadmin_1)
+    self.debug('Creating instance when Memory limit is fully used in child domain')
+    with self.assertRaises(Exception):
+        self.createInstance(account=self.cadmin_2, service_off=self.service_offering, api_client=api_client_cadmin_2)
+    self.debug(('Destroying instances: %s, %s' % (vm_1.name, vm_2.name)))
+    try:
+        vm_1.delete(self.apiclient)
+        vm_2.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to delete instance: %s' % e))
+    self.debug(('Checking resource count for account: %s' % self.cadmin_1.name))
+    account_list = Account.list(self.apiclient, id=self.cadmin_1.id)
+    self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+    resource_count_cadmin_1 = account_list[0].memorytotal
+    self.assertEqual(resource_count_cadmin_1, 0, ('Resource count for %s should be 0' % get_resource_type(resource_id=9)))
+    self.debug(('Checking resource count for account: %s' % self.cadmin_2.name))
+    account_list = Account.list(self.apiclient, id=self.cadmin_1.id)
+    self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+    resource_count_cadmin_2 = account_list[0].memorytotal
+    self.assertEqual(resource_count_cadmin_2, 0, ('Resource count for %s should be 0' % get_resource_type(resource_id=9)))
+    return

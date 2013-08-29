@@ -1,0 +1,59 @@
+@attr(tags=['advanced', 'advancedns', 'simulator'])
+def test_01_change_service_offering(self):
+    'Test Deploy VM with 5 GB RAM & verify the usage'
+    self.debug('Setting up account and domain hierarchy')
+    self.setupAccounts()
+    users = {self.domain: self.admin, self.child_domain: self.child_do_admin, }
+    for (domain, admin) in users.items():
+        self.account = admin
+        self.domain = domain
+        self.debug(('Creating an instance with service offering: %s' % self.service_offering.name))
+        api_client = self.testClient.createUserApiClient(UserName=self.account.name, DomainName=self.account.domain)
+        vm = self.createInstance(service_off=self.service_offering, api_client=api_client)
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count = account_list[0].memorytotal
+        expected_resource_count = int(self.services['service_offering']['memory'])
+        self.assertEqual(resource_count, expected_resource_count, 'Resource count should match with the expected resource count')
+        self.debug(('Stopping instance: %s' % vm.name))
+        try:
+            vm.stop(self.apiclient)
+        except Exception as e:
+            self.fail(('Failed to stop instance: %s' % e))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_stop = account_list[0].memorytotal
+        self.asserEqual(resource_count_after_stop, expected_resource_count, 'Resource count should be same after stopping the instance')
+        self.debug('Creating service offering with 7 GB RAM')
+        self.services['service_offering']['memory'] = 7168
+        self.service_offering_7gb = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+        self.cleanup.append(self.service_offering_7gb)
+        self.debug(('Upgrade service offering of instance %s from %s to %s' % (vm.name, self.service_offering.name, self.service_offering_7gb.name)))
+        try:
+            vm.change_service_offering(self.apiclient, serviceOfferingId=self.service_offering_7gb.id)
+        except Exception as e:
+            self.fail(('Failed to change service offering of vm %s - %s' % (vm.name, e)))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_upgrade = account_list[0].memorytotal
+        self.debug(resource_count_after_upgrade)
+        self.assertTrue((resource_count_after_upgrade > resource_count_after_stop), 'Resource count should be more than before, after upgrading service offering')
+        self.debug(('Down grade service offering of instance %s from %s to %s' % (vm.name, self.service_offering_7gb.name, self.service_offering.name)))
+        try:
+            vm.change_service_offering(self.apiclient, serviceOfferingId=self.service_offering.id)
+        except Exception as e:
+            self.fail(('Failed to change service offering of vm %s - %s' % (vm.name, e)))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_downgrade = account_list[0].memorytotal
+        self.assertTrue((resource_count_after_downgrade < resource_count_after_upgrade), 'Resource count should be less than before, after downgrading service offering')
+        self.debug(('Starting instance: %s' % vm.name))
+        try:
+            vm.start(self.apiclient)
+        except Exception as e:
+            self.fail(('Failed to start instance: %s' % e))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_start = account_list[0].memorytotal
+        self.assertTrue((resource_count_after_start == resource_count_after_downgrade), 'Resource count should be same after starting the instance')
+    return
