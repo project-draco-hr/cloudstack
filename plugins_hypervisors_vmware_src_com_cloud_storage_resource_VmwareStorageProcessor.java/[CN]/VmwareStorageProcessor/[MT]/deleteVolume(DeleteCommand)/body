@@ -25,12 +25,16 @@
           if (s_logger.isInfoEnabled()) {
             s_logger.info("Destroy root volume and VM itself. vmName " + vmName);
           }
+          vmMo.removeAllSnapshots();
+          VirtualMachineDiskInfo diskInfo=null;
+          if (vol.getChainInfo() != null)           diskInfo=_gson.fromJson(vol.getChainInfo(),VirtualMachineDiskInfo.class);
           HostMO hostMo=vmMo.getRunningHost();
           List<NetworkDetails> networks=vmMo.getNetworksWithDetails();
           if (this.resource.getVmState(vmMo) != State.Stopped) {
             vmMo.safePowerOff(_shutdown_waitMs);
           }
-          vmMo.tearDownDevices(new Class<?>[]{VirtualDisk.class,VirtualEthernetCard.class});
+          List<String> detachedDisks=vmMo.detachAllDisksExcept(vol.getPath(),diskInfo != null ? diskInfo.getDiskDeviceBusName() : null);
+          VmwareStorageLayoutHelper.moveVolumeToRootFolder(new DatacenterMO(context,morDc),detachedDisks);
           vmMo.destroy();
           for (          NetworkDetails netDetails : networks) {
             if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {
@@ -40,8 +44,6 @@
             }
           }
         }
-        if (s_logger.isInfoEnabled())         s_logger.info("Destroy volume by original name: " + vol.getPath() + ".vmdk");
-        VmwareStorageLayoutHelper.deleteVolumeVmdkFiles(dsMo,vol.getPath(),new DatacenterMO(context,morDc));
         return new Answer(cmd,true,"Success");
       }
       if (s_logger.isInfoEnabled()) {

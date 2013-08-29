@@ -1,0 +1,36 @@
+{
+  List<VirtualDevice> devices=(List<VirtualDevice>)_context.getVimClient().getDynamicProperty(_mor,"config.hardware.device");
+  VirtualMachineConfigSpec reConfigSpec=new VirtualMachineConfigSpec();
+  List<String> detachedDiskFiles=new ArrayList<String>();
+  for (  VirtualDevice device : devices) {
+    if (device instanceof VirtualDisk) {
+      VirtualDeviceConfigSpec deviceConfigSpec=new VirtualDeviceConfigSpec();
+      VirtualDiskFlatVer2BackingInfo diskBackingInfo=(VirtualDiskFlatVer2BackingInfo)device.getBacking();
+      DatastoreFile dsBackingFile=new DatastoreFile(diskBackingInfo.getFileName());
+      String backingBaseName=dsBackingFile.getFileBaseName();
+      String deviceNumbering=getDeviceBusName(devices,device);
+      if (backingBaseName.equalsIgnoreCase(vmdkBaseName) || (deviceBusName != null && deviceBusName.equals(deviceNumbering))) {
+        continue;
+      }
+ else {
+        s_logger.info("Detach " + diskBackingInfo.getFileName() + " from "+ getName());
+        detachedDiskFiles.add(diskBackingInfo.getFileName());
+        deviceConfigSpec.setDevice(device);
+        deviceConfigSpec.setOperation(VirtualDeviceConfigSpecOperation.REMOVE);
+        reConfigSpec.getDeviceChange().add(deviceConfigSpec);
+      }
+    }
+  }
+  if (detachedDiskFiles.size() > 0) {
+    ManagedObjectReference morTask=_context.getService().reconfigVMTask(_mor,reConfigSpec);
+    boolean result=_context.getVimClient().waitForTask(morTask);
+    if (result) {
+      _context.waitForTaskProgressDone(morTask);
+    }
+ else {
+      s_logger.warn("Unable to reconfigure the VM to detach disks");
+      throw new Exception("Unable to reconfigure the VM to detach disks");
+    }
+  }
+  return detachedDiskFiles;
+}
