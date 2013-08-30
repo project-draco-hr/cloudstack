@@ -1,0 +1,50 @@
+{
+  return new Runnable(){
+    @Override public void run(){
+      GlobalLock scanLock=GlobalLock.getInternLock("AsyncJobManagerGC");
+      try {
+        if (scanLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+          try {
+            reallyRun();
+          }
+  finally {
+            scanLock.unlock();
+          }
+        }
+      }
+  finally {
+        scanLock.releaseRef();
+      }
+    }
+    public void reallyRun(){
+      try {
+        s_logger.trace("Begin cleanup expired async-jobs");
+        Date cutTime=new Date(DateUtil.currentGMTTime().getTime() - _jobExpireSeconds.value() * 1000);
+        List<AsyncJobVO> l=_jobDao.getExpiredUnfinishedJobs(cutTime,100);
+        for (        AsyncJobVO job : l) {
+          s_logger.trace("Expunging unfinished job " + job);
+          expungeAsyncJob(job);
+        }
+        List<AsyncJobVO> completedJobs=_jobDao.getExpiredCompletedJobs(cutTime,100);
+        for (        AsyncJobVO job : completedJobs) {
+          s_logger.trace("Expunging completed job " + job);
+          expungeAsyncJob(job);
+        }
+        List<SyncQueueItemVO> blockItems=_queueMgr.getBlockedQueueItems(_jobCancelThresholdSeconds.value() * 1000,false);
+        if (blockItems != null && blockItems.size() > 0) {
+          for (          SyncQueueItemVO item : blockItems) {
+            if (item.getContentType().equalsIgnoreCase(SyncQueueItem.AsyncJobContentType)) {
+              completeAsyncJob(item.getContentId(),JobInfo.Status.FAILED,0,"Job is cancelled as it has been blocking others for too long");
+            }
+            _queueMgr.purgeItem(item.getId());
+          }
+        }
+        s_logger.trace("End cleanup expired async-jobs");
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception when trying to execute queue item, ",e);
+      }
+    }
+  }
+;
+}

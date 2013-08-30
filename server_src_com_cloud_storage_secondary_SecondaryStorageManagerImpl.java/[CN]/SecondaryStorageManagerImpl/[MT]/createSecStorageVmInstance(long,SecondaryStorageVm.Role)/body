@@ -30,27 +30,28 @@
     defaultNetwork=defaultNetworks.get(0);
   }
   List<? extends NetworkOffering> offerings=_networkModel.getSystemAccountNetworkOfferings(NetworkOfferingVO.SystemControlNetwork,NetworkOfferingVO.SystemManagementNetwork,NetworkOfferingVO.SystemStorageNetwork);
-  List<Pair<NetworkVO,NicProfile>> networks=new ArrayList<Pair<NetworkVO,NicProfile>>(offerings.size() + 1);
+  LinkedHashMap<Network,NicProfile> networks=new LinkedHashMap<Network,NicProfile>(offerings.size() + 1);
   NicProfile defaultNic=new NicProfile();
   defaultNic.setDefaultNic(true);
   defaultNic.setDeviceId(2);
   try {
-    networks.add(new Pair<NetworkVO,NicProfile>(_networkMgr.setupNetwork(systemAcct,_networkOfferingDao.findById(defaultNetwork.getNetworkOfferingId()),plan,null,null,false).get(0),defaultNic));
+    networks.put(_networkMgr.setupNetwork(systemAcct,_networkOfferingDao.findById(defaultNetwork.getNetworkOfferingId()),plan,null,null,false).get(0),defaultNic);
     for (    NetworkOffering offering : offerings) {
-      networks.add(new Pair<NetworkVO,NicProfile>(_networkMgr.setupNetwork(systemAcct,offering,plan,null,null,false).get(0),null));
+      networks.put(_networkMgr.setupNetwork(systemAcct,offering,plan,null,null,false).get(0),null);
     }
   }
  catch (  ConcurrentOperationException e) {
     s_logger.info("Unable to setup due to concurrent operation. " + e);
     return new HashMap<String,Object>();
   }
-  HypervisorType hypeType=_resourceMgr.getAvailableHypervisor(dataCenterId);
-  VMTemplateVO template=_templateDao.findSystemVMTemplate(dataCenterId,hypeType);
+  VMTemplateVO template=null;
+  HypervisorType availableHypervisor=_resourceMgr.getAvailableHypervisor(dataCenterId);
+  template=_templateDao.findSystemVMReadyTemplate(dataCenterId,availableHypervisor);
   if (template == null) {
-    s_logger.debug("Can't find a template to start");
-    throw new CloudRuntimeException("Insufficient capacity exception");
+    throw new CloudRuntimeException("Not able to find the System templates or not downloaded in zone " + dataCenterId);
   }
   SecondaryStorageVmVO secStorageVm=new SecondaryStorageVmVO(id,_serviceOffering.getId(),name,template.getId(),template.getHypervisorType(),template.getGuestOSId(),dataCenterId,systemAcct.getDomainId(),systemAcct.getId(),role,_serviceOffering.getOfferHA());
+  secStorageVm.setDynamicallyScalable(template.isDynamicallyScalable());
   secStorageVm=_secStorageVmDao.persist(secStorageVm);
   try {
     _itMgr.allocate(name,template,_serviceOffering,networks,plan,null);

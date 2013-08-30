@@ -1,0 +1,72 @@
+{
+  return new Runnable(){
+    @Override public void run(){
+      Transaction txn=null;
+      long runNumber=getJobRunNumber();
+      try {
+        txn=Transaction.open(Transaction.CLOUD_DB);
+        try {
+          JmxUtil.registerMBean("AsyncJobManager","Active Job " + job.getId(),new AsyncJobMBeanImpl(job));
+        }
+ catch (        Exception e) {
+          if (s_logger.isTraceEnabled())           s_logger.trace("Unable to register active job " + job.getId() + " to JMX monitoring due to exception "+ ExceptionUtil.toString(e));
+        }
+        _jobMonitor.registerActiveTask(runNumber,job.getId());
+        AsyncJobExecutionContext.setCurrentExecutionContext(new AsyncJobExecutionContext(job));
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Executing " + job);
+        }
+        if ((getAndResetPendingSignals(job) & AsyncJob.Constants.SIGNAL_MASK_WAKEUP) != 0) {
+          AsyncJobDispatcher jobDispatcher=getWakeupDispatcher(job);
+          if (jobDispatcher != null) {
+            jobDispatcher.runJob(job);
+          }
+ else {
+            s_logger.error("Unable to find a wakeup dispatcher from the joined job: " + job);
+          }
+        }
+ else {
+          AsyncJobDispatcher jobDispatcher=getDispatcher(job.getDispatcher());
+          if (jobDispatcher != null) {
+            jobDispatcher.runJob(job);
+          }
+ else {
+            s_logger.error("Unable to find job dispatcher, job will be cancelled");
+            completeAsyncJob(job.getId(),JobInfo.Status.FAILED,ApiErrorCode.INTERNAL_ERROR.getHttpCode(),null);
+          }
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Done executing " + job.getCmd() + " for job-"+ job.getId());
+        }
+      }
+ catch (      Throwable e) {
+        s_logger.error("Unexpected exception",e);
+        completeAsyncJob(job.getId(),JobInfo.Status.FAILED,ApiErrorCode.INTERNAL_ERROR.getHttpCode(),null);
+      }
+ finally {
+        try {
+          AsyncJobVO jobToUpdate=_jobDao.findById(job.getId());
+          jobToUpdate.setExecutingMsid(null);
+          _jobDao.update(job.getId(),jobToUpdate);
+          if (job.getSyncSource() != null) {
+            _queueMgr.purgeItem(job.getSyncSource().getId());
+            checkQueue(job.getSyncSource().getQueueId());
+          }
+          try {
+            JmxUtil.unregisterMBean("AsyncJobManager","Active Job " + job.getId());
+          }
+ catch (          Exception e) {
+            if (s_logger.isTraceEnabled())             s_logger.trace("Unable to unregister job " + job.getId() + " to JMX monitoring due to exception "+ ExceptionUtil.toString(e));
+          }
+          if (txn != null)           txn.close();
+          AsyncJobExecutionContext.unregister();
+          _jobMonitor.unregisterActiveTask(runNumber);
+        }
+ catch (        Throwable e) {
+          s_logger.error("Double exception",e);
+        }
+      }
+    }
+  }
+;
+}

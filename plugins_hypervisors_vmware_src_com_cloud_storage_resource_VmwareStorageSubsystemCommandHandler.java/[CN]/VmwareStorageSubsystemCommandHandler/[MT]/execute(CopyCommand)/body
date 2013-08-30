@@ -1,0 +1,74 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  DataTO destData=cmd.getDestTO();
+  DataStoreTO srcDataStore=srcData.getDataStore();
+  DataStoreTO destDataStore=destData.getDataStore();
+  boolean needDelegation=false;
+  if (destDataStore instanceof NfsTO && destDataStore.getRole() == DataStoreRole.ImageCache) {
+    if (srcDataStore instanceof S3TO || srcDataStore instanceof SwiftTO) {
+      needDelegation=true;
+    }
+  }
+  if (srcDataStore.getRole() == DataStoreRole.ImageCache && destDataStore.getRole() == DataStoreRole.Image) {
+    if (srcData.getObjectType() == DataObjectType.VOLUME) {
+      NfsTO cacheStore=(NfsTO)srcDataStore;
+      String parentPath=storageResource.getRootDir(cacheStore.getUrl());
+      VolumeObjectTO vol=(VolumeObjectTO)srcData;
+      String path=vol.getPath();
+      int index=path.lastIndexOf(File.separator);
+      String name=path.substring(index + 1);
+      storageManager.createOva(parentPath + File.separator + path,name);
+      vol.setPath(path + File.separator + name+ ".ova");
+    }
+ else     if (srcData.getObjectType() == DataObjectType.SNAPSHOT && destData.getObjectType() == DataObjectType.TEMPLATE) {
+      TemplateObjectTO cacheTemplate=(TemplateObjectTO)destData;
+      cacheTemplate.setDataStore(srcDataStore);
+      CopyCmdAnswer answer=(CopyCmdAnswer)processor.createTemplateFromSnapshot(cmd);
+      if (!answer.getResult()) {
+        return answer;
+      }
+      cacheTemplate.setDataStore(destDataStore);
+      TemplateObjectTO template=(TemplateObjectTO)answer.getNewData();
+      template.setDataStore(srcDataStore);
+      CopyCommand newCmd=new CopyCommand(template,destData,cmd.getWait(),cmd.executeInSequence());
+      return storageResource.defaultAction(newCmd);
+    }
+    needDelegation=true;
+  }
+  if (srcData.getObjectType() == DataObjectType.SNAPSHOT && srcData.getDataStore().getRole() == DataStoreRole.Primary) {
+    if (cmd.getCacheTO() != null) {
+      cmd.setDestTO(cmd.getCacheTO());
+      CopyCmdAnswer answer=(CopyCmdAnswer)processor.backupSnapshot(cmd);
+      if (!answer.getResult()) {
+        return answer;
+      }
+      NfsTO cacheStore=(NfsTO)cmd.getCacheTO().getDataStore();
+      String parentPath=storageResource.getRootDir(cacheStore.getUrl());
+      SnapshotObjectTO newSnapshot=(SnapshotObjectTO)answer.getNewData();
+      String path=newSnapshot.getPath();
+      int index=path.lastIndexOf(File.separator);
+      String name=path.substring(index + 1);
+      String dir=path.substring(0,index);
+      storageManager.createOva(parentPath + File.separator + dir,name);
+      newSnapshot.setPath(newSnapshot.getPath() + ".ova");
+      newSnapshot.setDataStore(cmd.getCacheTO().getDataStore());
+      CopyCommand newCmd=new CopyCommand(newSnapshot,destData,cmd.getWait(),cmd.executeInSequence());
+      Answer result=storageResource.defaultAction(newCmd);
+      try {
+        newSnapshot.setPath(path);
+        DeleteCommand deleteCommand=new DeleteCommand(newSnapshot);
+        storageResource.defaultAction(deleteCommand);
+      }
+ catch (      Exception e) {
+        s_logger.debug("Failed to clean up staging area:",e);
+      }
+      return result;
+    }
+  }
+  if (needDelegation) {
+    return storageResource.defaultAction(cmd);
+  }
+ else {
+    return super.execute(cmd);
+  }
+}

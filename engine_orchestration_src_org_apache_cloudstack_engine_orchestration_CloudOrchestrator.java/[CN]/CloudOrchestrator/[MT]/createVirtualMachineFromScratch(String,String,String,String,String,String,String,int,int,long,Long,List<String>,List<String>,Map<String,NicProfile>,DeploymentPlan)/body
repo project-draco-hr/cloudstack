@@ -1,0 +1,37 @@
+{
+  VirtualMachineEntityImpl vmEntity=ComponentContext.inject(VirtualMachineEntityImpl.class);
+  vmEntity.init(id,owner,hostName,displayName,cpu,speed,memory,computeTags,rootDiskTags,new ArrayList<String>(networkNicMap.keySet()));
+  VMInstanceVO vm=_vmDao.findByUuid(id);
+  Pair<DiskOffering,Long> rootDiskOffering=new Pair<DiskOffering,Long>(null,null);
+  ServiceOfferingVO offering=_serviceOfferingDao.findById(vm.getServiceOfferingId());
+  rootDiskOffering.first(offering);
+  LinkedHashMap<DiskOffering,Long> dataDiskOfferings=new LinkedHashMap<DiskOffering,Long>();
+  Long diskOfferingId=vm.getDiskOfferingId();
+  if (diskOfferingId == null) {
+    throw new InvalidParameterValueException("Installing from ISO requires a disk offering to be specified for the root disk.");
+  }
+  DiskOfferingVO diskOffering=_diskOfferingDao.findById(diskOfferingId);
+  if (diskOffering == null) {
+    throw new InvalidParameterValueException("Unable to find disk offering " + diskOfferingId);
+  }
+  Long size=null;
+  if (diskOffering.getDiskSize() == 0) {
+    size=diskSize;
+    if (size == null) {
+      throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+    }
+    _volumeMgr.validateVolumeSizeRange(size * 1024 * 1024* 1024);
+  }
+  rootDiskOffering.first(diskOffering);
+  rootDiskOffering.second(size);
+  LinkedHashMap<Network,NicProfile> networkIpMap=new LinkedHashMap<Network,NicProfile>();
+  for (  String uuid : networkNicMap.keySet()) {
+    NetworkVO network=_networkDao.findByUuid(uuid);
+    if (network != null) {
+      networkIpMap.put(network,networkNicMap.get(uuid));
+    }
+  }
+  HypervisorType hypervisorType=HypervisorType.valueOf(hypervisor);
+  _itMgr.allocate(vm.getInstanceName(),_templateDao.findById(new Long(isoId)),offering,rootDiskOffering,dataDiskOfferings,networkIpMap,plan,hypervisorType);
+  return vmEntity;
+}

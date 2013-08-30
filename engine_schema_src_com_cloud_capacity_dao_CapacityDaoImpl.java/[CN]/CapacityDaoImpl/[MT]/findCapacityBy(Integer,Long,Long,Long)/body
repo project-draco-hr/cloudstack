@@ -1,43 +1,42 @@
 {
-  GenericSearchBuilder<CapacityVO,SummedCapacity> SummedCapacitySearch=createSearchBuilder(SummedCapacity.class);
-  SummedCapacitySearch.select("dcId",Func.NATIVE,SummedCapacitySearch.entity().getDataCenterId());
-  SummedCapacitySearch.select("sumUsed",Func.SUM,SummedCapacitySearch.entity().getUsedCapacity());
-  SummedCapacitySearch.select("sumReserved",Func.SUM,SummedCapacitySearch.entity().getReservedCapacity());
-  SummedCapacitySearch.select("sumTotal",Func.SUM,SummedCapacitySearch.entity().getTotalCapacity());
-  SummedCapacitySearch.select("capacityType",Func.NATIVE,SummedCapacitySearch.entity().getCapacityType());
-  if (zoneId == null && podId == null && clusterId == null) {
-    SummedCapacitySearch.groupBy(SummedCapacitySearch.entity().getDataCenterId(),SummedCapacitySearch.entity().getCapacityType());
-  }
- else {
-    SummedCapacitySearch.groupBy(SummedCapacitySearch.entity().getCapacityType());
-  }
+  Transaction txn=Transaction.currentTxn();
+  PreparedStatement pstmt=null;
+  List<SummedCapacity> result=new ArrayList<SummedCapacity>();
+  StringBuilder sql=new StringBuilder(LIST_CAPACITY_GROUP_BY_CAPACITY_PART1);
+  List<Long> resourceIdList=new ArrayList<Long>();
   if (zoneId != null) {
-    SummedCapacitySearch.and("dcId",SummedCapacitySearch.entity().getDataCenterId(),Op.EQ);
+    sql.append(" AND capacity.data_center_id = ?");
+    resourceIdList.add(zoneId);
   }
   if (podId != null) {
-    SummedCapacitySearch.and("podId",SummedCapacitySearch.entity().getPodId(),Op.EQ);
+    sql.append(" AND capacity.pod_id = ?");
+    resourceIdList.add(podId);
   }
   if (clusterId != null) {
-    SummedCapacitySearch.and("clusterId",SummedCapacitySearch.entity().getClusterId(),Op.EQ);
+    sql.append(" AND capacity.cluster_id = ?");
+    resourceIdList.add(clusterId);
   }
   if (capacityType != null) {
-    SummedCapacitySearch.and("capacityType",SummedCapacitySearch.entity().getCapacityType(),Op.EQ);
+    sql.append(" AND capacity.capacity_type = ?");
+    resourceIdList.add(capacityType.longValue());
   }
-  SummedCapacitySearch.done();
-  SearchCriteria<SummedCapacity> sc=SummedCapacitySearch.create();
-  if (zoneId != null) {
-    sc.setParameters("dcId",zoneId);
+  sql.append(LIST_CAPACITY_GROUP_BY_CAPACITY_PART2);
+  try {
+    pstmt=txn.prepareAutoCloseStatement(sql.toString());
+    for (int i=0; i < resourceIdList.size(); i++) {
+      pstmt.setLong(i + 1,resourceIdList.get(i));
+    }
+    ResultSet rs=pstmt.executeQuery();
+    while (rs.next()) {
+      SummedCapacity summedCapacity=new SummedCapacity(rs.getLong(1),rs.getLong(2),rs.getLong(3),(short)rs.getLong(5),null,null,rs.getLong(6));
+      result.add(summedCapacity);
+    }
+    return result;
   }
-  if (podId != null) {
-    sc.setParameters("podId",podId);
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("DB Exception on: " + sql,e);
   }
-  if (clusterId != null) {
-    sc.setParameters("clusterId",clusterId);
+catch (  Throwable e) {
+    throw new CloudRuntimeException("Caught: " + sql,e);
   }
-  if (capacityType != null) {
-    sc.setParameters("capacityType",capacityType);
-  }
-  Filter filter=new Filter(CapacityVO.class,null,true,null,null);
-  List<SummedCapacity> results=customSearchIncludingRemoved(sc,filter);
-  return results;
 }

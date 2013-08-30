@@ -1,0 +1,53 @@
+{
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Parsing all VmSnapshot volume usage events for account: " + account.getId());
+  }
+  if ((endDate == null) || endDate.after(new Date())) {
+    endDate=new Date();
+  }
+  List<UsageVMSnapshotVO> usageUsageVMSnapshots=m_usageVMSnapshotDao.getUsageRecords(account.getId(),account.getDomainId(),startDate,endDate);
+  if (usageUsageVMSnapshots.isEmpty()) {
+    s_logger.debug("No VM snapshot usage events for this period");
+    return true;
+  }
+  Map<String,UsageVMSnapshotVO> unprocessedUsage=new HashMap<String,UsageVMSnapshotVO>();
+  for (  UsageVMSnapshotVO usageRec : usageUsageVMSnapshots) {
+    long zoneId=usageRec.getZoneId();
+    Long volId=usageRec.getId();
+    long vmId=usageRec.getVmId();
+    String key=vmId + ":" + volId;
+    if (usageRec.getCreated().before(startDate)) {
+      unprocessedUsage.put(key,usageRec);
+      continue;
+    }
+    UsageVMSnapshotVO previousEvent=m_usageVMSnapshotDao.getPreviousUsageRecord(usageRec);
+    if (previousEvent == null || previousEvent.getSize() == 0) {
+      unprocessedUsage.put(key,usageRec);
+      continue;
+    }
+    Date previousCreated=previousEvent.getCreated();
+    if (previousCreated.before(startDate)) {
+      previousCreated=startDate;
+    }
+    Date createDate=usageRec.getCreated();
+    long duration=(createDate.getTime() - previousCreated.getTime()) + 1;
+    createUsageRecord(UsageTypes.VM_SNAPSHOT,duration,previousCreated,createDate,account,volId,zoneId,previousEvent.getDiskOfferingId(),vmId,previousEvent.getSize());
+    previousEvent.setProcessed(new Date());
+    m_usageVMSnapshotDao.update(previousEvent);
+    if (usageRec.getSize() == 0) {
+      usageRec.setProcessed(new Date());
+      m_usageVMSnapshotDao.update(usageRec);
+    }
+ else     unprocessedUsage.put(key,usageRec);
+  }
+  for (  String key : unprocessedUsage.keySet()) {
+    UsageVMSnapshotVO usageRec=unprocessedUsage.get(key);
+    Date created=usageRec.getCreated();
+    if (created.before(startDate)) {
+      created=startDate;
+    }
+    long duration=(endDate.getTime() - created.getTime()) + 1;
+    createUsageRecord(UsageTypes.VM_SNAPSHOT,duration,created,endDate,account,usageRec.getId(),usageRec.getZoneId(),usageRec.getDiskOfferingId(),usageRec.getVmId(),usageRec.getSize());
+  }
+  return true;
+}

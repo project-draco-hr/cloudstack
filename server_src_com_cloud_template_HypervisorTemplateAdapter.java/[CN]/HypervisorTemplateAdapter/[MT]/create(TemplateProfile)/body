@@ -7,13 +7,29 @@
   if (imageStores == null || imageStores.size() == 0) {
     throw new CloudRuntimeException("Unable to find image store to download template " + profile.getTemplate());
   }
+  Collections.shuffle(imageStores);
   for (  DataStore imageStore : imageStores) {
+    Long zoneId=imageStore.getScope().getScopeId();
+    if (zoneId != null) {
+      DataCenterVO zone=_dcDao.findById(zoneId);
+      if (zone == null) {
+        s_logger.warn("Unable to find zone by id " + zoneId + ", so skip downloading template to its image store "+ imageStore.getId());
+        continue;
+      }
+      if (Grouping.AllocationState.Disabled == zone.getAllocationState()) {
+        s_logger.info("Zone " + zoneId + " is disabled, so skip downloading template to its image store "+ imageStore.getId());
+        continue;
+      }
+    }
     TemplateInfo tmpl=this.imageFactory.getTemplate(template.getId(),imageStore);
     CreateTemplateContext<TemplateApiResult> context=new CreateTemplateContext<TemplateApiResult>(null,tmpl);
     AsyncCallbackDispatcher<HypervisorTemplateAdapter,TemplateApiResult> caller=AsyncCallbackDispatcher.create(this);
     caller.setCallback(caller.getTarget().createTemplateAsyncCallBack(null,null));
     caller.setContext(context);
     this.imageService.createTemplateAsync(tmpl,imageStore,caller);
+    if (!(profile.getIsPublic() || profile.getFeatured())) {
+      break;
+    }
   }
   _resourceLimitMgr.incrementResourceCount(profile.getAccountId(),ResourceType.template);
   return template;

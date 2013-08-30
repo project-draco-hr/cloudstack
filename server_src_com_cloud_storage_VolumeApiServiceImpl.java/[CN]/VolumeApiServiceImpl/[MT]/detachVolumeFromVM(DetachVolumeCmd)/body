@@ -1,0 +1,76 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  if ((cmmd.getId() == null && cmmd.getDeviceId() == null && cmmd.getVirtualMachineId() == null) || (cmmd.getId() != null && (cmmd.getDeviceId() != null || cmmd.getVirtualMachineId() != null)) || (cmmd.getId() == null && (cmmd.getDeviceId() == null || cmmd.getVirtualMachineId() == null))) {
+    throw new InvalidParameterValueException("Please provide either a volume id, or a tuple(device id, instance id)");
+  }
+  Long volumeId=cmmd.getId();
+  VolumeVO volume=null;
+  if (volumeId != null) {
+    volume=_volsDao.findById(volumeId);
+  }
+ else {
+    volume=_volsDao.findByInstanceAndDeviceId(cmmd.getVirtualMachineId(),cmmd.getDeviceId()).get(0);
+  }
+  Long vmId=null;
+  if (cmmd.getVirtualMachineId() == null) {
+    vmId=volume.getInstanceId();
+  }
+ else {
+    vmId=cmmd.getVirtualMachineId();
+  }
+  if (volume == null) {
+    throw new InvalidParameterValueException("Unable to find volume with ID: " + volumeId);
+  }
+  _accountMgr.checkAccess(caller,null,true,volume);
+  if (volume.getVolumeType() != Volume.Type.DATADISK) {
+    throw new InvalidParameterValueException("Please specify a data volume.");
+  }
+  if (vmId == null) {
+    throw new InvalidParameterValueException("The specified volume is not attached to a VM.");
+  }
+  UserVmVO vm=_userVmDao.findById(vmId);
+  if (vm.getState() != State.Running && vm.getState() != State.Stopped && vm.getState() != State.Destroyed) {
+    throw new InvalidParameterValueException("Please specify a VM that is either running or stopped.");
+  }
+  AsyncJobExecutionContext asyncExecutionContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (asyncExecutionContext != null) {
+    AsyncJob job=asyncExecutionContext.getJob();
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Trying to attaching volume " + volumeId + "to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
+    }
+    _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
+    _asyncMgr.updateAsyncJobStatus(job.getId(),BaseCmd.PROGRESS_INSTANCE_CREATED,volumeId.toString());
+  }
+  String errorMsg="Failed to detach volume: " + volume.getName() + " from VM: "+ vm.getHostName();
+  boolean sendCommand=(vm.getState() == State.Running);
+  Answer answer=null;
+  if (sendCommand) {
+    StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
+    DataTO volTO=volFactory.getVolume(volume.getId()).getTO();
+    DiskTO disk=new DiskTO(volTO,volume.getDeviceId(),null,volume.getVolumeType());
+    DettachCommand cmd=new DettachCommand(disk,vm.getInstanceName());
+    cmd.setManaged(volumePool.isManaged());
+    cmd.setStorageHost(volumePool.getHostAddress());
+    cmd.setStoragePort(volumePool.getPort());
+    cmd.set_iScsiName(volume.get_iScsiName());
+    try {
+      answer=_agentMgr.send(vm.getHostId(),cmd);
+    }
+ catch (    Exception e) {
+      throw new CloudRuntimeException(errorMsg + " due to: " + e.getMessage());
+    }
+  }
+  if (!sendCommand || (answer != null && answer.getResult())) {
+    _volsDao.detachVolume(volume.getId());
+    return _volsDao.findById(volumeId);
+  }
+ else {
+    if (answer != null) {
+      String details=answer.getDetails();
+      if (details != null && !details.isEmpty()) {
+        errorMsg+="; " + details;
+      }
+    }
+    throw new CloudRuntimeException(errorMsg);
+  }
+}

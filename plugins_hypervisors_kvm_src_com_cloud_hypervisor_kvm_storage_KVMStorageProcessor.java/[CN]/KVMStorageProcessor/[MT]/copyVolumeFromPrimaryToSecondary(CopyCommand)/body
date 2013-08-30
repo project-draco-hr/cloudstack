@@ -1,3 +1,54 @@
 {
-  return null;
+  DataTO srcData=cmd.getSrcTO();
+  DataTO destData=cmd.getDestTO();
+  VolumeObjectTO srcVol=(VolumeObjectTO)srcData;
+  VolumeObjectTO destVol=(VolumeObjectTO)destData;
+  ImageFormat srcFormat=srcVol.getFormat();
+  ImageFormat destFormat=destVol.getFormat();
+  DataStoreTO srcStore=srcData.getDataStore();
+  DataStoreTO destStore=destData.getDataStore();
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)srcStore;
+  if (!(destStore instanceof NfsTO)) {
+    return new CopyCmdAnswer("can only handle nfs storage");
+  }
+  NfsTO nfsStore=(NfsTO)destStore;
+  String srcVolumePath=srcData.getPath();
+  String destVolumePath=destData.getPath();
+  String secondaryStorageUrl=nfsStore.getUrl();
+  KVMStoragePool secondaryStoragePool=null;
+  KVMStoragePool primaryPool=null;
+  try {
+    try {
+      primaryPool=storagePoolMgr.getStoragePool(primaryStore.getPoolType(),primaryStore.getUuid());
+    }
+ catch (    CloudRuntimeException e) {
+      if (e.getMessage().contains("not found")) {
+        primaryPool=storagePoolMgr.createStoragePool(primaryStore.getUuid(),primaryStore.getHost(),primaryStore.getPort(),primaryStore.getPath(),null,primaryStore.getPoolType());
+      }
+ else {
+        return new CopyCmdAnswer(e.getMessage());
+      }
+    }
+    String volumeName=UUID.randomUUID().toString();
+    String destVolumeName=volumeName + "." + destFormat.getFileExtension();
+    KVMPhysicalDisk volume=primaryPool.getPhysicalDisk(srcVolumePath);
+    volume.setFormat(PhysicalDiskFormat.valueOf(srcFormat.toString()));
+    secondaryStoragePool=storagePoolMgr.getStoragePoolByURI(secondaryStorageUrl);
+    secondaryStoragePool.createFolder(destVolumePath);
+    storagePoolMgr.deleteStoragePool(secondaryStoragePool.getType(),secondaryStoragePool.getUuid());
+    secondaryStoragePool=storagePoolMgr.getStoragePoolByURI(secondaryStorageUrl + File.separator + destVolumePath);
+    storagePoolMgr.copyPhysicalDisk(volume,destVolumeName,secondaryStoragePool);
+    VolumeObjectTO newVol=new VolumeObjectTO();
+    newVol.setPath(destVolumePath + File.separator + destVolumeName);
+    newVol.setFormat(destFormat);
+    return new CopyCmdAnswer(newVol);
+  }
+ catch (  CloudRuntimeException e) {
+    return new CopyCmdAnswer(e.toString());
+  }
+ finally {
+    if (secondaryStoragePool != null) {
+      storagePoolMgr.deleteStoragePool(secondaryStoragePool.getType(),secondaryStoragePool.getUuid());
+    }
+  }
 }

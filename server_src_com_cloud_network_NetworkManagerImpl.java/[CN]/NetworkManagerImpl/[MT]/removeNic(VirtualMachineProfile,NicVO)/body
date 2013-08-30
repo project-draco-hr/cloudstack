@@ -4,20 +4,29 @@
   NetworkVO network=_networksDao.findById(nic.getNetworkId());
   NicProfile profile=new NicProfile(nic,network,null,null,null,_networkModel.isSecurityGroupSupportedInNetwork(network),_networkModel.getNetworkTag(vm.getHypervisorType(),network));
   if (nic.getReservationStrategy() == Nic.ReservationStrategy.Create) {
+    List<Provider> providersToImplement=getNetworkProviders(network.getId());
     for (    NetworkElement element : _networkElements) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Asking " + element.getName() + " to release "+ nic);
-      }
-      try {
-        element.release(network,profile,vm,null);
-      }
- catch (      ConcurrentOperationException ex) {
-        s_logger.warn("release failed during the nic " + nic.toString() + " removeNic due to ",ex);
-      }
-catch (      ResourceUnavailableException ex) {
-        s_logger.warn("release failed during the nic " + nic.toString() + " removeNic due to ",ex);
+      if (providersToImplement.contains(element.getProvider())) {
+        if (!_networkModel.isProviderEnabledInPhysicalNetwork(_networkModel.getPhysicalNetworkId(network),element.getProvider().getName())) {
+          throw new CloudRuntimeException("Service provider " + element.getProvider().getName() + " either doesn't exist or is not enabled in physical network id: "+ network.getPhysicalNetworkId());
+        }
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Asking " + element.getName() + " to release "+ nic);
+        }
+        try {
+          element.release(network,profile,vm,null);
+        }
+ catch (        ConcurrentOperationException ex) {
+          s_logger.warn("release failed during the nic " + nic.toString() + " removeNic due to ",ex);
+        }
+catch (        ResourceUnavailableException ex) {
+          s_logger.warn("release failed during the nic " + nic.toString() + " removeNic due to ",ex);
+        }
       }
     }
+  }
+  if (vm.getType() == Type.User && isDhcpAccrossMultipleSubnetsSupported(network) && isLastNicInSubnet(nic) && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == GuestType.Shared) {
+    removeDhcpServiceInSubnet(nic);
   }
   NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,network.getGuruName());
   guru.deallocate(network,profile,vm);

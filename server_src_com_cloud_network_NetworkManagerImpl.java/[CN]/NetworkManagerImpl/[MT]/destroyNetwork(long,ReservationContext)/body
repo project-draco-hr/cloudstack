@@ -5,11 +5,6 @@
     s_logger.debug("Unable to find network with id: " + networkId);
     return false;
   }
-  int nicCount=getActiveNicsInNetwork(networkId);
-  if (nicCount > 0) {
-    s_logger.debug("Unable to remove the network id=" + networkId + " as it has active Nics.");
-    return false;
-  }
   List<UserVmVO> userVms=_userVmDao.listByNetworkIdAndStates(networkId);
   for (  UserVmVO vm : userVms) {
     if (!(vm.getState() == VirtualMachine.State.Expunging && vm.getRemoved() != null)) {
@@ -17,7 +12,12 @@
       return false;
     }
   }
-  DataCenter zone=_configMgr.getZone(network.getDataCenterId());
+  int nicCount=getActiveNicsInNetwork(networkId);
+  if (nicCount > 0) {
+    s_logger.debug("The network id=" + networkId + " has active Nics, but shouldn't.");
+    _networksDao.changeActiveNicsBy(networkId,(-1 * nicCount));
+  }
+  DataCenter zone=_entityMgr.findById(DataCenter.class,network.getDataCenterId());
   if (zone.getNetworkType() == NetworkType.Basic) {
     List<VMInstanceVO> systemVms=_vmDao.listNonRemovedVmsByTypeAndNetwork(network.getId(),Type.ConsoleProxy,Type.SecondaryStorageVm);
     if (systemVms != null && !systemVms.isEmpty()) {
@@ -92,7 +92,7 @@ catch (      Exception e) {
         NetworkAccountVO networkAccount=_networkAccountDao.getAccountNetworkMapByNetworkId(network.getId());
         if (networkAccount != null)         _networkAccountDao.remove(networkAccount.getId());
       }
-      NetworkOffering ntwkOff=_configMgr.getNetworkOffering(network.getNetworkOfferingId());
+      NetworkOffering ntwkOff=_entityMgr.findById(NetworkOffering.class,network.getNetworkOfferingId());
       boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,network.getAclType());
       if (updateResourceCount) {
         _resourceLimitMgr.decrementResourceCount(owner.getId(),ResourceType.network);
