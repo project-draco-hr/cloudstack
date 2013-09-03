@@ -1,15 +1,27 @@
 {
   boolean isExplicit=false;
   VirtualMachine vm=vmProfile.getVirtualMachine();
+  DedicatedResourceVO dedicatedZone=_dedicatedDao.findByZoneId(dc.getId());
+  if (dedicatedZone != null) {
+    long accountDomainId=vmProfile.getOwner().getDomainId();
+    long accountId=vmProfile.getOwner().getAccountId();
+    if (dedicatedZone.getAccountId() != null) {
+      if (dedicatedZone.getAccountId().equals(accountId)) {
+        return;
+      }
+ else {
+        throw new CloudRuntimeException("Failed to deploy VM, Zone " + dc.getName() + " not available for the user account "+ vmProfile.getOwner());
+      }
+    }
+    if (!_affinityGroupService.isAffinityGroupAvailableInDomain(dedicatedZone.getAffinityGroupId(),accountDomainId)) {
+      throw new CloudRuntimeException("Failed to deploy VM, Zone " + dc.getName() + " not available for the user domain "+ vmProfile.getOwner());
+    }
+  }
   List<AffinityGroupVMMapVO> vmGroupMappings=_affinityGroupVMMapDao.findByVmIdType(vm.getId(),"ExplicitDedication");
   if (vmGroupMappings != null && !vmGroupMappings.isEmpty()) {
     isExplicit=true;
   }
-  if (!isExplicit && vm.getType() == VirtualMachine.Type.User) {
-    DedicatedResourceVO dedicatedZone=_dedicatedDao.findByZoneId(dc.getId());
-    if (dedicatedZone != null && dedicatedZone.getDomainId() != null) {
-      throw new CloudRuntimeException("Failed to deploy VM. Zone " + dc.getName() + " is dedicated . Please use Explicit Dedication Affinity Group");
-    }
+  if (!isExplicit) {
     List<Long> allPodsInDc=_podDao.listAllPods(dc.getId());
     List<Long> allDedicatedPods=_dedicatedDao.listAllPods();
     allPodsInDc.retainAll(allDedicatedPods);

@@ -15,6 +15,7 @@
   }
   ControlledEntity.ACLType aclType=null;
   Account owner=null;
+  boolean domainLevel=false;
   if (account != null && domainId != null) {
     owner=_accountMgr.finalizeOwner(caller,account,domainId,null);
     aclType=ControlledEntity.ACLType.Account;
@@ -33,6 +34,7 @@
     _accountMgr.checkAccess(caller,domain);
     owner=_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
     aclType=ControlledEntity.ACLType.Domain;
+    domainLevel=true;
   }
  else {
     owner=caller;
@@ -41,12 +43,17 @@
   if (_affinityGroupDao.isNameInUse(owner.getAccountId(),owner.getDomainId(),affinityGroupName)) {
     throw new InvalidParameterValueException("Unable to create affinity group, a group with name " + affinityGroupName + " already exisits.");
   }
+  if (domainLevel && _affinityGroupDao.findDomainLevelGroupByName(domainId,affinityGroupName) != null) {
+    throw new InvalidParameterValueException("Unable to create affinity group, a group with name " + affinityGroupName + " already exisits under the domain.");
+  }
   Transaction txn=Transaction.currentTxn();
   txn.start();
   AffinityGroupVO group=new AffinityGroupVO(affinityGroupName,affinityGroupType,description,owner.getDomainId(),owner.getId(),aclType);
   _affinityGroupDao.persist(group);
   if (domainId != null && aclType == ACLType.Domain) {
-    AffinityGroupDomainMapVO domainMap=new AffinityGroupDomainMapVO(group.getId(),domainId,false);
+    boolean subDomainAccess=false;
+    subDomainAccess=processor.subDomainAccess();
+    AffinityGroupDomainMapVO domainMap=new AffinityGroupDomainMapVO(group.getId(),domainId,subDomainAccess);
     _affinityGroupDomainMapDao.persist(domainMap);
   }
   txn.commit();
