@@ -21,29 +21,38 @@
     s_logger.debug("Trying to create " + volume + " on "+ pool);
   }
   DataStore store=dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
-  AsyncCallFuture<VolumeApiResult> future=null;
-  boolean isNotCreatedFromTemplate=volume.getTemplateId() == null ? true : false;
-  if (isNotCreatedFromTemplate) {
-    future=volService.createVolumeAsync(volume,store);
-  }
- else {
-    TemplateInfo templ=tmplFactory.getTemplate(template.getId(),DataStoreRole.Image);
-    future=volService.createVolumeFromTemplateAsync(volume,store.getId(),templ);
-  }
-  try {
-    VolumeApiResult result=future.get();
-    if (result.isFailed()) {
-      s_logger.debug("create volume failed: " + result.getResult());
-      throw new CloudRuntimeException("create volume failed:" + result.getResult());
+  for (int i=0; i < 2; i++) {
+    AsyncCallFuture<VolumeApiResult> future=null;
+    boolean isNotCreatedFromTemplate=volume.getTemplateId() == null ? true : false;
+    if (isNotCreatedFromTemplate) {
+      future=volService.createVolumeAsync(volume,store);
     }
-    return result.getVolume();
+ else {
+      TemplateInfo templ=tmplFactory.getTemplate(template.getId(),DataStoreRole.Image);
+      future=volService.createVolumeFromTemplateAsync(volume,store.getId(),templ);
+    }
+    try {
+      VolumeApiResult result=future.get();
+      if (result.isFailed()) {
+        if (result.getResult().contains("request template reload") && (i == 0)) {
+          s_logger.debug("Retry template re-deploy for vmware");
+          continue;
+        }
+ else {
+          s_logger.debug("create volume failed: " + result.getResult());
+          throw new CloudRuntimeException("create volume failed:" + result.getResult());
+        }
+      }
+      return result.getVolume();
+    }
+ catch (    InterruptedException e) {
+      s_logger.error("create volume failed",e);
+      throw new CloudRuntimeException("create volume failed",e);
+    }
+catch (    ExecutionException e) {
+      s_logger.error("create volume failed",e);
+      throw new CloudRuntimeException("create volume failed",e);
+    }
   }
- catch (  InterruptedException e) {
-    s_logger.error("create volume failed",e);
-    throw new CloudRuntimeException("create volume failed",e);
-  }
-catch (  ExecutionException e) {
-    s_logger.error("create volume failed",e);
-    throw new CloudRuntimeException("create volume failed",e);
-  }
+  throw new CloudRuntimeException("create volume failed even after template re-deploy");
 }
