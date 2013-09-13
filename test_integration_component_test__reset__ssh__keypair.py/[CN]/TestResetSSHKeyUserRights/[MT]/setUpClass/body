@@ -1,0 +1,43 @@
+@classmethod
+def setUpClass(cls):
+    cls.api_client = super(TestResetSSHKeyUserRights, cls).getClsTestClient().getApiClient()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client, cls.services)
+    cls.zone = get_zone(cls.api_client, cls.services)
+    cls.services['mode'] = cls.zone.networktype
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = template.id
+    cls.account = Account.create(cls.api_client, cls.services['account'], domainid=cls.domain.id)
+    cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+    cls.virtual_machine = VirtualMachine.create(cls.api_client, cls.services['virtual_machine'], accountid=cls.account.name, domainid=cls.account.domainid, serviceofferingid=cls.service_offering.id, mode=cls.services['mode'])
+    networkid = cls.virtual_machine.nic[0].networkid
+    if (cls.zone.networktype.lower() == 'advanced'):
+        EgressFireWallRule.create(cls.api_client, networkid=networkid, protocol=cls.services['egress']['protocol'], startport=cls.services['egress']['startport'], endport=cls.services['egress']['endport'], cidrlist=cls.services['egress']['cidrlist'])
+    cls.virtual_machine.password = cls.services['virtual_machine']['password']
+    ssh = cls.virtual_machine.get_ssh_client()
+    cmds = [(('cd /etc/init.d;wget http://downloads.sourceforge.net/project/cloudstack/SSH%20Key%20Gen%20Script/' + 'cloud-set-guest-sshkey.in?r=http%3A%2F%2Fsourceforge') + '.net%2Fprojects%2Fcloudstack%2Ffiles%2FSSH%2520Key%2520Gen%2520Script%2F&ts=1331225219&use_mirror=iweb'), 'chmod +x /etc/init.d/cloud-set-guest-sshkey.in', 'chkconfig --add cloud-set-guest-sshkey.in']
+    for c in cmds:
+        result = ssh.execute(c)
+    cls.virtual_machine.stop(cls.api_client)
+    timeout = cls.services['timeout']
+    while True:
+        time.sleep(cls.services['sleep'])
+        list_vm_response = list_virtual_machines(cls.api_client, id=cls.virtual_machine.id)
+        if isinstance(list_vm_response, list):
+            vm = list_vm_response[0]
+            if (vm.state == 'Stopped'):
+                break
+        if (timeout == 0):
+            raise Exception(('Failed to stop VM (ID: %s) ' % vm.id))
+        timeout = (timeout - 1)
+    list_volume = list_volumes(cls.api_client, virtualmachineid=cls.virtual_machine.id, type='ROOT', listall=True)
+    if isinstance(list_volume, list):
+        cls.volume = list_volume[0]
+    else:
+        raise Exception(('Exception: Unable to find root volume for VM: %s' % cls.virtual_machine.id))
+    cls.services['template']['ostype'] = cls.services['ostype']
+    cls.pw_ssh_enabled_template = Template.create(cls.api_client, cls.services['template'], cls.volume.id)
+    cls.virtual_machine.delete(cls.api_client)
+    cls._cleanup = [cls.service_offering, cls.pw_ssh_enabled_template, cls.account]

@@ -1,0 +1,61 @@
+@attr(tags=['simulator', 'basic', 'advanced'])
+def test_03_reset_keypair_root_admin(self):
+    'Verify API resetSSHKeyForVirtualMachine for domain admin root\n            domain user'
+    self.debug('Creating a ROOT admin account')
+    self.account = Account.create(self.apiclient, self.services['account'], admin=True)
+    self.cleanup.append(self.account)
+    self.debug(('Account created: %s' % self.account.name))
+    self.debug(('Generating SSH keypair for the account: %s' % self.account.name))
+    self.keypair = SSHKeyPair.create(self.apiclient, name=(random_gen() + '.pem'), account=self.account.name, domainid=self.account.domainid)
+    self.debug('Writing the private key to local file')
+    keyPairFilePath = ((tempfile.gettempdir() + os.sep) + self.keypair.name)
+    self.debug(('File path: %s' % keyPairFilePath))
+    f = open(keyPairFilePath, 'w+')
+    f.write(self.keypair.privatekey)
+    f.close()
+    os.system(('chmod 400 ' + keyPairFilePath))
+    self.debug('Deploying the virtual machine in default network offering')
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.pw_ssh_enabled_template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, keypair=self.keypair.name, mode=self.services['mode'])
+    self.debug('Check if the VM is properly deployed or not?')
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'List VMs should return the valid list')
+    vm = vms[0]
+    self.assertEqual(vm.state, 'Running', 'VM state should be running after deployment')
+    self.debug('Stopping the virtual machine')
+    try:
+        virtual_machine.stop(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to stop virtual machine: %s, %s' % (virtual_machine.id, e)))
+    self.debug(('Creating a new SSH keypair for account: %s' % self.account.name))
+    new_keypair = SSHKeyPair.create(self.apiclient, name=(random_gen() + '.pem'), account=self.account.name, domainid=self.account.domainid)
+    self.debug(('Created a new keypair with name: %s' % new_keypair.name))
+    self.debug('Writing the private key to local file')
+    keyPairFilePath = ((tempfile.gettempdir() + os.sep) + new_keypair.name)
+    self.debug(('File path: %s' % keyPairFilePath))
+    f = open(keyPairFilePath, 'w+')
+    f.write(new_keypair.privatekey)
+    f.close()
+    os.system(('chmod 400 ' + keyPairFilePath))
+    self.debug(('Resetting the SSH key pair for instance: %s' % virtual_machine.name))
+    try:
+        virtual_machine.resetSshKey(self.apiclient, keypair=new_keypair.name, name=new_keypair.name, account=self.account.name, domainid=self.account.domainid)
+    except Exception as e:
+        self.fail(('Failed to reset SSH key: %s, %s' % (virtual_machine.name, e)))
+    self.debug('Starting the virtual machine after resetting the keypair')
+    try:
+        virtual_machine.start(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to start virtual machine: %s, %s' % (virtual_machine.name, e)))
+    while True:
+        vms = VirtualMachine.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+        if (vms[0].state == 'Running'):
+            break
+        self.debug('Vm not in Running state sleep 60s')
+        time.sleep(60)
+    self.debug('SSHing with new keypair')
+    try:
+        virtual_machine.get_ssh_client(keyPairFileLocation=str(keyPairFilePath))
+    except Exception as e:
+        self.fail(('Failed to SSH into VM with new keypair: %s, %s' % (virtual_machine.name, e)))
+    virtual_machine.delete(self.apiclient)
+    return
