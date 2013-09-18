@@ -1,0 +1,33 @@
+@attr(tags=['advanced', 'basic'])
+def test_01_snapshot_on_rootVolume(self):
+    'Test create VM with default cent os template and create snapshot\n            on root disk of the vm\n        '
+    new_virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, diskofferingid=self.disk_offering.id)
+    self.debug(('Virtual machine got created with id: %s' % new_virtual_machine.id))
+    list_virtual_machine_response = VirtualMachine.list(self.apiclient, id=new_virtual_machine.id)
+    self.assertEqual(isinstance(list_virtual_machine_response, list), True, 'Check listVirtualMachines returns a valid list')
+    self.assertNotEqual(len(list_virtual_machine_response), 0, 'Check listVirtualMachines response')
+    self.cleanup.append(new_virtual_machine)
+    list_volume_response = Volume.list(self.apiclient, virtualmachineid=list_virtual_machine_response[0].id, type='ROOT', account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(list_volume_response, list), True, 'Check listVolumes returns a valid list')
+    self.assertNotEqual(len(list_volume_response), 0, 'Check listVolumes response')
+    self.debug(('Snapshot will be created on the volume with voluem id: %s' % list_volume_response[0].id))
+    root_volume_snapshot = Snapshot.create(self.apiclient, volume_id=list_volume_response[0].id)
+    self.debug(('Created snapshot: %s for vm: %s' % (root_volume_snapshot.id, list_virtual_machine_response[0].id)))
+    list_snapshot_response = Snapshot.list(self.apiclient, id=root_volume_snapshot.id, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(list_snapshot_response, list), True, 'Check listSnapshots returns a valid list')
+    self.assertNotEqual(len(list_snapshot_response), 0, 'Check listSnapshots response')
+    self.assertEqual((list_snapshot_response[0].state in ['BackedUp', 'CreatedOnPrimary']), True, ('Snapshot state is not as expected. It is %s' % list_snapshot_response[0].state))
+    self.assertEqual(list_snapshot_response[0].volumeid, list_volume_response[0].id, "Snapshot volume id is not matching with the vm's volume id")
+    self.cleanup.append(root_volume_snapshot)
+    self.debug(("select id, removed, backup_snap_id from snapshots where uuid = '%s';" % root_volume_snapshot.id))
+    qryresult = self.dbclient.execute(("select id, removed, backup_snap_id from snapshots where uuid = '%s';" % root_volume_snapshot.id))
+    self.assertNotEqual(len(qryresult), 0, 'Check sql query to return snapshots list')
+    snapshot_qry_response = qryresult[0]
+    snapshot_id = snapshot_qry_response[0]
+    is_removed = snapshot_qry_response[1]
+    backup_snap_id = snapshot_qry_response[2]
+    self.assertNotEqual(is_removed, 'NULL', 'Snapshot is removed from CS, please check the logs')
+    msg = ('Backup snapshot id is set to null for the backedup snapshot :%s' % snapshot_id)
+    self.assertNotEqual(backup_snap_id, 'NULL', msg)
+    self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, root_volume_snapshot.id))
+    return
