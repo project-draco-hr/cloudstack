@@ -4,6 +4,7 @@
   String vmName=vmSpec.getName();
   State state=State.Stopped;
   VM vm=null;
+  Map<String,String> iqnToPath=new HashMap<String,String>();
   try {
     Set<VM> vms=VM.getByNameLabel(conn,vmName);
     if (vms != null) {
@@ -32,7 +33,29 @@ synchronized (_cluster.intern()) {
     Host host=Host.getByUuid(conn,_host.uuid);
     vm=createVmFromTemplate(conn,vmSpec,host);
     for (    DiskTO disk : vmSpec.getDisks()) {
-      createVbd(conn,disk,vmName,vm,vmSpec.getBootloader());
+      VDI vdi=null;
+      if (disk.getData() instanceof VolumeObjectTO) {
+        Map<String,String> details=disk.getDetails();
+        boolean isManaged=details != null && Boolean.parseBoolean(details.get(DiskTO.MANAGED));
+        if (isManaged) {
+          String iScsiName=details.get(DiskTO.IQN);
+          String storageHost=details.get(DiskTO.STORAGE_HOST);
+          String chapInitiatorUsername=disk.getDetails().get(DiskTO.CHAP_INITIATOR_USERNAME);
+          String chapInitiatorSecret=disk.getDetails().get(DiskTO.CHAP_INITIATOR_SECRET);
+          Long volumeSize=Long.parseLong(details.get(DiskTO.VOLUME_SIZE));
+          String vdiNameLabel=vmName + "-DATA";
+          SR sr=getIscsiSR(conn,iScsiName,storageHost,iScsiName,chapInitiatorUsername,chapInitiatorSecret,true);
+          vdi=getVDIbyUuid(conn,disk.getPath(),false);
+          if (vdi == null) {
+            vdi=createVdi(sr,vdiNameLabel,volumeSize);
+            iqnToPath.put(iScsiName,vdi.getUuid(conn));
+          }
+ else {
+            vdi.setNameLabel(conn,vdiNameLabel);
+          }
+        }
+      }
+      createVbd(conn,disk,vmName,vm,vmSpec.getBootloader(),vdi);
     }
     if (vmSpec.getType() != VirtualMachine.Type.User) {
       createPatchVbd(conn,vmName,vm);
@@ -106,12 +129,16 @@ synchronized (_cluster.intern()) {
       }
     }
     state=State.Running;
-    return new StartAnswer(cmd);
+    StartAnswer startAnswer=new StartAnswer(cmd);
+    startAnswer.setIqnToPath(iqnToPath);
+    return startAnswer;
   }
  catch (  Exception e) {
     s_logger.warn("Catch Exception: " + e.getClass().toString() + " due to "+ e.toString(),e);
     String msg=handleVmStartFailure(conn,vmName,vm,"",e);
-    return new StartAnswer(cmd,msg);
+    StartAnswer startAnswer=new StartAnswer(cmd,msg);
+    startAnswer.setIqnToPath(iqnToPath);
+    return startAnswer;
   }
  finally {
 synchronized (_cluster.intern()) {
@@ -123,6 +150,9 @@ synchronized (_cluster.intern()) {
         s_vms.remove(_cluster,_name,vmName);
         s_logger.debug("The VM is in stopped state, detected problem during startup : " + vmName);
       }
+    }
+    if (state != State.Running) {
+      disconnectManagedVolumes(conn,vm);
     }
   }
 }
