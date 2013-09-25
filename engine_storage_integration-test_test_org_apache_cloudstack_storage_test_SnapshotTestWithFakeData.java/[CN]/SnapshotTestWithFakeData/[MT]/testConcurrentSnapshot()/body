@@ -1,28 +1,43 @@
 {
   DataStore store=createDataStore();
-  FakePrimaryDataStoreDriver dataStoreDriver=(FakePrimaryDataStoreDriver)store.getDriver();
+  final FakePrimaryDataStoreDriver dataStoreDriver=(FakePrimaryDataStoreDriver)store.getDriver();
   dataStoreDriver.makeTakeSnapshotSucceed(true);
   final VolumeInfo volumeInfo=createVolume(1L,store);
   Assert.assertTrue(volumeInfo.getState() == Volume.State.Ready);
   vol=volumeInfo;
   ExecutorService pool=Executors.newFixedThreadPool(2);
   boolean result=false;
-  Future<Boolean> future=null;
-  for (int i=0; i < 1; i++) {
-    future=pool.submit(new Callable<Boolean>(){
+  List<Future<Boolean>> future=new ArrayList<Future<Boolean>>();
+  for (int i=0; i < 12; i++) {
+    final int cnt=i;
+    Future<Boolean> task=pool.submit(new Callable<Boolean>(){
       @Override public Boolean call() throws Exception {
-        boolean r=false;
+        boolean r=true;
         try {
+          SnapshotVO snapshotVO=createSnapshotInDb(vol.getId());
+          VolumeObject volumeObject=(VolumeObject)vol;
+          Account account=mock(Account.class);
+          when(account.getId()).thenReturn(1L);
+          CreateSnapshotPayload createSnapshotPayload=mock(CreateSnapshotPayload.class);
+          when(createSnapshotPayload.getAccount()).thenReturn(account);
+          when(createSnapshotPayload.getSnapshotId()).thenReturn(snapshotVO.getId());
+          when(createSnapshotPayload.getSnapshotPolicyId()).thenReturn(0L);
+          volumeObject.addPayload(createSnapshotPayload);
+          if (cnt > 8) {
+            mockStorageMotionStrategy.makeBackupSnapshotSucceed(false);
+          }
           SnapshotInfo newSnapshot=volumeService.takeSnapshot(vol);
-          Assert.assertTrue(newSnapshot != null);
+          if (newSnapshot == null) {
+            r=false;
+          }
         }
  catch (        Exception e) {
           r=false;
         }
-        return true;
+        return r;
       }
     }
 );
+    Assert.assertTrue(task.get());
   }
-  future.get();
 }
