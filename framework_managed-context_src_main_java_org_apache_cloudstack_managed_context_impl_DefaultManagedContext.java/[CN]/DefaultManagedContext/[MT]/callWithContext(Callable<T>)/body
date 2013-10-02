@@ -1,0 +1,49 @@
+{
+  Object owner=new Object();
+  Stack<ListenerInvocation> invocations=new Stack<ListenerInvocation>();
+  boolean reentry=!ManagedContextUtils.setAndCheckOwner(owner);
+  Throwable firstError=null;
+  try {
+    for (    ManagedContextListener<?> listener : listeners) {
+      Object data=null;
+      try {
+        data=listener.onEnterContext(reentry);
+      }
+ catch (      Throwable t) {
+        if (firstError == null) {
+          firstError=t;
+        }
+        log.error("Failed onEnterContext for listener [{}]",listener,t);
+      }
+      invocations.push(new ListenerInvocation((ManagedContextListener<Object>)listener,data));
+    }
+    try {
+      if (firstError == null) {
+        return callable.call();
+      }
+ else {
+        throwException(firstError);
+        return null;
+      }
+    }
+  finally {
+      Throwable lastError=null;
+      while (!invocations.isEmpty()) {
+        ListenerInvocation invocation=invocations.pop();
+        try {
+          invocation.listener.onLeaveContext(invocation.data,reentry);
+        }
+ catch (        Throwable t) {
+          lastError=t;
+          log.error("Failed onLeaveContext for listener [{}]",invocation.listener,t);
+        }
+      }
+      if (firstError == null && lastError != null) {
+        throwException(lastError);
+      }
+    }
+  }
+  finally {
+    if (ManagedContextUtils.clearOwner(owner))     ManagedThreadLocal.reset();
+  }
+}
