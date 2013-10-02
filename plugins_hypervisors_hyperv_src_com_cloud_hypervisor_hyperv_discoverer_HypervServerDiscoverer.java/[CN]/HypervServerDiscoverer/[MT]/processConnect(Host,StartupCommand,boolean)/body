@@ -1,0 +1,51 @@
+{
+  if (!(cmd instanceof StartupRoutingCommand)) {
+    return;
+  }
+  StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+  if (startup.getHypervisorType() != HypervisorType.Hyperv) {
+    s_logger.debug("Not Hyper-V hypervisor, so moving on.");
+    return;
+  }
+  long agentId=agent.getId();
+  HostVO host=_hostDao.findById(agentId);
+  ClusterVO cluster=_clusterDao.findById(host.getClusterId());
+  if (cluster.getGuid() == null) {
+    cluster.setGuid(startup.getPool());
+    _clusterDao.update(cluster.getId(),cluster);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Setting up host " + agentId);
+  }
+  HostEnvironment env=new HostEnvironment();
+  SetupCommand setup=new SetupCommand(env);
+  if (!host.isSetup()) {
+    setup.setNeedSetup(true);
+  }
+  try {
+    SetupAnswer answer=(SetupAnswer)_agentMgr.send(agentId,setup);
+    if (answer != null && answer.getResult()) {
+      host.setSetup(true);
+      host.setLastPinged((System.currentTimeMillis() >> 10) - 5 * 60);
+      _hostDao.update(host.getId(),host);
+      if (answer.needReconnect()) {
+        throw new ConnectionException(false,"Reinitialize agent after setup.");
+      }
+      return;
+    }
+ else {
+      String reason=answer.getDetails();
+      if (reason == null) {
+        reason=" details were null";
+      }
+      s_logger.warn("Unable to setup agent " + agentId + " due to "+ reason);
+    }
+  }
+ catch (  AgentUnavailableException e) {
+    s_logger.warn("Unable to setup agent " + agentId + " because it became unavailable.",e);
+  }
+catch (  OperationTimedoutException e) {
+    s_logger.warn("Unable to setup agent " + agentId + " because it timed out",e);
+  }
+  throw new ConnectionException(true,"Reinitialize agent after setup.");
+}
