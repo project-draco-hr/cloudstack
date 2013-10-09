@@ -1,51 +1,46 @@
 {
-  String entityType=AclEntityType.VM.toString();
-  if (entity instanceof InternalIdentity) {
-    InternalIdentity entityWithId=(InternalIdentity)entity;
-    List<AclGroupAccountMapVO> acctGroups=_aclGroupAccountMapDao.listByAccountId(caller.getId());
-    for (    AclGroupAccountMapVO groupMapping : acctGroups) {
-      AclEntityPermissionVO entityPermission=_entityPermissionDao.findByGroupAndEntity(groupMapping.getAclGroupId(),entityType,entityWithId.getId(),accessType);
-      if (entityPermission != null) {
-        if (entityPermission.isAllowed()) {
-          return true;
-        }
- else {
-          if (s_logger.isDebugEnabled()) {
-            s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+  if (entity instanceof VirtualMachine) {
+    String entityType=AclEntityType.VM.toString();
+    if (entity instanceof InternalIdentity) {
+      InternalIdentity entityWithId=(InternalIdentity)entity;
+      List<AclGroupAccountMapVO> acctGroups=_aclGroupAccountMapDao.listByAccountId(caller.getId());
+      for (      AclGroupAccountMapVO groupMapping : acctGroups) {
+        AclEntityPermissionVO entityPermission=_entityPermissionDao.findByGroupAndEntity(groupMapping.getAclGroupId(),entityType,entityWithId.getId(),accessType);
+        if (entityPermission != null) {
+          if (entityPermission.isAllowed()) {
+            return true;
           }
-          throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+ else {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+            }
+            throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+          }
         }
       }
     }
-  }
-  if (_accountService.isRootAdmin(caller.getId())) {
-    return true;
-  }
-  if (caller.getId() == entity.getAccountId()) {
-    return true;
-  }
-  List<AclRole> roles=_aclService.getEffectiveRoles(caller,entity);
-  for (  AclRole role : roles) {
-    AclRolePermissionVO permission=_rolePermissionDao.findByRoleAndEntity(role.getId(),entityType,accessType);
-    boolean operationAllowedForAll=true;
-    if (permission.getEntityType().equals(entityType)) {
-      if (permission.isAllowed()) {
+    List<AclRole> roles=_aclService.getEffectiveRoles(caller,entity);
+    HashMap<AclRole,Boolean> rolePermissionMap=new HashMap<AclRole,Boolean>();
+    for (    AclRole role : roles) {
+      List<AclRolePermissionVO> permissions=_rolePermissionDao.listByRoleAndEntity(role.getId(),entityType,accessType);
+      for (      AclRolePermissionVO permission : permissions) {
+        if (permission.getEntityType().equals(entityType)) {
+          rolePermissionMap.put(role,permission.isAllowed());
+          break;
+        }
+ else         if (permission.getEntityType().equals("*")) {
+          rolePermissionMap.put(role,permission.isAllowed());
+        }
+      }
+      if (rolePermissionMap.containsKey(role) && rolePermissionMap.get(role)) {
         return true;
       }
- else {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
-        }
-        throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
-      }
     }
- else     if (permission.getEntityType().equals("*")) {
-      if (permission.isAllowed()) {
-        operationAllowedForAll=true;
+    if (!roles.isEmpty()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
       }
- else {
-        operationAllowedForAll=false;
-      }
+      throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
     }
   }
   return false;
