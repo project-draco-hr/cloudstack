@@ -1,0 +1,28 @@
+@attr(tags=['advanced', 'advancedns'])
+@attr(speed='slow')
+def test_04_delete_lb_rule(self):
+    'Test LB rule before/after stickiness policy creation'
+    lb_methods = ['roundrobin', 'leastconn', 'source']
+    configs = {'SourceBased': {'tablesize': '100k', }, 'AppCookie': {'request-learn': 'true', }, 'LBCookie': {'nocache': 'true', }, }
+    for lb_method in lb_methods:
+        for (method, params) in configs.items():
+            self.debug(('Creating load balancing rule on IP %s & algo %s' % (self.public_ip.ipaddress.ipaddress, lb_method)))
+            services = self.services['lbrule']
+            services['alg'] = lb_method
+            lb_rule = self.create_LB_Rule(self.public_ip, network=self.get_Network(self.account), vmarray=[self.virtual_machine, self.virtual_machine_2], services=services)
+            self.debug('Deleting the LB rule before stickiness policy creation')
+            lb_rule.delete(self.apiclient)
+            with self.assertRaises(Exception):
+                LoadBalancerRule.list(self.apiclient, id=lb_rule.id, listall=True)
+            lb_rule = self.create_LB_Rule(self.public_ip, network=self.get_Network(self.account), vmarray=[self.virtual_machine, self.virtual_machine_2], services=services)
+            self.debug(('Creating stickiness policy for the LB rule: %s' % lb_rule.id))
+            policies = self.configure_Stickiness_Policy(lb_rule, method=method, paramDict=params)
+            policy = policies.stickinesspolicy[0]
+            self.debug(('Policy: %s' % str(policy)))
+            self.debug('Validating the stickiness policy')
+            self.validate_Stickiness_Policy(lb_rule, method, self.public_ip.ipaddress.ipaddress)
+            self.debug(('Deleting the LB rule: %s' % lb_rule.name))
+            lb_rule.delete(self.apiclient)
+            with self.assertRaises(Exception):
+                LoadBalancerRule.list(self.apiclient, id=lb_rule.id)
+    return
