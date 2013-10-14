@@ -1,0 +1,43 @@
+def get_vm_group_perfmon(args={}):
+    login = XenAPI.xapi_local()
+    login.login_with_password('', '')
+    average_cpu = 0
+    average_memory = 0
+    result = ''
+    total_vm = int(args['total_vm'])
+    total_counter = int(args['total_counter'])
+    now = (int(time.time()) / 60)
+    session = login._session
+    max_duration = 0
+    for counter_count in xrange(1, (total_counter + 1)):
+        duration = int(args[('duration' + str(counter_count))])
+        if (duration > max_duration):
+            max_duration = duration
+    rrd_updates = RRDUpdates()
+    rrd_updates.refresh(login.xenapi, ((now * 60) - max_duration), session, {})
+    for vm_count in xrange(1, (total_vm + 1)):
+        vm_uuid = args[('vmuuid' + str(vm_count))]
+        for counter_count in xrange(1, (total_counter + 1)):
+            counter = args[('counter' + str(counter_count))]
+            total_row = rrd_updates.get_nrows()
+            duration = (int(args[('duration' + str(counter_count))]) / 60)
+            duration_diff = (total_row - duration)
+            if (counter == 'cpu'):
+                total_cpu = rrd_updates.get_total_cpu_core(vm_uuid)
+                for row in xrange(duration_diff, total_row):
+                    for cpu in xrange(0, total_cpu):
+                        average_cpu += rrd_updates.get_vm_data(vm_uuid, ('cpu' + str(cpu)), row)
+                average_cpu /= (duration * total_cpu)
+                if (result == ''):
+                    result += ((((str(vm_count) + '.') + str(counter_count)) + ':') + str(average_cpu))
+                else:
+                    result += (((((',' + str(vm_count)) + '.') + str(counter_count)) + ':') + str(average_cpu))
+            elif (counter == 'memory'):
+                for row in xrange(duration_diff, total_row):
+                    average_memory += ((rrd_updates.get_vm_data(vm_uuid, 'memory_target', row) / 1048576) - (rrd_updates.get_vm_data(vm_uuid, 'memory_internal_free', row) / 1024))
+                average_memory /= duration
+                if (result == ''):
+                    result += ((((str(vm_count) + '.') + str(counter_count)) + ':') + str(average_memory))
+                else:
+                    result += (((((',' + str(vm_count)) + '.') + str(counter_count)) + ':') + str(average_memory))
+    return result
