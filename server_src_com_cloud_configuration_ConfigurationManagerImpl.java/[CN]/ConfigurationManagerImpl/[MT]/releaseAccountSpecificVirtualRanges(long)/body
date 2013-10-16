@@ -1,23 +1,25 @@
 {
-  List<AccountVlanMapVO> maps=_accountVlanMapDao.listAccountVlanMapsByAccount(accountId);
-  boolean result=true;
+  final List<AccountVlanMapVO> maps=_accountVlanMapDao.listAccountVlanMapsByAccount(accountId);
   if (maps != null && !maps.isEmpty()) {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    for (    AccountVlanMapVO map : maps) {
-      if (!releasePublicIpRange(map.getVlanDbId(),_accountMgr.getSystemUser().getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM))) {
-        result=false;
+    try {
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          for (          AccountVlanMapVO map : maps) {
+            if (!releasePublicIpRange(map.getVlanDbId(),_accountMgr.getSystemUser().getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM))) {
+              throw new CloudRuntimeException("Failed to release account specific virtual ip ranges for account id=" + accountId);
+            }
+          }
+        }
       }
+);
     }
-    if (result) {
-      txn.commit();
-    }
- else {
-      s_logger.error("Failed to release account specific virtual ip ranges for account id=" + accountId);
+ catch (    CloudRuntimeException e) {
+      s_logger.error(e);
+      return false;
     }
   }
  else {
     s_logger.trace("Account id=" + accountId + " has no account specific virtual ip ranges, nothing to release");
   }
-  return result;
+  return true;
 }

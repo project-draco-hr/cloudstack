@@ -1,15 +1,18 @@
 {
-  FirewallRuleVO[] rules=new FirewallRuleVO[ports.length];
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  for (int i=0; i < ports.length; i++) {
-    rules[i]=new FirewallRuleVO(null,ip.getId(),ports[i],protocol,ip.getAssociatedWithNetworkId(),ip.getAllocatedToAccountId(),ip.getAllocatedInDomainId(),purpose,null,null,null,null);
-    rules[i]=_firewallDao.persist(rules[i]);
-    if (openFirewall) {
-      _firewallMgr.createRuleForAllCidrs(ip.getId(),caller,ports[i],ports[i],protocol,null,null,rules[i].getId(),ip.getAssociatedWithNetworkId());
+  final FirewallRuleVO[] rules=new FirewallRuleVO[ports.length];
+  Transaction.executeWithException(new TransactionCallbackWithException<Object>(){
+    @Override public Object doInTransaction(    TransactionStatus status) throws NetworkRuleConflictException {
+      for (int i=0; i < ports.length; i++) {
+        rules[i]=new FirewallRuleVO(null,ip.getId(),ports[i],protocol,ip.getAssociatedWithNetworkId(),ip.getAllocatedToAccountId(),ip.getAllocatedInDomainId(),purpose,null,null,null,null);
+        rules[i]=_firewallDao.persist(rules[i]);
+        if (openFirewall) {
+          _firewallMgr.createRuleForAllCidrs(ip.getId(),caller,ports[i],ports[i],protocol,null,null,rules[i].getId(),ip.getAssociatedWithNetworkId());
+        }
+      }
+      return null;
     }
   }
-  txn.commit();
+,NetworkRuleConflictException.class);
   boolean success=false;
   try {
     for (    FirewallRuleVO newRule : rules) {
@@ -20,11 +23,14 @@
   }
   finally {
     if (!success) {
-      txn.start();
-      for (      FirewallRuleVO newRule : rules) {
-        _firewallMgr.removeRule(newRule);
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          for (          FirewallRuleVO newRule : rules) {
+            _firewallMgr.removeRule(newRule);
+          }
+        }
       }
-      txn.commit();
+);
     }
   }
 }

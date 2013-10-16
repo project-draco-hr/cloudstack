@@ -1,6 +1,6 @@
 {
   Account caller=CallContext.current().getCallingAccount();
-  User user=_userDao.findById(userId);
+  final User user=_userDao.findById(userId);
   if (user == null || user.getRemoved() != null) {
     throw new InvalidParameterValueException("Unable to find active user by id " + userId);
   }
@@ -12,11 +12,14 @@
     throw new InvalidParameterValueException("User id : " + userId + " is a system user, enabling is not allowed");
   }
   checkAccess(caller,null,true,account);
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  boolean success=doSetUserStatus(userId,State.enabled);
-  success=success && enableAccount(user.getAccountId());
-  txn.commit();
+  boolean success=Transaction.execute(new TransactionCallback<Boolean>(){
+    @Override public Boolean doInTransaction(    TransactionStatus status){
+      boolean success=doSetUserStatus(userId,State.enabled);
+      success=success && enableAccount(user.getAccountId());
+      return success;
+    }
+  }
+);
   if (success) {
     updateLoginAttempts(userId,0,false);
     CallContext.current().putContextParameter(User.class,user.getUuid());

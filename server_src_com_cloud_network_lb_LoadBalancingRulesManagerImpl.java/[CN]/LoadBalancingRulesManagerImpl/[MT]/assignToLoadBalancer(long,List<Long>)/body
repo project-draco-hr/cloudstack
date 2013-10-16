@@ -1,7 +1,7 @@
 {
   CallContext ctx=CallContext.current();
   Account caller=ctx.getCallingAccount();
-  LoadBalancerVO loadBalancer=_lbDao.findById(loadBalancerId);
+  final LoadBalancerVO loadBalancer=_lbDao.findById(loadBalancerId);
   if (loadBalancer == null) {
     throw new InvalidParameterValueException("Failed to assign to load balancer " + loadBalancerId + ", the load balancer was not found.");
   }
@@ -10,7 +10,7 @@
   for (  LoadBalancerVMMapVO mappedInstance : mappedInstances) {
     mappedInstanceIds.add(Long.valueOf(mappedInstance.getInstanceId()));
   }
-  List<UserVm> vmsToAdd=new ArrayList<UserVm>();
+  final List<UserVm> vmsToAdd=new ArrayList<UserVm>();
   if (instanceIds == null || instanceIds.isEmpty()) {
     s_logger.warn("List of vms to assign to the lb, is empty");
     return false;
@@ -52,13 +52,15 @@
     }
     vmsToAdd.add(vm);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  for (  UserVm vm : vmsToAdd) {
-    LoadBalancerVMMapVO map=new LoadBalancerVMMapVO(loadBalancer.getId(),vm.getId(),false);
-    map=_lb2VmMapDao.persist(map);
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      for (      UserVm vm : vmsToAdd) {
+        LoadBalancerVMMapVO map=new LoadBalancerVMMapVO(loadBalancer.getId(),vm.getId(),false);
+        map=_lb2VmMapDao.persist(map);
+      }
+    }
   }
-  txn.commit();
+);
   if (_autoScaleVmGroupDao.isAutoScaleLoadBalancer(loadBalancerId)) {
     return true;
   }
@@ -72,13 +74,15 @@
   }
  catch (  ResourceUnavailableException e) {
     if (isRollBackAllowedForProvider(loadBalancer)) {
-      List<Long> vmInstanceIds=new ArrayList<Long>();
-      txn=Transaction.currentTxn();
-      txn.start();
-      for (      UserVm vm : vmsToAdd) {
-        vmInstanceIds.add(vm.getId());
+      final List<Long> vmInstanceIds=new ArrayList<Long>();
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          for (          UserVm vm : vmsToAdd) {
+            vmInstanceIds.add(vm.getId());
+          }
+        }
       }
-      txn.commit();
+);
       if (!vmInstanceIds.isEmpty()) {
         _lb2VmMapDao.remove(loadBalancer.getId(),vmInstanceIds,null);
         s_logger.debug("LB Rollback rule id: " + loadBalancer.getId() + "  while attaching VM: "+ vmInstanceIds);

@@ -9,7 +9,7 @@
  else {
     throw new InvalidParameterValueException("Unable to create affinity group, no Affinity Group Types configured");
   }
-  AffinityGroupProcessor processor=typeProcessorMap.get(affinityGroupType);
+  final AffinityGroupProcessor processor=typeProcessorMap.get(affinityGroupType);
   if (processor.isAdminControlledGroup() && !_accountMgr.isRootAdmin(caller.getType())) {
     throw new PermissionDeniedException("Cannot create the affinity group");
   }
@@ -46,17 +46,22 @@
   if (domainLevel && _affinityGroupDao.findDomainLevelGroupByName(domainId,affinityGroupName) != null) {
     throw new InvalidParameterValueException("Unable to create affinity group, a group with name " + affinityGroupName + " already exisits under the domain.");
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  AffinityGroupVO group=new AffinityGroupVO(affinityGroupName,affinityGroupType,description,owner.getDomainId(),owner.getId(),aclType);
-  _affinityGroupDao.persist(group);
-  if (domainId != null && aclType == ACLType.Domain) {
-    boolean subDomainAccess=false;
-    subDomainAccess=processor.subDomainAccess();
-    AffinityGroupDomainMapVO domainMap=new AffinityGroupDomainMapVO(group.getId(),domainId,subDomainAccess);
-    _affinityGroupDomainMapDao.persist(domainMap);
+  final Account ownerFinal=owner;
+  final ControlledEntity.ACLType aclTypeFinal=aclType;
+  AffinityGroupVO group=Transaction.execute(new TransactionCallback<AffinityGroupVO>(){
+    @Override public AffinityGroupVO doInTransaction(    TransactionStatus status){
+      AffinityGroupVO group=new AffinityGroupVO(affinityGroupName,affinityGroupType,description,ownerFinal.getDomainId(),ownerFinal.getId(),aclTypeFinal);
+      _affinityGroupDao.persist(group);
+      if (domainId != null && aclTypeFinal == ACLType.Domain) {
+        boolean subDomainAccess=false;
+        subDomainAccess=processor.subDomainAccess();
+        AffinityGroupDomainMapVO domainMap=new AffinityGroupDomainMapVO(group.getId(),domainId,subDomainAccess);
+        _affinityGroupDomainMapDao.persist(domainMap);
+      }
+      return group;
+    }
   }
-  txn.commit();
+);
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Created affinity group =" + affinityGroupName);
   }

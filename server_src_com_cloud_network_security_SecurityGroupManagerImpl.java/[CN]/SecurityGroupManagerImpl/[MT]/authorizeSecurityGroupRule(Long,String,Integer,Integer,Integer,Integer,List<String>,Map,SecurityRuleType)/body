@@ -96,62 +96,66 @@
       authorizedGroups.add(groupVO);
     }
   }
-  final Transaction txn=Transaction.currentTxn();
   final Set<SecurityGroupVO> authorizedGroups2=new TreeSet<SecurityGroupVO>(new SecurityGroupVOComparator());
   authorizedGroups2.addAll(authorizedGroups);
-  txn.start();
-  securityGroup=_securityGroupDao.acquireInLockTable(securityGroupId);
-  if (securityGroup == null) {
-    s_logger.warn("Could not acquire lock on network security group: id= " + securityGroupId);
-    return null;
-  }
-  List<SecurityGroupRuleVO> newRules=new ArrayList<SecurityGroupRuleVO>();
-  try {
-    for (    final SecurityGroupVO ngVO : authorizedGroups2) {
-      final Long ngId=ngVO.getId();
-      if (ngVO.getId() != securityGroup.getId()) {
-        final SecurityGroupVO tmpGrp=_securityGroupDao.lockRow(ngId,false);
-        if (tmpGrp == null) {
-          s_logger.warn("Failed to acquire lock on security group: " + ngId);
-          txn.rollback();
-          return null;
+  final Integer startPortOrTypeFinal=startPortOrType;
+  final Integer endPortOrCodeFinal=endPortOrCode;
+  final String protocolFinal=protocol;
+  return Transaction.execute(new TransactionCallback<List<SecurityGroupRuleVO>>(){
+    @Override public List<SecurityGroupRuleVO> doInTransaction(    TransactionStatus status){
+      SecurityGroup securityGroup=_securityGroupDao.acquireInLockTable(securityGroupId);
+      if (securityGroup == null) {
+        s_logger.warn("Could not acquire lock on network security group: id= " + securityGroupId);
+        return null;
+      }
+      List<SecurityGroupRuleVO> newRules=new ArrayList<SecurityGroupRuleVO>();
+      try {
+        for (        final SecurityGroupVO ngVO : authorizedGroups2) {
+          final Long ngId=ngVO.getId();
+          if (ngVO.getId() != securityGroup.getId()) {
+            final SecurityGroupVO tmpGrp=_securityGroupDao.lockRow(ngId,false);
+            if (tmpGrp == null) {
+              s_logger.warn("Failed to acquire lock on security group: " + ngId);
+              throw new ConcurrentAccessException("Failed to acquire lock on security group: " + ngId);
+            }
+          }
+          SecurityGroupRuleVO securityGroupRule=_securityGroupRuleDao.findByProtoPortsAndAllowedGroupId(securityGroup.getId(),protocolFinal,startPortOrTypeFinal,endPortOrCodeFinal,ngVO.getId());
+          if ((securityGroupRule != null) && (securityGroupRule.getRuleType() == ruleType)) {
+            continue;
+          }
+          securityGroupRule=new SecurityGroupRuleVO(ruleType,securityGroup.getId(),startPortOrTypeFinal,endPortOrCodeFinal,protocolFinal,ngVO.getId());
+          securityGroupRule=_securityGroupRuleDao.persist(securityGroupRule);
+          newRules.add(securityGroupRule);
         }
-      }
-      SecurityGroupRuleVO securityGroupRule=_securityGroupRuleDao.findByProtoPortsAndAllowedGroupId(securityGroup.getId(),protocol,startPortOrType,endPortOrCode,ngVO.getId());
-      if ((securityGroupRule != null) && (securityGroupRule.getRuleType() == ruleType)) {
-        continue;
-      }
-      securityGroupRule=new SecurityGroupRuleVO(ruleType,securityGroup.getId(),startPortOrType,endPortOrCode,protocol,ngVO.getId());
-      securityGroupRule=_securityGroupRuleDao.persist(securityGroupRule);
-      newRules.add(securityGroupRule);
-    }
-    if (cidrList != null) {
-      for (      String cidr : cidrList) {
-        SecurityGroupRuleVO securityGroupRule=_securityGroupRuleDao.findByProtoPortsAndCidr(securityGroup.getId(),protocol,startPortOrType,endPortOrCode,cidr);
-        if ((securityGroupRule != null) && (securityGroupRule.getRuleType() == ruleType)) {
-          continue;
+        if (cidrList != null) {
+          for (          String cidr : cidrList) {
+            SecurityGroupRuleVO securityGroupRule=_securityGroupRuleDao.findByProtoPortsAndCidr(securityGroup.getId(),protocolFinal,startPortOrTypeFinal,endPortOrCodeFinal,cidr);
+            if ((securityGroupRule != null) && (securityGroupRule.getRuleType() == ruleType)) {
+              continue;
+            }
+            securityGroupRule=new SecurityGroupRuleVO(ruleType,securityGroup.getId(),startPortOrTypeFinal,endPortOrCodeFinal,protocolFinal,cidr);
+            securityGroupRule=_securityGroupRuleDao.persist(securityGroupRule);
+            newRules.add(securityGroupRule);
+          }
         }
-        securityGroupRule=new SecurityGroupRuleVO(ruleType,securityGroup.getId(),startPortOrType,endPortOrCode,protocol,cidr);
-        securityGroupRule=_securityGroupRuleDao.persist(securityGroupRule);
-        newRules.add(securityGroupRule);
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Added " + newRules.size() + " rules to security group "+ securityGroup.getName());
+        }
+        final ArrayList<Long> affectedVms=new ArrayList<Long>();
+        affectedVms.addAll(_securityGroupVMMapDao.listVmIdsBySecurityGroup(securityGroup.getId()));
+        scheduleRulesetUpdateToHosts(affectedVms,true,null);
+        return newRules;
       }
-    }
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Added " + newRules.size() + " rules to security group "+ securityGroup.getName());
-    }
-    txn.commit();
-    final ArrayList<Long> affectedVms=new ArrayList<Long>();
-    affectedVms.addAll(_securityGroupVMMapDao.listVmIdsBySecurityGroup(securityGroup.getId()));
-    scheduleRulesetUpdateToHosts(affectedVms,true,null);
-    return newRules;
-  }
- catch (  Exception e) {
-    s_logger.warn("Exception caught when adding security group rules ",e);
-    throw new CloudRuntimeException("Exception caught when adding security group rules",e);
-  }
+ catch (      Exception e) {
+        s_logger.warn("Exception caught when adding security group rules ",e);
+        throw new CloudRuntimeException("Exception caught when adding security group rules",e);
+      }
  finally {
-    if (securityGroup != null) {
-      _securityGroupDao.releaseFromLockTable(securityGroup.getId());
+        if (securityGroup != null) {
+          _securityGroupDao.releaseFromLockTable(securityGroup.getId());
+        }
+      }
     }
   }
+);
 }

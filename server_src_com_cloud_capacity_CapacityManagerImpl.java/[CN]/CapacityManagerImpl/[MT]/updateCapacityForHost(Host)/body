@@ -94,23 +94,29 @@
     }
   }
  else {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    CapacityVO capacity=new CapacityVO(host.getId(),host.getDataCenterId(),host.getPodId(),host.getClusterId(),usedMemory,host.getTotalMemory(),CapacityVO.CAPACITY_TYPE_MEMORY);
-    capacity.setReservedCapacity(reservedMemory);
-    CapacityState capacityState=CapacityState.Enabled;
-    if (host.getClusterId() != null) {
-      cluster=ApiDBUtils.findClusterById(host.getClusterId());
-      if (cluster != null) {
-        capacityState=_configMgr.findClusterAllocationState(cluster) == AllocationState.Disabled ? CapacityState.Disabled : CapacityState.Enabled;
+    final long usedMemoryFinal=usedMemory;
+    final long reservedMemoryFinal=reservedMemory;
+    final long usedCpuFinal=usedCpu;
+    final long reservedCpuFinal=reservedCpu;
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        CapacityVO capacity=new CapacityVO(host.getId(),host.getDataCenterId(),host.getPodId(),host.getClusterId(),usedMemoryFinal,host.getTotalMemory(),CapacityVO.CAPACITY_TYPE_MEMORY);
+        capacity.setReservedCapacity(reservedMemoryFinal);
+        CapacityState capacityState=CapacityState.Enabled;
+        if (host.getClusterId() != null) {
+          ClusterVO cluster=ApiDBUtils.findClusterById(host.getClusterId());
+          if (cluster != null) {
+            capacityState=_configMgr.findClusterAllocationState(cluster) == AllocationState.Disabled ? CapacityState.Disabled : CapacityState.Enabled;
+            capacity.setCapacityState(capacityState);
+          }
+        }
+        _capacityDao.persist(capacity);
+        capacity=new CapacityVO(host.getId(),host.getDataCenterId(),host.getPodId(),host.getClusterId(),usedCpuFinal,host.getCpus().longValue() * host.getSpeed().longValue(),CapacityVO.CAPACITY_TYPE_CPU);
+        capacity.setReservedCapacity(reservedCpuFinal);
         capacity.setCapacityState(capacityState);
+        _capacityDao.persist(capacity);
       }
     }
-    _capacityDao.persist(capacity);
-    capacity=new CapacityVO(host.getId(),host.getDataCenterId(),host.getPodId(),host.getClusterId(),usedCpu,host.getCpus().longValue() * host.getSpeed().longValue(),CapacityVO.CAPACITY_TYPE_CPU);
-    capacity.setReservedCapacity(reservedCpu);
-    capacity.setCapacityState(capacityState);
-    _capacityDao.persist(capacity);
-    txn.commit();
+);
   }
 }

@@ -2,15 +2,17 @@
   Network network=_networksDao.findById(nic.getNetworkId());
   DhcpServiceProvider dhcpServiceProvider=getDhcpServiceProvider(network);
   try {
-    NicIpAliasVO ipAlias=_nicIpAliasDao.findByGatewayAndNetworkIdAndState(nic.getGateway(),network.getId(),NicIpAlias.state.active);
+    final NicIpAliasVO ipAlias=_nicIpAliasDao.findByGatewayAndNetworkIdAndState(nic.getGateway(),network.getId(),NicIpAlias.state.active);
     if (ipAlias != null) {
       ipAlias.setState(NicIpAlias.state.revoked);
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
-      IPAddressVO aliasIpaddressVo=_publicIpAddressDao.findByIpAndSourceNetworkId(ipAlias.getNetworkId(),ipAlias.getIp4Address());
-      _publicIpAddressDao.unassignIpAddress(aliasIpaddressVo.getId());
-      txn.commit();
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          _nicIpAliasDao.update(ipAlias.getId(),ipAlias);
+          IPAddressVO aliasIpaddressVo=_publicIpAddressDao.findByIpAndSourceNetworkId(ipAlias.getNetworkId(),ipAlias.getIp4Address());
+          _publicIpAddressDao.unassignIpAddress(aliasIpaddressVo.getId());
+        }
+      }
+);
       if (!dhcpServiceProvider.removeDhcpSupportForSubnet(network)) {
         s_logger.warn("Failed to remove the ip alias on the router, marking it as removed in db and freed the allocated ip " + ipAlias.getIp4Address());
       }

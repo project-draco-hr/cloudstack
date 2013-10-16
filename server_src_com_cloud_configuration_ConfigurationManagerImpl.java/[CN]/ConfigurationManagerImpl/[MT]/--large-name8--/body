@@ -102,44 +102,47 @@
   if (serviceProviderMap != null && serviceProviderMap.containsKey(Service.Lb) && !internalLb && !publicLb) {
     publicLb=true;
   }
-  NetworkOfferingVO offering=new NetworkOfferingVO(name,displayText,trafficType,systemOnly,specifyVlan,networkRate,multicastRate,isDefault,availability,tags,type,conserveMode,dedicatedLb,sharedSourceNat,redundantRouter,elasticIp,elasticLb,specifyIpRanges,inline,isPersistent,associatePublicIp,publicLb,internalLb,egressDefaultPolicy);
+  final NetworkOfferingVO offeringFinal=new NetworkOfferingVO(name,displayText,trafficType,systemOnly,specifyVlan,networkRate,multicastRate,isDefault,availability,tags,type,conserveMode,dedicatedLb,sharedSourceNat,redundantRouter,elasticIp,elasticLb,specifyIpRanges,inline,isPersistent,associatePublicIp,publicLb,internalLb,egressDefaultPolicy);
   if (serviceOfferingId != null) {
-    offering.setServiceOfferingId(serviceOfferingId);
+    offeringFinal.setServiceOfferingId(serviceOfferingId);
   }
   if (details != null) {
     validateNtwkOffDetails(details,serviceProviderMap);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  s_logger.debug("Adding network offering " + offering);
-  offering.setConcurrentConnections(maxconn);
-  offering=_networkOfferingDao.persist(offering,details);
-  if (serviceProviderMap != null) {
-    for (    Network.Service service : serviceProviderMap.keySet()) {
-      Set<Provider> providers=serviceProviderMap.get(service);
-      if (providers != null && !providers.isEmpty()) {
-        boolean vpcOff=false;
-        for (        Network.Provider provider : providers) {
-          if (provider == Provider.VPCVirtualRouter) {
-            vpcOff=true;
+  return Transaction.execute(new TransactionCallback<NetworkOfferingVO>(){
+    @Override public NetworkOfferingVO doInTransaction(    TransactionStatus status){
+      NetworkOfferingVO offering=offeringFinal;
+      s_logger.debug("Adding network offering " + offering);
+      offering.setConcurrentConnections(maxconn);
+      offering=_networkOfferingDao.persist(offering,details);
+      if (serviceProviderMap != null) {
+        for (        Network.Service service : serviceProviderMap.keySet()) {
+          Set<Provider> providers=serviceProviderMap.get(service);
+          if (providers != null && !providers.isEmpty()) {
+            boolean vpcOff=false;
+            for (            Network.Provider provider : providers) {
+              if (provider == Provider.VPCVirtualRouter) {
+                vpcOff=true;
+              }
+              NetworkOfferingServiceMapVO offService=new NetworkOfferingServiceMapVO(offering.getId(),service,provider);
+              _ntwkOffServiceMapDao.persist(offService);
+              s_logger.trace("Added service for the network offering: " + offService + " with provider "+ provider.getName());
+            }
+            if (vpcOff) {
+              List<Service> supportedSvcs=new ArrayList<Service>();
+              supportedSvcs.addAll(serviceProviderMap.keySet());
+              _vpcMgr.validateNtwkOffForVpc(offering,supportedSvcs);
+            }
           }
-          NetworkOfferingServiceMapVO offService=new NetworkOfferingServiceMapVO(offering.getId(),service,provider);
-          _ntwkOffServiceMapDao.persist(offService);
-          s_logger.trace("Added service for the network offering: " + offService + " with provider "+ provider.getName());
-        }
-        if (vpcOff) {
-          List<Service> supportedSvcs=new ArrayList<Service>();
-          supportedSvcs.addAll(serviceProviderMap.keySet());
-          _vpcMgr.validateNtwkOffForVpc(offering,supportedSvcs);
-        }
-      }
  else {
-        NetworkOfferingServiceMapVO offService=new NetworkOfferingServiceMapVO(offering.getId(),service,null);
-        _ntwkOffServiceMapDao.persist(offService);
-        s_logger.trace("Added service for the network offering: " + offService + " with null provider");
+            NetworkOfferingServiceMapVO offService=new NetworkOfferingServiceMapVO(offering.getId(),service,null);
+            _ntwkOffServiceMapDao.persist(offService);
+            s_logger.trace("Added service for the network offering: " + offService + " with null provider");
+          }
+        }
       }
+      return offering;
     }
   }
-  txn.commit();
-  return offering;
+);
 }

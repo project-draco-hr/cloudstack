@@ -1,5 +1,5 @@
 {
-  long numResources=((count.length == 0) ? 1 : count[0]);
+  final long numResources=((count.length == 0) ? 1 : count[0]);
   Project project=null;
   if (_accountMgr.isRootAdmin(account.getType())) {
     return;
@@ -7,44 +7,44 @@
   if (account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
     project=_projectDao.findByProjectAccountId(account.getId());
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  try {
-    Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdate(account.getId(),ResourceOwnerType.Account,type);
-    SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
-    sc.setParameters("id",rowIdsToLock.toArray());
-    _resourceCountDao.lockRows(sc,null,true);
-    long accountLimit=findCorrectResourceLimitForAccount(account,type);
-    long potentialCount=_resourceCountDao.getResourceCount(account.getId(),ResourceOwnerType.Account,type) + numResources;
-    if (accountLimit != Resource.RESOURCE_UNLIMITED && potentialCount > accountLimit) {
-      String message="Maximum number of resources of type '" + type + "' for account name="+ account.getAccountName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
-      if (project != null) {
-        message="Maximum number of resources of type '" + type + "' for project name="+ project.getName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
+  final Project projectFinal=project;
+  Transaction.executeWithException(new TransactionCallbackWithException<Object>(){
+    @Override public Object doInTransaction(    TransactionStatus status) throws ResourceAllocationException {
+      Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdate(account.getId(),ResourceOwnerType.Account,type);
+      SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
+      sc.setParameters("id",rowIdsToLock.toArray());
+      _resourceCountDao.lockRows(sc,null,true);
+      long accountLimit=findCorrectResourceLimitForAccount(account,type);
+      long potentialCount=_resourceCountDao.getResourceCount(account.getId(),ResourceOwnerType.Account,type) + numResources;
+      if (accountLimit != Resource.RESOURCE_UNLIMITED && potentialCount > accountLimit) {
+        String message="Maximum number of resources of type '" + type + "' for account name="+ account.getAccountName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
+        if (projectFinal != null) {
+          message="Maximum number of resources of type '" + type + "' for project name="+ projectFinal.getName()+ " in domain id="+ account.getDomainId()+ " has been exceeded.";
+        }
+        throw new ResourceAllocationException(message,type);
       }
-      throw new ResourceAllocationException(message,type);
-    }
-    Long domainId=null;
-    if (project != null) {
-      domainId=project.getDomainId();
-    }
+      Long domainId=null;
+      if (projectFinal != null) {
+        domainId=projectFinal.getDomainId();
+      }
  else {
-      domainId=account.getDomainId();
-    }
-    while (domainId != null) {
-      DomainVO domain=_domainDao.findById(domainId);
-      if (domainId != Domain.ROOT_DOMAIN) {
-        ResourceLimitVO domainLimit=_resourceLimitDao.findByOwnerIdAndType(domainId,ResourceOwnerType.Domain,type);
-        if (domainLimit != null && domainLimit.getMax().longValue() != Resource.RESOURCE_UNLIMITED) {
-          long domainCount=_resourceCountDao.getResourceCount(domainId,ResourceOwnerType.Domain,type);
-          if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
-            throw new ResourceAllocationException("Maximum number of resources of type '" + type + "' for domain id="+ domainId+ " has been exceeded.",type);
+        domainId=account.getDomainId();
+      }
+      while (domainId != null) {
+        DomainVO domain=_domainDao.findById(domainId);
+        if (domainId != Domain.ROOT_DOMAIN) {
+          ResourceLimitVO domainLimit=_resourceLimitDao.findByOwnerIdAndType(domainId,ResourceOwnerType.Domain,type);
+          if (domainLimit != null && domainLimit.getMax().longValue() != Resource.RESOURCE_UNLIMITED) {
+            long domainCount=_resourceCountDao.getResourceCount(domainId,ResourceOwnerType.Domain,type);
+            if ((domainCount + numResources) > domainLimit.getMax().longValue()) {
+              throw new ResourceAllocationException("Maximum number of resources of type '" + type + "' for domain id="+ domainId+ " has been exceeded.",type);
+            }
           }
         }
+        domainId=domain.getParent();
       }
-      domainId=domain.getParent();
+      return null;
     }
   }
-  finally {
-    txn.commit();
-  }
+,ResourceAllocationException.class);
 }

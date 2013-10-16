@@ -1,18 +1,22 @@
 {
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  newRule=_lbDao.persist(newRule);
   boolean success=true;
+  ApplicationLoadBalancerRuleVO newRule=null;
   try {
-    detectLbRulesConflicts(newRule);
-    if (!_firewallDao.setStateToAdd(newRule)) {
-      throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+    newRule=Transaction.executeWithException(new TransactionCallbackWithException<ApplicationLoadBalancerRuleVO>(){
+      @Override public ApplicationLoadBalancerRuleVO doInTransaction(      TransactionStatus status) throws NetworkRuleConflictException {
+        ApplicationLoadBalancerRuleVO newRule=_lbDao.persist(newRuleFinal);
+        detectLbRulesConflicts(newRule);
+        if (!_firewallDao.setStateToAdd(newRule)) {
+          throw new CloudRuntimeException("Unable to update the state to add for " + newRule);
+        }
+        s_logger.debug("Load balancer " + newRule.getId() + " for Ip address "+ newRule.getSourceIp().addr()+ ", source port "+ newRule.getSourcePortStart()+ ", instance port "+ newRule.getDefaultPortStart()+ " is added successfully.");
+        CallContext.current().setEventDetails("Load balancer Id: " + newRule.getId());
+        Network ntwk=_networkModel.getNetwork(newRule.getNetworkId());
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_CREATE,newRule.getAccountId(),ntwk.getDataCenterId(),newRule.getId(),null,LoadBalancingRule.class.getName(),newRule.getUuid());
+        return newRule;
+      }
     }
-    s_logger.debug("Load balancer " + newRule.getId() + " for Ip address "+ newRule.getSourceIp().addr()+ ", source port "+ newRule.getSourcePortStart()+ ", instance port "+ newRule.getDefaultPortStart()+ " is added successfully.");
-    CallContext.current().setEventDetails("Load balancer Id: " + newRule.getId());
-    Network ntwk=_networkModel.getNetwork(newRule.getNetworkId());
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_CREATE,newRule.getAccountId(),ntwk.getDataCenterId(),newRule.getId(),null,LoadBalancingRule.class.getName(),newRule.getUuid());
-    txn.commit();
+,NetworkRuleConflictException.class);
     return newRule;
   }
  catch (  Exception e) {

@@ -1,9 +1,9 @@
 {
-  Integer vlan=cmd.getVlan();
-  Long rangeId=cmd.getId();
+  final Integer vlan=cmd.getVlan();
+  final Long rangeId=cmd.getId();
   String startIp=cmd.getStartIp();
   String endIp=cmd.getEndIp();
-  String netmask=cmd.getNetmask();
+  final String netmask=cmd.getNetmask();
   if (netmask != null && !NetUtils.isValidNetmask(netmask)) {
     throw new CloudRuntimeException("Invalid netmask:" + netmask);
   }
@@ -21,33 +21,38 @@
     checkOverlapPrivateIpRange(podId,startIp,endIp);
     checkOverlapStorageIpRange(podId,startIp,endIp);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  try {
-    range=_sNwIpRangeDao.acquireInLockTable(range.getId());
-    if (range == null) {
-      throw new CloudRuntimeException("Cannot acquire lock on storage ip range " + rangeId);
-    }
-    StorageNetworkIpRangeVO vo=_sNwIpRangeDao.createForUpdate();
-    if (vlan != null) {
-      vo.setVlan(vlan);
-    }
-    if (startIp != null) {
-      vo.setStartIp(startIp);
-    }
-    if (endIp != null) {
-      vo.setEndIp(endIp);
-    }
-    if (netmask != null) {
-      vo.setNetmask(netmask);
-    }
-    _sNwIpRangeDao.update(rangeId,vo);
-  }
+  final String startIpFinal=startIp;
+  final String endIpFinal=endIp;
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      StorageNetworkIpRangeVO range=null;
+      try {
+        range=_sNwIpRangeDao.acquireInLockTable(rangeId);
+        if (range == null) {
+          throw new CloudRuntimeException("Cannot acquire lock on storage ip range " + rangeId);
+        }
+        StorageNetworkIpRangeVO vo=_sNwIpRangeDao.createForUpdate();
+        if (vlan != null) {
+          vo.setVlan(vlan);
+        }
+        if (startIpFinal != null) {
+          vo.setStartIp(startIpFinal);
+        }
+        if (endIpFinal != null) {
+          vo.setEndIp(endIpFinal);
+        }
+        if (netmask != null) {
+          vo.setNetmask(netmask);
+        }
+        _sNwIpRangeDao.update(rangeId,vo);
+      }
   finally {
-    if (range != null) {
-      _sNwIpRangeDao.releaseFromLockTable(range.getId());
+        if (range != null) {
+          _sNwIpRangeDao.releaseFromLockTable(range.getId());
+        }
+      }
     }
   }
-  txn.commit();
+);
   return _sNwIpRangeDao.findById(rangeId);
 }

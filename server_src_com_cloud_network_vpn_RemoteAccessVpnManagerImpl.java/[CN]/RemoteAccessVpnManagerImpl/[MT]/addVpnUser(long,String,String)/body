@@ -1,28 +1,30 @@
 {
-  Account caller=CallContext.current().getCallingAccount();
+  final Account caller=CallContext.current().getCallingAccount();
   if (!username.matches("^[a-zA-Z0-9][a-zA-Z0-9@._-]{2,63}$")) {
     throw new InvalidParameterValueException("Username has to be begin with an alphabet have 3-64 characters including alphabets, numbers and the set '@.-_'");
   }
   if (!password.matches("^[a-zA-Z0-9][a-zA-Z0-9@#+=._-]{2,31}$")) {
     throw new InvalidParameterValueException("Password has to be 3-32 characters including alphabets, numbers and the set '@#+=.-_'");
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  Account owner=_accountDao.lockRow(vpnOwnerId,true);
-  if (owner == null) {
-    throw new InvalidParameterValueException("Unable to add vpn user: Another operation active");
+  return Transaction.execute(new TransactionCallback<VpnUser>(){
+    @Override public VpnUser doInTransaction(    TransactionStatus status){
+      Account owner=_accountDao.lockRow(vpnOwnerId,true);
+      if (owner == null) {
+        throw new InvalidParameterValueException("Unable to add vpn user: Another operation active");
+      }
+      _accountMgr.checkAccess(caller,null,true,owner);
+      VpnUserVO vpnUser=_vpnUsersDao.findByAccountAndUsername(owner.getId(),username);
+      if (vpnUser != null) {
+        throw new InvalidParameterValueException("VPN User with name " + username + " is already added for account "+ owner);
+      }
+      long userCount=_vpnUsersDao.getVpnUserCount(owner.getId());
+      if (userCount >= _userLimit) {
+        throw new AccountLimitException("Cannot add more than " + _userLimit + " remote access vpn users");
+      }
+      VpnUser user=_vpnUsersDao.persist(new VpnUserVO(vpnOwnerId,owner.getDomainId(),username,password));
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VPN_USER_ADD,user.getAccountId(),0,user.getId(),user.getUsername(),user.getClass().getName(),user.getUuid());
+      return user;
+    }
   }
-  _accountMgr.checkAccess(caller,null,true,owner);
-  VpnUserVO vpnUser=_vpnUsersDao.findByAccountAndUsername(owner.getId(),username);
-  if (vpnUser != null) {
-    throw new InvalidParameterValueException("VPN User with name " + username + " is already added for account "+ owner);
-  }
-  long userCount=_vpnUsersDao.getVpnUserCount(owner.getId());
-  if (userCount >= _userLimit) {
-    throw new AccountLimitException("Cannot add more than " + _userLimit + " remote access vpn users");
-  }
-  VpnUser user=_vpnUsersDao.persist(new VpnUserVO(vpnOwnerId,owner.getDomainId(),username,password));
-  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VPN_USER_ADD,user.getAccountId(),0,user.getId(),user.getUsername(),user.getClass().getName(),user.getUuid());
-  txn.commit();
-  return user;
+);
 }

@@ -3,30 +3,29 @@
   ItWorkVO work=new ItWorkVO(UUID.randomUUID().toString(),_nodeId,State.Starting,vm.getType(),vm.getId());
   int retry=VmOpLockStateRetry.value();
   while (retry-- != 0) {
-    Transaction txn=Transaction.currentTxn();
-    Ternary<VMInstanceVO,ReservationContext,ItWorkVO> result=null;
-    txn.start();
     try {
-      Journal journal=new Journal.LogJournal("Creating " + vm,s_logger);
-      work=_workDao.persist(work);
-      ReservationContextImpl context=new ReservationContextImpl(work.getId(),journal,caller,account);
-      if (stateTransitTo(vm,Event.StartRequested,null,work.getId())) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Successfully transitioned to start state for " + vm + " reservation id = "+ work.getId());
+      final ItWorkVO workFinal=work;
+      Ternary<VMInstanceVO,ReservationContext,ItWorkVO> result=Transaction.executeWithException(new TransactionCallbackWithException<Ternary<VMInstanceVO,ReservationContext,ItWorkVO>>(){
+        @Override public Ternary<VMInstanceVO,ReservationContext,ItWorkVO> doInTransaction(        TransactionStatus status) throws NoTransitionException {
+          Journal journal=new Journal.LogJournal("Creating " + vm,s_logger);
+          ItWorkVO work=_workDao.persist(workFinal);
+          ReservationContextImpl context=new ReservationContextImpl(work.getId(),journal,caller,account);
+          if (stateTransitTo(vm,Event.StartRequested,null,work.getId())) {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Successfully transitioned to start state for " + vm + " reservation id = "+ work.getId());
+            }
+            return new Ternary<VMInstanceVO,ReservationContext,ItWorkVO>(vm,context,work);
+          }
+          return new Ternary<VMInstanceVO,ReservationContext,ItWorkVO>(null,null,work);
         }
-        result=new Ternary<VMInstanceVO,ReservationContext,ItWorkVO>(vm,context,work);
-        txn.commit();
-        return result;
       }
+,NoTransitionException.class);
+      work=result.third();
+      if (result.first() != null)       return result;
     }
  catch (    NoTransitionException e) {
       if (s_logger.isDebugEnabled()) {
         s_logger.debug("Unable to transition into Starting state due to " + e.getMessage());
-      }
-    }
- finally {
-      if (result == null) {
-        txn.rollback();
       }
     }
     VMInstanceVO instance=_vmDao.findById(vmId);

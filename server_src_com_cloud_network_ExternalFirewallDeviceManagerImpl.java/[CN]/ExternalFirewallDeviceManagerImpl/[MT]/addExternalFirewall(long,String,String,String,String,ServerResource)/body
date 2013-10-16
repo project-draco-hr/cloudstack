@@ -11,7 +11,7 @@
     throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
   }
   zoneId=pNetwork.getDataCenterId();
-  PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(pNetwork.getId(),ntwkDevice.getNetworkServiceProvder());
+  final PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(pNetwork.getId(),ntwkDevice.getNetworkServiceProvder());
   if (ntwkSvcProvider == null) {
     throw new CloudRuntimeException("Network Service Provider: " + ntwkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
   }
@@ -37,7 +37,7 @@
   hostDetails.put("username",username);
   hostDetails.put("password",password);
   hostDetails.put("deviceName",deviceName);
-  Map<String,String> configParams=new HashMap<String,String>();
+  final Map<String,String> configParams=new HashMap<String,String>();
   UrlUtil.parseQueryParameters(uri.getQuery(),false,configParams);
   hostDetails.putAll(configParams);
   try {
@@ -46,21 +46,24 @@
  catch (  ConfigurationException e) {
     throw new CloudRuntimeException(e.getMessage());
   }
-  Host externalFirewall=_resourceMgr.addHost(zoneId,resource,Host.Type.ExternalFirewall,hostDetails);
+  final Host externalFirewall=_resourceMgr.addHost(zoneId,resource,Host.Type.ExternalFirewall,hostDetails);
   if (externalFirewall != null) {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    boolean dedicatedUse=(configParams.get(ApiConstants.FIREWALL_DEVICE_DEDICATED) != null) ? Boolean.parseBoolean(configParams.get(ApiConstants.FIREWALL_DEVICE_DEDICATED)) : false;
-    long capacity=NumbersUtil.parseLong(configParams.get(ApiConstants.FIREWALL_DEVICE_CAPACITY),0);
-    if (capacity == 0) {
-      capacity=_defaultFwCapacity;
+    final PhysicalNetworkVO pNetworkFinal=pNetwork;
+    return Transaction.execute(new TransactionCallback<ExternalFirewallDeviceVO>(){
+      @Override public ExternalFirewallDeviceVO doInTransaction(      TransactionStatus status){
+        boolean dedicatedUse=(configParams.get(ApiConstants.FIREWALL_DEVICE_DEDICATED) != null) ? Boolean.parseBoolean(configParams.get(ApiConstants.FIREWALL_DEVICE_DEDICATED)) : false;
+        long capacity=NumbersUtil.parseLong(configParams.get(ApiConstants.FIREWALL_DEVICE_CAPACITY),0);
+        if (capacity == 0) {
+          capacity=_defaultFwCapacity;
+        }
+        ExternalFirewallDeviceVO fwDevice=new ExternalFirewallDeviceVO(externalFirewall.getId(),pNetworkFinal.getId(),ntwkSvcProvider.getProviderName(),deviceName,capacity,dedicatedUse);
+        _externalFirewallDeviceDao.persist(fwDevice);
+        DetailVO hostDetail=new DetailVO(externalFirewall.getId(),ApiConstants.FIREWALL_DEVICE_ID,String.valueOf(fwDevice.getId()));
+        _hostDetailDao.persist(hostDetail);
+        return fwDevice;
+      }
     }
-    ExternalFirewallDeviceVO fwDevice=new ExternalFirewallDeviceVO(externalFirewall.getId(),pNetwork.getId(),ntwkSvcProvider.getProviderName(),deviceName,capacity,dedicatedUse);
-    _externalFirewallDeviceDao.persist(fwDevice);
-    DetailVO hostDetail=new DetailVO(externalFirewall.getId(),ApiConstants.FIREWALL_DEVICE_ID,String.valueOf(fwDevice.getId()));
-    _hostDetailDao.persist(hostDetail);
-    txn.commit();
-    return fwDevice;
+);
   }
  else {
     return null;

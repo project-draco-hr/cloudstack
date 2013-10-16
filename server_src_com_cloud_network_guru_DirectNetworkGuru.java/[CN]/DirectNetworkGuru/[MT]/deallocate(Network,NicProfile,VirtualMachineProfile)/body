@@ -3,27 +3,29 @@
     s_logger.debug("Deallocate network: networkId: " + nic.getNetworkId() + ", ip: "+ nic.getIp4Address());
   }
   if (nic.getIp4Address() != null) {
-    IPAddressVO ip=_ipAddressDao.findByIpAndSourceNetworkId(nic.getNetworkId(),nic.getIp4Address());
+    final IPAddressVO ip=_ipAddressDao.findByIpAndSourceNetworkId(nic.getNetworkId(),nic.getIp4Address());
     if (ip != null) {
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      Nic placeholderNic=_networkModel.getPlaceholderNicForRouter(network,null);
-      if (placeholderNic != null && placeholderNic.getIp4Address().equalsIgnoreCase(ip.getAddress().addr())) {
-        s_logger.debug("Not releasing direct ip " + ip.getId() + " yet as its ip is saved in the placeholder");
-      }
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          Nic placeholderNic=_networkModel.getPlaceholderNicForRouter(network,null);
+          if (placeholderNic != null && placeholderNic.getIp4Address().equalsIgnoreCase(ip.getAddress().addr())) {
+            s_logger.debug("Not releasing direct ip " + ip.getId() + " yet as its ip is saved in the placeholder");
+          }
  else {
-        _ipAddrMgr.markIpAsUnavailable(ip.getId());
-        _ipAddressDao.unassignIpAddress(ip.getId());
+            _ipAddrMgr.markIpAsUnavailable(ip.getId());
+            _ipAddressDao.unassignIpAddress(ip.getId());
+          }
+          s_logger.debug("remove nic " + nic.getId() + " secondary ip ");
+          List<String> nicSecIps=null;
+          nicSecIps=_nicSecondaryIpDao.getSecondaryIpAddressesForNic(nic.getId());
+          for (          String secIp : nicSecIps) {
+            IPAddressVO pubIp=_ipAddressDao.findByIpAndSourceNetworkId(nic.getNetworkId(),secIp);
+            _ipAddrMgr.markIpAsUnavailable(pubIp.getId());
+            _ipAddressDao.unassignIpAddress(pubIp.getId());
+          }
+        }
       }
-      s_logger.debug("remove nic " + nic.getId() + " secondary ip ");
-      List<String> nicSecIps=null;
-      nicSecIps=_nicSecondaryIpDao.getSecondaryIpAddressesForNic(nic.getId());
-      for (      String secIp : nicSecIps) {
-        IPAddressVO pubIp=_ipAddressDao.findByIpAndSourceNetworkId(nic.getNetworkId(),secIp);
-        _ipAddrMgr.markIpAsUnavailable(pubIp.getId());
-        _ipAddressDao.unassignIpAddress(pubIp.getId());
-      }
-      txn.commit();
+);
     }
   }
   if (nic.getIp6Address() != null) {
