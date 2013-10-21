@@ -1,0 +1,33 @@
+@attr(tags=['sg'])
+def test_05_del_cidr_verify_alias_removal(self):
+    'Destroy lastvm in the CIDR and verifly alias removal\n            1.Deploy guest vm in new cidr\n            2.Verify ip alias creation\n            3.Destroy vm and wait for it to expunge\n            4.Verify ip alias removal after vm expunge\n        '
+    list_router_response = list_routers(self.apiclient, zoneid=self.zone.id, listall=True)
+    self.assertEqual(isinstance(list_router_response, list), True, 'Check list response returns a valid list')
+    router = list_router_response[0]
+    hosts = list_hosts(self.apiclient, zoneid=router.zoneid, type='Routing', state='Up', id=router.hostid)
+    self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+    host = hosts[0]
+    self.debug(('Router ID: %s, state: %s' % (router.id, router.state)))
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    proc = 'ip addr show eth0'
+    result = get_process_status(host.ipaddress, self.services['host']['publicport'], self.services['host']['username'], self.services['host']['password'], router.linklocalip, proc)
+    res = str(result)
+    self.debug(('ip alias configuration on VR: %s' % res))
+    self.assertNotEqual((res.find(self.alias_ip) - 1), 'ip alias is not created on VR eth0')
+    self.virtual_machine.delete(self.apiclient)
+    expunge_del = Configurations.list(self.apiclient, name='expunge.delay')
+    expunge_int = Configurations.list(self.apiclient, name='expunge.interval')
+    wait_time = ((int(expunge_del[0].value) + int(expunge_int[0].value)) + int(30))
+    self.debug('Waiting for {} seconds for the vm to expunge'.format(wait_time))
+    time.sleep(wait_time)
+    self.debug('Verify that expunging the last vm in the CIDR should delete the ip alias from VR')
+    ip_alias2 = self.dbclient.execute('select ip4_address from nic_ip_alias;')
+    self.assertEqual(isinstance(ip_alias2, list), True, 'Error in sql query')
+    self.assertEqual(len(ip_alias2), 0, 'Failure in clearing ip alias entry from cloud db')
+    proc = 'ip addr show eth0'
+    result = get_process_status(host.ipaddress, self.services['host']['publicport'], self.services['host']['username'], self.services['host']['password'], router.linklocalip, proc)
+    res = str(result)
+    self.assertEqual(res.find(self.alias_ip), (-1), 'Failed to clean up ip alias from VR even after last vm expunge in the CIDR')
+    self.debug('IP alias got deleted from VR successfully.')
+    self.cleanup.remove(self.virtual_machine)
+    return
