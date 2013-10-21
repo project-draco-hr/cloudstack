@@ -1,24 +1,34 @@
 {
-  final HashMap<String,Pair<String,State>> changes=new HashMap<String,Pair<String,State>>();
+  final HashMap<String,Ternary<String,State,String>> changes=new HashMap<String,Ternary<String,State,String>>();
 synchronized (_cluster.intern()) {
-    HashMap<String,Pair<String,State>> newStates=getAllVms(conn);
+    HashMap<String,Ternary<String,State,String>> newStates=getAllVms(conn);
     if (newStates == null) {
       s_logger.warn("Unable to get the vm states so no state sync at this point.");
       return null;
     }
-    HashMap<String,Pair<String,State>> oldStates=new HashMap<String,Pair<String,State>>(s_vms.size(_cluster));
+    HashMap<String,Ternary<String,State,String>> oldStates=new HashMap<String,Ternary<String,State,String>>(s_vms.size(_cluster));
     oldStates.putAll(s_vms.getClusterVmState(_cluster));
-    for (    final Map.Entry<String,Pair<String,State>> entry : newStates.entrySet()) {
+    for (    final Map.Entry<String,Ternary<String,State,String>> entry : newStates.entrySet()) {
       final String vm=entry.getKey();
+      String xstoolsversion=entry.getValue().third();
       State newState=entry.getValue().second();
       String host_uuid=entry.getValue().first();
-      final Pair<String,State> oldState=oldStates.remove(vm);
+      final Ternary<String,State,String> oldState=oldStates.remove(vm);
+      if (xstoolsversion != null && oldState != null) {
+        if (xstoolsversion != oldState.third() && newState != State.Stopped && newState != State.Stopping) {
+          s_logger.warn("Detecting a change in xstoolsversion for " + vm);
+          changes.put(vm,new Ternary<String,State,String>(host_uuid,newState,xstoolsversion));
+          s_logger.debug("11. The VM " + vm + " is in "+ newState+ " state");
+          s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
+          continue;
+        }
+      }
       if (host_uuid != null && oldState != null) {
         if (!host_uuid.equals(oldState.first()) && newState != State.Stopped && newState != State.Stopping) {
           s_logger.warn("Detecting a change in host for " + vm);
-          changes.put(vm,new Pair<String,State>(host_uuid,newState));
+          changes.put(vm,new Ternary<String,State,String>(host_uuid,newState,null));
           s_logger.debug("11. The VM " + vm + " is in "+ newState+ " state");
-          s_vms.put(_cluster,host_uuid,vm,newState);
+          s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
           continue;
         }
       }
@@ -33,14 +43,14 @@ synchronized (_cluster.intern()) {
         continue;
       }
       if (oldState == null) {
-        s_vms.put(_cluster,host_uuid,vm,newState);
+        s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
         s_logger.warn("Detecting a new state but couldn't find a old state so adding it to the changes: " + vm);
-        changes.put(vm,new Pair<String,State>(host_uuid,newState));
+        changes.put(vm,new Ternary<String,State,String>(host_uuid,newState,null));
       }
  else       if (oldState.second() == State.Starting) {
         if (newState == State.Running) {
           s_logger.debug("12. The VM " + vm + " is in "+ State.Running+ " state");
-          s_vms.put(_cluster,host_uuid,vm,newState);
+          s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
         }
  else         if (newState == State.Stopped) {
           s_logger.warn("Ignoring vm " + vm + " because of a lag in starting the vm.");
@@ -49,13 +59,13 @@ synchronized (_cluster.intern()) {
  else       if (oldState.second() == State.Migrating) {
         if (newState == State.Running) {
           s_logger.debug("Detected that an migrating VM is now running: " + vm);
-          s_vms.put(_cluster,host_uuid,vm,newState);
+          s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
         }
       }
  else       if (oldState.second() == State.Stopping) {
         if (newState == State.Stopped) {
           s_logger.debug("13. The VM " + vm + " is in "+ State.Stopped+ " state");
-          s_vms.put(_cluster,host_uuid,vm,newState);
+          s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
         }
  else         if (newState == State.Running) {
           s_logger.warn("Ignoring vm " + vm + " because of a lag in stopping the vm. ");
@@ -63,13 +73,13 @@ synchronized (_cluster.intern()) {
       }
  else       if (oldState.second() != newState) {
         s_logger.debug("14. The VM " + vm + " is in "+ newState+ " state was "+ oldState.second());
-        s_vms.put(_cluster,host_uuid,vm,newState);
+        s_vms.put(_cluster,host_uuid,vm,newState,xstoolsversion);
         if (newState == State.Stopped) {
         }
-        changes.put(vm,new Pair<String,State>(host_uuid,newState));
+        changes.put(vm,new Ternary<String,State,String>(host_uuid,newState,null));
       }
     }
-    for (    final Map.Entry<String,Pair<String,State>> entry : oldStates.entrySet()) {
+    for (    final Map.Entry<String,Ternary<String,State,String>> entry : oldStates.entrySet()) {
       final String vm=entry.getKey();
       final State oldState=entry.getValue().second();
       String host_uuid=entry.getValue().first();
@@ -93,7 +103,7 @@ synchronized (_cluster.intern()) {
  else {
         State newState=State.Stopped;
         s_logger.warn("The VM is now missing marking it as Stopped " + vm);
-        changes.put(vm,new Pair<String,State>(host_uuid,newState));
+        changes.put(vm,new Ternary<String,State,String>(host_uuid,newState,null));
       }
     }
   }
