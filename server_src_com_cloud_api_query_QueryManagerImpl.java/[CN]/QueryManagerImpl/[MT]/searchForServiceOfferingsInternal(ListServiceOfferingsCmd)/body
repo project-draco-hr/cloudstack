@@ -32,15 +32,38 @@
       throw new PermissionDeniedException("The account:" + caller.getAccountName() + " does not fall in the same domain hierarchy as the service offering");
     }
   }
+  if (vmId != null) {
+    UserVmVO vmInstance=_userVmDao.findById(vmId);
+    if ((vmInstance == null) || (vmInstance.getRemoved() != null)) {
+      InvalidParameterValueException ex=new InvalidParameterValueException("unable to find a virtual machine with specified id");
+      ex.addProxyObject(vmId.toString(),"vmId");
+      throw ex;
+    }
+    _accountMgr.checkAccess(caller,null,true,vmInstance);
+    ServiceOfferingVO offering=_srvOfferingDao.findByIdIncludingRemoved(vmInstance.getServiceOfferingId());
+    sc.addAnd("id",SearchCriteria.Op.NEQ,offering.getId());
+    sc.addAnd("useLocalStorage",SearchCriteria.Op.EQ,offering.getUseLocalStorage());
+  }
   if ((caller.getType() == Account.ACCOUNT_TYPE_NORMAL || caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
     if (isSystem) {
       throw new InvalidParameterValueException("Only root admins can access system's offering");
     }
     List<Long> domainIds=new ArrayList<Long>();
-    DomainVO domainRecord=_domainDao.findById(caller.getDomainId());
-    if (domainRecord == null) {
-      s_logger.error("Could not find the domainId for account:" + caller.getAccountName());
-      throw new CloudAuthenticationException("Could not find the domainId for account:" + caller.getAccountName());
+    DomainVO domainRecord;
+    if (vmId != null) {
+      UserVmVO vmInstance=_userVmDao.findById(vmId);
+      domainRecord=_domainDao.findById(vmInstance.getDomainId());
+      if (domainRecord == null) {
+        s_logger.error("Could not find the domainId for vmId:" + vmId);
+        throw new CloudAuthenticationException("Could not find the domainId for vmId:" + vmId);
+      }
+    }
+ else {
+      domainRecord=_domainDao.findById(caller.getDomainId());
+      if (domainRecord == null) {
+        s_logger.error("Could not find the domainId for account:" + caller.getAccountName());
+        throw new CloudAuthenticationException("Could not find the domainId for account:" + caller.getAccountName());
+      }
     }
     domainIds.add(domainRecord.getId());
     while (domainRecord.getParent() != null) {
@@ -65,18 +88,6 @@
     ssc.addOr("displayText",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
     sc.addAnd("name",SearchCriteria.Op.SC,ssc);
-  }
- else   if (vmId != null) {
-    UserVmVO vmInstance=_userVmDao.findById(vmId);
-    if ((vmInstance == null) || (vmInstance.getRemoved() != null)) {
-      InvalidParameterValueException ex=new InvalidParameterValueException("unable to find a virtual machine with specified id");
-      ex.addProxyObject(vmId.toString(),"vmId");
-      throw ex;
-    }
-    _accountMgr.checkAccess(caller,null,true,vmInstance);
-    ServiceOfferingVO offering=_srvOfferingDao.findByIdIncludingRemoved(vmInstance.getServiceOfferingId());
-    sc.addAnd("id",SearchCriteria.Op.NEQ,offering.getId());
-    sc.addAnd("useLocalStorage",SearchCriteria.Op.EQ,offering.getUseLocalStorage());
   }
   if (id != null) {
     sc.addAnd("id",SearchCriteria.Op.EQ,id);
