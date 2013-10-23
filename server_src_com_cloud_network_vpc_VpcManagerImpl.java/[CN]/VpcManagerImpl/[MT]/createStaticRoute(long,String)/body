@@ -1,13 +1,13 @@
 {
   Account caller=CallContext.current().getCallingAccount();
-  VpcGateway gateway=_vpcGatewayDao.findById(gatewayId);
+  final VpcGateway gateway=_vpcGatewayDao.findById(gatewayId);
   if (gateway == null) {
     throw new InvalidParameterValueException("Invalid gateway id is given");
   }
   if (gateway.getState() != VpcGateway.State.Ready) {
     throw new InvalidParameterValueException("Gateway is not in the " + VpcGateway.State.Ready + " state: "+ gateway.getState());
   }
-  Vpc vpc=getActiveVpc(gateway.getVpcId());
+  final Vpc vpc=getActiveVpc(gateway.getVpcId());
   if (vpc == null) {
     throw new InvalidParameterValueException("Can't add static route to VPC that is being deleted");
   }
@@ -24,16 +24,18 @@
   if (isCidrBlacklisted(cidr,vpc.getZoneId())) {
     throw new InvalidParameterValueException("The static gateway cidr overlaps with one of the blacklisted routes of the zone the VPC belongs to");
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  StaticRouteVO newRoute=new StaticRouteVO(gateway.getId(),cidr,vpc.getId(),vpc.getAccountId(),vpc.getDomainId());
-  s_logger.debug("Adding static route " + newRoute);
-  newRoute=_staticRouteDao.persist(newRoute);
-  detectRoutesConflict(newRoute);
-  if (!_staticRouteDao.setStateToAdd(newRoute)) {
-    throw new CloudRuntimeException("Unable to update the state to add for " + newRoute);
+  return Transaction.execute(new TransactionCallbackWithException<StaticRouteVO,NetworkRuleConflictException>(){
+    @Override public StaticRouteVO doInTransaction(    TransactionStatus status) throws NetworkRuleConflictException {
+      StaticRouteVO newRoute=new StaticRouteVO(gateway.getId(),cidr,vpc.getId(),vpc.getAccountId(),vpc.getDomainId());
+      s_logger.debug("Adding static route " + newRoute);
+      newRoute=_staticRouteDao.persist(newRoute);
+      detectRoutesConflict(newRoute);
+      if (!_staticRouteDao.setStateToAdd(newRoute)) {
+        throw new CloudRuntimeException("Unable to update the state to add for " + newRoute);
+      }
+      CallContext.current().setEventDetails("Static route Id: " + newRoute.getId());
+      return newRoute;
+    }
   }
-  CallContext.current().setEventDetails("Static route Id: " + newRoute.getId());
-  txn.commit();
-  return newRoute;
+);
 }

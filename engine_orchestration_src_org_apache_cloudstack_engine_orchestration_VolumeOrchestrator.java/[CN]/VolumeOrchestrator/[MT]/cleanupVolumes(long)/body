@@ -2,29 +2,31 @@
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Cleaning storage for vm: " + vmId);
   }
-  List<VolumeVO> volumesForVm=_volsDao.findByInstance(vmId);
-  List<VolumeVO> toBeExpunged=new ArrayList<VolumeVO>();
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  for (  VolumeVO vol : volumesForVm) {
-    if (vol.getVolumeType().equals(Type.ROOT)) {
-      boolean volumeAlreadyDestroyed=(vol.getState() == Volume.State.Destroy || vol.getState() == Volume.State.Expunged || vol.getState() == Volume.State.Expunging);
-      if (!volumeAlreadyDestroyed) {
-        volService.destroyVolume(vol.getId());
-      }
+  final List<VolumeVO> volumesForVm=_volsDao.findByInstance(vmId);
+  final List<VolumeVO> toBeExpunged=new ArrayList<VolumeVO>();
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      for (      VolumeVO vol : volumesForVm) {
+        if (vol.getVolumeType().equals(Type.ROOT)) {
+          boolean volumeAlreadyDestroyed=(vol.getState() == Volume.State.Destroy || vol.getState() == Volume.State.Expunged || vol.getState() == Volume.State.Expunging);
+          if (!volumeAlreadyDestroyed) {
+            volService.destroyVolume(vol.getId());
+          }
  else {
-        s_logger.debug("Skipping destroy for the volume " + vol + " as its in state "+ vol.getState().toString());
-      }
-      toBeExpunged.add(vol);
-    }
+            s_logger.debug("Skipping destroy for the volume " + vol + " as its in state "+ vol.getState().toString());
+          }
+          toBeExpunged.add(vol);
+        }
  else {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Detaching " + vol);
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Detaching " + vol);
+          }
+          _volsDao.detachVolume(vol.getId());
+        }
       }
-      _volsDao.detachVolume(vol.getId());
     }
   }
-  txn.commit();
+);
   AsyncCallFuture<VolumeApiResult> future=null;
   for (  VolumeVO expunge : toBeExpunged) {
     future=volService.expungeVolumeAsync(volFactory.getVolume(expunge.getId()));

@@ -1,5 +1,5 @@
 {
-  Account callerAccount=context.getAccount();
+  final Account callerAccount=context.getAccount();
   NetworkVO network=_networksDao.findById(networkId);
   if (network == null) {
     s_logger.debug("Unable to find network with id: " + networkId);
@@ -70,33 +70,43 @@ catch (      Exception e) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Network id=" + networkId + " is destroyed successfully, cleaning up corresponding resources now.");
     }
-    NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,network.getGuruName());
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    guru.trash(network,_networkOfferingDao.findById(network.getNetworkOfferingId()));
-    if (!deleteVlansInNetwork(network.getId(),context.getCaller().getId(),callerAccount)) {
-      success=false;
-      s_logger.warn("Failed to delete network " + network + "; was unable to cleanup corresponding ip ranges");
-    }
+    final NetworkVO networkFinal=network;
+    try {
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,networkFinal.getGuruName());
+          guru.trash(networkFinal,_networkOfferingDao.findById(networkFinal.getNetworkOfferingId()));
+          if (!deleteVlansInNetwork(networkFinal.getId(),context.getCaller().getId(),callerAccount)) {
+            s_logger.warn("Failed to delete network " + networkFinal + "; was unable to cleanup corresponding ip ranges");
+            throw new CloudRuntimeException("Failed to delete network " + networkFinal + "; was unable to cleanup corresponding ip ranges");
+          }
  else {
-      try {
-        stateTransitTo(network,Event.DestroyNetwork);
+            try {
+              stateTransitTo(networkFinal,Event.DestroyNetwork);
+            }
+ catch (            NoTransitionException e) {
+              s_logger.debug(e.getMessage());
+            }
+            if (_networksDao.remove(networkFinal.getId())) {
+              NetworkDomainVO networkDomain=_networkDomainDao.getDomainNetworkMapByNetworkId(networkFinal.getId());
+              if (networkDomain != null)               _networkDomainDao.remove(networkDomain.getId());
+              NetworkAccountVO networkAccount=_networkAccountDao.getAccountNetworkMapByNetworkId(networkFinal.getId());
+              if (networkAccount != null)               _networkAccountDao.remove(networkAccount.getId());
+            }
+            NetworkOffering ntwkOff=_entityMgr.findById(NetworkOffering.class,networkFinal.getNetworkOfferingId());
+            boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,networkFinal.getAclType());
+            if (updateResourceCount) {
+              _resourceLimitMgr.decrementResourceCount(networkFinal.getAccountId(),ResourceType.network);
+            }
+          }
+        }
       }
- catch (      NoTransitionException e) {
-        s_logger.debug(e.getMessage());
-      }
-      if (_networksDao.remove(network.getId())) {
-        NetworkDomainVO networkDomain=_networkDomainDao.getDomainNetworkMapByNetworkId(network.getId());
-        if (networkDomain != null)         _networkDomainDao.remove(networkDomain.getId());
-        NetworkAccountVO networkAccount=_networkAccountDao.getAccountNetworkMapByNetworkId(network.getId());
-        if (networkAccount != null)         _networkAccountDao.remove(networkAccount.getId());
-      }
-      NetworkOffering ntwkOff=_entityMgr.findById(NetworkOffering.class,network.getNetworkOfferingId());
-      boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,network.getAclType());
-      if (updateResourceCount) {
-        _resourceLimitMgr.decrementResourceCount(network.getAccountId(),ResourceType.network);
-      }
-      txn.commit();
+);
+      return false;
+    }
+ catch (    CloudRuntimeException e) {
+      s_logger.error("Failed to delete network",e);
+      return false;
     }
   }
   return success;

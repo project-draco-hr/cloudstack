@@ -1,10 +1,10 @@
 {
-  NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(networkOfferingId);
+  final NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(networkOfferingId);
   if (ntwkOff.getTrafficType() != TrafficType.Guest) {
     s_logger.warn("Only guest networks can be created using this method");
     return null;
   }
-  boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,aclType);
+  final boolean updateResourceCount=resourceCountNeedsUpdate(ntwkOff,aclType);
   if (updateResourceCount) {
     _resourceLimitMgr.checkResourceLimit(owner,ResourceType.network);
   }
@@ -22,7 +22,7 @@
   if (ip6Gateway != null && ip6Cidr != null) {
     ipv6=true;
   }
-  DataCenterVO zone=_dcDao.findById(zoneId);
+  final DataCenterVO zone=_dcDao.findById(zoneId);
   if (zone.getNetworkType() == NetworkType.Basic) {
     if (ipv6) {
       throw new InvalidParameterValueException("IPv6 is not supported in Basic zone");
@@ -164,65 +164,71 @@
       throw new InvalidParameterValueException("Virtual Guest Cidr " + cidr + " is not RFC1918 compliant");
     }
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  Long physicalNetworkId=null;
-  if (pNtwk != null) {
-    physicalNetworkId=pNtwk.getId();
-  }
-  DataCenterDeployment plan=new DataCenterDeployment(zoneId,null,null,null,null,physicalNetworkId);
-  NetworkVO userNetwork=new NetworkVO();
-  userNetwork.setNetworkDomain(networkDomain);
-  if (cidr != null && gateway != null) {
-    userNetwork.setCidr(cidr);
-    userNetwork.setGateway(gateway);
-  }
-  if (ip6Cidr != null && ip6Gateway != null) {
-    userNetwork.setIp6Cidr(ip6Cidr);
-    userNetwork.setIp6Gateway(ip6Gateway);
-  }
-  if (vlanId != null) {
-    if (isolatedPvlan == null) {
-      URI uri=BroadcastDomainType.fromString(vlanId);
-      userNetwork.setBroadcastUri(uri);
-      if (!vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
-        userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+  final String networkDomainFinal=networkDomain;
+  final String vlanIdFinal=vlanId;
+  final Boolean subdomainAccessFinal=subdomainAccess;
+  Network network=Transaction.execute(new TransactionCallback<Network>(){
+    @Override public Network doInTransaction(    TransactionStatus status){
+      Long physicalNetworkId=null;
+      if (pNtwk != null) {
+        physicalNetworkId=pNtwk.getId();
       }
- else {
-        userNetwork.setBroadcastDomainType(BroadcastDomainType.Native);
+      DataCenterDeployment plan=new DataCenterDeployment(zoneId,null,null,null,null,physicalNetworkId);
+      NetworkVO userNetwork=new NetworkVO();
+      userNetwork.setNetworkDomain(networkDomainFinal);
+      if (cidr != null && gateway != null) {
+        userNetwork.setCidr(cidr);
+        userNetwork.setGateway(gateway);
       }
-    }
- else {
-      if (vlanId.equalsIgnoreCase(Vlan.UNTAGGED)) {
-        throw new InvalidParameterValueException("Cannot support pvlan with untagged primary vlan!");
+      if (ip6Cidr != null && ip6Gateway != null) {
+        userNetwork.setIp6Cidr(ip6Cidr);
+        userNetwork.setIp6Gateway(ip6Gateway);
       }
-      userNetwork.setBroadcastUri(NetUtils.generateUriForPvlan(vlanId,isolatedPvlan));
-      userNetwork.setBroadcastDomainType(BroadcastDomainType.Pvlan);
-    }
-  }
-  List<? extends Network> networks=setupNetwork(owner,ntwkOff,userNetwork,plan,name,displayText,true,domainId,aclType,subdomainAccess,vpcId,isDisplayNetworkEnabled);
-  Network network=null;
-  if (networks == null || networks.isEmpty()) {
-    throw new CloudRuntimeException("Fail to create a network");
-  }
+      if (vlanIdFinal != null) {
+        if (isolatedPvlan == null) {
+          URI uri=BroadcastDomainType.fromString(vlanIdFinal);
+          userNetwork.setBroadcastUri(uri);
+          if (!vlanIdFinal.equalsIgnoreCase(Vlan.UNTAGGED)) {
+            userNetwork.setBroadcastDomainType(BroadcastDomainType.Vlan);
+          }
  else {
-    if (networks.size() > 0 && networks.get(0).getGuestType() == Network.GuestType.Isolated && networks.get(0).getTrafficType() == TrafficType.Guest) {
-      Network defaultGuestNetwork=networks.get(0);
-      for (      Network nw : networks) {
-        if (nw.getCidr() != null && nw.getCidr().equals(zone.getGuestNetworkCidr())) {
-          defaultGuestNetwork=nw;
+            userNetwork.setBroadcastDomainType(BroadcastDomainType.Native);
+          }
+        }
+ else {
+          if (vlanIdFinal.equalsIgnoreCase(Vlan.UNTAGGED)) {
+            throw new InvalidParameterValueException("Cannot support pvlan with untagged primary vlan!");
+          }
+          userNetwork.setBroadcastUri(NetUtils.generateUriForPvlan(vlanIdFinal,isolatedPvlan));
+          userNetwork.setBroadcastDomainType(BroadcastDomainType.Pvlan);
         }
       }
-      network=defaultGuestNetwork;
-    }
+      List<? extends Network> networks=setupNetwork(owner,ntwkOff,userNetwork,plan,name,displayText,true,domainId,aclType,subdomainAccessFinal,vpcId,isDisplayNetworkEnabled);
+      Network network=null;
+      if (networks == null || networks.isEmpty()) {
+        throw new CloudRuntimeException("Fail to create a network");
+      }
  else {
-      network=networks.get(0);
+        if (networks.size() > 0 && networks.get(0).getGuestType() == Network.GuestType.Isolated && networks.get(0).getTrafficType() == TrafficType.Guest) {
+          Network defaultGuestNetwork=networks.get(0);
+          for (          Network nw : networks) {
+            if (nw.getCidr() != null && nw.getCidr().equals(zone.getGuestNetworkCidr())) {
+              defaultGuestNetwork=nw;
+            }
+          }
+          network=defaultGuestNetwork;
+        }
+ else {
+          network=networks.get(0);
+        }
+      }
+      if (updateResourceCount) {
+        _resourceLimitMgr.incrementResourceCount(owner.getId(),ResourceType.network);
+      }
+      return network;
     }
   }
-  if (updateResourceCount) {
-    _resourceLimitMgr.incrementResourceCount(owner.getId(),ResourceType.network);
-  }
-  txn.commit();
+);
   CallContext.current().setEventDetails("Network Id: " + network.getId());
   return network;
 }

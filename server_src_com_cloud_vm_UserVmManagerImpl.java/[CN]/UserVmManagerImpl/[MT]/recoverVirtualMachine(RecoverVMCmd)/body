@@ -1,7 +1,7 @@
 {
-  Long vmId=cmd.getId();
+  final Long vmId=cmd.getId();
   Account caller=CallContext.current().getCallingAccount();
-  UserVmVO vm=_vmDao.findById(vmId.longValue());
+  final UserVmVO vm=_vmDao.findById(vmId.longValue());
   if (vm == null) {
     throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
   }
@@ -21,41 +21,42 @@
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Recovering vm " + vmId);
   }
-  Transaction txn=Transaction.currentTxn();
-  AccountVO account=null;
-  txn.start();
-  account=_accountDao.lockRow(vm.getAccountId(),true);
-  if (account.getRemoved() != null) {
-    throw new CloudRuntimeException("Unable to recover VM as the account is deleted");
-  }
-  ServiceOfferingVO serviceOffering=_serviceOfferingDao.findById(vm.getServiceOfferingId());
-  resourceLimitCheck(account,new Long(serviceOffering.getCpu()),new Long(serviceOffering.getRamSize()));
-  _haMgr.cancelDestroy(vm,vm.getHostId());
-  try {
-    if (!_itMgr.stateTransitTo(vm,VirtualMachine.Event.RecoveryRequested,null)) {
-      s_logger.debug("Unable to recover the vm because it is not in the correct state: " + vmId);
-      throw new InvalidParameterValueException("Unable to recover the vm because it is not in the correct state: " + vmId);
-    }
-  }
- catch (  NoTransitionException e) {
-    throw new InvalidParameterValueException("Unable to recover the vm because it is not in the correct state: " + vmId);
-  }
-  List<VolumeVO> volumes=_volsDao.findByInstance(vmId);
-  for (  VolumeVO volume : volumes) {
-    if (volume.getVolumeType().equals(Volume.Type.ROOT)) {
-      Long templateId=volume.getTemplateId();
-      Long diskOfferingId=volume.getDiskOfferingId();
-      Long offeringId=null;
-      if (diskOfferingId != null) {
-        DiskOfferingVO offering=_diskOfferingDao.findById(diskOfferingId);
-        if (offering != null && (offering.getType() == DiskOfferingVO.Type.Disk)) {
-          offeringId=offering.getId();
+  Transaction.execute(new TransactionCallbackWithExceptionNoReturn<ResourceAllocationException>(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status) throws ResourceAllocationException {
+      Account account=_accountDao.lockRow(vm.getAccountId(),true);
+      if (account.getRemoved() != null) {
+        throw new CloudRuntimeException("Unable to recover VM as the account is deleted");
+      }
+      ServiceOfferingVO serviceOffering=_serviceOfferingDao.findById(vm.getServiceOfferingId());
+      resourceLimitCheck(account,new Long(serviceOffering.getCpu()),new Long(serviceOffering.getRamSize()));
+      _haMgr.cancelDestroy(vm,vm.getHostId());
+      try {
+        if (!_itMgr.stateTransitTo(vm,VirtualMachine.Event.RecoveryRequested,null)) {
+          s_logger.debug("Unable to recover the vm because it is not in the correct state: " + vmId);
+          throw new InvalidParameterValueException("Unable to recover the vm because it is not in the correct state: " + vmId);
         }
       }
-      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),offeringId,templateId,volume.getSize(),Volume.class.getName(),volume.getUuid());
+ catch (      NoTransitionException e) {
+        throw new InvalidParameterValueException("Unable to recover the vm because it is not in the correct state: " + vmId);
+      }
+      List<VolumeVO> volumes=_volsDao.findByInstance(vmId);
+      for (      VolumeVO volume : volumes) {
+        if (volume.getVolumeType().equals(Volume.Type.ROOT)) {
+          Long templateId=volume.getTemplateId();
+          Long diskOfferingId=volume.getDiskOfferingId();
+          Long offeringId=null;
+          if (diskOfferingId != null) {
+            DiskOfferingVO offering=_diskOfferingDao.findById(diskOfferingId);
+            if (offering != null && (offering.getType() == DiskOfferingVO.Type.Disk)) {
+              offeringId=offering.getId();
+            }
+          }
+          UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),offeringId,templateId,volume.getSize(),Volume.class.getName(),volume.getUuid());
+        }
+      }
+      resourceCountIncrement(account.getId(),new Long(serviceOffering.getCpu()),new Long(serviceOffering.getRamSize()));
     }
   }
-  resourceCountIncrement(account.getId(),new Long(serviceOffering.getCpu()),new Long(serviceOffering.getRamSize()));
-  txn.commit();
+);
   return _vmDao.findById(vmId);
 }

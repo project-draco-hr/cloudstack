@@ -1,6 +1,5 @@
 {
   DedicatedResourceVO resource=null;
-  Long resourceId=null;
   if (zoneId != null) {
     resource=_dedicatedDao.findByZoneId(zoneId);
   }
@@ -17,23 +16,26 @@
     throw new InvalidParameterValueException("No Dedicated Resource available to release");
   }
  else {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    resourceId=resource.getId();
-    if (!_dedicatedDao.remove(resourceId)) {
-      throw new CloudRuntimeException("Failed to delete Resource " + resourceId);
-    }
-    if (zoneId != null) {
-      DataCenterVO dc=_zoneDao.findById(zoneId);
-      if (dc != null) {
-        dc.setDomainId(null);
-        dc.setDomain(null);
-        if (!_zoneDao.update(zoneId,dc)) {
-          throw new CloudRuntimeException("Failed to release dedicated zone, could not clear domainId. Please contact Cloud Support.");
+    final DedicatedResourceVO resourceFinal=resource;
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        Long resourceId=resourceFinal.getId();
+        if (!_dedicatedDao.remove(resourceId)) {
+          throw new CloudRuntimeException("Failed to delete Resource " + resourceId);
+        }
+        if (zoneId != null) {
+          DataCenterVO dc=_zoneDao.findById(zoneId);
+          if (dc != null) {
+            dc.setDomainId(null);
+            dc.setDomain(null);
+            if (!_zoneDao.update(zoneId,dc)) {
+              throw new CloudRuntimeException("Failed to release dedicated zone, could not clear domainId. Please contact Cloud Support.");
+            }
+          }
         }
       }
     }
-    txn.commit();
+);
     List<DedicatedResourceVO> resourcesInGroup=_dedicatedDao.listByAffinityGroupId(resource.getAffinityGroupId());
     if (resourcesInGroup.isEmpty()) {
       _affinityGroupService.deleteAffinityGroup(resource.getAffinityGroupId(),null,null,null);

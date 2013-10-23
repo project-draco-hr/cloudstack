@@ -22,22 +22,25 @@
  else {
     throw new InvalidParameterValueException("Start ip is required parameter");
   }
-  HostPodVO pod=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
+  final HostPodVO podFinal=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
   Grouping.AllocationState allocationState=null;
   if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
     allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
-    pod.setAllocationState(allocationState);
+    podFinal.setAllocationState(allocationState);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  pod=_podDao.persist(pod);
-  if (startIp != null) {
-    _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
+  final String endIpFinal=endIp;
+  return Transaction.execute(new TransactionCallback<HostPodVO>(){
+    @Override public HostPodVO doInTransaction(    TransactionStatus status){
+      HostPodVO pod=_podDao.persist(podFinal);
+      if (startIp != null) {
+        _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIpFinal);
+      }
+      String[] linkLocalIpRanges=getLinkLocalIPRange();
+      if (linkLocalIpRanges != null) {
+        _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
+      }
+      return pod;
+    }
   }
-  String[] linkLocalIpRanges=getLinkLocalIPRange();
-  if (linkLocalIpRanges != null) {
-    _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
-  }
-  txn.commit();
-  return pod;
+);
 }

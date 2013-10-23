@@ -1,5 +1,4 @@
 {
-  Transaction txn=Transaction.currentTxn();
   Long templateIdToUse=null;
   Long volTemplateId=existingVolume.getTemplateId();
   long vmTemplateId=vm.getTemplateId();
@@ -9,17 +8,21 @@
     }
     templateIdToUse=vmTemplateId;
   }
-  txn.start();
-  VolumeVO newVolume=allocateDuplicateVolumeVO(existingVolume,templateIdToUse);
-  if (vm.getHypervisorType() == HypervisorType.VMware) {
-    _volsDao.detachVolume(existingVolume.getId());
+  final Long templateIdToUseFinal=templateIdToUse;
+  return Transaction.execute(new TransactionCallback<VolumeVO>(){
+    @Override public VolumeVO doInTransaction(    TransactionStatus status){
+      VolumeVO newVolume=allocateDuplicateVolumeVO(existingVolume,templateIdToUseFinal);
+      if (vm.getHypervisorType() == HypervisorType.VMware) {
+        _volsDao.detachVolume(existingVolume.getId());
+      }
+      try {
+        stateTransitTo(existingVolume,Volume.Event.DestroyRequested);
+      }
+ catch (      NoTransitionException e) {
+        s_logger.debug("Unable to destroy existing volume: " + e.toString());
+      }
+      return newVolume;
+    }
   }
-  try {
-    stateTransitTo(existingVolume,Volume.Event.DestroyRequested);
-  }
- catch (  NoTransitionException e) {
-    s_logger.debug("Unable to destroy existing volume: " + e.toString());
-  }
-  txn.commit();
-  return newVolume;
+);
 }

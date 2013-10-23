@@ -17,36 +17,38 @@
   if (s_logger.isTraceEnabled()) {
     s_logger.trace("Security Group Mgr: acquired global work lock");
   }
-  Transaction txn=Transaction.currentTxn();
   try {
-    txn.start();
-    for (    Long vmId : affectedVms) {
-      if (s_logger.isTraceEnabled()) {
-        s_logger.trace("Security Group Mgr: scheduling ruleset update for " + vmId);
-      }
-      VmRulesetLogVO log=null;
-      SecurityGroupWorkVO work=null;
-      log=_rulesetLogDao.findByVmId(vmId);
-      if (log == null) {
-        log=new VmRulesetLogVO(vmId);
-        log=_rulesetLogDao.persist(log);
-      }
-      if (log != null && updateSeqno) {
-        log.incrLogsequence();
-        _rulesetLogDao.update(log.getId(),log);
-      }
-      work=_workDao.findByVmIdStep(vmId,Step.Scheduled);
-      if (work == null) {
-        work=new SecurityGroupWorkVO(vmId,null,null,SecurityGroupWork.Step.Scheduled,null);
-        work=_workDao.persist(work);
-        if (s_logger.isTraceEnabled()) {
-          s_logger.trace("Security Group Mgr: created new work item for " + vmId + "; id = "+ work.getId());
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        for (        Long vmId : affectedVms) {
+          if (s_logger.isTraceEnabled()) {
+            s_logger.trace("Security Group Mgr: scheduling ruleset update for " + vmId);
+          }
+          VmRulesetLogVO log=null;
+          SecurityGroupWorkVO work=null;
+          log=_rulesetLogDao.findByVmId(vmId);
+          if (log == null) {
+            log=new VmRulesetLogVO(vmId);
+            log=_rulesetLogDao.persist(log);
+          }
+          if (log != null && updateSeqno) {
+            log.incrLogsequence();
+            _rulesetLogDao.update(log.getId(),log);
+          }
+          work=_workDao.findByVmIdStep(vmId,Step.Scheduled);
+          if (work == null) {
+            work=new SecurityGroupWorkVO(vmId,null,null,SecurityGroupWork.Step.Scheduled,null);
+            work=_workDao.persist(work);
+            if (s_logger.isTraceEnabled()) {
+              s_logger.trace("Security Group Mgr: created new work item for " + vmId + "; id = "+ work.getId());
+            }
+          }
+          work.setLogsequenceNumber(log.getLogsequence());
+          _workDao.update(work.getId(),work);
         }
       }
-      work.setLogsequenceNumber(log.getLogsequence());
-      _workDao.update(work.getId(),work);
     }
-    txn.commit();
+);
     for (    Long vmId : affectedVms) {
       _executorPool.schedule(new WorkerThread(),delayMs,TimeUnit.MILLISECONDS);
     }
