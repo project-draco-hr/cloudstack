@@ -1,8 +1,6 @@
 {
-  Transaction txn=Transaction.currentTxn();
-  boolean success=false;
   Long userId=CallContext.current().getCallingUserId();
-  Long zoneId=cmd.getId();
+  final Long zoneId=cmd.getId();
   if (userId == null) {
     userId=Long.valueOf(User.UID_SYSTEM);
   }
@@ -10,23 +8,26 @@
     throw new InvalidParameterValueException("A zone with ID: " + zoneId + " does not exist.");
   }
   checkIfZoneIsDeletable(zoneId);
-  txn.start();
-  List<VlanVO> vlans=_vlanDao.listByZone(zoneId);
-  for (  VlanVO vlan : vlans) {
-    _vlanDao.remove(vlan.getId());
-  }
-  success=_zoneDao.remove(zoneId);
-  if (success) {
-    _capacityDao.removeBy(null,zoneId,null,null,null);
-    DedicatedResourceVO dr=_dedicatedDao.findByZoneId(zoneId);
-    if (dr != null) {
-      _dedicatedDao.remove(dr.getId());
-      List<DedicatedResourceVO> resourcesInGroup=_dedicatedDao.listByAffinityGroupId(dr.getAffinityGroupId());
-      if (resourcesInGroup.isEmpty()) {
-        _affinityGroupService.deleteAffinityGroup(dr.getAffinityGroupId(),null,null,null);
+  return Transaction.execute(new TransactionCallback<Boolean>(){
+    @Override public Boolean doInTransaction(    TransactionStatus status){
+      List<VlanVO> vlans=_vlanDao.listByZone(zoneId);
+      for (      VlanVO vlan : vlans) {
+        _vlanDao.remove(vlan.getId());
       }
+      boolean success=_zoneDao.remove(zoneId);
+      if (success) {
+        _capacityDao.removeBy(null,zoneId,null,null,null);
+        DedicatedResourceVO dr=_dedicatedDao.findByZoneId(zoneId);
+        if (dr != null) {
+          _dedicatedDao.remove(dr.getId());
+          List<DedicatedResourceVO> resourcesInGroup=_dedicatedDao.listByAffinityGroupId(dr.getAffinityGroupId());
+          if (resourcesInGroup.isEmpty()) {
+            _affinityGroupService.deleteAffinityGroup(dr.getAffinityGroupId(),null,null,null);
+          }
+        }
+      }
+      return success;
     }
   }
-  txn.commit();
-  return success;
+);
 }

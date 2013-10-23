@@ -1,6 +1,5 @@
 {
-  HostPodVO pod=_podDao.findById(id);
-  ;
+  final HostPodVO pod=_podDao.findById(id);
   if (pod == null) {
     throw new InvalidParameterValueException("Unable to find pod by id " + id);
   }
@@ -64,46 +63,59 @@
   if (allocationStateStr == null) {
     allocationStateStr=pod.getAllocationState().toString();
   }
-  String cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
+  final String cidr=NetUtils.ipAndNetMaskToCidr(gateway,netmask);
   boolean checkForDuplicates=!oldPodName.equals(name);
   checkPodAttributes(id,name,pod.getDataCenterId(),gateway,cidr,startIp,endIp,allocationStateStr,checkForDuplicates,false);
-  Transaction txn=Transaction.currentTxn();
   try {
-    txn.start();
-    long zoneId=pod.getDataCenterId();
-    if (!allowToDownsize) {
-      if (leftRangeToAdd != null) {
-        _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),leftRangeToAdd[0],leftRangeToAdd[1]);
-      }
-      if (rightRangeToAdd != null) {
-        _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),rightRangeToAdd[0],rightRangeToAdd[1]);
-      }
-    }
+    final String[] existingPodIpRangeFinal=existingPodIpRange;
+    final String[] leftRangeToAddFinal=leftRangeToAdd;
+    final String[] rightRangeToAddFinal=rightRangeToAdd;
+    final boolean allowToDownsizeFinal=allowToDownsize;
+    final String allocationStateStrFinal=allocationStateStr;
+    final String startIpFinal=startIp;
+    final String endIpFinal=endIp;
+    final String nameFinal=name;
+    final String gatewayFinal=gateway;
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        long zoneId=pod.getDataCenterId();
+        String startIp=startIpFinal;
+        String endIp=endIpFinal;
+        if (!allowToDownsizeFinal) {
+          if (leftRangeToAddFinal != null) {
+            _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),leftRangeToAddFinal[0],leftRangeToAddFinal[1]);
+          }
+          if (rightRangeToAddFinal != null) {
+            _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),rightRangeToAddFinal[0],rightRangeToAddFinal[1]);
+          }
+        }
  else {
-      _zoneDao.deletePrivateIpAddressByPod(pod.getId());
-      if (startIp == null) {
-        startIp=existingPodIpRange[0];
+          _zoneDao.deletePrivateIpAddressByPod(pod.getId());
+          if (startIp == null) {
+            startIp=existingPodIpRangeFinal[0];
+          }
+          if (endIp == null) {
+            endIp=existingPodIpRangeFinal[1];
+          }
+          _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
+        }
+        pod.setName(nameFinal);
+        pod.setDataCenterId(zoneId);
+        pod.setGateway(gatewayFinal);
+        pod.setCidrAddress(getCidrAddress(cidr));
+        pod.setCidrSize(getCidrSize(cidr));
+        String ipRange=startIp + "-" + endIp;
+        pod.setDescription(ipRange);
+        Grouping.AllocationState allocationState=null;
+        if (allocationStateStrFinal != null && !allocationStateStrFinal.isEmpty()) {
+          allocationState=Grouping.AllocationState.valueOf(allocationStateStrFinal);
+          _capacityDao.updateCapacityState(null,pod.getId(),null,null,allocationStateStrFinal);
+          pod.setAllocationState(allocationState);
+        }
+        _podDao.update(id,pod);
       }
-      if (endIp == null) {
-        endIp=existingPodIpRange[1];
-      }
-      _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
     }
-    pod.setName(name);
-    pod.setDataCenterId(zoneId);
-    pod.setGateway(gateway);
-    pod.setCidrAddress(getCidrAddress(cidr));
-    pod.setCidrSize(getCidrSize(cidr));
-    String ipRange=startIp + "-" + endIp;
-    pod.setDescription(ipRange);
-    Grouping.AllocationState allocationState=null;
-    if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
-      allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
-      _capacityDao.updateCapacityState(null,pod.getId(),null,null,allocationStateStr);
-      pod.setAllocationState(allocationState);
-    }
-    _podDao.update(id,pod);
-    txn.commit();
+);
   }
  catch (  Exception e) {
     s_logger.error("Unable to edit pod due to " + e.getMessage(),e);

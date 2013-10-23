@@ -1,5 +1,5 @@
 {
-  long rangeId=cmd.getId();
+  final long rangeId=cmd.getId();
   StorageNetworkIpRangeVO range=_sNwIpRangeDao.findById(rangeId);
   if (range == null) {
     throw new CloudRuntimeException("Can not find storage network ip range " + rangeId);
@@ -7,21 +7,24 @@
   if (_sNwIpDao.countInUseIpByRangeId(rangeId) > 0) {
     throw new CloudRuntimeException(getInUseIpAddress(rangeId));
   }
-  final Transaction txn=Transaction.currentTxn();
-  txn.start();
-  try {
-    range=_sNwIpRangeDao.acquireInLockTable(rangeId);
-    if (range == null) {
-      String msg="Unable to acquire lock on storage network ip range id=" + rangeId + ", delete failed";
-      s_logger.warn(msg);
-      throw new CloudRuntimeException(msg);
-    }
-    _sNwIpRangeDao.remove(rangeId);
-  }
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      StorageNetworkIpRangeVO range=null;
+      try {
+        range=_sNwIpRangeDao.acquireInLockTable(rangeId);
+        if (range == null) {
+          String msg="Unable to acquire lock on storage network ip range id=" + rangeId + ", delete failed";
+          s_logger.warn(msg);
+          throw new CloudRuntimeException(msg);
+        }
+        _sNwIpRangeDao.remove(rangeId);
+      }
   finally {
-    if (range != null) {
-      _sNwIpRangeDao.releaseFromLockTable(rangeId);
+        if (range != null) {
+          _sNwIpRangeDao.releaseFromLockTable(rangeId);
+        }
+      }
     }
   }
-  txn.commit();
+);
 }

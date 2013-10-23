@@ -14,17 +14,20 @@
     throw new InvalidParameterValueException("Project with name " + name + " already exists in domain id="+ owner.getDomainId());
   }
   _resourceLimitMgr.checkResourceLimit(owner,ResourceType.project);
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  StringBuilder acctNm=new StringBuilder("PrjAcct-");
-  acctNm.append(name).append("-").append(owner.getDomainId());
-  Account projectAccount=_accountMgr.createAccount(acctNm.toString(),Account.ACCOUNT_TYPE_PROJECT,domainId,null,null,UUID.randomUUID().toString());
-  Project project=_projectDao.persist(new ProjectVO(name,displayText,owner.getDomainId(),projectAccount.getId()));
-  assignAccountToProject(project,owner.getId(),ProjectAccount.Role.Admin);
-  if (project != null) {
-    CallContext.current().setEventDetails("Project id=" + project.getId());
+  final Account ownerFinal=owner;
+  return Transaction.execute(new TransactionCallback<Project>(){
+    @Override public Project doInTransaction(    TransactionStatus status){
+      StringBuilder acctNm=new StringBuilder("PrjAcct-");
+      acctNm.append(name).append("-").append(ownerFinal.getDomainId());
+      Account projectAccount=_accountMgr.createAccount(acctNm.toString(),Account.ACCOUNT_TYPE_PROJECT,domainId,null,null,UUID.randomUUID().toString());
+      Project project=_projectDao.persist(new ProjectVO(name,displayText,ownerFinal.getDomainId(),projectAccount.getId()));
+      assignAccountToProject(project,ownerFinal.getId(),ProjectAccount.Role.Admin);
+      if (project != null) {
+        CallContext.current().setEventDetails("Project id=" + project.getId());
+      }
+      _resourceLimitMgr.incrementResourceCount(ownerFinal.getId(),ResourceType.project);
+      return project;
+    }
   }
-  _resourceLimitMgr.incrementResourceCount(owner.getId(),ResourceType.project);
-  txn.commit();
-  return project;
+);
 }

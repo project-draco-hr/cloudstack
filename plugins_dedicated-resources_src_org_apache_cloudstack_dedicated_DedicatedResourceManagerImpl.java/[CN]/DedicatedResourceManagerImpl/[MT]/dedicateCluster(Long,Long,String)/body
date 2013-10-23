@@ -66,27 +66,30 @@
     }
   }
   checkHostsSuitabilityForExplicitDedication(accountId,childDomainIds,hosts);
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  AffinityGroup group=findOrCreateDedicatedAffinityGroup(domainId,accountId);
-  if (group == null) {
-    s_logger.error("Unable to dedicate zone due to, failed to create dedication affinity group");
-    throw new CloudRuntimeException("Failed to dedicate zone. Please contact Cloud Support.");
-  }
-  DedicatedResourceVO dedicatedResource=new DedicatedResourceVO(null,null,clusterId,null,null,null,group.getId());
-  try {
-    dedicatedResource.setDomainId(domainId);
-    if (accountId != null) {
-      dedicatedResource.setAccountId(accountId);
+  final Long accountIdFinal=accountId;
+  return Transaction.execute(new TransactionCallback<List<DedicatedResourceVO>>(){
+    @Override public List<DedicatedResourceVO> doInTransaction(    TransactionStatus status){
+      AffinityGroup group=findOrCreateDedicatedAffinityGroup(domainId,accountIdFinal);
+      if (group == null) {
+        s_logger.error("Unable to dedicate zone due to, failed to create dedication affinity group");
+        throw new CloudRuntimeException("Failed to dedicate zone. Please contact Cloud Support.");
+      }
+      DedicatedResourceVO dedicatedResource=new DedicatedResourceVO(null,null,clusterId,null,null,null,group.getId());
+      try {
+        dedicatedResource.setDomainId(domainId);
+        if (accountIdFinal != null) {
+          dedicatedResource.setAccountId(accountIdFinal);
+        }
+        dedicatedResource=_dedicatedDao.persist(dedicatedResource);
+      }
+ catch (      Exception e) {
+        s_logger.error("Unable to dedicate host due to " + e.getMessage(),e);
+        throw new CloudRuntimeException("Failed to dedicate cluster. Please contact Cloud Support.");
+      }
+      List<DedicatedResourceVO> result=new ArrayList<DedicatedResourceVO>();
+      result.add(dedicatedResource);
+      return result;
     }
-    dedicatedResource=_dedicatedDao.persist(dedicatedResource);
   }
- catch (  Exception e) {
-    s_logger.error("Unable to dedicate host due to " + e.getMessage(),e);
-    throw new CloudRuntimeException("Failed to dedicate cluster. Please contact Cloud Support.");
-  }
-  txn.commit();
-  List<DedicatedResourceVO> result=new ArrayList<DedicatedResourceVO>();
-  result.add(dedicatedResource);
-  return result;
+);
 }

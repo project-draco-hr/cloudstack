@@ -1,22 +1,30 @@
 {
-  Transaction txn=Transaction.currentTxn();
   GlobalLock deviceMapLock=GlobalLock.getInternLock("LoadBalancerAllocLock");
   try {
     if (deviceMapLock.lock(120)) {
-      txn.start();
-      NetworkExternalLoadBalancerVO networkLBDevice=_networkExternalLBDao.findByNetworkId(guestConfig.getId());
-      long lbDeviceId=networkLBDevice.getExternalLBDeviceId();
-      _networkExternalLBDao.remove(networkLBDevice.getId());
-      List<NetworkExternalLoadBalancerVO> ntwksMapped=_networkExternalLBDao.listByLoadBalancerDeviceId(networkLBDevice.getExternalLBDeviceId());
-      ExternalLoadBalancerDeviceVO lbDevice=_externalLoadBalancerDeviceDao.findById(lbDeviceId);
-      boolean lbInUse=!(ntwksMapped == null || ntwksMapped.isEmpty());
-      boolean lbCloudManaged=lbDevice.getIsManagedDevice();
-      if (!lbInUse && !lbCloudManaged) {
-        lbDevice.setAllocationState(LBDeviceAllocationState.Free);
-        _externalLoadBalancerDeviceDao.update(lbDevice.getId(),lbDevice);
+      ExternalLoadBalancerDeviceVO lbDevice=Transaction.execute(new TransactionCallback<ExternalLoadBalancerDeviceVO>(){
+        @Override public ExternalLoadBalancerDeviceVO doInTransaction(        TransactionStatus status){
+          NetworkExternalLoadBalancerVO networkLBDevice=_networkExternalLBDao.findByNetworkId(guestConfig.getId());
+          long lbDeviceId=networkLBDevice.getExternalLBDeviceId();
+          _networkExternalLBDao.remove(networkLBDevice.getId());
+          List<NetworkExternalLoadBalancerVO> ntwksMapped=_networkExternalLBDao.listByLoadBalancerDeviceId(networkLBDevice.getExternalLBDeviceId());
+          ExternalLoadBalancerDeviceVO lbDevice=_externalLoadBalancerDeviceDao.findById(lbDeviceId);
+          boolean lbInUse=!(ntwksMapped == null || ntwksMapped.isEmpty());
+          boolean lbCloudManaged=lbDevice.getIsManagedDevice();
+          if (!lbInUse && !lbCloudManaged) {
+            lbDevice.setAllocationState(LBDeviceAllocationState.Free);
+            _externalLoadBalancerDeviceDao.update(lbDevice.getId(),lbDevice);
+          }
+          if (!lbInUse && lbCloudManaged) {
+            return lbDevice;
+          }
+ else {
+            return null;
+          }
+        }
       }
-      txn.commit();
-      if (!lbInUse && lbCloudManaged) {
+);
+      if (lbDevice != null) {
         Host lbHost=_hostDao.findById(lbDevice.getHostId());
         String lbIP=lbHost.getPrivateIpAddress();
         DestroyLoadBalancerApplianceCommand lbDeleteCmd=new DestroyLoadBalancerApplianceCommand(lbIP);
@@ -51,7 +59,6 @@
     }
   }
  catch (  Exception exception) {
-    txn.rollback();
     s_logger.error("Failed to release load balancer device for the network" + guestConfig.getId() + " due to "+ exception.getMessage());
   }
  finally {

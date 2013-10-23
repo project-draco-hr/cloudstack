@@ -1,5 +1,5 @@
 {
-  GlobalLoadBalancerRuleVO gslbRule=_gslbRuleDao.findById(gslbRuleId);
+  final GlobalLoadBalancerRuleVO gslbRule=_gslbRuleDao.findById(gslbRuleId);
   if (gslbRule == null) {
     throw new InvalidParameterValueException("Invalid global load balancer rule id: " + gslbRuleId);
   }
@@ -16,16 +16,19 @@
     gslbRule.setState(GlobalLoadBalancerRule.State.Revoke);
     _gslbRuleDao.update(gslbRuleId,gslbRule);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  List<GlobalLoadBalancerLbRuleMapVO> gslbLbMapVos=_gslbLbMapDao.listByGslbRuleId(gslbRuleId);
-  if (gslbLbMapVos != null) {
-    for (    GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
-      gslbLbMap.setRevoke(true);
-      _gslbLbMapDao.update(gslbLbMap.getId(),gslbLbMap);
+  final List<GlobalLoadBalancerLbRuleMapVO> gslbLbMapVos=Transaction.execute(new TransactionCallback<List<GlobalLoadBalancerLbRuleMapVO>>(){
+    @Override public List<GlobalLoadBalancerLbRuleMapVO> doInTransaction(    TransactionStatus status){
+      List<GlobalLoadBalancerLbRuleMapVO> gslbLbMapVos=_gslbLbMapDao.listByGslbRuleId(gslbRuleId);
+      if (gslbLbMapVos != null) {
+        for (        GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
+          gslbLbMap.setRevoke(true);
+          _gslbLbMapDao.update(gslbLbMap.getId(),gslbLbMap);
+        }
+      }
+      return gslbLbMapVos;
     }
   }
-  txn.commit();
+);
   boolean success=false;
   try {
     if (gslbLbMapVos != null) {
@@ -36,13 +39,16 @@
  catch (  ResourceUnavailableException e) {
     throw new CloudRuntimeException("Failed to update the gloabal load balancer");
   }
-  txn.start();
-  if (gslbLbMapVos != null) {
-    for (    GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
-      _gslbLbMapDao.remove(gslbLbMap.getId());
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      if (gslbLbMapVos != null) {
+        for (        GlobalLoadBalancerLbRuleMapVO gslbLbMap : gslbLbMapVos) {
+          _gslbLbMapDao.remove(gslbLbMap.getId());
+        }
+      }
+      _gslbRuleDao.remove(gslbRuleId);
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_GLOBAL_LOAD_BALANCER_DELETE,gslbRule.getAccountId(),0,gslbRule.getId(),gslbRule.getName(),GlobalLoadBalancerRule.class.getName(),gslbRule.getUuid());
     }
   }
-  _gslbRuleDao.remove(gslbRuleId);
-  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_GLOBAL_LOAD_BALANCER_DELETE,gslbRule.getAccountId(),0,gslbRule.getId(),gslbRule.getName(),GlobalLoadBalancerRule.class.getName(),gslbRule.getUuid());
-  txn.commit();
+);
 }

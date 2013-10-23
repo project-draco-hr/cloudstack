@@ -1,5 +1,5 @@
 {
-  Long zoneId=cmd.getId();
+  final Long zoneId=cmd.getId();
   String zoneName=cmd.getZoneName();
   String dns1=cmd.getDns1();
   String dns2=cmd.getDns2();
@@ -9,13 +9,13 @@
   String internalDns2=cmd.getInternalDns2();
   String guestCidr=cmd.getGuestCidrAddress();
   List<String> dnsSearchOrder=cmd.getDnsSearchOrder();
-  Boolean isPublic=cmd.isPublic();
-  String allocationStateStr=cmd.getAllocationState();
-  String dhcpProvider=cmd.getDhcpProvider();
+  final Boolean isPublic=cmd.isPublic();
+  final String allocationStateStr=cmd.getAllocationState();
+  final String dhcpProvider=cmd.getDhcpProvider();
   Map<?,?> detailsMap=cmd.getDetails();
   String networkDomain=cmd.getDomain();
   Boolean localStorageEnabled=cmd.getLocalStorageEnabled();
-  Map<String,String> newDetails=new HashMap<String,String>();
+  final Map<String,String> newDetails=new HashMap<String,String>();
   if (detailsMap != null) {
     Collection<?> zoneDetailsCollection=detailsMap.values();
     Iterator<?> iter=zoneDetailsCollection.iterator();
@@ -37,7 +37,7 @@
     }
     newDetails.put(ZoneConfig.DnsSearchOrder.getName(),StringUtils.join(dnsSearchOrder,","));
   }
-  DataCenterVO zone=_zoneDao.findById(zoneId);
+  final DataCenterVO zone=_zoneDao.findById(zoneId);
   if (zone == null) {
     throw new InvalidParameterValueException("unable to find zone by id " + zoneId);
   }
@@ -101,62 +101,64 @@
       zone.setDomain(networkDomain);
     }
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  Map<String,String> updatedDetails=new HashMap<String,String>();
-  _zoneDao.loadDetails(zone);
-  if (zone.getDetails() != null) {
-    updatedDetails.putAll(zone.getDetails());
-  }
-  updatedDetails.putAll(newDetails);
-  zone.setDetails(updatedDetails);
-  if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
-    Grouping.AllocationState allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
-    if (allocationState == Grouping.AllocationState.Enabled) {
-      try {
-        PhysicalNetwork mgmtPhyNetwork;
-        mgmtPhyNetwork=_networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Management);
-        if (NetworkType.Advanced == zone.getNetworkType() && !zone.isSecurityGroupEnabled()) {
-          _networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Public);
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      Map<String,String> updatedDetails=new HashMap<String,String>();
+      _zoneDao.loadDetails(zone);
+      if (zone.getDetails() != null) {
+        updatedDetails.putAll(zone.getDetails());
+      }
+      updatedDetails.putAll(newDetails);
+      zone.setDetails(updatedDetails);
+      if (allocationStateStr != null && !allocationStateStr.isEmpty()) {
+        Grouping.AllocationState allocationState=Grouping.AllocationState.valueOf(allocationStateStr);
+        if (allocationState == Grouping.AllocationState.Enabled) {
+          try {
+            PhysicalNetwork mgmtPhyNetwork;
+            mgmtPhyNetwork=_networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Management);
+            if (NetworkType.Advanced == zone.getNetworkType() && !zone.isSecurityGroupEnabled()) {
+              _networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Public);
+            }
+            try {
+              _networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Storage);
+            }
+ catch (            InvalidParameterValueException noStorage) {
+              PhysicalNetworkTrafficTypeVO mgmtTraffic=_trafficTypeDao.findBy(mgmtPhyNetwork.getId(),TrafficType.Management);
+              _networkSvc.addTrafficTypeToPhysicalNetwork(mgmtPhyNetwork.getId(),TrafficType.Storage.toString(),mgmtTraffic.getXenNetworkLabel(),mgmtTraffic.getKvmNetworkLabel(),mgmtTraffic.getVmwareNetworkLabel(),mgmtTraffic.getSimulatorNetworkLabel(),mgmtTraffic.getVlan());
+              s_logger.info("No storage traffic type was specified by admin, create default storage traffic on physical network " + mgmtPhyNetwork.getId() + " with same configure of management traffic type");
+            }
+          }
+ catch (          InvalidParameterValueException ex) {
+            throw new InvalidParameterValueException("Cannot enable this Zone since: " + ex.getMessage());
+          }
         }
-        try {
-          _networkModel.getDefaultPhysicalNetworkByZoneAndTrafficType(zoneId,TrafficType.Storage);
-        }
- catch (        InvalidParameterValueException noStorage) {
-          PhysicalNetworkTrafficTypeVO mgmtTraffic=_trafficTypeDao.findBy(mgmtPhyNetwork.getId(),TrafficType.Management);
-          _networkSvc.addTrafficTypeToPhysicalNetwork(mgmtPhyNetwork.getId(),TrafficType.Storage.toString(),mgmtTraffic.getXenNetworkLabel(),mgmtTraffic.getKvmNetworkLabel(),mgmtTraffic.getVmwareNetworkLabel(),mgmtTraffic.getSimulatorNetworkLabel(),mgmtTraffic.getVlan());
-          s_logger.info("No storage traffic type was specified by admin, create default storage traffic on physical network " + mgmtPhyNetwork.getId() + " with same configure of management traffic type");
+        _capacityDao.updateCapacityState(zone.getId(),null,null,null,allocationStateStr);
+        zone.setAllocationState(allocationState);
+      }
+      if (dhcpProvider != null) {
+        zone.setDhcpProvider(dhcpProvider);
+      }
+      if (isPublic != null && isPublic) {
+        zone.setDomainId(null);
+        zone.setDomain(null);
+        DedicatedResourceVO resource=_dedicatedDao.findByZoneId(zoneId);
+        Long resourceId=null;
+        if (resource != null) {
+          resourceId=resource.getId();
+          if (!_dedicatedDao.remove(resourceId)) {
+            throw new CloudRuntimeException("Failed to delete dedicated Zone Resource " + resourceId);
+          }
+          List<DedicatedResourceVO> resourcesInGroup=_dedicatedDao.listByAffinityGroupId(resource.getAffinityGroupId());
+          if (resourcesInGroup.isEmpty()) {
+            _affinityGroupService.deleteAffinityGroup(resource.getAffinityGroupId(),null,null,null);
+          }
         }
       }
- catch (      InvalidParameterValueException ex) {
-        throw new InvalidParameterValueException("Cannot enable this Zone since: " + ex.getMessage());
+      if (!_zoneDao.update(zoneId,zone)) {
+        throw new CloudRuntimeException("Failed to edit zone. Please contact Cloud Support.");
       }
     }
-    _capacityDao.updateCapacityState(zone.getId(),null,null,null,allocationStateStr);
-    zone.setAllocationState(allocationState);
   }
-  if (dhcpProvider != null) {
-    zone.setDhcpProvider(dhcpProvider);
-  }
-  if (isPublic != null && isPublic) {
-    zone.setDomainId(null);
-    zone.setDomain(null);
-    DedicatedResourceVO resource=_dedicatedDao.findByZoneId(zoneId);
-    Long resourceId=null;
-    if (resource != null) {
-      resourceId=resource.getId();
-      if (!_dedicatedDao.remove(resourceId)) {
-        throw new CloudRuntimeException("Failed to delete dedicated Zone Resource " + resourceId);
-      }
-      List<DedicatedResourceVO> resourcesInGroup=_dedicatedDao.listByAffinityGroupId(resource.getAffinityGroupId());
-      if (resourcesInGroup.isEmpty()) {
-        _affinityGroupService.deleteAffinityGroup(resource.getAffinityGroupId(),null,null,null);
-      }
-    }
-  }
-  if (!_zoneDao.update(zoneId,zone)) {
-    throw new CloudRuntimeException("Failed to edit zone. Please contact Cloud Support.");
-  }
-  txn.commit();
+);
   return zone;
 }

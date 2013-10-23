@@ -1,39 +1,41 @@
 {
-  LoadBalancerVO lb=_lbDao.findById(loadBalancerId);
-  Transaction txn=Transaction.currentTxn();
-  boolean generateUsageEvent=false;
-  boolean success=true;
+  final LoadBalancerVO lb=_lbDao.findById(loadBalancerId);
   FirewallRule.State backupState=lb.getState();
-  txn.start();
-  if (lb.getState() == FirewallRule.State.Staged) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Found a rule that is still in stage state so just removing it: " + lb);
+  List<LoadBalancerVMMapVO> backupMaps=Transaction.execute(new TransactionCallback<List<LoadBalancerVMMapVO>>(){
+    @Override public List<LoadBalancerVMMapVO> doInTransaction(    TransactionStatus status){
+      boolean generateUsageEvent=false;
+      if (lb.getState() == FirewallRule.State.Staged) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Found a rule that is still in stage state so just removing it: " + lb);
+        }
+        generateUsageEvent=true;
+      }
+ else       if (lb.getState() == FirewallRule.State.Add || lb.getState() == FirewallRule.State.Active) {
+        lb.setState(FirewallRule.State.Revoke);
+        _lbDao.persist(lb);
+        generateUsageEvent=true;
+      }
+      List<LoadBalancerVMMapVO> backupMaps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
+      List<LoadBalancerVMMapVO> maps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
+      if (maps != null) {
+        for (        LoadBalancerVMMapVO map : maps) {
+          map.setRevoke(true);
+          _lb2VmMapDao.persist(map);
+          s_logger.debug("Set load balancer rule for revoke: rule id " + loadBalancerId + ", vmId "+ map.getInstanceId());
+        }
+      }
+      List<LBHealthCheckPolicyVO> hcPolicies=_lb2healthcheckDao.listByLoadBalancerId(loadBalancerId);
+      for (      LBHealthCheckPolicyVO lbHealthCheck : hcPolicies) {
+        lbHealthCheck.setRevoke(true);
+        _lb2healthcheckDao.persist(lbHealthCheck);
+      }
+      if (generateUsageEvent) {
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_DELETE,lb.getAccountId(),0,lb.getId(),null,LoadBalancingRule.class.getName(),lb.getUuid());
+      }
+      return backupMaps;
     }
-    generateUsageEvent=true;
   }
- else   if (lb.getState() == FirewallRule.State.Add || lb.getState() == FirewallRule.State.Active) {
-    lb.setState(FirewallRule.State.Revoke);
-    _lbDao.persist(lb);
-    generateUsageEvent=true;
-  }
-  List<LoadBalancerVMMapVO> backupMaps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
-  List<LoadBalancerVMMapVO> maps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
-  if (maps != null) {
-    for (    LoadBalancerVMMapVO map : maps) {
-      map.setRevoke(true);
-      _lb2VmMapDao.persist(map);
-      s_logger.debug("Set load balancer rule for revoke: rule id " + loadBalancerId + ", vmId "+ map.getInstanceId());
-    }
-  }
-  List<LBHealthCheckPolicyVO> hcPolicies=_lb2healthcheckDao.listByLoadBalancerId(loadBalancerId);
-  for (  LBHealthCheckPolicyVO lbHealthCheck : hcPolicies) {
-    lbHealthCheck.setRevoke(true);
-    _lb2healthcheckDao.persist(lbHealthCheck);
-  }
-  if (generateUsageEvent) {
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_LOAD_BALANCER_DELETE,lb.getAccountId(),0,lb.getId(),null,LoadBalancingRule.class.getName(),lb.getUuid());
-  }
-  txn.commit();
+);
   NetworkVO network=_networkDao.findById(lb.getNetworkId());
   if (network != null) {
     if (_networkModel.networkIsConfiguredForExternalNetworking(network.getDataCenterId(),network.getId())) {
@@ -68,13 +70,11 @@
   FirewallRuleVO relatedRule=_firewallDao.findByRelatedId(lb.getId());
   if (relatedRule != null) {
     s_logger.warn("Unable to remove firewall rule id=" + lb.getId() + " as it has related firewall rule id="+ relatedRule.getId()+ "; leaving it in Revoke state");
-    success=false;
+    return false;
   }
  else {
     _firewallMgr.removeRule(lb);
   }
-  if (success) {
-    s_logger.debug("Load balancer with id " + lb.getId() + " is removed successfully");
-  }
-  return success;
+  s_logger.debug("Load balancer with id " + lb.getId() + " is removed successfully");
+  return true;
 }

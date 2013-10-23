@@ -1,13 +1,12 @@
 {
-  VlanType vlanType=VlanType.VirtualNetwork;
-  boolean assign=false;
+  final VlanType vlanType=VlanType.VirtualNetwork;
+  final boolean assign=false;
   if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
     PermissionDeniedException ex=new PermissionDeniedException("Cannot perform this operation, " + "Zone is currently disabled");
     ex.addProxyObject(zone.getUuid(),"zoneId");
     throw ex;
   }
   PublicIp ip=null;
-  Transaction txn=Transaction.currentTxn();
   Account accountToLock=null;
   try {
     if (s_logger.isDebugEnabled()) {
@@ -21,17 +20,21 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Associate IP address lock acquired");
     }
-    txn.start();
-    ip=fetchNewPublicIp(zone.getId(),null,null,ipOwner,vlanType,null,false,assign,null,isSystem,null);
-    if (ip == null) {
-      InsufficientAddressCapacityException ex=new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zone.getId());
-      ex.addProxyObject(ApiDBUtils.findZoneById(zone.getId()).getUuid());
-      throw ex;
+    ip=Transaction.execute(new TransactionCallbackWithException<PublicIp,InsufficientAddressCapacityException>(){
+      @Override public PublicIp doInTransaction(      TransactionStatus status) throws InsufficientAddressCapacityException {
+        PublicIp ip=fetchNewPublicIp(zone.getId(),null,null,ipOwner,vlanType,null,false,assign,null,isSystem,null);
+        if (ip == null) {
+          InsufficientAddressCapacityException ex=new InsufficientAddressCapacityException("Unable to find available public IP addresses",DataCenter.class,zone.getId());
+          ex.addProxyObject(ApiDBUtils.findZoneById(zone.getId()).getUuid());
+          throw ex;
+        }
+        CallContext.current().setEventDetails("Ip Id: " + ip.getId());
+        Ip ipAddress=ip.getAddress();
+        s_logger.debug("Got " + ipAddress + " to assign for account "+ ipOwner.getId()+ " in zone "+ zone.getId());
+        return ip;
+      }
     }
-    CallContext.current().setEventDetails("Ip Id: " + ip.getId());
-    Ip ipAddress=ip.getAddress();
-    s_logger.debug("Got " + ipAddress + " to assign for account "+ ipOwner.getId()+ " in zone "+ zone.getId());
-    txn.commit();
+);
   }
   finally {
     if (accountToLock != null) {

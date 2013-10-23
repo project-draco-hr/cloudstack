@@ -1,11 +1,11 @@
 {
-  Integer regionId=cmd.getRegionId();
-  String startIP=cmd.getStartIp();
-  String endIP=cmd.getEndIp();
-  String gateway=cmd.getGateway();
-  String netmask=cmd.getNetmask();
+  final Integer regionId=cmd.getRegionId();
+  final String startIP=cmd.getStartIp();
+  final String endIP=cmd.getEndIp();
+  final String gateway=cmd.getGateway();
+  final String netmask=cmd.getNetmask();
   String vlanId=cmd.getVlan();
-  RegionVO region=_regionDao.findById(regionId);
+  final RegionVO region=_regionDao.findById(regionId);
   if (region == null) {
     throw new InvalidParameterValueException("Invalid region ID: " + regionId);
   }
@@ -38,20 +38,27 @@
   }
   GlobalLock portableIpLock=GlobalLock.getInternLock("PortablePublicIpRange");
   portableIpLock.lock(5);
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  PortableIpRangeVO portableIpRange=new PortableIpRangeVO(regionId,vlanId,gateway,netmask,startIP,endIP);
-  portableIpRange=_portableIpRangeDao.persist(portableIpRange);
-  long startIpLong=NetUtils.ip2Long(startIP);
-  long endIpLong=NetUtils.ip2Long(endIP);
-  while (startIpLong <= endIpLong) {
-    PortableIpVO portableIP=new PortableIpVO(regionId,portableIpRange.getId(),vlanId,gateway,netmask,NetUtils.long2Ip(startIpLong));
-    _portableIpDao.persist(portableIP);
-    startIpLong++;
+  try {
+    final String vlanIdFinal=vlanId;
+    return Transaction.execute(new TransactionCallback<PortableIpRangeVO>(){
+      @Override public PortableIpRangeVO doInTransaction(      TransactionStatus status){
+        PortableIpRangeVO portableIpRange=new PortableIpRangeVO(regionId,vlanIdFinal,gateway,netmask,startIP,endIP);
+        portableIpRange=_portableIpRangeDao.persist(portableIpRange);
+        long startIpLong=NetUtils.ip2Long(startIP);
+        long endIpLong=NetUtils.ip2Long(endIP);
+        while (startIpLong <= endIpLong) {
+          PortableIpVO portableIP=new PortableIpVO(regionId,portableIpRange.getId(),vlanIdFinal,gateway,netmask,NetUtils.long2Ip(startIpLong));
+          _portableIpDao.persist(portableIP);
+          startIpLong++;
+        }
+        region.setPortableipEnabled(true);
+        _regionDao.update(region.getId(),region);
+        return portableIpRange;
+      }
+    }
+);
   }
-  region.setPortableipEnabled(true);
-  _regionDao.update(region.getId(),region);
-  txn.commit();
-  portableIpLock.unlock();
-  return portableIpRange;
+  finally {
+    portableIpLock.unlock();
+  }
 }

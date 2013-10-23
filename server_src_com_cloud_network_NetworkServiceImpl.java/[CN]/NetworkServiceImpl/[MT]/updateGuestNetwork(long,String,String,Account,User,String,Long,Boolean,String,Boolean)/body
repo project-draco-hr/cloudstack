@@ -1,6 +1,6 @@
 {
   boolean restartNetwork=false;
-  NetworkVO network=_networksDao.findById(networkId);
+  final NetworkVO network=_networksDao.findById(networkId);
   if (network == null) {
     InvalidParameterValueException ex=new InvalidParameterValueException("Specified network id doesn't exist in the system");
     ex.addProxyObject(String.valueOf(networkId),"networkId");
@@ -37,7 +37,7 @@
     throw new InvalidParameterValueException("NetworkOffering and domain suffix upgrade can be perfomed for Isolated networks only");
   }
   boolean networkOfferingChanged=false;
-  long oldNetworkOfferingId=network.getNetworkOfferingId();
+  final long oldNetworkOfferingId=network.getNetworkOfferingId();
   NetworkOffering oldNtwkOff=_networkOfferingDao.findByIdIncludingRemoved(oldNetworkOfferingId);
   NetworkOfferingVO networkOffering=_networkOfferingDao.findById(networkOfferingId);
   if (networkOfferingId != null) {
@@ -77,10 +77,7 @@
       networkOfferingChanged=true;
     }
   }
-  Map<String,String> newSvcProviders=new HashMap<String,String>();
-  if (networkOfferingChanged) {
-    newSvcProviders=_networkMgr.finalizeServicesAndProvidersForNetwork(_entityMgr.findById(NetworkOffering.class,networkOfferingId),network.getPhysicalNetworkId());
-  }
+  final Map<String,String> newSvcProviders=networkOfferingChanged ? _networkMgr.finalizeServicesAndProvidersForNetwork(_entityMgr.findById(NetworkOffering.class,networkOfferingId),network.getPhysicalNetworkId()) : new HashMap<String,String>();
   if (domainSuffix != null) {
     if (!NetUtils.verifyDomainName(domainSuffix)) {
       throw new InvalidParameterValueException("Invalid network domain. Total length shouldn't exceed 190 chars. Each domain label must be between 1 and 63 characters long, can contain ASCII letters 'a' through 'z', the digits '0' through '9', " + "and the hyphen ('-'); can't start or end with \"-\"");
@@ -209,24 +206,26 @@
   }
   if (networkOfferingId != null) {
     if (networkOfferingChanged) {
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      network.setNetworkOfferingId(networkOfferingId);
-      _networksDao.update(networkId,network,newSvcProviders);
-      List<NicVO> nics=_nicDao.listByNetworkId(networkId);
-      for (      NicVO nic : nics) {
-        long vmId=nic.getInstanceId();
-        VMInstanceVO vm=_vmDao.findById(vmId);
-        if (vm == null) {
-          s_logger.error("Vm for nic " + nic.getId() + " not found with Vm Id:"+ vmId);
-          continue;
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          network.setNetworkOfferingId(networkOfferingId);
+          _networksDao.update(networkId,network,newSvcProviders);
+          List<NicVO> nics=_nicDao.listByNetworkId(networkId);
+          for (          NicVO nic : nics) {
+            long vmId=nic.getInstanceId();
+            VMInstanceVO vm=_vmDao.findById(vmId);
+            if (vm == null) {
+              s_logger.error("Vm for nic " + nic.getId() + " not found with Vm Id:"+ vmId);
+              continue;
+            }
+            long isDefault=(nic.isDefaultNic()) ? 1 : 0;
+            String nicIdString=Long.toString(nic.getId());
+            UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_REMOVE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),nicIdString,oldNetworkOfferingId,null,isDefault,VirtualMachine.class.getName(),vm.getUuid());
+            UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_ASSIGN,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),nicIdString,networkOfferingId,null,isDefault,VirtualMachine.class.getName(),vm.getUuid());
+          }
         }
-        long isDefault=(nic.isDefaultNic()) ? 1 : 0;
-        String nicIdString=Long.toString(nic.getId());
-        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_REMOVE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),nicIdString,oldNetworkOfferingId,null,isDefault,VirtualMachine.class.getName(),vm.getUuid());
-        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_ASSIGN,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),nicIdString,networkOfferingId,null,isDefault,VirtualMachine.class.getName(),vm.getUuid());
       }
-      txn.commit();
+);
     }
  else {
       network.setNetworkOfferingId(networkOfferingId);

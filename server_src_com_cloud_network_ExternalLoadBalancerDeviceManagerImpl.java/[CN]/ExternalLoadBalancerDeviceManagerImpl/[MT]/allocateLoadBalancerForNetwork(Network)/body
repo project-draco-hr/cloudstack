@@ -7,21 +7,23 @@
   String provider=_ntwkSrvcProviderDao.getProviderForServiceInNetwork(guestConfig.getId(),Service.Lb);
   while (retry) {
     GlobalLock deviceMapLock=GlobalLock.getInternLock("LoadBalancerAllocLock");
-    Transaction txn=Transaction.currentTxn();
     try {
       if (deviceMapLock.lock(120)) {
         try {
-          boolean dedicatedLB=offering.getDedicatedLB();
-          long lbDeviceId;
-          txn.start();
+          final boolean dedicatedLB=offering.getDedicatedLB();
           try {
-            lbDevice=findSuitableLoadBalancerForNetwork(guestConfig,dedicatedLB);
-            lbDeviceId=lbDevice.getId();
-            NetworkExternalLoadBalancerVO networkLB=new NetworkExternalLoadBalancerVO(guestConfig.getId(),lbDeviceId);
-            _networkExternalLBDao.persist(networkLB);
-            lbDevice.setAllocationState(dedicatedLB ? LBDeviceAllocationState.Dedicated : LBDeviceAllocationState.Shared);
-            _externalLoadBalancerDeviceDao.update(lbDeviceId,lbDevice);
-            txn.commit();
+            lbDevice=Transaction.execute(new TransactionCallbackWithException<ExternalLoadBalancerDeviceVO,InsufficientCapacityException>(){
+              @Override public ExternalLoadBalancerDeviceVO doInTransaction(              TransactionStatus status) throws InsufficientCapacityException {
+                ExternalLoadBalancerDeviceVO lbDevice=findSuitableLoadBalancerForNetwork(guestConfig,dedicatedLB);
+                long lbDeviceId=lbDevice.getId();
+                NetworkExternalLoadBalancerVO networkLB=new NetworkExternalLoadBalancerVO(guestConfig.getId(),lbDeviceId);
+                _networkExternalLBDao.persist(networkLB);
+                lbDevice.setAllocationState(dedicatedLB ? LBDeviceAllocationState.Dedicated : LBDeviceAllocationState.Shared);
+                _externalLoadBalancerDeviceDao.update(lbDeviceId,lbDevice);
+                return lbDevice;
+              }
+            }
+);
             tryLbProvisioning=false;
             retry=false;
           }
@@ -38,9 +40,6 @@
         }
   finally {
           deviceMapLock.unlock();
-          if (lbDevice == null) {
-            txn.rollback();
-          }
         }
       }
     }

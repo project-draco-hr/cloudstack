@@ -1,65 +1,64 @@
 {
-  String accountErrorMsg="Failed to update external network stats entry. Details: account ID = " + accountId;
-  Transaction txn=Transaction.open(Transaction.CLOUD_DB);
+  final String accountErrorMsg="Failed to update external network stats entry. Details: account ID = " + accountId;
   try {
-    txn.start();
-    String networkErrorMsg=accountErrorMsg + ", network ID = " + network.getId();
-    boolean sharedSourceNat=false;
-    Map<Network.Capability,String> sourceNatCapabilities=_networkModel.getNetworkServiceCapabilities(network.getId(),Network.Service.SourceNat);
-    if (sourceNatCapabilities != null) {
-      String supportedSourceNatTypes=sourceNatCapabilities.get(Network.Capability.SupportedSourceNatTypes).toLowerCase();
-      if (supportedSourceNatTypes.contains("zone")) {
-        sharedSourceNat=true;
-      }
-    }
-    if (externalFirewall != null && firewallAnswer != null) {
-      if (!sharedSourceNat) {
-        List<IPAddressVO> sourceNatIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
-        if (sourceNatIps.size() == 1) {
-          String publicIp=sourceNatIps.get(0).getAddress().addr();
-          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
-            throw new ExecutionException(networkErrorMsg + ", source NAT IP = " + publicIp);
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        String networkErrorMsg=accountErrorMsg + ", network ID = " + network.getId();
+        boolean sharedSourceNat=false;
+        Map<Network.Capability,String> sourceNatCapabilities=_networkModel.getNetworkServiceCapabilities(network.getId(),Network.Service.SourceNat);
+        if (sourceNatCapabilities != null) {
+          String supportedSourceNatTypes=sourceNatCapabilities.get(Network.Capability.SupportedSourceNatTypes).toLowerCase();
+          if (supportedSourceNatTypes.contains("zone")) {
+            sharedSourceNat=true;
           }
         }
-        List<IPAddressVO> staticNatIps=_ipAddressDao.listStaticNatPublicIps(network.getId());
-        for (        IPAddressVO staticNatIp : staticNatIps) {
-          String publicIp=staticNatIp.getAddress().addr();
-          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
-            throw new ExecutionException(networkErrorMsg + ", static NAT rule public IP = " + publicIp);
+        if (externalFirewall != null && firewallAnswer != null) {
+          if (!sharedSourceNat) {
+            List<IPAddressVO> sourceNatIps=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+            if (sourceNatIps.size() == 1) {
+              String publicIp=sourceNatIps.get(0).getAddress().addr();
+              if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+                throw new CloudRuntimeException(networkErrorMsg + ", source NAT IP = " + publicIp);
+              }
+            }
+            List<IPAddressVO> staticNatIps=_ipAddressDao.listStaticNatPublicIps(network.getId());
+            for (            IPAddressVO staticNatIp : staticNatIps) {
+              String publicIp=staticNatIp.getAddress().addr();
+              if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+                throw new CloudRuntimeException(networkErrorMsg + ", static NAT rule public IP = " + publicIp);
+              }
+            }
+            List<PortForwardingRuleVO> portForwardingRules=_portForwardingRulesDao.listByNetwork(network.getId());
+            for (            PortForwardingRuleVO portForwardingRule : portForwardingRules) {
+              String publicIp=_networkModel.getIp(portForwardingRule.getSourceIpAddressId()).getAddress().addr();
+              if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
+                throw new CloudRuntimeException(networkErrorMsg + ", port forwarding rule public IP = " + publicIp);
+              }
+            }
           }
-        }
-        List<PortForwardingRuleVO> portForwardingRules=_portForwardingRulesDao.listByNetwork(network.getId());
-        for (        PortForwardingRuleVO portForwardingRule : portForwardingRules) {
-          String publicIp=_networkModel.getIp(portForwardingRule.getSourceIpAddressId()).getAddress().addr();
-          if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalFirewall.getId(),firewallAnswer,false)) {
-            throw new ExecutionException(networkErrorMsg + ", port forwarding rule public IP = " + publicIp);
-          }
-        }
-      }
  else {
-        if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),null,externalFirewall.getId(),firewallAnswer,false)) {
-          throw new ExecutionException(networkErrorMsg);
+            if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),null,externalFirewall.getId(),firewallAnswer,false)) {
+              throw new CloudRuntimeException(networkErrorMsg);
+            }
+          }
+        }
+        if (externalLoadBalancer != null && lbAnswer != null) {
+          boolean inline=_networkModel.isNetworkInlineMode(network);
+          List<LoadBalancerVO> loadBalancers=_loadBalancerDao.listByNetworkIdAndScheme(network.getId(),Scheme.Public);
+          for (          LoadBalancerVO loadBalancer : loadBalancers) {
+            String publicIp=_networkModel.getIp(loadBalancer.getSourceIpAddressId()).getAddress().addr();
+            if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalLoadBalancer.getId(),lbAnswer,inline)) {
+              throw new CloudRuntimeException(networkErrorMsg + ", load balancing rule public IP = " + publicIp);
+            }
+          }
         }
       }
     }
-    if (externalLoadBalancer != null && lbAnswer != null) {
-      boolean inline=_networkModel.isNetworkInlineMode(network);
-      List<LoadBalancerVO> loadBalancers=_loadBalancerDao.listByNetworkIdAndScheme(network.getId(),Scheme.Public);
-      for (      LoadBalancerVO loadBalancer : loadBalancers) {
-        String publicIp=_networkModel.getIp(loadBalancer.getSourceIpAddressId()).getAddress().addr();
-        if (!createOrUpdateStatsEntry(create,accountId,zoneId,network.getId(),publicIp,externalLoadBalancer.getId(),lbAnswer,inline)) {
-          throw new ExecutionException(networkErrorMsg + ", load balancing rule public IP = " + publicIp);
-        }
-      }
-    }
-    return txn.commit();
+);
+    return true;
   }
  catch (  Exception e) {
     s_logger.warn("Exception: ",e);
-    txn.rollback();
     return false;
-  }
- finally {
-    txn.close();
   }
 }
