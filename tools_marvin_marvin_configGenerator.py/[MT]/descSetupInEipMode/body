@@ -1,4 +1,5 @@
-def describe_setup_in_advancedsg_mode():
+def descSetupInEipMode():
+    '\n    Setting up an EIP/ELB enabled zone with netscaler provider\n    '
     zs = cloudstackConfiguration()
     for l in range(1):
         z = zone()
@@ -7,16 +8,26 @@ def describe_setup_in_advancedsg_mode():
         z.internaldns1 = '192.168.110.254'
         z.internaldns2 = '192.168.110.253'
         z.name = ('test' + str(l))
-        z.networktype = 'Advanced'
-        z.vlan = '100-2000'
-        z.securitygroupenabled = 'true'
-        pn = physical_network()
-        pn.name = 'test-network'
-        pn.traffictypes = [traffictype('Guest'), traffictype('Management')]
+        z.networktype = 'Basic'
+        ips = iprange()
+        ips.vlan = '49'
+        ips.startip = '10.147.49.200'
+        ips.endip = '10.147.49.250'
+        ips.gateway = '10.147.49.1'
+        ips.netmask = '255.255.255.0'
+        z.ipranges.append(ips)
         sgprovider = provider()
-        sgprovider.broadcastdomainrange = 'ZONE'
+        sgprovider.broadcastdomainrange = 'Pod'
         sgprovider.name = 'SecurityGroupProvider'
-        pn.providers.append(sgprovider)
+        nsprovider = provider()
+        nsprovider.name = 'Netscaler'
+        ns = netscaler()
+        ns.hostname = '10.147.40.100'
+        nsprovider.devices.append(ns)
+        pn = physicalNetwork()
+        pn.name = 'test-network'
+        pn.traffictypes = [trafficType('Guest', {'xen': 'cloud-guest', }), trafficType('Management'), trafficType('Public', {'xen': 'cloud-public', })]
+        pn.providers.extend([sgprovider, nsprovider])
         z.physical_networks.append(pn)
         'create 10 pods'
         for i in range(2):
@@ -24,8 +35,16 @@ def describe_setup_in_advancedsg_mode():
             p.name = (('test' + str(l)) + str(i))
             p.gateway = ('192.168.%d.1' % i)
             p.netmask = '255.255.255.0'
-            p.startip = ('192.168.%d.200' % i)
+            p.startip = ('192.168.%d.150' % i)
             p.endip = ('192.168.%d.220' % i)
+            'add two pod guest ip ranges'
+            for j in range(2):
+                ip = iprange()
+                ip.gateway = p.gateway
+                ip.netmask = p.netmask
+                ip.startip = ('192.168.%d.%d' % (i, (j * 20)))
+                ip.endip = ('192.168.%d.%d' % (i, ((j * 20) + 10)))
+                p.guestIpRanges.append(ip)
             'add 10 clusters'
             for j in range(2):
                 c = cluster()
@@ -37,9 +56,7 @@ def describe_setup_in_advancedsg_mode():
                     h = host()
                     h.username = 'root'
                     h.password = 'password'
-                    memory = (((8 * 1024) * 1024) * 1024)
-                    localstorage = ((((1 * 1024) * 1024) * 1024) * 1024)
-                    h.url = ('http://sim/%d%d%d%d' % (l, i, j, k))
+                    h.url = ('http://Sim/%d%d%d%d' % (l, i, j, k))
                     c.hosts.append(h)
                 'add 2 primary storages'
                 for m in range(2):
@@ -54,14 +71,6 @@ def describe_setup_in_advancedsg_mode():
             secondary = secondaryStorage()
             secondary.url = (('nfs://localhost/path' + str(l)) + str(i))
             z.secondaryStorages.append(secondary)
-        'add default guest network'
-        ips = iprange()
-        ips.vlan = '26'
-        ips.startip = '172.16.26.2'
-        ips.endip = '172.16.26.100'
-        ips.gateway = '172.16.26.1'
-        ips.netmask = '255.255.255.0'
-        z.ipranges.append(ips)
         zs.zones.append(z)
     'Add one mgt server'
     mgt = managementServer()
