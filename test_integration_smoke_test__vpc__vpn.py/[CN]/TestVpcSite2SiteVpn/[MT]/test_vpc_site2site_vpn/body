@@ -1,0 +1,67 @@
+@attr(tags=['advanced'])
+def test_vpc_site2site_vpn(self):
+    'Test VPN in VPC'
+    networkOffering = NetworkOffering.list(self.apiclient, name='DefaultIsolatedNetworkOfferingForVpcNetworks')
+    self.assert_(((networkOffering is not None) and (len(networkOffering) > 0)), 'No VPC based network offering')
+    vpcOffering = VpcOffering.list(self.apiclient, isdefault=True)
+    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    vpc1 = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc1.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    self.assert_((vpc1 is not None), 'VPC creation failed')
+    self.debug(('VPC1 %s created' % vpc1.id))
+    vpc2 = VPC.create(apiclient=self.apiclient, services=self.services['vpc2'], networkDomain='vpc2.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    self.assert_((vpc2 is not None), 'VPC2 creation failed')
+    self.debug(('VPC2 %s created' % vpc1.id))
+    ntwk1 = Network.create(apiclient=self.apiclient, services=self.services['ntwk'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc1.id)
+    self.assertIsNotNone(ntwk1, 'Network failed to create')
+    self.debug(('Network %s created in VPC %s' % (ntwk1.id, vpc1.id)))
+    ntwk2 = Network.create(apiclient=self.apiclient, services=self.services['ntwk2'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc2.id)
+    self.assertIsNotNone(ntwk2, 'Network failed to create')
+    self.debug(('Network %s created in VPC %s' % (ntwk2.id, vpc2.id)))
+    vm1 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, networkids=ntwk1.id)
+    self.assert_((vm1 is not None), 'VM failed to deploy')
+    self.assert_((vm1.state == 'Running'), 'VM is not running')
+    self.debug(('VM %s deployed in VPC %s' % (vm1.id, vpc1.id)))
+    vm2 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, networkids=ntwk2.id)
+    self.assert_((vm2 is not None), 'VM failed to deploy')
+    self.assert_((vm2.state == 'Running'), 'VM is not running')
+    self.debug(('VM %s deployed in VPC %s' % (vm2.id, vpc2.id)))
+    cmd = createVpnGateway.createVpnGatewayCmd()
+    cmd.vpcid = vpc1.id
+    vpn1_response = self.apiclient.createVpnGateway(cmd)
+    self.debug(('VPN gateway for VPC %s enabled' % vpc1.id))
+    cmd = createVpnGateway.createVpnGatewayCmd()
+    cmd.vpcid = vpc2.id
+    vpn2_response = self.apiclient.createVpnGateway(cmd)
+    self.debug(('VPN gateway for VPC %s enabled' % vpc2.id))
+    src_nat_list = PublicIPAddress.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True, issourcenat=True, vpcid=vpc1.id)
+    ip1 = src_nat_list[0]
+    src_nat_list = PublicIPAddress.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True, issourcenat=True, vpcid=vpc2.id)
+    ip2 = src_nat_list[0]
+    cmd = createVpnCustomerGateway.createVpnCustomerGatewayCmd()
+    cmd.esppolicy = '3des-md5;modp1536'
+    cmd.ikepolicy = '3des-md5;modp1536'
+    cmd.domainid = self.account.domainid
+    cmd.account = self.account.name
+    cmd.ipsecpsk = 'ipsecpsk'
+    cmd.name = 'Peer VPC1'
+    cmd.gateway = ip1.ipaddress
+    cmd.cidrlist = vpc1.cidr
+    customer1_response = self.apiclient.createVpnCustomerGateway(cmd)
+    self.debug(('VPN customer gateway added for VPC %s enabled' % vpc1.id))
+    cmd.name = 'Peer VPC2'
+    cmd.gateway = ip2.ipaddress
+    cmd.cidrlist = vpc2.cidr
+    customer2_response = self.apiclient.createVpnCustomerGateway(cmd)
+    self.debug(('VPN customer gateway added for VPC %s enabled' % vpc2.id))
+    cmd = createVpnConnection.createVpnConnectionCmd()
+    cmd.s2svpngatewayid = vpn2_response.id
+    cmd.s2scustomergatewayid = customer1_response.id
+    cmd.passive = 'true'
+    vpnconn1_response = self.apiclient.createVpnConnection(cmd)
+    self.debug(('VPN passive connection created for VPC %s' % vpc2.id))
+    cmd = createVpnConnection.createVpnConnectionCmd()
+    cmd.s2svpngatewayid = vpn1_response.id
+    cmd.s2scustomergatewayid = customer2_response.id
+    vpnconn2_response = self.apiclient.createVpnConnection(cmd)
+    self.debug(('VPN connection created for VPC %s' % vpc1.id))
+    self.assertEqual(vpnconn2_response.state, 'Connected', 'Failed to connect between VPCs!')
