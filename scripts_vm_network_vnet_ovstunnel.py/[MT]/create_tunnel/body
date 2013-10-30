@@ -1,20 +1,20 @@
-def create_tunnel(bridge, remote_ip, gre_key, src_host, dst_host):
+def create_tunnel(bridge, remote_ip, key, src_host, dst_host):
     logging.debug('Entering create_tunnel')
     res = lib.check_switch()
     if (res != 'SUCCESS'):
         logging.debug('Openvswitch running: NO')
-        return ('FAILURE:%s' % res)
-    name = ('t%s-%s-%s' % (gre_key, src_host, dst_host))
+        return 'false'
+    name = ('t%s-%s-%s' % (key, src_host, dst_host))
     wait = [lib.VSCTL_PATH, '--timeout=30', 'wait-until', 'bridge', bridge, '--', 'get', 'bridge', bridge, 'name']
     res = lib.do_cmd(wait)
     if (bridge not in res):
         logging.debug(("WARNING:Can't find bridge %s for creating " + ('tunnel!' % bridge)))
-        return 'FAILURE:NO_BRIDGE'
+        return 'false'
     logging.debug(('bridge %s for creating tunnel - VERIFIED' % bridge))
     tunnel_setup = False
     drop_flow_setup = False
     try:
-        add_tunnel = [lib.VSCTL_PATH, 'add-port', bridge, name, '--', 'set', 'interface', name, 'type=gre', ('options:key=%s' % gre_key), ('options:remote_ip=%s' % remote_ip)]
+        add_tunnel = [lib.VSCTL_PATH, 'add-port', bridge, name, '--', 'set', 'interface', name, 'type=gre', ('options:key=%s' % key), ('options:remote_ip=%s' % remote_ip)]
         lib.do_cmd(add_tunnel)
         tunnel_setup = True
         verify_port = [lib.VSCTL_PATH, 'get', 'port', name, 'interfaces']
@@ -24,15 +24,15 @@ def create_tunnel(bridge, remote_ip, gre_key, src_host, dst_host):
             iface_list = res.strip()[1:(-1)].split(',')
         if (len(iface_list) != 1):
             logging.debug(('WARNING: Unexpected output while verifying ' + ('port %s on bridge %s' % (name, bridge))))
-            return 'FAILURE:VERIFY_PORT_FAILED'
+            return 'false'
         iface_uuid = iface_list[0]
         verify_interface_key = [lib.VSCTL_PATH, 'get', 'interface', iface_uuid, 'options:key']
         verify_interface_ip = [lib.VSCTL_PATH, 'get', 'interface', iface_uuid, 'options:remote_ip']
         key_validation = lib.do_cmd(verify_interface_key)
         ip_validation = lib.do_cmd(verify_interface_ip)
-        if ((not (gre_key in key_validation)) or (not (remote_ip in ip_validation))):
+        if ((not (key in key_validation)) or (not (remote_ip in ip_validation))):
             logging.debug(('WARNING: Unexpected output while verifying ' + ('interface %s on bridge %s' % (name, bridge))))
-            return 'FAILURE:VERIFY_INTERFACE_FAILED'
+            return 'false'
         logging.debug(('Tunnel interface validated:%s' % verify_interface_ip))
         cmd_tun_ofport = [lib.VSCTL_PATH, 'get', 'interface', iface_uuid, 'ofport']
         tun_ofport = lib.do_cmd(cmd_tun_ofport)
@@ -42,7 +42,7 @@ def create_tunnel(bridge, remote_ip, gre_key, src_host, dst_host):
         lib.add_flow(bridge, priority=1000, in_port=tun_ofport, nw_dst='224.0.0.0/24', actions='drop')
         drop_flow_setup = True
         logging.debug('Broadcast drop rules added')
-        return ('SUCCESS:%s' % name)
+        return 'true'
     except:
         logging.debug('An unexpected error occured. Rolling back')
         if tunnel_setup:
