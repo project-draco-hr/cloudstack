@@ -1,0 +1,28 @@
+{
+  String value=configurationDao.getValue("vmsnapshot.create.wait");
+  int wait=NumbersUtil.parseInt(value,1800);
+  Long hostId=vmSnapshotHelper.pickRunningHost(virtualMachine.getId());
+  VMSnapshotTO vmSnapshotTO=new VMSnapshotTO(1L,UUID.randomUUID().toString(),VMSnapshot.Type.DiskAndMemory,null,null,false,null);
+  GuestOSVO guestOS=guestOSDao.findById(virtualMachine.getGuestOSId());
+  List<VolumeObjectTO> volumeTOs=vmSnapshotHelper.getVolumeTOList(virtualMachine.getId());
+  CreateVMSnapshotCommand ccmd=new CreateVMSnapshotCommand(virtualMachine.getInstanceName(),vmSnapshotTO,volumeTOs,guestOS.getDisplayName(),virtualMachine.getState());
+  ccmd.setWait(wait);
+  try {
+    Answer answer=agentMgr.send(hostId,ccmd);
+    if (answer != null && answer.getResult()) {
+      CreateVMSnapshotAnswer snapshotAnswer=(CreateVMSnapshotAnswer)answer;
+      vmSnapshotTO.setVolumes(snapshotAnswer.getVolumeTOs());
+    }
+ else {
+      String errMsg=(answer != null) ? answer.getDetails() : null;
+      throw new CloudRuntimeException("Failed to quiesce vm, due to " + errMsg);
+    }
+  }
+ catch (  AgentUnavailableException e) {
+    throw new CloudRuntimeException("Failed to quiesce vm",e);
+  }
+catch (  OperationTimedoutException e) {
+    throw new CloudRuntimeException("Failed to quiesce vm",e);
+  }
+  return vmSnapshotTO;
+}
