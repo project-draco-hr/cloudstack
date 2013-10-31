@@ -1,6 +1,8 @@
 {
   VolumeObjectTO volumeTO=(VolumeObjectTO)vol.getData();
   PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)volumeTO.getDataStore();
+  Map<String,String> details=vol.getDetails();
+  boolean isManaged=details != null && Boolean.parseBoolean(details.get(DiskTO.MANAGED));
   Pair<ManagedObjectReference,DatastoreMO> volumeDsDetails=dataStoresDetails.get(primaryStore.getUuid());
   if (volumeDsDetails == null)   throw new Exception("Primary datastore " + primaryStore.getUuid() + " is not mounted on host.");
   DatastoreMO dsMo=volumeDsDetails.second();
@@ -8,14 +10,20 @@
     String disks[]=diskInfo.getDiskChain();
     for (int i=0; i < disks.length; i++) {
       DatastoreFile file=new DatastoreFile(disks[i]);
-      if (file.getDir() != null && file.getDir().isEmpty()) {
+      if (!isManaged && file.getDir() != null && file.getDir().isEmpty()) {
         s_logger.info("Perform run-time datastore folder upgrade. sync " + disks[i] + " to VM folder");
         disks[i]=VmwareStorageLayoutHelper.syncVolumeToVmDefaultFolder(dcMo,vmMo.getName(),dsMo,file.getFileBaseName());
       }
     }
     return disks;
   }
-  String datastoreDiskPath=VmwareStorageLayoutHelper.syncVolumeToVmDefaultFolder(dcMo,vmMo.getName(),dsMo,volumeTO.getPath());
+  final String datastoreDiskPath;
+  if (isManaged) {
+    datastoreDiskPath=dsMo.getDatastorePath(dsMo.getName() + ".vmdk");
+  }
+ else {
+    datastoreDiskPath=VmwareStorageLayoutHelper.syncVolumeToVmDefaultFolder(dcMo,vmMo.getName(),dsMo,volumeTO.getPath());
+  }
   if (!dsMo.fileExists(datastoreDiskPath)) {
     s_logger.warn("Volume " + volumeTO.getId() + " does not seem to exist on datastore, out of sync? path: "+ datastoreDiskPath);
   }
