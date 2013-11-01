@@ -1,0 +1,53 @@
+{
+  ApiConnector api=controller.getApiAccessor();
+  VlanDao vlanDao=controller.getVlanDao();
+  try {
+    _vn=(VirtualNetwork)api.findById(VirtualNetwork.class,_uuid);
+  }
+ catch (  IOException e) {
+    e.printStackTrace();
+  }
+  if (_vn == null) {
+    return;
+  }
+  if (_ipam == null) {
+    NetworkIpam ipam=null;
+    try {
+      String ipam_id=api.findByName(NetworkIpam.class,null,"default-network-ipam");
+      if (ipam_id == null) {
+        s_logger.debug("could not find default-network-ipam");
+        return;
+      }
+      ipam=(NetworkIpam)api.findById(NetworkIpam.class,ipam_id);
+      if (ipam == null) {
+        s_logger.debug("could not find NetworkIpam with ipam_id: " + ipam_id);
+        return;
+      }
+    }
+ catch (    IOException ex) {
+      s_logger.error(ex);
+      return;
+    }
+    _ipam=ipam;
+  }
+  if (_prefix != null) {
+    VnSubnetsType subnet=new VnSubnetsType();
+    String[] addr_pair=_prefix.split("\\/");
+    subnet.addIpamSubnets(new SubnetType(addr_pair[0],Integer.parseInt(addr_pair[1])),_gateway);
+    _vn.setNetworkIpam(_ipam,subnet);
+  }
+ else   if (_trafficType == TrafficType.Public) {
+    _vn.clearNetworkIpam();
+    List<VlanVO> vlan_list=vlanDao.listVlansByNetworkId(_id);
+    for (    VlanVO vlan : vlan_list) {
+      String cidr=NetUtils.ipAndNetMaskToCidr(vlan.getVlanGateway(),vlan.getVlanNetmask());
+      int slash=cidr.indexOf('/');
+      String ip_addr=cidr.substring(0,slash);
+      int plen=Integer.parseInt(cidr.substring(slash + 1));
+      VnSubnetsType subnet=new VnSubnetsType();
+      subnet.addIpamSubnets(new SubnetType(ip_addr,plen),vlan.getVlanGateway());
+      _vn.addNetworkIpam(_ipam,subnet);
+    }
+  }
+  return;
+}

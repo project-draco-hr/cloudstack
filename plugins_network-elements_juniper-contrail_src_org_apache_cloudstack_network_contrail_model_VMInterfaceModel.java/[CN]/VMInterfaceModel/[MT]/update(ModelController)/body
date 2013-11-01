@@ -1,0 +1,58 @@
+{
+  if (!_netActive || !_nicActive) {
+    s_logger.debug("vm interface update, _netActive: " + _netActive + ", _nicActive: "+ _nicActive);
+    delete(controller);
+    return;
+  }
+  if (_vmModel == null) {
+    throw new InternalErrorException("virtual-machine not set on VMI: " + _uuid);
+  }
+  if (_vnModel == null) {
+    throw new InternalErrorException("virtual-network not set on VMI: " + _uuid);
+  }
+  ContrailManager manager=controller.getManager();
+  ApiConnector api=controller.getApiAccessor();
+  VirtualMachineInterface vmi=(VirtualMachineInterface)api.findById(VirtualMachineInterface.class,_uuid);
+  boolean create=false;
+  if (vmi == null) {
+    create=true;
+    vmi=new VirtualMachineInterface();
+    vmi.setParent(_vmModel.getVirtualMachine());
+    vmi.setName(manager.getVifNameByVmName(_vmModel.getInstanceName(),_deviceId));
+    vmi.setUuid(_uuid);
+    vmi.setVirtualNetwork(_vnModel.getVirtualNetwork());
+  }
+ else {
+    vmi.clearRoutingInstance();
+  }
+  _vmi=vmi;
+  if (_macAddress != null) {
+    MacAddressesType mac=new MacAddressesType();
+    mac.addMacAddress(_macAddress);
+    vmi.setMacAddresses(mac);
+  }
+  if (_serviceTag != null) {
+    vmi.setProperties(new VirtualMachineInterfacePropertiesType(_serviceTag,null));
+  }
+  if (create) {
+    if (!api.create(vmi)) {
+      throw new InternalErrorException("Unable to create virtual-machine-interface " + _uuid);
+    }
+  }
+ else {
+    if (!api.update(vmi)) {
+      throw new InternalErrorException("Unable to update virtual-machine-interface " + _uuid);
+    }
+  }
+  api.read(vmi);
+  int ipCount=0;
+  for (  ModelObject successor : successors()) {
+    if (successor.getClass() == InstanceIpModel.class) {
+      ipCount++;
+    }
+    successor.update(controller);
+  }
+  if (ipCount == 0) {
+    s_logger.warn("virtual-machine-interface " + _uuid + " has no instance-ip");
+  }
+}
