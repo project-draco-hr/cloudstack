@@ -1,0 +1,55 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  SearchBuilder<ResourceTagVO> sb=_resourceTagDao.createSearchBuilder();
+  sb.and().op("resourceId",sb.entity().getResourceId(),SearchCriteria.Op.IN);
+  sb.or("resourceUuid",sb.entity().getResourceUuid(),SearchCriteria.Op.IN);
+  sb.cp();
+  sb.and("resourceType",sb.entity().getResourceType(),SearchCriteria.Op.EQ);
+  SearchCriteria<ResourceTagVO> sc=sb.create();
+  sc.setParameters("resourceId",resourceIds.toArray());
+  sc.setParameters("resourceUuid",resourceIds.toArray());
+  sc.setParameters("resourceType",resourceType);
+  List<? extends ResourceTag> resourceTags=_resourceTagDao.search(sc,null);
+  ;
+  final List<ResourceTag> tagsToRemove=new ArrayList<ResourceTag>();
+  for (  ResourceTag resourceTag : resourceTags) {
+    Account owner=_accountMgr.getAccount(resourceTag.getAccountId());
+    _accountMgr.checkAccess(caller,null,false,owner);
+    if (tags != null && !tags.isEmpty()) {
+      for (      String key : tags.keySet()) {
+        boolean canBeRemoved=false;
+        if (resourceTag.getKey().equalsIgnoreCase(key)) {
+          String value=tags.get(key);
+          if (value != null) {
+            if (resourceTag.getValue().equalsIgnoreCase(value)) {
+              canBeRemoved=true;
+            }
+          }
+ else {
+            canBeRemoved=true;
+          }
+          if (canBeRemoved) {
+            tagsToRemove.add(resourceTag);
+            break;
+          }
+        }
+      }
+    }
+ else {
+      tagsToRemove.add(resourceTag);
+    }
+  }
+  if (tagsToRemove.isEmpty()) {
+    throw new InvalidParameterValueException("Unable to find tags by parameters specified");
+  }
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      for (      ResourceTag tagToRemove : tagsToRemove) {
+        _resourceTagDao.remove(tagToRemove.getId());
+        s_logger.debug("Removed the tag " + tagToRemove);
+      }
+    }
+  }
+);
+  return true;
+}

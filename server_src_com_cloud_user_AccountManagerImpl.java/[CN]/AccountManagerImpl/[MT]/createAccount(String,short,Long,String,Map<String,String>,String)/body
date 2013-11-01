@@ -26,18 +26,20 @@
       throw new InvalidParameterValueException("The account cannot be created as domain " + domain.getName() + " is not associated with any private Zone");
     }
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  AccountVO account=_accountDao.persist(new AccountVO(accountName,domainId,networkDomain,accountType,uuid));
-  if (account == null) {
-    throw new CloudRuntimeException("Failed to create account name " + accountName + " in domain id="+ domainId);
+  return Transaction.execute(new TransactionCallback<AccountVO>(){
+    @Override public AccountVO doInTransaction(    TransactionStatus status){
+      AccountVO account=_accountDao.persist(new AccountVO(accountName,domainId,networkDomain,accountType,uuid));
+      if (account == null) {
+        throw new CloudRuntimeException("Failed to create account name " + accountName + " in domain id="+ domainId);
+      }
+      Long accountId=account.getId();
+      if (details != null) {
+        _accountDetailsDao.persist(accountId,details);
+      }
+      _resourceCountDao.createResourceCounts(accountId,ResourceLimit.ResourceOwnerType.Account);
+      _networkGroupMgr.createDefaultSecurityGroup(accountId);
+      return account;
+    }
   }
-  Long accountId=account.getId();
-  if (details != null) {
-    _accountDetailsDao.persist(accountId,details);
-  }
-  _resourceCountDao.createResourceCounts(accountId,ResourceLimit.ResourceOwnerType.Account);
-  _networkGroupMgr.createDefaultSecurityGroup(accountId);
-  txn.commit();
-  return account;
+);
 }

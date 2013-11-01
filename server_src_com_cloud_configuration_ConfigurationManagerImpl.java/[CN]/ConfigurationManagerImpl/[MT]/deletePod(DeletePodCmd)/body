@@ -1,38 +1,40 @@
 {
-  Long podId=cmd.getId();
-  Transaction txn=Transaction.currentTxn();
+  final Long podId=cmd.getId();
   if (!validPod(podId)) {
     throw new InvalidParameterValueException("A pod with ID: " + podId + " does not exist.");
   }
   checkIfPodIsDeletable(podId);
-  HostPodVO pod=_podDao.findById(podId);
-  txn.start();
-  List<DataCenterIpAddressVO> privateIps=_privateIpAddressDao.listByPodIdDcId(Long.valueOf(podId),pod.getDataCenterId());
-  if (!privateIps.isEmpty()) {
-    if (!(_privateIpAddressDao.deleteIpAddressByPod(podId))) {
-      throw new CloudRuntimeException("Failed to cleanup private ip addresses for pod " + podId);
+  final HostPodVO pod=_podDao.findById(podId);
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      List<DataCenterIpAddressVO> privateIps=_privateIpAddressDao.listByPodIdDcId(Long.valueOf(podId),pod.getDataCenterId());
+      if (!privateIps.isEmpty()) {
+        if (!(_privateIpAddressDao.deleteIpAddressByPod(podId))) {
+          throw new CloudRuntimeException("Failed to cleanup private ip addresses for pod " + podId);
+        }
+      }
+      List<DataCenterLinkLocalIpAddressVO> localIps=_LinkLocalIpAllocDao.listByPodIdDcId(podId,pod.getDataCenterId());
+      if (!localIps.isEmpty()) {
+        if (!(_LinkLocalIpAllocDao.deleteIpAddressByPod(podId))) {
+          throw new CloudRuntimeException("Failed to cleanup private ip addresses for pod " + podId);
+        }
+      }
+      List<? extends Vlan> vlans=_networkModel.listPodVlans(podId);
+      if (vlans != null && !vlans.isEmpty()) {
+        for (        Vlan vlan : vlans) {
+          _vlanDao.remove(vlan.getId());
+        }
+      }
+      _capacityDao.removeBy(null,null,podId,null,null);
+      if (!(_podDao.remove(podId))) {
+        throw new CloudRuntimeException("Failed to delete pod " + podId);
+      }
+      DedicatedResourceVO dr=_dedicatedDao.findByPodId(podId);
+      if (dr != null) {
+        _dedicatedDao.remove(dr.getId());
+      }
     }
   }
-  List<DataCenterLinkLocalIpAddressVO> localIps=_LinkLocalIpAllocDao.listByPodIdDcId(podId,pod.getDataCenterId());
-  if (!localIps.isEmpty()) {
-    if (!(_LinkLocalIpAllocDao.deleteIpAddressByPod(podId))) {
-      throw new CloudRuntimeException("Failed to cleanup private ip addresses for pod " + podId);
-    }
-  }
-  List<? extends Vlan> vlans=_networkModel.listPodVlans(podId);
-  if (vlans != null && !vlans.isEmpty()) {
-    for (    Vlan vlan : vlans) {
-      _vlanDao.remove(vlan.getId());
-    }
-  }
-  _capacityDao.removeBy(null,null,podId,null,null);
-  if (!(_podDao.remove(podId))) {
-    throw new CloudRuntimeException("Failed to delete pod " + podId);
-  }
-  DedicatedResourceVO dr=_dedicatedDao.findByPodId(podId);
-  if (dr != null) {
-    _dedicatedDao.remove(dr.getId());
-  }
-  txn.commit();
+);
   return true;
 }

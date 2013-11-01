@@ -61,7 +61,7 @@
     if (!NetUtils.isValidIp(vlanGateway)) {
       throw new InvalidParameterValueException("Please specify a valid gateway");
     }
-    if (!NetUtils.isValidIp(vlanNetmask)) {
+    if (!NetUtils.isValidNetmask(vlanNetmask)) {
       throw new InvalidParameterValueException("Please specify a valid netmask");
     }
   }
@@ -75,6 +75,9 @@
   }
   if (ipv4) {
     String newCidr=NetUtils.getCidrFromGatewayAndNetmask(vlanGateway,vlanNetmask);
+    if (!NetUtils.isIpWithtInCidrRange(vlanGateway,newCidr) || !NetUtils.isIpWithtInCidrRange(startIP,newCidr) || !NetUtils.isIpWithtInCidrRange(endIP,newCidr)) {
+      throw new InvalidParameterValueException("Please specify a valid IP range or valid netmask or valid gateway");
+    }
     String guestNetworkCidr=zone.getGuestNetworkCidr();
     if (guestNetworkCidr != null) {
       if (NetUtils.isNetworksOverlap(newCidr,guestNetworkCidr)) {
@@ -82,6 +85,7 @@
       }
     }
     checkPublicIpRangeErrors(zoneId,vlanId,vlanGateway,vlanNetmask,startIP,endIP);
+    checkConflictsWithPortableIpRange(zoneId,vlanId,vlanGateway,vlanNetmask,startIP,endIP);
     List<VlanVO> vlans=_vlanDao.listByZone(zone.getId());
     for (    VlanVO vlan : vlans) {
       String otherVlanGateway=vlan.getVlanGateway();
@@ -147,29 +151,6 @@
       ipRange+="-" + endIP;
     }
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  VlanVO vlan=new VlanVO(vlanType,vlanId,vlanGateway,vlanNetmask,zone.getId(),ipRange,networkId,physicalNetworkId,vlanIp6Gateway,vlanIp6Cidr,ipv6Range);
-  s_logger.debug("Saving vlan range " + vlan);
-  vlan=_vlanDao.persist(vlan);
-  if (ipv4) {
-    if (!savePublicIPRange(startIP,endIP,zoneId,vlan.getId(),networkId,physicalNetworkId)) {
-      throw new CloudRuntimeException("Failed to save IPv4 range. Please contact Cloud Support.");
-    }
-  }
-  if (vlanOwner != null) {
-    AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(vlanOwner.getId(),vlan.getId());
-    _accountVlanMapDao.persist(accountVlanMapVO);
-    List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlan.getId());
-    for (    IPAddressVO ip : ips) {
-      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_ASSIGN,vlanOwner.getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
-    }
-    _resourceLimitMgr.incrementResourceCount(vlanOwner.getId(),ResourceType.public_ip,new Long(ips.size()));
-  }
- else   if (podId != null) {
-    PodVlanMapVO podVlanMapVO=new PodVlanMapVO(podId,vlan.getId());
-    _podVlanMapDao.persist(podVlanMapVO);
-  }
-  txn.commit();
+  VlanVO vlan=commitVlanAndIpRange(zoneId,networkId,physicalNetworkId,podId,startIP,endIP,vlanGateway,vlanNetmask,vlanId,vlanOwner,vlanIp6Gateway,vlanIp6Cidr,ipv4,zone,vlanType,ipv6Range,ipRange);
   return vlan;
 }

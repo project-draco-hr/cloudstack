@@ -3,21 +3,20 @@
   Long snapshotId=payload.getSnapshotId();
   Account snapshotOwner=payload.getAccount();
   SnapshotInfo snapshot=snapshotFactory.getSnapshot(snapshotId,volume.getDataStore());
-  boolean processed=false;
   try {
-    for (    SnapshotStrategy strategy : snapshotStrategies) {
-      if (strategy.canHandle(snapshot)) {
-        processed=true;
-        snapshot=strategy.takeSnapshot(snapshot);
-        break;
-      }
-    }
-    if (!processed) {
+    SnapshotStrategy snapshotStrategy=_storageStrategyFactory.getSnapshotStrategy(snapshot,SnapshotOperation.TAKE);
+    if (snapshotStrategy == null) {
       throw new CloudRuntimeException("Can't find snapshot strategy to deal with snapshot:" + snapshotId);
     }
-    postCreateSnapshot(volume.getId(),snapshotId,payload.getSnapshotPolicyId());
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,volume.getSize(),snapshot.getClass().getName(),snapshot.getUuid());
-    _resourceLimitMgr.incrementResourceCount(snapshotOwner.getId(),ResourceType.snapshot);
+    snapshotStrategy.takeSnapshot(snapshot);
+    try {
+      postCreateSnapshot(volume.getId(),snapshotId,payload.getSnapshotPolicyId());
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_SNAPSHOT_CREATE,snapshot.getAccountId(),snapshot.getDataCenterId(),snapshotId,snapshot.getName(),null,null,volume.getSize(),snapshot.getClass().getName(),snapshot.getUuid());
+      _resourceLimitMgr.incrementResourceCount(snapshotOwner.getId(),ResourceType.snapshot);
+    }
+ catch (    Exception e) {
+      s_logger.debug("post process snapshot failed",e);
+    }
   }
  catch (  Exception e) {
     s_logger.debug("Failed to create snapshot",e);

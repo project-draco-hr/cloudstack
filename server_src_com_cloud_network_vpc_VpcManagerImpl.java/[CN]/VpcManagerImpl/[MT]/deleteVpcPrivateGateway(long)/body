@@ -1,19 +1,21 @@
 {
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  VpcGatewayVO gatewayVO=_vpcGatewayDao.acquireInLockTable(gatewayId);
+  final VpcGatewayVO gatewayVO=_vpcGatewayDao.acquireInLockTable(gatewayId);
   if (gatewayVO == null || gatewayVO.getType() != VpcGateway.Type.Private) {
     throw new ConcurrentOperationException("Unable to lock gateway " + gatewayId);
   }
   try {
-    long routeCount=_staticRouteDao.countRoutesByGateway(gatewayVO.getId());
-    if (routeCount > 0) {
-      throw new CloudRuntimeException("Can't delete private gateway " + gatewayVO + " as it has "+ routeCount+ " static routes applied. Remove the routes first");
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        long routeCount=_staticRouteDao.countRoutesByGateway(gatewayVO.getId());
+        if (routeCount > 0) {
+          throw new CloudRuntimeException("Can't delete private gateway " + gatewayVO + " as it has "+ routeCount+ " static routes applied. Remove the routes first");
+        }
+        gatewayVO.setState(VpcGateway.State.Deleting);
+        _vpcGatewayDao.update(gatewayVO.getId(),gatewayVO);
+        s_logger.debug("Marked gateway " + gatewayVO + " with state "+ VpcGateway.State.Deleting);
+      }
     }
-    gatewayVO.setState(VpcGateway.State.Deleting);
-    _vpcGatewayDao.update(gatewayVO.getId(),gatewayVO);
-    s_logger.debug("Marked gateway " + gatewayVO + " with state "+ VpcGateway.State.Deleting);
-    txn.commit();
+);
     PrivateGateway gateway=getVpcPrivateGateway(gatewayId);
     for (    VpcProvider provider : getVpcElements()) {
       if (provider.deletePrivateGateway(gateway)) {

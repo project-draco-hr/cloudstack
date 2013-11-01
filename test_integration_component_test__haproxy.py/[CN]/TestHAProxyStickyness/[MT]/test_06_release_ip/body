@@ -1,0 +1,25 @@
+@attr(tags=['advanced', 'advancedns'])
+@attr(speed='slow')
+def test_06_release_ip(self):
+    'Test release public IP with stickiness policy'
+    lb_methods = ['roundrobin', 'leastconn', 'source']
+    configs = {'SourceBased': {'tablesize': '100k', }, 'AppCookie': {'request-learn': 'true', }, 'LBCookie': {'nocache': 'true', }, }
+    for lb_method in lb_methods:
+        for (method, params) in configs.items():
+            self.debug('Setting up environment - acquire public IP')
+            public_ip = self.acquire_Public_Ip()
+            self.debug(('Creating a load balancing rule on IP %s and algo %s' % (public_ip.ipaddress.ipaddress, lb_method)))
+            services = self.services['lbrule']
+            services['alg'] = lb_method
+            lb_rule = self.create_LB_Rule(public_ip, network=self.get_Network(self.account), vmarray=[self.virtual_machine, self.virtual_machine_2], services=services)
+            policies = self.configure_Stickiness_Policy(lb_rule, method=method, paramDict=params)
+            policy = policies.stickinesspolicy[0]
+            self.debug(('Policy: %s' % str(policy)))
+            self.debug('Validating the stickiness policy')
+            self.validate_Stickiness_Policy(lb_rule, method, public_ip.ipaddress.ipaddress)
+            self.debug(('Releasing public Ip: %s' % public_ip.ipaddress.ipaddress))
+            public_ip.delete(self.apiclient)
+            self.debug('Checking the response of liststickiness policies')
+            with self.assertRaises(Exception):
+                lb_rule.listStickyPolicies(self.apiclient, lbruleid=lb_rule.id, listall=True)
+    return

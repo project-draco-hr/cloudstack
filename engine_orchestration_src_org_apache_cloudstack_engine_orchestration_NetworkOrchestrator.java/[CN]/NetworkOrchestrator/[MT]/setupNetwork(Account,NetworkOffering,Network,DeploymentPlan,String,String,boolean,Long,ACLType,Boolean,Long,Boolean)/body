@@ -4,7 +4,7 @@
     throw new ConcurrentOperationException("Unable to acquire lock on " + owner);
   }
   try {
-    if (predefined == null || (offering.getTrafficType() != TrafficType.Guest && predefined.getCidr() == null && predefined.getBroadcastUri() == null && !(predefined.getBroadcastDomainType() == BroadcastDomainType.Vlan || predefined.getBroadcastDomainType() == BroadcastDomainType.Lswitch))) {
+    if (predefined == null || (offering.getTrafficType() != TrafficType.Guest && predefined.getCidr() == null && predefined.getBroadcastUri() == null && !(predefined.getBroadcastDomainType() == BroadcastDomainType.Vlan || predefined.getBroadcastDomainType() == BroadcastDomainType.Lswitch || predefined.getBroadcastDomainType() == BroadcastDomainType.Vxlan))) {
       List<NetworkVO> configs=_networksDao.listBy(owner.getId(),offering.getId(),plan.getDataCenterId());
       if (configs.size() > 0) {
         if (s_logger.isDebugEnabled()) {
@@ -21,10 +21,10 @@
         }
       }
     }
-    List<NetworkVO> networks=new ArrayList<NetworkVO>();
+    final List<NetworkVO> networks=new ArrayList<NetworkVO>();
     long related=-1;
-    for (    NetworkGuru guru : _networkGurus) {
-      Network network=guru.design(offering,plan,predefined,owner);
+    for (    final NetworkGuru guru : _networkGurus) {
+      final Network network=guru.design(offering,plan,predefined,owner);
       if (network == null) {
         continue;
       }
@@ -37,22 +37,22 @@
         }
         continue;
       }
-      long id=_networksDao.getNextInSequence(Long.class,"id");
+      final long id=_networksDao.getNextInSequence(Long.class,"id");
       if (related == -1) {
         related=id;
       }
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      NetworkVO vo=new NetworkVO(id,network,offering.getId(),guru.getName(),owner.getDomainId(),owner.getId(),related,name,displayText,predefined.getNetworkDomain(),offering.getGuestType(),plan.getDataCenterId(),plan.getPhysicalNetworkId(),aclType,offering.getSpecifyIpRanges(),vpcId);
-      vo.setDisplayNetwork(isDisplayNetworkEnabled == null ? true : isDisplayNetworkEnabled);
-      networks.add(_networksDao.persist(vo,vo.getGuestType() == Network.GuestType.Isolated,finalizeServicesAndProvidersForNetwork(offering,plan.getPhysicalNetworkId())));
-      if (domainId != null && aclType == ACLType.Domain) {
-        if (subdomainAccess == null) {
-          subdomainAccess=true;
+      final long relatedFile=related;
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          NetworkVO vo=new NetworkVO(id,network,offering.getId(),guru.getName(),owner.getDomainId(),owner.getId(),relatedFile,name,displayText,predefined.getNetworkDomain(),offering.getGuestType(),plan.getDataCenterId(),plan.getPhysicalNetworkId(),aclType,offering.getSpecifyIpRanges(),vpcId);
+          vo.setDisplayNetwork(isDisplayNetworkEnabled == null ? true : isDisplayNetworkEnabled);
+          networks.add(_networksDao.persist(vo,vo.getGuestType() == Network.GuestType.Isolated,finalizeServicesAndProvidersForNetwork(offering,plan.getPhysicalNetworkId())));
+          if (domainId != null && aclType == ACLType.Domain) {
+            _networksDao.addDomainToNetwork(id,domainId,subdomainAccess == null ? true : subdomainAccess);
+          }
         }
-        _networksDao.addDomainToNetwork(id,domainId,subdomainAccess);
       }
-      txn.commit();
+);
     }
     if (networks.size() < 1) {
       CloudRuntimeException ex=new CloudRuntimeException("Unable to convert network offering with specified id to network profile");

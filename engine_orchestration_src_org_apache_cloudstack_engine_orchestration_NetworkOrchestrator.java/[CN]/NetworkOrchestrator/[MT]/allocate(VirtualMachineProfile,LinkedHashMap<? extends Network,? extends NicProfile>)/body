@@ -1,50 +1,52 @@
 {
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  int deviceId=0;
-  boolean[] deviceIds=new boolean[networks.size()];
-  Arrays.fill(deviceIds,false);
-  List<NicProfile> nics=new ArrayList<NicProfile>(networks.size());
-  NicProfile defaultNic=null;
-  for (  Map.Entry<? extends Network,? extends NicProfile> network : networks.entrySet()) {
-    Network config=network.getKey();
-    NicProfile requested=network.getValue();
-    Boolean isDefaultNic=false;
-    if (vm != null && (requested != null && requested.isDefaultNic())) {
-      isDefaultNic=true;
-    }
-    while (deviceIds[deviceId] && deviceId < deviceIds.length) {
-      deviceId++;
-    }
-    Pair<NicProfile,Integer> vmNicPair=allocateNic(requested,config,isDefaultNic,deviceId,vm);
-    NicProfile vmNic=vmNicPair.first();
-    if (vmNic == null) {
-      continue;
-    }
-    deviceId=vmNicPair.second();
-    int devId=vmNic.getDeviceId();
-    if (devId > deviceIds.length) {
-      throw new IllegalArgumentException("Device id for nic is too large: " + vmNic);
-    }
-    if (deviceIds[devId]) {
-      throw new IllegalArgumentException("Conflicting device id for two different nics: " + vmNic);
-    }
-    deviceIds[devId]=true;
-    if (vmNic.isDefaultNic()) {
-      if (defaultNic != null) {
-        throw new IllegalArgumentException("You cannot specify two nics as default nics: nic 1 = " + defaultNic + "; nic 2 = "+ vmNic);
+  Transaction.execute(new TransactionCallbackWithExceptionNoReturn<InsufficientCapacityException>(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status) throws InsufficientCapacityException {
+      int deviceId=0;
+      boolean[] deviceIds=new boolean[networks.size()];
+      Arrays.fill(deviceIds,false);
+      List<NicProfile> nics=new ArrayList<NicProfile>(networks.size());
+      NicProfile defaultNic=null;
+      for (      Map.Entry<? extends Network,? extends NicProfile> network : networks.entrySet()) {
+        Network config=network.getKey();
+        NicProfile requested=network.getValue();
+        Boolean isDefaultNic=false;
+        if (vm != null && (requested != null && requested.isDefaultNic())) {
+          isDefaultNic=true;
+        }
+        while (deviceIds[deviceId] && deviceId < deviceIds.length) {
+          deviceId++;
+        }
+        Pair<NicProfile,Integer> vmNicPair=allocateNic(requested,config,isDefaultNic,deviceId,vm);
+        NicProfile vmNic=vmNicPair.first();
+        if (vmNic == null) {
+          continue;
+        }
+        deviceId=vmNicPair.second();
+        int devId=vmNic.getDeviceId();
+        if (devId > deviceIds.length) {
+          throw new IllegalArgumentException("Device id for nic is too large: " + vmNic);
+        }
+        if (deviceIds[devId]) {
+          throw new IllegalArgumentException("Conflicting device id for two different nics: " + vmNic);
+        }
+        deviceIds[devId]=true;
+        if (vmNic.isDefaultNic()) {
+          if (defaultNic != null) {
+            throw new IllegalArgumentException("You cannot specify two nics as default nics: nic 1 = " + defaultNic + "; nic 2 = "+ vmNic);
+          }
+          defaultNic=vmNic;
+        }
+        nics.add(vmNic);
+        vm.addNic(vmNic);
       }
-      defaultNic=vmNic;
+      if (nics.size() != networks.size()) {
+        s_logger.warn("Number of nics " + nics.size() + " doesn't match number of requested networks "+ networks.size());
+        throw new CloudRuntimeException("Number of nics " + nics.size() + " doesn't match number of requested networks "+ networks.size());
+      }
+      if (nics.size() == 1) {
+        nics.get(0).setDefaultNic(true);
+      }
     }
-    nics.add(vmNic);
-    vm.addNic(vmNic);
   }
-  if (nics.size() != networks.size()) {
-    s_logger.warn("Number of nics " + nics.size() + " doesn't match number of requested networks "+ networks.size());
-    throw new CloudRuntimeException("Number of nics " + nics.size() + " doesn't match number of requested networks "+ networks.size());
-  }
-  if (nics.size() == 1) {
-    nics.get(0).setDefaultNic(true);
-  }
-  txn.commit();
+);
 }

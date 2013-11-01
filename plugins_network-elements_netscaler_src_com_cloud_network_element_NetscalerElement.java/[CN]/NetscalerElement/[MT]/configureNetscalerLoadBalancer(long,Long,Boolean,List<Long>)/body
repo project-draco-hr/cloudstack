@@ -1,6 +1,6 @@
 {
-  ExternalLoadBalancerDeviceVO lbDeviceVo=_lbDeviceDao.findById(lbDeviceId);
-  Map<String,String> lbDetails=_detailsDao.findDetails(lbDeviceVo.getHostId());
+  final ExternalLoadBalancerDeviceVO lbDeviceVo=_lbDeviceDao.findById(lbDeviceId);
+  final Map<String,String> lbDetails=_detailsDao.findDetails(lbDeviceVo.getHostId());
   if ((lbDeviceVo == null) || !isNetscalerDevice(lbDeviceVo.getDeviceName())) {
     throw new InvalidParameterValueException("No netscaler device found with ID: " + lbDeviceId);
   }
@@ -11,7 +11,7 @@
       currentPodsConfig.add(nsPodVo.getPodId());
     }
   }
-  List<Long> podsToAssociate=new ArrayList<Long>();
+  final List<Long> podsToAssociate=new ArrayList<Long>();
   if (newPodsConfig != null && newPodsConfig.size() > 0) {
     for (    Long podId : newPodsConfig) {
       HostPodVO pod=_podDao.findById(podId);
@@ -25,7 +25,7 @@
       }
     }
   }
-  List<Long> podsToDeassociate=new ArrayList<Long>();
+  final List<Long> podsToDeassociate=new ArrayList<Long>();
   for (  Long podId : currentPodsConfig) {
     if (!newPodsConfig.contains(podId)) {
       podsToDeassociate.add(podId);
@@ -58,20 +58,22 @@
   if (dedicatedUse != null) {
     lbDeviceVo.setIsDedicatedDevice(dedicatedUse);
   }
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  _lbDeviceDao.update(lbDeviceId,lbDeviceVo);
-  for (  Long podId : podsToAssociate) {
-    NetScalerPodVO nsPodVo=new NetScalerPodVO(lbDeviceId,podId);
-    _netscalerPodDao.persist(nsPodVo);
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      _lbDeviceDao.update(lbDeviceId,lbDeviceVo);
+      for (      Long podId : podsToAssociate) {
+        NetScalerPodVO nsPodVo=new NetScalerPodVO(lbDeviceId,podId);
+        _netscalerPodDao.persist(nsPodVo);
+      }
+      for (      Long podId : podsToDeassociate) {
+        NetScalerPodVO nsPodVo=_netscalerPodDao.findByPodId(podId);
+        _netscalerPodDao.remove(nsPodVo.getId());
+      }
+      _detailsDao.persist(lbDeviceVo.getHostId(),lbDetails);
+    }
   }
-  for (  Long podId : podsToDeassociate) {
-    NetScalerPodVO nsPodVo=_netscalerPodDao.findByPodId(podId);
-    _netscalerPodDao.remove(nsPodVo.getId());
-  }
-  _detailsDao.persist(lbDeviceVo.getHostId(),lbDetails);
+);
   HostVO host=_hostDao.findById(lbDeviceVo.getHostId());
-  txn.commit();
   _agentMgr.reconnect(host.getId());
   return lbDeviceVo;
 }

@@ -5,30 +5,32 @@
     group=createVmGroup(groupName,vm.getAccountId());
   }
   if (group != null) {
-    final Transaction txn=Transaction.currentTxn();
-    txn.start();
     UserVm userVm=_vmDao.acquireInLockTable(userVmId);
     if (userVm == null) {
       s_logger.warn("Failed to acquire lock on user vm id=" + userVmId);
     }
     try {
-      InstanceGroupVO ngrpLock=_vmGroupDao.lockRow(group.getId(),false);
-      if (ngrpLock == null) {
-        s_logger.warn("Failed to acquire lock on vm group id=" + group.getId() + " name="+ group.getName());
-        txn.rollback();
-        return false;
-      }
-      if (_groupVMMapDao.listByInstanceId(userVmId) != null) {
-        List<InstanceGroupVMMapVO> groupVmMaps=_groupVMMapDao.listByInstanceId(userVmId);
-        for (        InstanceGroupVMMapVO groupMap : groupVmMaps) {
-          SearchCriteria<InstanceGroupVMMapVO> sc=_groupVMMapDao.createSearchCriteria();
-          sc.addAnd("instanceId",SearchCriteria.Op.EQ,groupMap.getInstanceId());
-          _groupVMMapDao.expunge(sc);
+      final InstanceGroupVO groupFinal=group;
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          InstanceGroupVO ngrpLock=_vmGroupDao.lockRow(groupFinal.getId(),false);
+          if (ngrpLock == null) {
+            s_logger.warn("Failed to acquire lock on vm group id=" + groupFinal.getId() + " name="+ groupFinal.getName());
+            throw new CloudRuntimeException("Failed to acquire lock on vm group id=" + groupFinal.getId() + " name="+ groupFinal.getName());
+          }
+          if (_groupVMMapDao.listByInstanceId(userVmId) != null) {
+            List<InstanceGroupVMMapVO> groupVmMaps=_groupVMMapDao.listByInstanceId(userVmId);
+            for (            InstanceGroupVMMapVO groupMap : groupVmMaps) {
+              SearchCriteria<InstanceGroupVMMapVO> sc=_groupVMMapDao.createSearchCriteria();
+              sc.addAnd("instanceId",SearchCriteria.Op.EQ,groupMap.getInstanceId());
+              _groupVMMapDao.expunge(sc);
+            }
+          }
+          InstanceGroupVMMapVO groupVmMapVO=new InstanceGroupVMMapVO(groupFinal.getId(),userVmId);
+          _groupVMMapDao.persist(groupVmMapVO);
         }
       }
-      InstanceGroupVMMapVO groupVmMapVO=new InstanceGroupVMMapVO(group.getId(),userVmId);
-      _groupVMMapDao.persist(groupVmMapVO);
-      txn.commit();
+);
       return true;
     }
   finally {

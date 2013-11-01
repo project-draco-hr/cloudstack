@@ -1,0 +1,45 @@
+@classmethod
+def setUpClass(cls):
+    cls.api_client = super(TestMultipleIpRanges, cls).getClsTestClient().getApiClient()
+    cls.dbclient = super(TestMultipleIpRanges, cls).getClsTestClient().getDbConnection()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client, cls.services)
+    cls.zone = get_zone(cls.api_client, cls.services)
+    cls.pod = get_pod(cls.api_client, cls.zone.id, cls.services)
+    cls.services['mode'] = cls.zone.networktype
+    cls.services['domainid'] = cls.domain.id
+    cls.services['zoneid'] = cls.zone.id
+    cls.account = Account.create(cls.api_client, cls.services['account'], domainid=cls.domain.id)
+    cls.services['account'] = cls.account.name
+    cls.disk_offering = DiskOffering.create(cls.api_client, cls.services['disk_offering'])
+    cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['templates']['ostypeid'] = cls.template.ostypeid
+    cls.services['diskoffering'] = cls.disk_offering.id
+    cls.dc_id = cls.dbclient.execute(("select id from data_center where uuid = '%s';" % str(cls.services['zoneid'])))
+    cls.dc_id = cls.dc_id[0][0]
+    cls.ids = cls.dbclient.execute(("select id from user_ip_address where allocated is null and data_center_id = '%s';" % str(cls.dc_id)))
+    cls.id_list = []
+    for i in range(len(cls.ids)):
+        cls.id_list.append(cls.ids[i][0])
+    vr_list = Router.list(cls.api_client, listall='true')
+    cls.debug('vr list {}'.format(vr_list))
+    if (isinstance(vr_list, list) and (len(vr_list) > 0)):
+        cls.debug('VR is running in the setup')
+        cls.vr_state = True
+    else:
+        cls.debug('VR is not present in the setup')
+        cls.vr_state = False
+        cls.id_list = cls.id_list[:(-2)]
+    for id in cls.id_list:
+        cls.dbclient.execute(("update user_ip_address set allocated=now() where id = '%s';" % str(id)))
+    cls.services['vlan_ip_range']['zoneid'] = cls.zone.id
+    cls.services['vlan_ip_range']['podid'] = cls.pod.id
+    if (cls.zone.networktype == 'Basic'):
+        cls.new_vlan = PublicIpRange.create(cls.api_client, cls.services['vlan_ip_range'])
+    else:
+        raise unittest.SkipTest('These tests can be run only on basic zone. So skipping the tests')
+    if (cls.vr_state is False):
+        cls.vm_res = VirtualMachine.create(cls.api_client, cls.services['server_without_disk'], templateid=cls.template.id, accountid=cls.account.name, domainid=cls.services['domainid'], zoneid=cls.services['zoneid'], serviceofferingid=cls.service_offering.id, mode=cls.services['mode'])
+    cls._cleanup = [cls.new_vlan, cls.account]
+    return

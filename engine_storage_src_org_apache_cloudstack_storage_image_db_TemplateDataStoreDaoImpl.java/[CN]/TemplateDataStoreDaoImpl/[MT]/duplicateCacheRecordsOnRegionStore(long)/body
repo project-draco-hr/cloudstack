@@ -1,0 +1,44 @@
+{
+  SearchCriteria<TemplateDataStoreVO> sc=templateRoleSearch.create();
+  sc.setParameters("store_role",DataStoreRole.ImageCache);
+  sc.setParameters("destroyed",false);
+  List<TemplateDataStoreVO> tmpls=listBy(sc);
+  if (tmpls != null) {
+    s_logger.info("Duplicate " + tmpls.size() + " template cache store records to region store");
+    for (    TemplateDataStoreVO tmpl : tmpls) {
+      long templateId=tmpl.getTemplateId();
+      VMTemplateVO template=_tmpltDao.findById(templateId);
+      if (template == null) {
+        throw new CloudRuntimeException("No template is found for template id: " + templateId);
+      }
+      if (template.getTemplateType() == TemplateType.SYSTEM) {
+        s_logger.info("No need to duplicate system template since it will be automatically downloaded while adding region store");
+        continue;
+      }
+      TemplateDataStoreVO tmpStore=findByStoreTemplate(storeId,tmpl.getTemplateId());
+      if (tmpStore != null) {
+        s_logger.info("There is already entry for template " + tmpl.getTemplateId() + " on region store "+ storeId);
+        continue;
+      }
+      s_logger.info("Persisting an entry for template " + tmpl.getTemplateId() + " on region store "+ storeId);
+      TemplateDataStoreVO ts=new TemplateDataStoreVO();
+      ts.setTemplateId(tmpl.getTemplateId());
+      ts.setDataStoreId(storeId);
+      ts.setDataStoreRole(DataStoreRole.Image);
+      ts.setState(tmpl.getState());
+      ts.setDownloadPercent(tmpl.getDownloadPercent());
+      ts.setDownloadState(tmpl.getDownloadState());
+      ts.setSize(tmpl.getSize());
+      ts.setPhysicalSize(tmpl.getPhysicalSize());
+      ts.setErrorString(tmpl.getErrorString());
+      ts.setDownloadUrl(tmpl.getDownloadUrl());
+      ts.setRefCnt(tmpl.getRefCnt());
+      persist(ts);
+      tmpl.incrRefCnt();
+      this.update(tmpl.getId(),tmpl);
+      template.setCrossZones(true);
+      _tmpltDao.update(templateId,template);
+      _tmplSrv.associateTemplateToZone(templateId,null);
+    }
+  }
+}

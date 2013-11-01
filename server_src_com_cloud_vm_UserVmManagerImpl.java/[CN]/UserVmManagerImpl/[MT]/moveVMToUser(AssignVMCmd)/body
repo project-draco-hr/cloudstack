@@ -3,7 +3,7 @@
   if (!_accountMgr.isRootAdmin(caller.getId()) && caller.getType() != Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
     throw new InvalidParameterValueException("Only domain admins are allowed to assign VMs and not " + caller.getType());
   }
-  UserVmVO vm=_vmDao.findById(cmd.getVmId());
+  final UserVmVO vm=_vmDao.findById(cmd.getVmId());
   if (vm == null) {
     throw new InvalidParameterValueException("There is no vm by that id " + cmd.getVmId());
   }
@@ -15,7 +15,7 @@
     ex.addProxyObject(vm.getUuid(),"vmId");
     throw ex;
   }
-  Account oldAccount=_accountService.getActiveAccountById(vm.getAccountId());
+  final Account oldAccount=_accountService.getActiveAccountById(vm.getAccountId());
   if (oldAccount == null) {
     throw new InvalidParameterValueException("Invalid account for VM " + vm.getAccountId() + " in domain.");
   }
@@ -24,7 +24,7 @@
     ex.addProxyObject(vm.getUuid(),"vmId");
     throw ex;
   }
-  Account newAccount=_accountService.getActiveAccountByName(cmd.getAccountName(),cmd.getDomainId());
+  final Account newAccount=_accountService.getActiveAccountByName(cmd.getAccountName(),cmd.getDomainId());
   if (newAccount == null || newAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
     throw new InvalidParameterValueException("Invalid accountid=" + cmd.getAccountName() + " in domain "+ cmd.getDomainId());
   }
@@ -55,8 +55,8 @@
     }
   }
   DataCenterVO zone=_dcDao.findById(vm.getDataCenterId());
-  ServiceOfferingVO offering=_serviceOfferingDao.findByIdIncludingRemoved(vm.getServiceOfferingId());
-  List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
+  final ServiceOfferingVO offering=_serviceOfferingDao.findByIdIncludingRemoved(vm.getServiceOfferingId());
+  final List<VolumeVO> volumes=_volsDao.findByInstance(cmd.getVmId());
   removeInstanceFromInstanceGroup(cmd.getVmId());
   resourceLimitCheck(newAccount,new Long(offering.getCpu()),new Long(offering.getRamSize()));
   _resourceLimitMgr.checkResourceLimit(newAccount,ResourceType.volume,_volsDao.findByInstance(cmd.getVmId()).size());
@@ -72,31 +72,33 @@
   }
   DomainVO domain=_domainDao.findById(cmd.getDomainId());
   _accountMgr.checkAccess(newAccount,domain);
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
-  resourceCountDecrement(oldAccount.getAccountId(),new Long(offering.getCpu()),new Long(offering.getRamSize()));
-  vm.setAccountId(newAccount.getAccountId());
-  vm.setDomainId(cmd.getDomainId());
-  _vmDao.persist(vm);
-  for (  VolumeVO volume : volumes) {
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),Volume.class.getName(),volume.getUuid());
-    _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume);
-    _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
-    volume.setAccountId(newAccount.getAccountId());
-    volume.setDomainId(newAccount.getDomainId());
-    _volsDao.persist(volume);
-    _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume);
-    _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
-    List<SnapshotVO> snapshots=_snapshotDao.listByVolumeIdIncludingRemoved(volume.getId());
-    for (    SnapshotVO snapshot : snapshots) {
-      _snapshotDao.remove(snapshot.getId());
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_DESTROY,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
+      resourceCountDecrement(oldAccount.getAccountId(),new Long(offering.getCpu()),new Long(offering.getRamSize()));
+      vm.setAccountId(newAccount.getAccountId());
+      vm.setDomainId(cmd.getDomainId());
+      _vmDao.persist(vm);
+      for (      VolumeVO volume : volumes) {
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_DELETE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),Volume.class.getName(),volume.getUuid());
+        _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.volume);
+        _resourceLimitMgr.decrementResourceCount(oldAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
+        volume.setAccountId(newAccount.getAccountId());
+        volume.setDomainId(newAccount.getDomainId());
+        _volsDao.persist(volume);
+        _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.volume);
+        _resourceLimitMgr.incrementResourceCount(newAccount.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_CREATE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
+        List<SnapshotVO> snapshots=_snapshotDao.listByVolumeIdIncludingRemoved(volume.getId());
+        for (        SnapshotVO snapshot : snapshots) {
+          _snapshotDao.remove(snapshot.getId());
+        }
+      }
+      resourceCountIncrement(newAccount.getAccountId(),new Long(offering.getCpu()),new Long(offering.getRamSize()));
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
     }
   }
-  resourceCountIncrement(newAccount.getAccountId(),new Long(offering.getCpu()),new Long(offering.getRamSize()));
-  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_CREATE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),vm.getHostName(),vm.getServiceOfferingId(),vm.getTemplateId(),vm.getHypervisorType().toString(),VirtualMachine.class.getName(),vm.getUuid());
-  txn.commit();
+);
   VirtualMachine vmoi=_itMgr.findById(vm.getId());
   VirtualMachineProfileImpl vmOldProfile=new VirtualMachineProfileImpl(vmoi);
   List<Long> networkIdList=cmd.getNetworkIds();

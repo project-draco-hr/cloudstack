@@ -1,41 +1,36 @@
 {
-  long newCount=0;
-  Transaction txn=Transaction.currentTxn();
-  txn.start();
-  try {
-    Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdate(domainId,ResourceOwnerType.Domain,type);
-    SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
-    sc.setParameters("id",rowIdsToLock.toArray());
-    _resourceCountDao.lockRows(sc,null,true);
-    ResourceCountVO domainRC=_resourceCountDao.findByOwnerAndType(domainId,ResourceOwnerType.Domain,type);
-    long oldCount=domainRC.getCount();
-    List<DomainVO> domainChildren=_domainDao.findImmediateChildrenForParent(domainId);
-    if (type.supportsOwner(ResourceOwnerType.Domain)) {
-      if (type == ResourceType.project) {
-        newCount=newCount + _projectDao.countProjectsForDomain(domainId);
+  return Transaction.execute(new TransactionCallback<Long>(){
+    @Override public Long doInTransaction(    TransactionStatus status){
+      long newCount=0;
+      Set<Long> rowIdsToLock=_resourceCountDao.listAllRowsToUpdate(domainId,ResourceOwnerType.Domain,type);
+      SearchCriteria<ResourceCountVO> sc=ResourceCountSearch.create();
+      sc.setParameters("id",rowIdsToLock.toArray());
+      _resourceCountDao.lockRows(sc,null,true);
+      ResourceCountVO domainRC=_resourceCountDao.findByOwnerAndType(domainId,ResourceOwnerType.Domain,type);
+      long oldCount=domainRC.getCount();
+      List<DomainVO> domainChildren=_domainDao.findImmediateChildrenForParent(domainId);
+      if (type.supportsOwner(ResourceOwnerType.Domain)) {
+        if (type == ResourceType.project) {
+          newCount=newCount + _projectDao.countProjectsForDomain(domainId);
+        }
+        for (        DomainVO domainChild : domainChildren) {
+          long domainCount=recalculateDomainResourceCount(domainChild.getId(),type);
+          newCount=newCount + domainCount;
+        }
       }
-      for (      DomainVO domainChild : domainChildren) {
-        long domainCount=recalculateDomainResourceCount(domainChild.getId(),type);
-        newCount=newCount + domainCount;
+      if (type.supportsOwner(ResourceOwnerType.Account)) {
+        List<AccountVO> accounts=_accountDao.findActiveAccountsForDomain(domainId);
+        for (        AccountVO account : accounts) {
+          long accountCount=recalculateAccountResourceCount(account.getId(),type);
+          newCount=newCount + accountCount;
+        }
       }
-    }
-    if (type.supportsOwner(ResourceOwnerType.Account)) {
-      List<AccountVO> accounts=_accountDao.findActiveAccountsForDomain(domainId);
-      for (      AccountVO account : accounts) {
-        long accountCount=recalculateAccountResourceCount(account.getId(),type);
-        newCount=newCount + accountCount;
+      _resourceCountDao.setResourceCount(domainId,ResourceOwnerType.Domain,type,newCount);
+      if (oldCount != newCount) {
+        s_logger.info("Discrepency in the resource count " + "(original count=" + oldCount + " correct count = "+ newCount+ ") for type "+ type+ " for domain ID "+ domainId+ " is fixed during resource count recalculation.");
       }
-    }
-    _resourceCountDao.setResourceCount(domainId,ResourceOwnerType.Domain,type,newCount);
-    if (oldCount != newCount) {
-      s_logger.info("Discrepency in the resource count " + "(original count=" + oldCount + " correct count = "+ newCount+ ") for type "+ type+ " for domain ID "+ domainId+ " is fixed during resource count recalculation.");
+      return newCount;
     }
   }
- catch (  Exception e) {
-    throw new CloudRuntimeException("Failed to update resource count for domain with Id " + domainId);
-  }
- finally {
-    txn.commit();
-  }
-  return newCount;
+);
 }

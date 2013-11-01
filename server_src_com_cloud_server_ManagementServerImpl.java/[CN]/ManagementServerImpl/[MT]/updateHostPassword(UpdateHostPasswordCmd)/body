@@ -16,31 +16,26 @@
     if (cluster == null || cluster.getHypervisorType() != HypervisorType.XenServer) {
       throw new InvalidParameterValueException("This operation is not supported for this hypervisor type");
     }
-    List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(cmd.getClusterId());
-    Transaction txn=Transaction.currentTxn();
-    try {
-      txn.start();
-      for (      HostVO h : hosts) {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Changing password for host name = " + h.getName());
-        }
-        DetailVO nv=_detailsDao.findDetail(h.getId(),ApiConstants.USERNAME);
-        if (nv.getValue().equals(cmd.getUsername())) {
-          DetailVO nvp=_detailsDao.findDetail(h.getId(),ApiConstants.PASSWORD);
-          nvp.setValue(DBEncryptionUtil.encrypt(cmd.getPassword()));
-          _detailsDao.persist(nvp);
-        }
+    final List<HostVO> hosts=_resourceMgr.listAllHostsInCluster(cmd.getClusterId());
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        for (        HostVO h : hosts) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Changing password for host name = " + h.getName());
+          }
+          DetailVO nv=_detailsDao.findDetail(h.getId(),ApiConstants.USERNAME);
+          if (nv.getValue().equals(cmd.getUsername())) {
+            DetailVO nvp=_detailsDao.findDetail(h.getId(),ApiConstants.PASSWORD);
+            nvp.setValue(DBEncryptionUtil.encrypt(cmd.getPassword()));
+            _detailsDao.persist(nvp);
+          }
  else {
-          txn.rollback();
-          throw new InvalidParameterValueException("The username is not same for all hosts, please modify passwords for individual hosts.");
+            throw new InvalidParameterValueException("The username is not same for all hosts, please modify passwords for individual hosts.");
+          }
         }
       }
-      txn.commit();
     }
- catch (    Exception e) {
-      txn.rollback();
-      throw new CloudRuntimeException("Failed to update password " + e.getMessage());
-    }
+);
   }
   return true;
 }

@@ -111,18 +111,12 @@
       ClusterDetailsVO cluster_detail_cpu=_clusterDetailsDao.findDetail(cluster_id,"cpuOvercommitRatio");
       ClusterDetailsVO cluster_detail_ram=_clusterDetailsDao.findDetail(cluster_id,"memoryOvercommitRatio");
       if (_uservmDetailsDao.findDetail(vm.getId(),"cpuOvercommitRatio") == null && ((Float.parseFloat(cluster_detail_cpu.getValue()) > 1f || Float.parseFloat(cluster_detail_ram.getValue()) > 1f))) {
-        UserVmDetailVO vmDetail_cpu=new UserVmDetailVO(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue());
-        UserVmDetailVO vmDetail_ram=new UserVmDetailVO(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue());
-        _uservmDetailsDao.persist(vmDetail_cpu);
-        _uservmDetailsDao.persist(vmDetail_ram);
+        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue());
+        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue());
       }
  else       if (_uservmDetailsDao.findDetail(vm.getId(),"cpuOvercommitRatio") != null) {
-        UserVmDetailVO vmDetail_cpu=_uservmDetailsDao.findDetail(vm.getId(),"cpuOvercommitRatio");
-        vmDetail_cpu.setValue(cluster_detail_cpu.getValue());
-        UserVmDetailVO vmDetail_ram=_uservmDetailsDao.findDetail(vm.getId(),"memoryOvercommitRatio");
-        vmDetail_ram.setValue(cluster_detail_ram.getValue());
-        _uservmDetailsDao.update(vmDetail_cpu.getId(),vmDetail_cpu);
-        _uservmDetailsDao.update(vmDetail_ram.getId(),vmDetail_ram);
+        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue());
+        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue());
       }
       vmProfile.setCpuOvercommitRatio(Float.parseFloat(cluster_detail_cpu.getValue()));
       vmProfile.setMemoryOvercommitRatio(Float.parseFloat(cluster_detail_ram.getValue()));
@@ -149,6 +143,7 @@
         Commands cmds=null;
         vmGuru.finalizeVirtualMachineProfile(vmProfile,dest,ctx);
         VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
+        handlePath(vmTO.getDisks(),vm.getHypervisorType());
         cmds=new Commands(Command.OnError.Stop);
         cmds.addCommand(new StartCommand(vmTO,dest.getHost(),getExecuteInSequence()));
         vmGuru.finalizeDeployment(cmds,vmProfile,dest,ctx);
@@ -161,6 +156,7 @@
         _workDao.updateStep(work,Step.Started);
         startAnswer=cmds.getAnswer(StartAnswer.class);
         if (startAnswer != null && startAnswer.getResult()) {
+          handlePath(vmTO.getDisks(),startAnswer.getIqnToPath());
           String host_guid=startAnswer.getHost_guid();
           if (host_guid != null) {
             HostVO finalHost=_resourceMgr.findHostByGuid(host_guid);
@@ -186,6 +182,17 @@
             }
             StopCommand cmd=new StopCommand(vm,getExecuteInSequence());
             StopAnswer answer=(StopAnswer)_agentMgr.easySend(destHostId,cmd);
+            if (answer != null) {
+              String hypervisortoolsversion=answer.getHypervisorToolsVersion();
+              if (hypervisortoolsversion != null) {
+                if (vm.getType() == VirtualMachine.Type.User) {
+                  UserVmVO userVm=_userVmDao.findById(vm.getId());
+                  _userVmDao.loadDetails(userVm);
+                  userVm.setDetail("hypervisortoolsversion",hypervisortoolsversion);
+                  _userVmDao.saveDetails(userVm);
+                }
+              }
+            }
             if (answer == null || !answer.getResult()) {
               s_logger.warn("Unable to stop " + vm + " due to "+ (answer != null ? answer.getDetails() : "no answers"));
               _haMgr.scheduleStop(vm,destHostId,WorkType.ForceStop);

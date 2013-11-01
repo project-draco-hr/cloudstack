@@ -1,5 +1,4 @@
 {
-  boolean result=false;
   NetworkVO network=_networksDao.findById(networkId);
   if (network.getState() == Network.State.Allocated) {
     s_logger.debug("Network is already shutdown: " + network);
@@ -39,45 +38,50 @@
         _networksDao.update(network.getId(),network);
       }
     }
-    boolean success=shutdownNetworkElementsAndResources(context,cleanupElements,network);
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    if (success) {
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Network id=" + networkId + " is shutdown successfully, cleaning up corresponding resources now.");
-      }
-      NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,network.getGuruName());
-      NetworkProfile profile=convertNetworkToNetworkProfile(network.getId());
-      guru.shutdown(profile,_networkOfferingDao.findById(network.getNetworkOfferingId()));
-      applyProfileToNetwork(network,profile);
-      DataCenterVO zone=_dcDao.findById(network.getDataCenterId());
-      if (isSharedNetworkOfferingWithServices(network.getNetworkOfferingId()) && (zone.getNetworkType() == NetworkType.Advanced)) {
-        network.setState(Network.State.Setup);
-      }
+    final boolean success=shutdownNetworkElementsAndResources(context,cleanupElements,network);
+    final NetworkVO networkFinal=network;
+    boolean result=Transaction.execute(new TransactionCallback<Boolean>(){
+      @Override public Boolean doInTransaction(      TransactionStatus status){
+        boolean result=false;
+        if (success) {
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Network id=" + networkId + " is shutdown successfully, cleaning up corresponding resources now.");
+          }
+          NetworkGuru guru=AdapterBase.getAdapterByName(_networkGurus,networkFinal.getGuruName());
+          NetworkProfile profile=convertNetworkToNetworkProfile(networkFinal.getId());
+          guru.shutdown(profile,_networkOfferingDao.findById(networkFinal.getNetworkOfferingId()));
+          applyProfileToNetwork(networkFinal,profile);
+          DataCenterVO zone=_dcDao.findById(networkFinal.getDataCenterId());
+          if (isSharedNetworkOfferingWithServices(networkFinal.getNetworkOfferingId()) && (zone.getNetworkType() == NetworkType.Advanced)) {
+            networkFinal.setState(Network.State.Setup);
+          }
  else {
-        try {
-          stateTransitTo(network,Event.OperationSucceeded);
+            try {
+              stateTransitTo(networkFinal,Event.OperationSucceeded);
+            }
+ catch (            NoTransitionException e) {
+              networkFinal.setState(Network.State.Allocated);
+              networkFinal.setRestartRequired(false);
+            }
+          }
+          _networksDao.update(networkFinal.getId(),networkFinal);
+          _networksDao.clearCheckForGc(networkId);
+          result=true;
         }
- catch (        NoTransitionException e) {
-          network.setState(Network.State.Allocated);
-          network.setRestartRequired(false);
-        }
-      }
-      _networksDao.update(network.getId(),network);
-      _networksDao.clearCheckForGc(networkId);
-      result=true;
-    }
  else {
-      try {
-        stateTransitTo(network,Event.OperationFailed);
+          try {
+            stateTransitTo(networkFinal,Event.OperationFailed);
+          }
+ catch (          NoTransitionException e) {
+            networkFinal.setState(Network.State.Implemented);
+            _networksDao.update(networkFinal.getId(),networkFinal);
+          }
+          result=false;
+        }
+        return result;
       }
- catch (      NoTransitionException e) {
-        network.setState(Network.State.Implemented);
-        _networksDao.update(network.getId(),network);
-      }
-      result=false;
     }
-    txn.commit();
+);
     return result;
   }
   finally {

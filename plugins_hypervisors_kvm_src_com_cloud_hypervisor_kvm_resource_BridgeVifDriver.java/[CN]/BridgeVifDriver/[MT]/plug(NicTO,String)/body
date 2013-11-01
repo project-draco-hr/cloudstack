@@ -3,9 +3,11 @@
     s_logger.debug("nic=" + nic);
   }
   LibvirtVMDef.InterfaceDef intf=new LibvirtVMDef.InterfaceDef();
-  String vlanId=null;
-  if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan) {
-    vlanId=Networks.BroadcastDomainType.getValue(nic.getBroadcastUri());
+  String vNetId=null;
+  String protocol=null;
+  if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan || nic.getBroadcastType() == Networks.BroadcastDomainType.Vxlan) {
+    vNetId=Networks.BroadcastDomainType.getValue(nic.getBroadcastUri());
+    protocol=Networks.BroadcastDomainType.getSchemeValue(nic.getBroadcastUri()).scheme();
   }
  else   if (nic.getBroadcastType() == Networks.BroadcastDomainType.Lswitch) {
     throw new InternalErrorException("Nicira NVP Logicalswitches are not supported by the BridgeVifDriver");
@@ -13,14 +15,14 @@
   String trafficLabel=nic.getName();
   if (nic.getType() == Networks.TrafficType.Guest) {
     Integer networkRateKBps=(nic.getNetworkRateMbps() != null && nic.getNetworkRateMbps().intValue() != -1) ? nic.getNetworkRateMbps().intValue() * 128 : 0;
-    if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan && !vlanId.equalsIgnoreCase("untagged")) {
+    if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan && !vNetId.equalsIgnoreCase("untagged") || nic.getBroadcastType() == Networks.BroadcastDomainType.Vxlan) {
       if (trafficLabel != null && !trafficLabel.isEmpty()) {
-        s_logger.debug("creating a vlan dev and bridge for guest traffic per traffic label " + trafficLabel);
-        String brName=createVlanBr(vlanId,_pifs.get(trafficLabel));
+        s_logger.debug("creating a vNet dev and bridge for guest traffic per traffic label " + trafficLabel);
+        String brName=createVnetBr(vNetId,trafficLabel,protocol);
         intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType),networkRateKBps);
       }
  else {
-        String brName=createVlanBr(vlanId,_pifs.get("private"));
+        String brName=createVnetBr(vNetId,"private",protocol);
         intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType),networkRateKBps);
       }
     }
@@ -34,14 +36,14 @@
   }
  else   if (nic.getType() == Networks.TrafficType.Public) {
     Integer networkRateKBps=(nic.getNetworkRateMbps() != null && nic.getNetworkRateMbps().intValue() != -1) ? nic.getNetworkRateMbps().intValue() * 128 : 0;
-    if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan && !vlanId.equalsIgnoreCase("untagged")) {
+    if (nic.getBroadcastType() == Networks.BroadcastDomainType.Vlan && !vNetId.equalsIgnoreCase("untagged")) {
       if (trafficLabel != null && !trafficLabel.isEmpty()) {
-        s_logger.debug("creating a vlan dev and bridge for public traffic per traffic label " + trafficLabel);
-        String brName=createVlanBr(vlanId,_pifs.get(trafficLabel));
+        s_logger.debug("creating a vNet dev and bridge for public traffic per traffic label " + trafficLabel);
+        String brName=createVnetBr(vNetId,trafficLabel,protocol);
         intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType),networkRateKBps);
       }
  else {
-        String brName=createVlanBr(vlanId,_pifs.get("public"));
+        String brName=createVnetBr(vNetId,"public",protocol);
         intf.defBridgeNet(brName,null,nic.getMac(),getGuestNicModel(guestOsType),networkRateKBps);
       }
     }

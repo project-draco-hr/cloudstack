@@ -9,7 +9,7 @@
   if (loadBalancer == null) {
     throw new InvalidParameterException("Invalid Load balancer : " + healthCheckPolicy.getLoadBalancerId() + " for HealthCheck policy id: "+ healthCheckPolicyId);
   }
-  long loadBalancerId=loadBalancer.getId();
+  final long loadBalancerId=loadBalancer.getId();
   FirewallRule.State backupState=loadBalancer.getState();
   _accountMgr.checkAccess(caller.getCallingAccount(),null,true,loadBalancer);
   if (apply) {
@@ -21,16 +21,18 @@
     healthCheckPolicy.setRevoke(true);
     _lb2healthcheckDao.persist(healthCheckPolicy);
     s_logger.debug("Set health check policy to revoke for loadbalancing rule id : " + loadBalancerId + ", healthCheckpolicyID "+ healthCheckPolicyId);
-    List<LoadBalancerVMMapVO> maps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
+    final List<LoadBalancerVMMapVO> maps=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId);
     if (maps != null) {
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      s_logger.debug("Resetting health state policy for services in loadbalancing rule id : " + loadBalancerId);
-      for (      LoadBalancerVMMapVO map : maps) {
-        map.setState(null);
-        _lb2VmMapDao.persist(map);
+      Transaction.execute(new TransactionCallbackNoReturn(){
+        @Override public void doInTransactionWithoutResult(        TransactionStatus status){
+          s_logger.debug("Resetting health state policy for services in loadbalancing rule id : " + loadBalancerId);
+          for (          LoadBalancerVMMapVO map : maps) {
+            map.setState(null);
+            _lb2VmMapDao.persist(map);
+          }
+        }
       }
-      txn.commit();
+);
     }
     try {
       if (!applyLoadBalancerConfig(loadBalancerId)) {

@@ -12,6 +12,7 @@ synchronized (_vms) {
     vm=createVMFromSpec(vmSpec);
     conn=LibvirtConnection.getConnectionByType(vm.getHvsType());
     createVbd(conn,vmSpec,vmName,vm);
+    _storagePoolMgr.connectPhysicalDisksViaVmSpec(vmSpec);
     createVifs(vmSpec,vm);
     s_logger.debug("starting " + vmName + ": "+ vm.toString());
     startVM(conn,vmName,vm.toString());
@@ -40,17 +41,18 @@ synchronized (_vms) {
       }
     }
     if (vmSpec.getType() != VirtualMachine.Type.User) {
-      if ((_kernelVersion < 2006034) && (conn.getVersion() < 1001000)) {
+      if ((conn.getVersion() < 1001000)) {
+        String controlIp=null;
+        for (        NicTO nic : nics) {
+          if (nic.getType() == TrafficType.Control) {
+            controlIp=nic.getIp();
+          }
+        }
         for (int count=0; count < 30; count++) {
-          boolean succeed=passCmdLine(vmName,vmSpec.getBootArgs());
-          if (succeed) {
+          passCmdLine(vmName,vmSpec.getBootArgs());
+          boolean result=_virtRouterResource.connect(controlIp,1,5000);
+          if (result) {
             break;
-          }
-          try {
-            Thread.sleep(5000);
-          }
- catch (          InterruptedException e) {
-            s_logger.trace("Ignoring InterruptedException.",e);
           }
         }
       }
@@ -90,6 +92,9 @@ synchronized (_vms) {
  else {
         _vms.remove(vmName);
       }
+    }
+    if (state != State.Running) {
+      _storagePoolMgr.disconnectPhysicalDisksViaVmSpec(vmSpec);
     }
   }
 }

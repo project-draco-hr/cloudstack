@@ -5,7 +5,7 @@
   if (accountName == null && token == null) {
     accountName=caller.getAccountName();
   }
-  Project project=getProject(projectId);
+  final Project project=getProject(projectId);
   if (project == null) {
     throw new InvalidParameterValueException("Unable to find the project id=" + projectId);
   }
@@ -33,25 +33,32 @@
       throw new InvalidParameterValueException("Invitation is expired for account id=" + accountName + " to the project id="+ projectId);
     }
  else {
-      Transaction txn=Transaction.currentTxn();
-      txn.start();
-      ProjectInvitation.State newState=accept ? ProjectInvitation.State.Completed : ProjectInvitation.State.Declined;
-      s_logger.debug("Marking invitation " + invite + " with state "+ newState);
-      invite.setState(newState);
-      result=_projectInvitationDao.update(invite.getId(),invite);
-      if (result && accept) {
-        ProjectAccount projectAccount=_projectAccountDao.findByProjectIdAccountId(projectId,accountId);
-        if (projectAccount != null) {
-          s_logger.debug("Account " + accountName + " already added to the project id="+ projectId);
-        }
+      final ProjectInvitationVO inviteFinal=invite;
+      final Long accountIdFinal=accountId;
+      final String accountNameFinal=accountName;
+      result=Transaction.execute(new TransactionCallback<Boolean>(){
+        @Override public Boolean doInTransaction(        TransactionStatus status){
+          boolean result=true;
+          ProjectInvitation.State newState=accept ? ProjectInvitation.State.Completed : ProjectInvitation.State.Declined;
+          s_logger.debug("Marking invitation " + inviteFinal + " with state "+ newState);
+          inviteFinal.setState(newState);
+          result=_projectInvitationDao.update(inviteFinal.getId(),inviteFinal);
+          if (result && accept) {
+            ProjectAccount projectAccount=_projectAccountDao.findByProjectIdAccountId(projectId,accountIdFinal);
+            if (projectAccount != null) {
+              s_logger.debug("Account " + accountNameFinal + " already added to the project id="+ projectId);
+            }
  else {
-          assignAccountToProject(project,accountId,ProjectAccount.Role.Regular);
+              assignAccountToProject(project,accountIdFinal,ProjectAccount.Role.Regular);
+            }
+          }
+ else {
+            s_logger.warn("Failed to update project invitation " + inviteFinal + " with state "+ newState);
+          }
+          return result;
         }
       }
- else {
-        s_logger.warn("Failed to update project invitation " + invite + " with state "+ newState);
-      }
-      txn.commit();
+);
     }
   }
  else {

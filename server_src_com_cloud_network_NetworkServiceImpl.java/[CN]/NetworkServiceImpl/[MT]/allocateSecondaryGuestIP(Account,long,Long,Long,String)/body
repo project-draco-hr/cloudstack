@@ -1,13 +1,10 @@
 {
-  Long accountId=null;
-  Long domainId=null;
-  Long vmId=null;
   String ipaddr=null;
   if (networkId == null) {
     throw new InvalidParameterValueException("Invalid network id is given");
   }
   Account caller=CallContext.current().getCallingAccount();
-  NicVO nicVO=_nicDao.findById(nicId);
+  final NicVO nicVO=_nicDao.findById(nicId);
   if (nicVO == null) {
     throw new InvalidParameterValueException("There is no nic for the " + nicId);
   }
@@ -23,8 +20,8 @@
   if (network == null) {
     throw new InvalidParameterValueException("Invalid network id is given");
   }
-  accountId=ipOwner.getAccountId();
-  domainId=ipOwner.getDomainId();
+  final Long accountId=ipOwner.getAccountId();
+  final Long domainId=ipOwner.getDomainId();
   NetworkOfferingVO ntwkOff=_networkOfferingDao.findById(network.getNetworkOfferingId());
   DataCenter dc=_dcDao.findById(network.getDataCenterId());
   DataCenter zone=_entityMgr.findById(DataCenter.class,zoneId);
@@ -65,22 +62,25 @@
     s_logger.error("AddIpToVMNic is not supported in this network...");
     return null;
   }
-  NicSecondaryIpVO secondaryIpVO;
   if (ipaddr != null) {
-    Transaction txn=Transaction.currentTxn();
-    txn.start();
-    boolean nicSecondaryIpSet=nicVO.getSecondaryIp();
-    if (!nicSecondaryIpSet) {
-      nicVO.setSecondaryIp(true);
-      s_logger.debug("Setting nics table ...");
-      _nicDao.update(nicId,nicVO);
+    final String addrFinal=ipaddr;
+    long id=Transaction.execute(new TransactionCallback<Long>(){
+      @Override public Long doInTransaction(      TransactionStatus status){
+        boolean nicSecondaryIpSet=nicVO.getSecondaryIp();
+        if (!nicSecondaryIpSet) {
+          nicVO.setSecondaryIp(true);
+          s_logger.debug("Setting nics table ...");
+          _nicDao.update(nicId,nicVO);
+        }
+        s_logger.debug("Setting nic_secondary_ip table ...");
+        Long vmId=nicVO.getInstanceId();
+        NicSecondaryIpVO secondaryIpVO=new NicSecondaryIpVO(nicId,addrFinal,vmId,accountId,domainId,networkId);
+        _nicSecondaryIpDao.persist(secondaryIpVO);
+        return secondaryIpVO.getId();
+      }
     }
-    s_logger.debug("Setting nic_secondary_ip table ...");
-    vmId=nicVO.getInstanceId();
-    secondaryIpVO=new NicSecondaryIpVO(nicId,ipaddr,vmId,accountId,domainId,networkId);
-    _nicSecondaryIpDao.persist(secondaryIpVO);
-    txn.commit();
-    return getNicSecondaryIp(secondaryIpVO.getId());
+);
+    return getNicSecondaryIp(id);
   }
  else {
     return null;

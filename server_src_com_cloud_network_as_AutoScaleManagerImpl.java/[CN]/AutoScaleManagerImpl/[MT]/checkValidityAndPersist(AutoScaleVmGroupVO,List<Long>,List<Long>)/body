@@ -4,7 +4,7 @@
   int interval=vmGroup.getInterval();
   List<Counter> counters=new ArrayList<Counter>();
   List<AutoScalePolicyVO> policies=new ArrayList<AutoScalePolicyVO>();
-  List<Long> policyIds=new ArrayList<Long>();
+  final List<Long> policyIds=new ArrayList<Long>();
   List<Long> currentScaleUpPolicyIds=new ArrayList<Long>();
   List<Long> currentScaleDownPolicyIds=new ArrayList<Long>();
   if (vmGroup.getCreated() != null) {
@@ -45,15 +45,17 @@
   sameOwnerEntities[sameOwnerEntities.length - 2]=loadBalancer;
   sameOwnerEntities[sameOwnerEntities.length - 1]=profileVO;
   _accountMgr.checkAccess(CallContext.current().getCallingAccount(),null,true,sameOwnerEntities);
-  final Transaction txn=Transaction.currentTxn();
-  txn.start();
-  vmGroup=_autoScaleVmGroupDao.persist(vmGroup);
-  if (passedScaleUpPolicyIds != null || passedScaleDownPolicyIds != null) {
-    _autoScaleVmGroupPolicyMapDao.removeByGroupId(vmGroup.getId());
-    for (    Long policyId : policyIds) {
-      _autoScaleVmGroupPolicyMapDao.persist(new AutoScaleVmGroupPolicyMapVO(vmGroup.getId(),policyId));
+  return Transaction.execute(new TransactionCallback<AutoScaleVmGroupVO>(){
+    @Override public AutoScaleVmGroupVO doInTransaction(    TransactionStatus status){
+      AutoScaleVmGroupVO vmGroupNew=_autoScaleVmGroupDao.persist(vmGroup);
+      if (passedScaleUpPolicyIds != null || passedScaleDownPolicyIds != null) {
+        _autoScaleVmGroupPolicyMapDao.removeByGroupId(vmGroupNew.getId());
+        for (        Long policyId : policyIds) {
+          _autoScaleVmGroupPolicyMapDao.persist(new AutoScaleVmGroupPolicyMapVO(vmGroupNew.getId(),policyId));
+        }
+      }
+      return vmGroupNew;
     }
   }
-  txn.commit();
-  return vmGroup;
+);
 }

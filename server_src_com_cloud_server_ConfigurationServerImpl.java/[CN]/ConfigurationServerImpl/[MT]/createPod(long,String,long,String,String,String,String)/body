@@ -17,33 +17,34 @@
  else {
     ipRange="";
   }
-  HostPodVO pod=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
-  Transaction txn=Transaction.currentTxn();
+  final HostPodVO pod=new HostPodVO(podName,zoneId,gateway,cidrAddress,cidrSize,ipRange);
   try {
-    txn.start();
-    if (_podDao.persist(pod) == null) {
-      txn.rollback();
-      throw new InternalErrorException("Failed to create new pod. Please contact Cloud Support.");
-    }
-    if (startIp != null) {
-      _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIp);
-    }
-    String ipNums=_configDao.getValue("linkLocalIp.nums");
-    int nums=Integer.parseInt(ipNums);
-    if (nums > 16 || nums <= 0) {
-      throw new InvalidParameterValueException("The linkLocalIp.nums: " + nums + "is wrong, should be 1~16");
-    }
-    String[] linkLocalIpRanges=NetUtils.getLinkLocalIPRange(nums);
-    if (linkLocalIpRanges == null) {
-      throw new InvalidParameterValueException("The linkLocalIp.nums: " + nums + "may be wrong, should be 1~16");
-    }
+    final String endIpFinal=endIp;
+    Transaction.execute(new TransactionCallbackWithExceptionNoReturn<InternalErrorException>(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status) throws InternalErrorException {
+        if (_podDao.persist(pod) == null) {
+          throw new InternalErrorException("Failed to create new pod. Please contact Cloud Support.");
+        }
+        if (startIp != null) {
+          _zoneDao.addPrivateIpAddress(zoneId,pod.getId(),startIp,endIpFinal);
+        }
+        String ipNums=_configDao.getValue("linkLocalIp.nums");
+        int nums=Integer.parseInt(ipNums);
+        if (nums > 16 || nums <= 0) {
+          throw new InvalidParameterValueException("The linkLocalIp.nums: " + nums + "is wrong, should be 1~16");
+        }
+        String[] linkLocalIpRanges=NetUtils.getLinkLocalIPRange(nums);
+        if (linkLocalIpRanges == null) {
+          throw new InvalidParameterValueException("The linkLocalIp.nums: " + nums + "may be wrong, should be 1~16");
+        }
  else {
-      _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
+          _zoneDao.addLinkLocalIpAddress(zoneId,pod.getId(),linkLocalIpRanges[0],linkLocalIpRanges[1]);
+        }
+      }
     }
-    txn.commit();
+);
   }
  catch (  Exception e) {
-    txn.rollback();
     s_logger.error("Unable to create new pod due to " + e.getMessage(),e);
     throw new InternalErrorException("Failed to create new pod. Please contact Cloud Support.");
   }
