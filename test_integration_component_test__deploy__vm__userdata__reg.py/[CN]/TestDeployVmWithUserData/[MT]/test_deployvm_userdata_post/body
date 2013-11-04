@@ -1,0 +1,40 @@
+@attr(tags=['simulator', 'devcloud', 'basic', 'advanced'])
+def test_deployvm_userdata_post(self):
+    'Test userdata as POST, size > 2k\n        '
+    self.userdata = base64.b64encode(self.userdata)
+    self.services['virtual_machine']['userdata'] = self.userdata
+    deployVmResponse = VirtualMachine.create(self.apiClient, services=self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id, zoneid=self.zone.id, method='POST')
+    vms = list_virtual_machines(self.apiClient, account=self.account.name, domainid=self.account.domainid, id=deployVmResponse.id)
+    self.assert_((len(vms) > 0), ('There are no Vms deployed in the account %s' % self.account.name))
+    vm = vms[0]
+    self.assert_((vm.id == str(deployVmResponse.id)), 'Vm deployed is different from the test')
+    self.assert_((vm.state == 'Running'), 'VM is not in Running state')
+    ip_addr = deployVmResponse.ipaddress
+    if (self.zone.networktype == 'Basic'):
+        list_router_response = list_routers(self.apiClient, listall='true')
+    else:
+        list_router_response = list_routers(self.apiClient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(list_router_response, list), True, 'Check list response returns a valid list')
+    router = list_router_response[0]
+    hosts = list_hosts(self.apiClient, zoneid=router.zoneid, type='Routing', state='Up', id=router.hostid)
+    self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+    host = hosts[0]
+    self.debug(('Router ID: %s, state: %s' % (router.id, router.state)))
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    host.user = 'root'
+    host.passwd = 'password'
+    cmd = (('cat /var/www/html/userdata/' + deployVmResponse.ipaddress) + '/user-data')
+    if (self.apiClient.hypervisor.lower() == 'vmware'):
+        try:
+            result = get_process_status(self.apiClient.connection.mgtSvr, 22, self.apiClient.connection.user, self.apiClient.connection.passwd, router.linklocalip, cmd, hypervisor=self.apiClient.hypervisor)
+            res = str(result)
+            self.assertEqual(res.__contains__(self.userdata), True, 'Userdata Not applied Check the failures')
+        except KeyError:
+            self.skipTest('Marvin configuration has no host credentials to check USERDATA')
+    else:
+        try:
+            result = get_process_status(host.ipaddress, 22, host.user, host.passwd, router.linklocalip, cmd)
+            res = str(result)
+            self.assertEqual(res.__contains__(self.userdata), True, 'Userdata Not applied Check the failures')
+        except KeyError:
+            self.skipTest('Marvin configuration has no host credentials to check router user data')

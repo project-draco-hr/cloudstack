@@ -1,0 +1,22 @@
+@attr(tags=['advanced'])
+def test_vpc_remote_access_vpn(self):
+    'Test VPN in VPC'
+    networkOffering = NetworkOffering.list(self.apiclient, name='DefaultIsolatedNetworkOfferingForVpcNetworks')
+    self.assert_(((networkOffering is not None) and (len(networkOffering) > 0)), 'No VPC based network offering')
+    vpcOffering = VpcOffering.list(self.apiclient, isdefault=True)
+    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    vpc = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    self.assert_((vpc is not None), 'VPC creation failed')
+    self.debug(('VPC %s created' % vpc.id))
+    ntwk = Network.create(apiclient=self.apiclient, services=self.services['ntwk'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc.id)
+    self.assertIsNotNone(ntwk, 'Network failed to create')
+    self.debug(('Network %s created in VPC %s' % (ntwk.id, vpc.id)))
+    vm = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, networkids=ntwk.id)
+    self.assert_((vm is not None), 'VM failed to deploy')
+    self.assert_((vm.state == 'Running'), 'VM is not running')
+    self.debug(('VM %s deployed in VPC %s' % (vm.id, vpc.id)))
+    src_nat_list = PublicIPAddress.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True, issourcenat=True, vpcid=vpc.id)
+    ip = src_nat_list[0]
+    vpn = Vpn.create(self.apiclient, publicipid=ip.id, account=self.account.name, domainid=self.account.domainid)
+    vpnUser = VpnUser.create(self.apiclient, account=self.account.name, domainid=self.account.domainid, username=self.services['vpn_user']['username'], password=self.services['vpn_user']['password'])
+    vpn.delete(self.apiclient)

@@ -1,0 +1,88 @@
+{
+  Network network=lookupTestNetwork("test-db-only-net");
+  if (network == null) {
+    network=createTestNetwork("test-db-only-net");
+  }
+  UserVm vm=_server.createVM("test-db-only-vm",network);
+  try {
+    createFloatingIp(network,vm);
+  }
+ catch (  Exception e) {
+    fail("unable to create floating ip");
+  }
+  ((ApiConnectorMock)_api).initConfig();
+  _contrailMgr.getDatabase().initDb();
+  net.juniper.contrail.api.types.Domain domain=new net.juniper.contrail.api.types.Domain();
+  domain.setName("test-vnc-only-domain--1");
+  domain.setUuid(UUID.randomUUID().toString());
+  try {
+    assertTrue(_api.create(domain));
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  Project project=new Project();
+  project.setName("test-vnc-only-project-1");
+  project.setUuid(UUID.randomUUID().toString());
+  project.setParent(domain);
+  try {
+    assertTrue(_api.create(project));
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  VirtualNetwork net=new VirtualNetwork();
+  net.setName("test-vnc-only-net-1");
+  net.setUuid(UUID.randomUUID().toString());
+  net.setParent(project);
+  NetworkIpam ipam=null;
+  try {
+    String ipam_id=_api.findByName(NetworkIpam.class,null,"default-network-ipam");
+    assertNotNull(ipam_id);
+    ipam=(NetworkIpam)_api.findById(NetworkIpam.class,ipam_id);
+    assertNotNull(ipam);
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  VnSubnetsType subnet=new VnSubnetsType();
+  subnet.addIpamSubnets(new SubnetType("10.0.2.0",24),"10.0.2.254");
+  net.addNetworkIpam(ipam,subnet);
+  VirtualMachine vncVm=new VirtualMachine();
+  vncVm.setName("test-vnc-only-vm-1");
+  try {
+    assertTrue(_api.create(vncVm));
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  VirtualMachineInterface vmi=new VirtualMachineInterface();
+  vmi.setParent(vncVm);
+  vmi.setName("test-vnc-only-vmi-1");
+  try {
+    assertTrue(_api.create(vmi));
+    assertTrue(_api.create(net));
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  InstanceIp ip_obj=new InstanceIp();
+  ip_obj.setName(net.getName() + ":0");
+  ip_obj.setVirtualNetwork(net);
+  ip_obj.setVirtualMachineInterface(vmi);
+  try {
+    assertTrue(_api.create(ip_obj));
+    assertTrue(_api.read(ip_obj));
+    assertNotNull(ip_obj.getAddress());
+  }
+ catch (  IOException ex) {
+    fail(ex.getMessage());
+  }
+  if (_dbSync.syncAll(DBSyncGeneric.SYNC_MODE_UPDATE) == ServerDBSync.SYNC_STATE_OUT_OF_SYNC) {
+    s_logger.info("# Cloudstack DB & VNC are out of sync - resync done");
+  }
+  if (_dbSync.syncAll(DBSyncGeneric.SYNC_MODE_CHECK) == ServerDBSync.SYNC_STATE_OUT_OF_SYNC) {
+    s_logger.info("# Cloudstack DB & VNC are still out of sync");
+    fail("DB Sync failed");
+  }
+}

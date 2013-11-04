@@ -6,10 +6,10 @@
     VmwareContext context=hostService.getServiceContext(null);
     VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,null);
     VolumeObjectTO vol=(VolumeObjectTO)cmd.getData();
-    PrimaryDataStoreTO store=(PrimaryDataStoreTO)vol.getDataStore();
+    DataStoreTO store=vol.getDataStore();
     ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,store.getUuid());
     if (morDs == null) {
-      String msg="Unable to find datastore based on volume mount point " + store.getPath();
+      String msg="Unable to find datastore based on volume mount point " + store.getUuid();
       s_logger.error(msg);
       throw new Exception(msg);
     }
@@ -33,9 +33,12 @@
           if (this.resource.getVmState(vmMo) != State.Stopped) {
             vmMo.safePowerOff(_shutdown_waitMs);
           }
+          List<VirtualDisk> virtualDisks=vmMo.getVirtualDisks();
+          List<String> managedIqns=getManagedIqnsFromVirtualDisks(virtualDisks);
           List<String> detachedDisks=vmMo.detachAllDisksExcept(vol.getPath(),diskInfo != null ? diskInfo.getDiskDeviceBusName() : null);
           VmwareStorageLayoutHelper.moveVolumeToRootFolder(new DatacenterMO(context,morDc),detachedDisks);
           vmMo.destroy();
+          this.hostService.removeManagedTargetsFromCluster(managedIqns);
           for (          NetworkDetails netDetails : networks) {
             if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {
               if (netDetails.getVMMorsOnNetwork() == null || netDetails.getVMMorsOnNetwork().length == 1) {

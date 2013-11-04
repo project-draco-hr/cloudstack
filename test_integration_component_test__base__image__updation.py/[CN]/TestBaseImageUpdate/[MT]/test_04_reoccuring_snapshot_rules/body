@@ -1,0 +1,50 @@
+def test_04_reoccuring_snapshot_rules(self):
+    '\n        1) Create a VM using the Service offering IsVolatile enabled\n        2) Apply a recurring snapshot rule on the  Volume.\n        3) After a couple of snapshots are taken reboot the VM.\n\n        Verify the following conditions\n        1) New root disk should be formed\n        2) The recurring snapshot rule should be deleted\n        '
+    vms = VirtualMachine.list(self.apiclient, id=self.vm_with_reset.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    vm_with_reset = vm_list_validation_result[1]
+    vm_with_reset_root_disk_id = self.get_root_device_uuid_for_vm(vm_with_reset.id, vm_with_reset.rootdeviceid)
+    now = datetime.now()
+    delta = timedelta(minutes=15)
+    scheduled_time = (now + delta)
+    self.services['recurring_snapshot']['schedule'] = scheduled_time.minute
+    self.debug('Creating recurring snapshot policy for root disk on vm created with IsVolatile=True')
+    self.debug(('Snapshot Policy - Type : %s Scheduled minute : %s' % (self.services['recurring_snapshot']['intervaltype'], self.services['recurring_snapshot']['schedule'])))
+    recurring_snapshot = SnapshotPolicy.create(self.apiclient, vm_with_reset_root_disk_id, self.services['recurring_snapshot'])
+    list_snapshots_policy = SnapshotPolicy.list(self.apiclient, id=recurring_snapshot.id, volumeid=vm_with_reset_root_disk_id)
+    snapshot_list_validation_result = validateList(list_snapshots_policy)
+    self.assertEqual(snapshot_list_validation_result[0], PASS, ('snapshot list validation failed due to %s' % snapshot_list_validation_result[2]))
+    snapshots_policy = snapshot_list_validation_result[1]
+    self.assertEqual(snapshots_policy.id, recurring_snapshot.id, 'Check recurring snapshot id in list resources call')
+    self.assertEqual(snapshots_policy.maxsnaps, self.services['recurring_snapshot']['maxsnaps'], 'Check interval type in list resources call')
+    sleep_seconds = (delta.seconds + 600)
+    sleep_minutes = (sleep_seconds / 60)
+    self.debug(('Sleeping for %s minutes till the volume is snapshoted' % sleep_minutes))
+    time.sleep(sleep_seconds)
+    retriesCount = self.services['retriesCount']
+    while True:
+        snapshots = Snapshot.list(self.apiclient, volumeid=vm_with_reset_root_disk_id, intervaltype=self.services['recurring_snapshot']['intervaltype'], snapshottype=RECURRING, listall=True)
+        snapshot_list_validation_result = validateList(snapshots)
+        if (snapshot_list_validation_result[0] == PASS):
+            break
+        elif (retriesCount == 0):
+            self.fail('Failed to get snapshots list')
+        time.sleep(60)
+        retriesCount = (retriesCount - 1)
+    try:
+        self.vm_with_reset.reboot(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to reboot the virtual machine. Error: %s' % e))
+    self.debug('Checking whether root disk of VM with isVolatile=True was destroyed')
+    vms = VirtualMachine.list(self.apiclient, id=self.vm_with_reset.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('list validation failed due to %s' % vm_list_validation_result[2]))
+    vm_with_reset_after_reboot = vm_list_validation_result[1]
+    vm_with_reset_root_disk_id_after_reboot = self.get_root_device_uuid_for_vm(vm_with_reset_after_reboot.id, vm_with_reset_after_reboot.rootdeviceid)
+    self.assertNotEqual(vm_with_reset_root_disk_id, vm_with_reset_root_disk_id_after_reboot, ('VM created with IsVolatile=True has same rootdeviceid : %s after reboot' % vm_with_reset_root_disk_id_after_reboot))
+    self.assertEqual(vm_with_reset.nic[0].ipaddress, vm_with_reset_after_reboot.nic[0].ipaddress, ("VM created with IsVolatile=True doesn't have same ip after reboot. Got : %s Expected : %s" % (vm_with_reset_after_reboot.nic[0].ipaddress, vm_with_reset.nic[0].ipaddress)))
+    self.debug('Checking whether snapshot rule for VM with isVolatile=True was destroyed                    Here we are passing root disk id of vm before reboot which does not exist hence                   listing should fail')
+    with self.assertRaises(Exception):
+        list_snapshots_policy = SnapshotPolicy.list(self.apiclient, volumeid=vm_with_reset_root_disk_id)
+    return

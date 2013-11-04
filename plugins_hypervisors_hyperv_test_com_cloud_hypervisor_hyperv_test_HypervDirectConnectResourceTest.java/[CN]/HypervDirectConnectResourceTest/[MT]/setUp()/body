@@ -1,0 +1,79 @@
+{
+  final Map<String,Object> params=PropertiesUtil.toMap(loadProperties());
+  params.put("local.storage.uuid",s_testLocalStoreUUID);
+  File testSecondarStoreDir=new File(s_testSecondaryStoreLocalPath);
+  if (!testSecondarStoreDir.exists()) {
+    testSecondarStoreDir.mkdirs();
+  }
+  Assert.assertTrue("Need to be able to create the folder " + s_testSecondaryStoreLocalPath,testSecondarStoreDir.exists());
+  try {
+    params.put("local.secondary.storage.path",testSecondarStoreDir.getCanonicalPath());
+  }
+ catch (  IOException e1) {
+    Assert.fail("No canonical path for " + testSecondarStoreDir.getAbsolutePath());
+  }
+  File testPoolDir=new File(s_testLocalStorePath);
+  if (!testPoolDir.exists()) {
+    testPoolDir.mkdirs();
+  }
+  Assert.assertTrue("To simulate local file system Storage Pool, " + " you need folder at " + testPoolDir.getPath(),testPoolDir.exists() && testPoolDir.isDirectory());
+  try {
+    s_testLocalStorePath=testPoolDir.getCanonicalPath();
+  }
+ catch (  IOException e) {
+    Assert.fail("No canonical path for " + testPoolDir.getAbsolutePath());
+  }
+  params.put("local.storage.path",s_testLocalStorePath);
+  File testVolWorks=new File(s_testLocalStorePath + File.separator + s_testSampleVolumeWorkingUUID);
+  if (!testVolWorks.exists()) {
+    ReadableByteChannel rbc;
+    try {
+      URL sampleLegitDiskImageURL=new URL("http://s3-eu-west-1.amazonaws.com/cshv3eu/SmallDisk.vhdx");
+      rbc=Channels.newChannel(sampleLegitDiskImageURL.openStream());
+      FileOutputStream fos=new FileOutputStream(testVolWorks);
+      fos.getChannel().transferFrom(rbc,0,Long.MAX_VALUE);
+    }
+ catch (    IOException e) {
+      e.printStackTrace();
+    }
+  }
+  Assert.assertTrue("Need to put a sample working virtual disk at " + testVolWorks.getPath(),testVolWorks.exists());
+  try {
+    s_testSampleVolumeWorkingURIJSON=s_gson.toJson(testVolWorks.getCanonicalPath());
+  }
+ catch (  IOException e) {
+    Assert.fail("No canonical path for " + testPoolDir.getAbsolutePath());
+  }
+  FilenameFilter vhdsFilt=new FilenameFilter(){
+    @Override public boolean accept(    final File directory,    final String fileName){
+      return fileName.endsWith(".vhdx") || fileName.endsWith(".vhd");
+    }
+  }
+;
+  for (  File file : testPoolDir.listFiles(vhdsFilt)) {
+    if (file.getName().equals(testVolWorks.getName())) {
+      continue;
+    }
+    Assert.assertTrue("Should have deleted file " + file.getPath(),file.delete());
+    s_logger.info("Cleaned up by delete file " + file.getPath());
+  }
+  s_testSampleVolumeTempURIJSON=createTestDiskImageFromExistingImage(testVolWorks,s_testLocalStorePath,s_testSampleVolumeTempUUID);
+  s_logger.info("Created " + s_testSampleVolumeTempURIJSON);
+  s_testSampleVolumeCorruptURIJSON=createTestDiskImageFromExistingImage(testVolWorks,s_testLocalStorePath,s_testSampleVolumeCorruptUUID);
+  s_logger.info("Created " + s_testSampleVolumeCorruptURIJSON);
+  createTestDiskImageFromExistingImage(testVolWorks,s_testLocalStorePath,s_testSampleTemplateUUID);
+  s_testSampleTemplateURLJSON=s_testSampleTemplateUUID;
+  s_logger.info("Created " + s_testSampleTemplateURLJSON + " in local storage.");
+  createTestDiskImageFromExistingImage(testVolWorks,testSecondarStoreDir.getAbsolutePath(),"af39aa7f-2b12-37e1-86d3-e23f2f005101.vhdx");
+  s_logger.info("Created " + "af39aa7f-2b12-37e1-86d3-e23f2f005101.vhdx" + " in secondary (NFS) storage.");
+  s_testLocalStorePathJSON=s_gson.toJson(s_testLocalStorePath);
+  String agentIp=(String)params.get("ipaddress");
+  s_logger.info("Test using agent IP address " + agentIp);
+  params.put("agentIp",agentIp);
+  setTestJsonResult(params);
+  s_hypervresource.configure("hypervresource",params);
+  s_logger.info("setUp complete, sample StoragePool at " + s_testLocalStorePathJSON + " sample template at "+ s_testSampleTemplateURLJSON);
+  s_agentExecutable=(String)params.get("agent.executable");
+  s_testPrimaryDataStoreHost=(String)params.get("ipaddress");
+  agentCreation();
+}

@@ -1,0 +1,74 @@
+{
+  s_logger.debug("createServiceInstance by " + owner.getAccountName());
+  if (left.getTrafficType() == TrafficType.Guest) {
+    _networkModel.checkNetworkPermissions(owner,left);
+  }
+  if (right.getTrafficType() == TrafficType.Guest) {
+    _networkModel.checkNetworkPermissions(owner,right);
+  }
+  final ApiConnector api=_manager.getApiConnector();
+  final VirtualNetwork netLeft;
+  try {
+    netLeft=(VirtualNetwork)api.findById(VirtualNetwork.class,left.getUuid());
+  }
+ catch (  IOException ex) {
+    throw new CloudRuntimeException("Unable to read virtual-network object",ex);
+  }
+  final VirtualNetwork netRight;
+  try {
+    netRight=(VirtualNetwork)api.findById(VirtualNetwork.class,right.getUuid());
+  }
+ catch (  IOException ex) {
+    throw new CloudRuntimeException("Unable to read virtual-network object",ex);
+  }
+  net.juniper.contrail.api.types.Project project;
+  try {
+    project=_manager.getVncProject(owner.getDomainId(),owner.getAccountId());
+  }
+ catch (  IOException ex) {
+    s_logger.warn("read project",ex);
+    throw new CloudRuntimeException(ex);
+  }
+  try {
+    final String srvid=api.findByName(ServiceInstance.class,project,name);
+    if (srvid != null) {
+      throw new InvalidParameterValueException("service-instance " + name + " already exists uuid="+ srvid);
+    }
+  }
+ catch (  IOException ex) {
+    s_logger.warn("service-instance lookup",ex);
+    throw new CloudRuntimeException(ex);
+  }
+  ServiceInstanceModel serviceModel=new ServiceInstanceModel(project,name,template,serviceOffering,netLeft,netRight);
+  try {
+    serviceModel.update(_manager.getModelController());
+  }
+ catch (  Exception ex) {
+    s_logger.warn("service-instance update",ex);
+    throw new CloudRuntimeException(ex);
+  }
+  s_logger.debug("service-instance object created");
+  ServiceInstance siObj;
+  try {
+    _manager.getDatabase().getServiceInstances().add(serviceModel);
+    siObj=serviceModel.getServiceInstance();
+  }
+ catch (  Exception ex) {
+    s_logger.warn("DB add",ex);
+    throw new CloudRuntimeException(ex);
+  }
+  String svmName=name.replace(" ","_") + "-1";
+  ServiceVirtualMachine svm=createServiceVM(zone,owner,template,serviceOffering,svmName,siObj,left,right);
+  s_logger.debug("created VMInstance " + svm.getUuid());
+  VirtualMachineModel instanceModel=new VirtualMachineModel(svm,svm.getUuid());
+  _manager.getDatabase().getVirtualMachines().add(instanceModel);
+  try {
+    instanceModel.setServiceInstance(_manager.getModelController(),svm,serviceModel);
+    instanceModel.update(_manager.getModelController());
+  }
+ catch (  Exception ex) {
+    s_logger.warn("service virtual-machine update",ex);
+    throw new CloudRuntimeException(ex);
+  }
+  return svm;
+}

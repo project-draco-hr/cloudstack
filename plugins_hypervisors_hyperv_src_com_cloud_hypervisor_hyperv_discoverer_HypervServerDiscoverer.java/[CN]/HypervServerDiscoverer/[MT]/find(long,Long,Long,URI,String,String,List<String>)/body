@@ -1,0 +1,83 @@
+{
+  if (s_logger.isInfoEnabled()) {
+    s_logger.info("Discover host. dc(zone): " + dcId + ", pod: "+ podId+ ", cluster: "+ clusterId+ ", uri host: "+ uri.getHost());
+  }
+  if (podId == null) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("No pod is assigned, skipping the discovery in" + " Hyperv discoverer");
+    }
+    return null;
+  }
+  ClusterVO cluster=_clusterDao.findById(clusterId);
+  if (cluster == null) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("No cluster in database for cluster id " + clusterId);
+    }
+    return null;
+  }
+  if (cluster.getHypervisorType() != HypervisorType.Hyperv) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Cluster " + clusterId + "is not for Hyperv hypervisors");
+    }
+    return null;
+  }
+  if (!uri.getScheme().equals("http")) {
+    String msg="urlString is not http so we're not taking care of" + " the discovery for this: " + uri;
+    s_logger.debug(msg);
+    return null;
+  }
+  try {
+    String hostname=uri.getHost();
+    InetAddress ia=InetAddress.getByName(hostname);
+    String agentIp=ia.getHostAddress();
+    String uuidSeed=agentIp;
+    String guidWithTail=calcServerResourceGuid(uuidSeed) + "-HypervResource";
+    if (_resourceMgr.findHostByGuid(guidWithTail) != null) {
+      s_logger.debug("Skipping " + agentIp + " because "+ guidWithTail+ " is already in the database.");
+      return null;
+    }
+    s_logger.info("Creating" + HypervDirectConnectResource.class.getName() + " HypervDummyResourceBase for zone/pod/cluster "+ dcId+ "/"+ podId+ "/"+ clusterId);
+    if (cluster.getGuid() == null) {
+      cluster.setGuid(UUID.nameUUIDFromBytes(String.valueOf(clusterId).getBytes()).toString());
+      _clusterDao.update(clusterId,cluster);
+    }
+    Map<String,Object> params=new HashMap<String,Object>();
+    params.put("zone",Long.toString(dcId));
+    params.put("pod",Long.toString(podId));
+    params.put("cluster",Long.toString(clusterId));
+    params.put("guid",guidWithTail);
+    params.put("ipaddress",agentIp);
+    params.put("sec.storage.url",getSecondaryStorageStoreUrl(dcId));
+    Map<String,String> details=new HashMap<String,String>();
+    details.put("url",uri.getHost());
+    details.put("username",username);
+    details.put("password",password);
+    details.put("cluster.guid",cluster.getGuid());
+    params.putAll(details);
+    HypervDirectConnectResource resource=new HypervDirectConnectResource();
+    resource.configure(agentIp,params);
+    ReadyCommand ping=new ReadyCommand();
+    Answer pingAns=resource.executeRequest(ping);
+    if (pingAns == null || !pingAns.getResult()) {
+      String errMsg="Agent not running, or no route to agent on at " + uri;
+      s_logger.debug(errMsg);
+      throw new DiscoveryException(errMsg);
+    }
+    Map<HypervDirectConnectResource,Map<String,String>> resources=new HashMap<HypervDirectConnectResource,Map<String,String>>();
+    resources.put(resource,details);
+    return resources;
+  }
+ catch (  ConfigurationException e) {
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,dcId,podId,"Unable to add " + uri.getHost(),"Error is " + e.getMessage());
+    s_logger.warn("Unable to instantiate " + uri.getHost(),e);
+  }
+catch (  UnknownHostException e) {
+    _alertMgr.sendAlert(AlertManager.ALERT_TYPE_HOST,dcId,podId,"Unable to add " + uri.getHost(),"Error is " + e.getMessage());
+    s_logger.warn("Unable to instantiate " + uri.getHost(),e);
+  }
+catch (  Exception e) {
+    String msg=" can't setup agent, due to " + e.toString() + " - "+ e.getMessage();
+    s_logger.warn(msg);
+  }
+  return null;
+}

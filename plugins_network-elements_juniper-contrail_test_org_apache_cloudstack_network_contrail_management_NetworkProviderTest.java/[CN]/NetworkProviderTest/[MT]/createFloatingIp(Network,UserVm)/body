@@ -1,0 +1,43 @@
+{
+  BaseCmd cmd=new AssociateIPAddrCmd();
+  BaseCmd proxy=ComponentContext.inject(cmd);
+  Account system=_accountMgr.getSystemAccount();
+  DataCenter zone=_server.getZone();
+  ManagementServerMock.setParameter(proxy,"accountName",BaseCmd.CommandType.STRING,system.getAccountName());
+  ManagementServerMock.setParameter(proxy,"domainId",BaseCmd.CommandType.LONG,Domain.ROOT_DOMAIN);
+  ManagementServerMock.setParameter(proxy,"zoneId",BaseCmd.CommandType.LONG,zone.getId());
+  ManagementServerMock.setParameter(proxy,"networkId",BaseCmd.CommandType.LONG,network.getId());
+  try {
+    ((AssociateIPAddrCmd)cmd).create();
+    ((AssociateIPAddrCmd)cmd).execute();
+  }
+ catch (  Exception e) {
+    s_logger.debug("AssociateIPAddrCmd exception: " + e);
+    e.printStackTrace();
+    throw e;
+  }
+  SearchBuilder<IPAddressVO> searchBuilder=_ipAddressDao.createSearchBuilder();
+  searchBuilder.and("sourceNat",searchBuilder.entity().isSourceNat(),Op.EQ);
+  searchBuilder.and("network",searchBuilder.entity().getAssociatedWithNetworkId(),Op.EQ);
+  searchBuilder.and("dataCenterId",searchBuilder.entity().getDataCenterId(),Op.EQ);
+  searchBuilder.and("associatedWithVmId",searchBuilder.entity().getAssociatedWithVmId(),Op.NULL);
+  SearchCriteria<IPAddressVO> sc=searchBuilder.create();
+  sc.setParameters("sourceNat",false);
+  sc.setParameters("network",network.getId());
+  List<IPAddressVO> publicIps=_ipAddressDao.search(sc,null);
+  assertNotNull(publicIps);
+  cmd=new EnableStaticNatCmd();
+  proxy=ComponentContext.inject(cmd);
+  ManagementServerMock.setParameter(proxy,"ipAddressId",BaseCmd.CommandType.LONG,publicIps.get(0).getId());
+  ManagementServerMock.setParameter(proxy,"networkId",BaseCmd.CommandType.LONG,network.getId());
+  ManagementServerMock.setParameter(proxy,"virtualMachineId",BaseCmd.CommandType.LONG,vm.getId());
+  try {
+    proxy.execute();
+  }
+ catch (  Exception e) {
+    s_logger.debug("EnableStaticNatCmd exception: " + e);
+    e.printStackTrace();
+    throw e;
+  }
+  return publicIps.get(0);
+}
