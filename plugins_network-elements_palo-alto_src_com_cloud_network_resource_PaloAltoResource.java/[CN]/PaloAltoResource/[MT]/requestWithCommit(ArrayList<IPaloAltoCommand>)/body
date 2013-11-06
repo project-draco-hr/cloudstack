@@ -1,0 +1,108 @@
+{
+  boolean result=true;
+  if (commandList.size() > 0) {
+    String pending_changes;
+    Map<String,String> check_params=new HashMap<String,String>();
+    check_params.put("type","op");
+    check_params.put("cmd","<check><pending-changes></pending-changes></check>");
+    String check_response=request(PaloAltoMethod.GET,check_params);
+    Document check_doc=getDocument(check_response);
+    XPath check_xpath=XPathFactory.newInstance().newXPath();
+    try {
+      XPathExpression expr=check_xpath.compile("/response[@status='success']/result/text()");
+      pending_changes=(String)expr.evaluate(check_doc,XPathConstants.STRING);
+    }
+ catch (    XPathExpressionException e) {
+      throw new ExecutionException(e.getCause().getMessage());
+    }
+    if (pending_changes.equals("yes")) {
+      throw new ExecutionException("The Palo Alto has uncommited changes, so no changes can be made.  Try again later or contact your administrator.");
+    }
+ else {
+      String add_lock_status;
+      Map<String,String> add_lock_params=new HashMap<String,String>();
+      add_lock_params.put("type","op");
+      add_lock_params.put("cmd","<request><config-lock><add></add></config-lock></request>");
+      String add_lock_response=request(PaloAltoMethod.GET,add_lock_params);
+      Document add_lock_doc=getDocument(add_lock_response);
+      XPath add_lock_xpath=XPathFactory.newInstance().newXPath();
+      try {
+        XPathExpression expr=add_lock_xpath.compile("/response[@status='success']/result/text()");
+        add_lock_status=(String)expr.evaluate(add_lock_doc,XPathConstants.STRING);
+      }
+ catch (      XPathExpressionException e) {
+        throw new ExecutionException(e.getCause().getMessage());
+      }
+      if (add_lock_status.length() == 0) {
+        throw new ExecutionException("The Palo Alto is locked, no changes can be made at this time.");
+      }
+      try {
+        for (        IPaloAltoCommand command : commandList) {
+          result=(result && command.execute());
+        }
+        String commit_job_id;
+        Map<String,String> commit_params=new HashMap<String,String>();
+        commit_params.put("type","commit");
+        commit_params.put("cmd","<commit></commit>");
+        String commit_response=requestWithPolling(PaloAltoMethod.GET,commit_params);
+        Document commit_doc=getDocument(commit_response);
+        XPath commit_xpath=XPathFactory.newInstance().newXPath();
+        try {
+          XPathExpression expr=commit_xpath.compile("/response[@status='success']/result/job/id/text()");
+          commit_job_id=(String)expr.evaluate(commit_doc,XPathConstants.STRING);
+        }
+ catch (        XPathExpressionException e) {
+          throw new ExecutionException(e.getCause().getMessage());
+        }
+        if (commit_job_id.length() == 0) {
+          String remove_lock_status;
+          Map<String,String> remove_lock_params=new HashMap<String,String>();
+          remove_lock_params.put("type","op");
+          remove_lock_params.put("cmd","<request><config-lock><remove></remove></config-lock></request>");
+          String remove_lock_response=request(PaloAltoMethod.GET,remove_lock_params);
+          Document remove_lock_doc=getDocument(remove_lock_response);
+          XPath remove_lock_xpath=XPathFactory.newInstance().newXPath();
+          try {
+            XPathExpression expr=remove_lock_xpath.compile("/response[@status='success']/result/text()");
+            remove_lock_status=(String)expr.evaluate(remove_lock_doc,XPathConstants.STRING);
+          }
+ catch (          XPathExpressionException e) {
+            throw new ExecutionException(e.getCause().getMessage());
+          }
+          if (remove_lock_status.length() == 0) {
+            throw new ExecutionException("Could not release the Palo Alto device.  Please notify an administrator!");
+          }
+        }
+      }
+ catch (      ExecutionException ex) {
+        String revert_job_id;
+        Map<String,String> revert_params=new HashMap<String,String>();
+        revert_params.put("type","op");
+        revert_params.put("cmd","<load><config><from>running-config.xml</from></config></load>");
+        requestWithPolling(PaloAltoMethod.GET,revert_params);
+        String remove_lock_status;
+        Map<String,String> remove_lock_params=new HashMap<String,String>();
+        remove_lock_params.put("type","op");
+        remove_lock_params.put("cmd","<request><config-lock><remove></remove></config-lock></request>");
+        String remove_lock_response=request(PaloAltoMethod.GET,remove_lock_params);
+        Document remove_lock_doc=getDocument(remove_lock_response);
+        XPath remove_lock_xpath=XPathFactory.newInstance().newXPath();
+        try {
+          XPathExpression expr=remove_lock_xpath.compile("/response[@status='success']/result/text()");
+          remove_lock_status=(String)expr.evaluate(remove_lock_doc,XPathConstants.STRING);
+        }
+ catch (        XPathExpressionException e) {
+          throw new ExecutionException(e.getCause().getMessage());
+        }
+        if (remove_lock_status.length() == 0) {
+          throw new ExecutionException("Could not release the Palo Alto device.  Please notify an administrator!");
+        }
+        throw ex;
+      }
+      return result;
+    }
+  }
+ else {
+    return true;
+  }
+}

@@ -1,0 +1,110 @@
+{
+  String publicIp=rule.getSrcIp();
+  String dstNatName=genDstNatRuleName(publicIp,rule.getId());
+  String publicInterfaceName;
+  String publicVlanTag=rule.getSrcVlanTag();
+  if (publicVlanTag == null || publicVlanTag.equals("untagged")) {
+    publicInterfaceName=genPublicInterfaceName(new Long("9999"));
+  }
+ else {
+    publicInterfaceName=genPublicInterfaceName(new Long(publicVlanTag));
+  }
+switch (prim) {
+case CHECK_IF_EXISTS:
+    Map<String,String> params=new HashMap<String,String>();
+  params.put("type","config");
+params.put("action","get");
+params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/nat/rules/entry[@name='" + dstNatName + "']");
+String response=request(PaloAltoMethod.GET,params);
+boolean result=(validResponse(response) && responseNotEmpty(response));
+s_logger.debug("Destination NAT exists: " + dstNatName + ", "+ result);
+return result;
+case ADD:
+if (manageDstNatRule(cmdList,PaloAltoPrimative.CHECK_IF_EXISTS,rule)) {
+return true;
+}
+String srcService;
+String protocol=rule.getProtocol();
+int[] srcPortRange=rule.getSrcPortRange();
+if (srcPortRange != null) {
+String portRange;
+if (srcPortRange.length == 1 || srcPortRange[0] == srcPortRange[1]) {
+portRange=String.valueOf(srcPortRange[0]);
+}
+ else {
+portRange=String.valueOf(srcPortRange[0]) + "-" + String.valueOf(srcPortRange[1]);
+}
+manageService(cmdList,PaloAltoPrimative.ADD,protocol,portRange,null);
+srcService=genServiceName(protocol,portRange,null);
+}
+ else {
+srcService="any";
+}
+String dstPortXML="";
+int[] dstPortRange=rule.getDstPortRange();
+if (dstPortRange != null) {
+dstPortXML="<translated-port>" + dstPortRange[0] + "</translated-port>";
+}
+Map<String,String> a_sub_params=new HashMap<String,String>();
+a_sub_params.put("type","config");
+a_sub_params.put("action","set");
+a_sub_params.put("xpath","/config/devices/entry/network/interface/" + _publicInterfaceType + "/entry[@name='"+ _publicInterface+ "']/layer3/units/entry[@name='"+ publicInterfaceName+ "']/ip");
+a_sub_params.put("element","<entry name='" + publicIp + "/32'/>");
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.GET,a_sub_params));
+String xml="";
+xml+="<from><member>" + _publicZone + "</member></from>";
+xml+="<to><member>" + _publicZone + "</member></to>";
+xml+="<source><member>any</member></source>";
+xml+="<destination><member>" + publicIp + "</member></destination>";
+xml+="<service>" + srcService + "</service>";
+xml+="<nat-type>ipv4</nat-type>";
+xml+="<to-interface>" + publicInterfaceName + "</to-interface>";
+xml+="<destination-translation><translated-address>" + rule.getDstIp() + "</translated-address>"+ dstPortXML+ "</destination-translation>";
+Map<String,String> a_params=new HashMap<String,String>();
+a_params.put("type","config");
+a_params.put("action","set");
+a_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/nat/rules/entry[@name='" + dstNatName + "']");
+a_params.put("element",xml);
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.POST,a_params));
+return true;
+case DELETE:
+if (!manageDstNatRule(cmdList,PaloAltoPrimative.CHECK_IF_EXISTS,rule)) {
+return true;
+}
+Map<String,String> c_params=new HashMap<String,String>();
+c_params.put("type","config");
+c_params.put("action","get");
+c_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/nat/rules/entry[destination/member[text()='" + publicIp + "']]");
+String c_response=request(PaloAltoMethod.GET,c_params);
+String count="";
+NodeList response_body;
+Document doc=getDocument(c_response);
+XPath xpath=XPathFactory.newInstance().newXPath();
+try {
+XPathExpression expr=xpath.compile("/response[@status='success']/result");
+response_body=(NodeList)expr.evaluate(doc,XPathConstants.NODESET);
+}
+ catch (XPathExpressionException e) {
+throw new ExecutionException(e.getCause().getMessage());
+}
+if (response_body.getLength() > 0 && response_body.item(0).getAttributes().getLength() > 0) {
+count=response_body.item(0).getAttributes().getNamedItem("count").getTextContent();
+}
+Map<String,String> d_params=new HashMap<String,String>();
+d_params.put("type","config");
+d_params.put("action","delete");
+d_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/nat/rules/entry[@name='" + dstNatName + "']");
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.POST,d_params));
+if (!count.equals("") && Integer.parseInt(count) == 1) {
+Map<String,String> d_sub_params=new HashMap<String,String>();
+d_sub_params.put("type","config");
+d_sub_params.put("action","delete");
+d_sub_params.put("xpath","/config/devices/entry/network/interface/" + _publicInterfaceType + "/entry[@name='"+ _publicInterface+ "']/layer3/units/entry[@name='"+ publicInterfaceName+ "']/ip/entry[@name='"+ publicIp+ "/32']");
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.GET,d_sub_params));
+}
+return true;
+default :
+s_logger.debug("Unrecognized command.");
+return false;
+}
+}
