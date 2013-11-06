@@ -14,6 +14,7 @@
       String lbAlgorithm=loadBalancer.getAlgorithm();
       String nsVirtualServerName=generateNSVirtualServerName(srcIp,srcPort);
       String nsMonitorName=generateNSMonitorName(srcIp,srcPort);
+      LbSslCert sslCert=loadBalancer.getSslCert();
       if (loadBalancer.isAutoScaleVmGroupTO()) {
         applyAutoScaleConfig(loadBalancer);
         continue;
@@ -21,6 +22,7 @@
       boolean hasMonitor=false;
       boolean deleteMonitor=false;
       boolean destinationsToAdd=false;
+      boolean deleteCert=false;
       for (      DestinationTO destination : loadBalancer.getDestinations()) {
         if (!destination.isRevoked()) {
           destinationsToAdd=true;
@@ -90,6 +92,23 @@
                 deleteMonitor=true;
               }
             }
+            if (sslCert != null && lbProtocol.equals(NetUtils.SSL_PROTO)) {
+              if (sslCert.isRevoked()) {
+                deleteCert=true;
+              }
+ else {
+                String certName=generateSslCertName(srcIp,srcPort);
+                String keyName=generateSslKeyName(srcIp,srcPort);
+                String certKeyName=generateSslCertKeyName(srcIp,srcPort);
+                if (SSL.isSslCertKeyPresent(_netscalerService,certKeyName)) {
+                  SSL.deleteSslCertKey(_netscalerService,certKeyName);
+                }
+                SSL.uploadCert(_ip,_username,_password,certName,sslCert.getCert().getBytes());
+                SSL.uploadKey(_ip,_username,_password,keyName,sslCert.getKey().getBytes());
+                SSL.createSslCertKey(_netscalerService,certName,keyName,certKeyName,sslCert.getPassword());
+                SSL.bindCertKeyToVserver(_netscalerService,certKeyName,nsVirtualServerName);
+              }
+            }
             if (s_logger.isDebugEnabled()) {
               s_logger.debug("Successfully added LB destination: " + destination.getDestIp() + ":"+ destination.getDestPort()+ " to load balancer "+ srcIp+ ":"+ srcPort);
             }
@@ -152,10 +171,22 @@
           }
           removeLBVirtualServer(nsVirtualServerName);
           deleteMonitor=true;
+          deleteCert=true;
         }
       }
       if (deleteMonitor) {
         removeLBMonitor(nsMonitorName);
+      }
+      if (sslCert != null && deleteCert) {
+        String certName=generateSslCertName(srcIp,srcPort);
+        String keyName=generateSslKeyName(srcIp,srcPort);
+        String certKeyName=generateSslCertKeyName(srcIp,srcPort);
+        if (nsVirtualServerExists(nsVirtualServerName)) {
+          SSL.unbindCertKeyFromVserver(_netscalerService,certKeyName,nsVirtualServerName);
+        }
+        SSL.deleteSslCertKey(_netscalerService,certKeyName);
+        SSL.deleteCertFile(_ip,_username,_password,certName);
+        SSL.deleteKeyFile(_ip,_username,_password,keyName);
       }
     }
     if (s_logger.isInfoEnabled()) {
