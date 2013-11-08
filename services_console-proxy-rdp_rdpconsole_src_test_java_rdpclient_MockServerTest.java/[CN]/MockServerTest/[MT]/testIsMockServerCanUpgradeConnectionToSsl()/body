@@ -1,0 +1,74 @@
+{
+  final byte[] mockClientData1=new byte[]{0x01,0x02,0x03};
+  final byte[] mockServerData1=new byte[]{0x03,0x02,0x01};
+  final byte[] mockClientData2=new byte[]{0x02,0x04,0x02,0x03};
+  final byte[] mockServerData2=new byte[]{0x02,0x02,0x01,0x04};
+  MockServer server=new MockServer(new Packet[]{new Packet("Client hello"){
+{
+      type=CLIENT;
+      data=mockClientData1;
+    }
+  }
+,new Packet("Server hello"){
+{
+      type=SERVER;
+      data=mockServerData1;
+    }
+  }
+,new Packet("Upgrade connection to SSL"){
+{
+      type=UPGRADE_TO_SSL;
+    }
+  }
+,new Packet("Client data over SSL"){
+{
+      type=CLIENT;
+      data=mockClientData2;
+    }
+  }
+,new Packet("Server data over SSL"){
+{
+      type=SERVER;
+      data=mockServerData2;
+    }
+  }
+});
+  server.start();
+  Socket socket=SocketFactory.getDefault().createSocket();
+  try {
+    InetSocketAddress address=server.getAddress();
+    socket.connect(address);
+{
+      InputStream is=socket.getInputStream();
+      OutputStream os=socket.getOutputStream();
+      os.write(mockClientData1);
+      byte actualData[]=new byte[mockServerData1.length];
+      int actualDataLength=is.read(actualData);
+      assertEquals("Unexpected length of actual data read from server.",mockServerData1.length,actualDataLength);
+      for (int i=0; i < actualDataLength; i++) {
+        assertEquals("Unexpected byte #" + i + " in response",mockServerData1[i],actualData[i]);
+      }
+    }
+{
+      final SSLSocketFactory sslSocketFactory=(SSLSocketFactory)SSLSocketFactory.getDefault();
+      SSLSocket sslSocket=(SSLSocket)sslSocketFactory.createSocket(socket,address.getHostString(),address.getPort(),true);
+      sslSocket.setEnabledCipherSuites(sslSocket.getSupportedCipherSuites());
+      sslSocket.startHandshake();
+      InputStream is=sslSocket.getInputStream();
+      OutputStream os=sslSocket.getOutputStream();
+      os.write(mockClientData2);
+      byte actualData[]=new byte[mockServerData2.length];
+      int actualDataLength=is.read(actualData);
+      assertEquals("Unexpected length of actual data read from server.",mockServerData2.length,actualDataLength);
+      for (int i=0; i < actualDataLength; i++) {
+        assertEquals("Unexpected byte #" + i + " in response",mockServerData2[i],actualData[i]);
+      }
+    }
+    server.waitUntilShutdowned(1 * 1000);
+    assertNull("Unexpected exception at mock server side.",server.getException());
+    assertTrue("Server is not shutdowned at after conversation.",server.isShutdowned());
+  }
+  finally {
+    socket.close();
+  }
+}

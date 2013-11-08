@@ -1,0 +1,115 @@
+{
+  final int bpp=getPixelSize(colorDepth);
+  final int rowDelta=imageWidth * bpp;
+  final int whitePixel=getColorWhite(colorDepth);
+  final int blackPixel=getColorBlack();
+  int fgPel=whitePixel;
+  boolean insertFgPel=false;
+  boolean firstLine=true;
+  if (destBuf.length != imageWidth * imageHeight * bpp)   throw new RuntimeException("Incorrect size of destination buffer. Expected size (imageWidth*imageHeight*bpp): " + (imageWidth * imageHeight * bpp) + ", actual size: "+ destBuf.length+ ".");
+  while (srcBuf.cursor < srcBuf.length) {
+    if (firstLine) {
+      if (destBuf.cursor >= rowDelta) {
+        firstLine=false;
+        insertFgPel=false;
+      }
+    }
+    int orderHeader=srcBuf.readUnsignedByte();
+    int code=extractCodeId(orderHeader);
+    if (code == REGULAR_BG_RUN | code == MEGA_MEGA_BG_RUN) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      if (firstLine) {
+        if (insertFgPel) {
+          writePixel(bpp,destBuf,fgPel);
+          runLength--;
+        }
+        for (; runLength > 0; runLength--)         writePixel(bpp,destBuf,blackPixel);
+      }
+ else {
+        if (insertFgPel) {
+          writePixel(bpp,destBuf,peekPixel(bpp,destBuf,-rowDelta) ^ fgPel);
+          runLength--;
+        }
+        for (; runLength > 0; runLength--)         writePixel(bpp,destBuf,peekPixel(bpp,destBuf,-rowDelta));
+      }
+      insertFgPel=true;
+      continue;
+    }
+    insertFgPel=false;
+    if (code == REGULAR_FG_RUN | code == MEGA_MEGA_FG_RUN | code == LITE_SET_FG_FG_RUN | code == MEGA_MEGA_SET_FG_RUN) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      if (code == LITE_SET_FG_FG_RUN | code == MEGA_MEGA_SET_FG_RUN)       fgPel=readPixel(bpp,srcBuf);
+      if (firstLine) {
+        for (; runLength > 0; runLength--) {
+          writePixel(bpp,destBuf,fgPel);
+        }
+      }
+ else {
+        for (; runLength > 0; runLength--) {
+          writePixel(bpp,destBuf,peekPixel(bpp,destBuf,-rowDelta) ^ fgPel);
+        }
+      }
+      continue;
+    }
+    if (code == LITE_DITHERED_RUN | code == MEGA_MEGA_DITHERED_RUN) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      int pixelA=readPixel(bpp,srcBuf);
+      int pixelB=readPixel(bpp,srcBuf);
+      for (; runLength > 0; runLength--) {
+        writePixel(bpp,destBuf,pixelA);
+        writePixel(bpp,destBuf,pixelB);
+      }
+      continue;
+    }
+    if (code == REGULAR_COLOR_RUN | code == MEGA_MEGA_COLOR_RUN) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      int pixelA=readPixel(bpp,srcBuf);
+      for (; runLength > 0; runLength--)       writePixel(bpp,destBuf,pixelA);
+      continue;
+    }
+    if (code == REGULAR_FGBG_IMAGE | code == MEGA_MEGA_FGBG_IMAGE | code == LITE_SET_FG_FGBG_IMAGE | code == MEGA_MEGA_SET_FGBG_IMAGE) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      if (code == LITE_SET_FG_FGBG_IMAGE | code == MEGA_MEGA_SET_FGBG_IMAGE) {
+        fgPel=readPixel(bpp,srcBuf);
+      }
+      for (; runLength > 8; runLength-=8) {
+        int bitmask=srcBuf.readUnsignedByte();
+        if (firstLine)         writeFirstLineFgBgImage(bpp,destBuf,bitmask,fgPel,8);
+ else         writeFgBgImage(bpp,destBuf,rowDelta,bitmask,fgPel,8);
+      }
+      if (runLength > 0) {
+        int bitmask=srcBuf.readUnsignedByte();
+        if (firstLine)         writeFirstLineFgBgImage(bpp,destBuf,bitmask,fgPel,runLength);
+ else         writeFgBgImage(bpp,destBuf,rowDelta,bitmask,fgPel,runLength);
+      }
+      continue;
+    }
+    if (code == REGULAR_COLOR_IMAGE | code == MEGA_MEGA_COLOR_IMAGE) {
+      int runLength=extractRunLength(code,orderHeader,srcBuf);
+      int lengthInBytes=runLength * bpp;
+      System.arraycopy(srcBuf.data,srcBuf.offset + srcBuf.cursor,destBuf.data,destBuf.offset + destBuf.cursor,lengthInBytes);
+      srcBuf.cursor+=lengthInBytes;
+      destBuf.cursor+=lengthInBytes;
+      continue;
+    }
+    if (code == SPECIAL_FGBG_1) {
+      if (firstLine)       writeFirstLineFgBgImage(bpp,destBuf,g_MaskSpecialFgBg1,fgPel,8);
+ else       writeFgBgImage(bpp,destBuf,rowDelta,g_MaskSpecialFgBg1,fgPel,8);
+      continue;
+    }
+    if (code == SPECIAL_FGBG_2) {
+      if (firstLine)       writeFirstLineFgBgImage(bpp,destBuf,g_MaskSpecialFgBg2,fgPel,8);
+ else       writeFgBgImage(bpp,destBuf,rowDelta,g_MaskSpecialFgBg2,fgPel,8);
+      continue;
+    }
+    if (code == SPECIAL_WHITE) {
+      writePixel(bpp,destBuf,whitePixel);
+      continue;
+    }
+    if (code == SPECIAL_BLACK) {
+      writePixel(bpp,destBuf,blackPixel);
+      continue;
+    }
+    throw new RuntimeException("Unknown code: " + code + ".");
+  }
+}
