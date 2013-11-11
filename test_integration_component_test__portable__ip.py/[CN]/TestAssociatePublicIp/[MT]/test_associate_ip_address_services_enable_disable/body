@@ -1,0 +1,30 @@
+@unittest.skip('SSH failing to portable ip, need to investigate the issue')
+@attr(tags=['advanced'])
+def test_associate_ip_address_services_enable_disable(self):
+    ' Test enabling and disabling NAT, Firewall services on portable ip\n        '
+    self.service_offering = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.cleanup.append(self.service_offering)
+    try:
+        self.debug('DeployingVirtual Machine')
+        self.virtual_machine = VirtualMachine.create(self.apiclient, self.services['small'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=[self.network.id], mode=self.services['mode'])
+        self.debug(('Created virtual machine instance: %s with ssh_ip: %s' % (self.virtual_machine.id, self.virtual_machine.ssh_ip)))
+    except Exception as e:
+        self.fail(('Exception while deploying vm : %s' % e))
+    portableip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.network.id, isportable=True)
+    self.debug(('created public ip address (portable): %s' % portableip.ipaddress.ipaddress))
+    self.debug('Opening firewall on the portable public ip')
+    fw_rule = FireWallRule.create(self.apiclient, ipaddressid=portableip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=[self.services['natrule']['cidr']], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
+    self.debug('Creating NAT rule on the portable public ip')
+    nat_rule = NATRule.create(self.apiclient, self.virtual_machine, self.services['natrule'], portableip.ipaddress.id)
+    try:
+        self.debug(('Trying to SSH to ip: %s' % portableip.ipaddress.ipaddress))
+        SshClient(portableip.ipaddress.ipaddress, self.services['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+    except Exception as e:
+        self.fail(('Exception while SSHing : %s' % e))
+    self.debug('Deleting firewall rule')
+    fw_rule.delete(self.apiclient)
+    self.debug('Deleting NAT rule')
+    nat_rule.delete(self.apiclient)
+    self.debug(('disassocoating portable ip: %s' % portableip.ipaddress.ipaddress))
+    portableip.delete(self.apiclient)
+    return
