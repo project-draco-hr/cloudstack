@@ -1,0 +1,61 @@
+{
+  try {
+    VmwareContext context=getServiceContext();
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    VmwareManager mgr=hyperHost.getContext().getStockObject(VmwareManager.CONTEXT_STOCK_NAME);
+    if (hyperHost.isHyperHostConnected()) {
+      mgr.gcLeftOverVMs(context);
+      s_logger.info("Scan hung worker VM to recycle");
+      int workerKey=((HostMO)hyperHost).getCustomFieldKey("VirtualMachine",CustomFieldConstants.CLOUD_WORKER);
+      int workerTagKey=((HostMO)hyperHost).getCustomFieldKey("VirtualMachine",CustomFieldConstants.CLOUD_WORKER_TAG);
+      String workerPropName=String.format("value[%d]",workerKey);
+      String workerTagPropName=String.format("value[%d]",workerTagKey);
+      ObjectContent[] ocs=hyperHost.getVmPropertiesOnHyperHost(new String[]{"name","config.template",workerPropName,workerTagPropName});
+      if (ocs != null) {
+        for (        ObjectContent oc : ocs) {
+          List<DynamicProperty> props=oc.getPropSet();
+          if (props != null) {
+            boolean template=false;
+            boolean isWorker=false;
+            String workerTag=null;
+            for (            DynamicProperty prop : props) {
+              if (prop.getName().equals("config.template")) {
+                template=(Boolean)prop.getVal();
+              }
+ else               if (prop.getName().equals(workerPropName)) {
+                CustomFieldStringValue val=(CustomFieldStringValue)prop.getVal();
+                if (val != null && val.getValue() != null && val.getValue().equalsIgnoreCase("true"))                 isWorker=true;
+              }
+ else               if (prop.getName().equals(workerTagPropName)) {
+                CustomFieldStringValue val=(CustomFieldStringValue)prop.getVal();
+                workerTag=val.getValue();
+              }
+            }
+            VirtualMachineMO vmMo=new VirtualMachineMO(hyperHost.getContext(),oc.getObj());
+            if (!template && isWorker) {
+              boolean recycle=false;
+              recycle=mgr.needRecycle(workerTag);
+              if (recycle) {
+                s_logger.info("Recycle pending worker VM: " + vmMo.getName());
+                vmMo.powerOff();
+                vmMo.destroy();
+              }
+            }
+          }
+        }
+      }
+    }
+ else {
+      s_logger.error("Host is no longer connected.");
+    }
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      invalidateServiceContext();
+    }
+  }
+ finally {
+    recycleServiceContext();
+  }
+}
