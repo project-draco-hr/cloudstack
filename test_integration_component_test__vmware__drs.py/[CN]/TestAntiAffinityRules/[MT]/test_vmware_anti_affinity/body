@@ -1,0 +1,52 @@
+@attr(tags=['advanced', 'vmware', 'multihost'])
+def test_vmware_anti_affinity(self):
+    ' Test Set up anti-affinity rules\n\n            The test requires following pre-requisites\n            - VMWare cluster configured in fully automated mode\n        '
+    hosts = Host.list(self.apiclient, zoneid=self.zone.id, resourcestate='Enabled', type='Routing')
+    self.assertEqual(isinstance(hosts, list), True, 'List hosts should return valid host response')
+    self.debug(len(hosts))
+    self.assertGreaterEqual(len(hosts), 3, 'There must be at least 3 hosts present in a cluster')
+    aff_grp = self.create_aff_grp(aff_grp=self.services['host_anti_affinity'], acc=self.account.name, domainid=self.domain.id)
+    vm_1 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, affinitygroupnames=[aff_grp.name])
+    vm_2 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, affinitygroupnames=[aff_grp.name])
+    host_1 = vm_1.hostid
+    host_2 = vm_2.hostid
+    vms = VirtualMachine.list(self.apiclient, id=vm_1.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[1]))
+    virtual_machine_1 = vm_list_validation_result[1]
+    self.debug(('VM State: %s' % virtual_machine_1.state))
+    self.assertEqual(virtual_machine_1.state, 'Running', 'Deployed VM should be in RUnning state')
+    vms = VirtualMachine.list(self.apiclient, id=vm_2.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[1]))
+    virtual_machine_2 = vm_list_validation_result[1]
+    self.debug(('VM %s  State: %s' % (virtual_machine_2.name, virtual_machine_2.state)))
+    self.assertEqual(virtual_machine_2.state, 'Running', 'Deployed VM should be in RUnning state')
+    self.debug(('Enabling maintenance mode on host_1: %s' % host_1))
+    cmd = prepareHostForMaintenance.prepareHostForMaintenanceCmd()
+    cmd.id = host_1
+    self.apiclient.prepareHostForMaintenance(cmd)
+    timeout = self.services['timeout']
+    while True:
+        hosts = Host.list(self.apiclient, zoneid=self.zone.id, type='Routing', id=host_1)
+        host_list_validation_result = validateList(hosts)
+        self.assertEqual(host_list_validation_result[0], PASS, ('host list validation failed due to %s' % host_list_validation_result[2]))
+        host = host_list_validation_result[1]
+        if (host.resourcestate == 'Maintenance'):
+            break
+        elif (timeout == 0):
+            self.fail(('Failed to put host: %s in maintenance mode' % host.name))
+        time.sleep(self.services['sleep'])
+        timeout = (timeout - 1)
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine_1.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    vm = vm_list_validation_result[0]
+    self.assertEqual(vm.state, 'Running', 'Deployed VM should be in RUnning state')
+    self.assertNotEqual(vm.hostid, host_2, 'The host name should not match with second host name')
+    self.debug(('Canceling host maintenance for ID: %s' % host_1.id))
+    cmd = cancelHostMaintenance.cancelHostMaintenanceCmd()
+    cmd.id = host_1.id
+    self.apiclient.cancelHostMaintenance(cmd)
+    self.debug(('Maintenance mode canceled for host: %s' % host_1.id))
+    return
