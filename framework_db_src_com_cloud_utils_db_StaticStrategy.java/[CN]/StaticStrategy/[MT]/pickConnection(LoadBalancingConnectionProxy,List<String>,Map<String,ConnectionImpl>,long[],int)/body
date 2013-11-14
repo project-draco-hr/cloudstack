@@ -1,0 +1,52 @@
+{
+  int numHosts=configuredHosts.size();
+  SQLException ex=null;
+  List<String> whiteList=new ArrayList<String>(numHosts);
+  whiteList.addAll(configuredHosts);
+  Map<String,Long> blackList=proxy.getGlobalBlacklist();
+  whiteList.removeAll(blackList.keySet());
+  Map<String,Integer> whiteListMap=this.getArrayIndexMap(whiteList);
+  for (int attempts=0; attempts < numRetries; ) {
+    if (whiteList.size() == 0) {
+      throw SQLError.createSQLException("No hosts configured",null);
+    }
+    String hostPortSpec=whiteList.get(0);
+    ConnectionImpl conn=liveConnections.get(hostPortSpec);
+    if (conn == null) {
+      try {
+        conn=proxy.createConnectionForHost(hostPortSpec);
+      }
+ catch (      SQLException sqlEx) {
+        ex=sqlEx;
+        if (proxy.shouldExceptionTriggerFailover(sqlEx)) {
+          Integer whiteListIndex=whiteListMap.get(hostPortSpec);
+          if (whiteListIndex != null) {
+            whiteList.remove(whiteListIndex.intValue());
+            whiteListMap=this.getArrayIndexMap(whiteList);
+          }
+          proxy.addToGlobalBlacklist(hostPortSpec);
+          if (whiteList.size() == 0) {
+            attempts++;
+            try {
+              Thread.sleep(250);
+            }
+ catch (            InterruptedException e) {
+            }
+            whiteListMap=new HashMap<String,Integer>(numHosts);
+            whiteList.addAll(configuredHosts);
+            blackList=proxy.getGlobalBlacklist();
+            whiteList.removeAll(blackList.keySet());
+            whiteListMap=this.getArrayIndexMap(whiteList);
+          }
+          continue;
+        }
+        throw sqlEx;
+      }
+    }
+    return conn;
+  }
+  if (ex != null) {
+    throw ex;
+  }
+  return null;
+}
