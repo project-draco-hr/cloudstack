@@ -1,43 +1,32 @@
 {
-  CallContext cctx=CallContext.current();
-  VMInstanceVO vmVO=_vmDao.findById(vm.getId());
-  NetworkVO network=_networkDao.findById(nic.getNetworkId());
-  ReservationContext context=new ReservationContextImpl(null,null,cctx.getCallingUser(),cctx.getCallingAccount());
-  VirtualMachineProfileImpl vmProfile=new VirtualMachineProfileImpl(vmVO,null,null,null,null);
-  DataCenter dc=_entityMgr.findById(DataCenter.class,network.getDataCenterId());
-  Host host=_hostDao.findById(vm.getHostId());
-  DeployDestination dest=new DeployDestination(dc,null,null,host);
-  HypervisorGuru hvGuru=_hvGuruMgr.getGuru(vmProfile.getVirtualMachine().getHypervisorType());
-  VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
-  if (nic.isDefaultNic() && vm.getType() == VirtualMachine.Type.User) {
-    s_logger.warn("Failed to remove nic from " + vm + " in "+ network+ ", nic is default.");
-    throw new CloudRuntimeException("Failed to remove nic from " + vm + " in "+ network+ ", nic is default.");
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkJobDispatcher.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateRemoveNicFromVm(vm,nic);
   }
-  if (rulesMgr.listAssociatedRulesForGuestNic(nic).size() > 0) {
-    throw new CloudRuntimeException("Failed to remove nic from " + vm + " in "+ network+ ", nic has associated Port forwarding or Load balancer or Static NAT rules.");
-  }
-  NicProfile nicProfile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),_networkModel.getNetworkRate(network.getId(),vm.getId()),_networkModel.isSecurityGroupSupportedInNetwork(network),_networkModel.getNetworkTag(vmProfile.getVirtualMachine().getHypervisorType(),network));
-  if (vm.getState() == State.Running) {
-    NicTO nicTO=toNicTO(nicProfile,vmProfile.getVirtualMachine().getHypervisorType());
-    s_logger.debug("Un-plugging nic " + nic + " for vm "+ vm+ " from network "+ network);
-    boolean result=unplugNic(network,nicTO,vmTO,context,dest);
-    if (result) {
-      s_logger.debug("Nic is unplugged successfully for vm " + vm + " in network "+ network);
-      long isDefault=(nic.isDefaultNic()) ? 1 : 0;
-      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_REMOVE,vm.getAccountId(),vm.getDataCenterId(),vm.getId(),Long.toString(nic.getId()),network.getNetworkOfferingId(),null,isDefault,VirtualMachine.class.getName(),vm.getUuid());
+ else {
+    Outcome<VirtualMachine> outcome=removeNicFromVmThroughJobQueue(vm,nic);
+    try {
+      outcome.get();
+    }
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    AsyncJobVO jobVo=_entityMgr.findById(AsyncJobVO.class,outcome.getJob().getId());
+    if (jobVo.getResultCode() == JobInfo.Status.SUCCEEDED.ordinal()) {
+      Boolean result=(Boolean)JobSerializerHelper.fromObjectSerializedString(jobVo.getResult());
+      return result;
     }
  else {
-      s_logger.warn("Failed to unplug nic for the vm " + vm + " from network "+ network);
-      return false;
+      Throwable jobException=retriveExecutionException(outcome.getJob());
+      if (jobException != null) {
+        if (jobException instanceof ResourceUnavailableException)         throw (ResourceUnavailableException)jobException;
+ else         if (jobException instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobException;
+ else         if (jobException instanceof RuntimeException)         throw (RuntimeException)jobException;
+      }
+      throw new RuntimeException("Job failed with un-handled exception");
     }
   }
- else   if (vm.getState() != State.Stopped) {
-    s_logger.warn("Unable to remove vm " + vm + " from network  "+ network);
-    throw new ResourceUnavailableException("Unable to remove vm " + vm + " from network, is not in the right state",DataCenter.class,vm.getDataCenterId());
-  }
-  _networkMgr.releaseNic(vmProfile,nic);
-  s_logger.debug("Successfully released nic " + nic + "for vm "+ vm);
-  _networkMgr.removeNic(vmProfile,nic);
-  _nicsDao.expunge(nic.getId());
-  return true;
 }

@@ -1,45 +1,31 @@
 {
-  VMInstanceVO vm=_vmDao.findByUuid(vmUuid);
-  long newServiceofferingId=vm.getServiceOfferingId();
-  ServiceOffering newServiceOffering=_entityMgr.findById(ServiceOffering.class,newServiceofferingId);
-  HostVO hostVo=_hostDao.findById(vm.getHostId());
-  Float memoryOvercommitRatio=CapacityManager.MemOverprovisioningFactor.valueIn(hostVo.getClusterId());
-  Float cpuOvercommitRatio=CapacityManager.CpuOverprovisioningFactor.valueIn(hostVo.getClusterId());
-  long minMemory=(long)(newServiceOffering.getRamSize() / memoryOvercommitRatio);
-  ScaleVmCommand reconfigureCmd=new ScaleVmCommand(vm.getInstanceName(),newServiceOffering.getCpu(),(int)(newServiceOffering.getSpeed() / cpuOvercommitRatio),newServiceOffering.getSpeed(),minMemory * 1024L * 1024L,newServiceOffering.getRamSize() * 1024L * 1024L,newServiceOffering.getLimitCpuUse());
-  Long dstHostId=vm.getHostId();
-  ItWorkVO work=new ItWorkVO(UUID.randomUUID().toString(),_nodeId,State.Running,vm.getType(),vm.getId());
-  work.setStep(Step.Prepare);
-  work.setResourceType(ItWorkVO.ResourceType.Host);
-  work.setResourceId(vm.getHostId());
-  work=_workDao.persist(work);
-  boolean success=false;
-  try {
-    if (reconfiguringOnExistingHost) {
-      vm.setServiceOfferingId(oldServiceOffering.getId());
-      _capacityMgr.releaseVmCapacity(vm,false,false,vm.getHostId());
-      vm.setServiceOfferingId(newServiceofferingId);
-      _capacityMgr.allocateVmCapacity(vm,false);
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkJobDispatcher.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateReConfigureVm(vmUuid,oldServiceOffering,reconfiguringOnExistingHost);
+  }
+ else {
+    Outcome<VirtualMachine> outcome=reconfigureVmThroughJobQueue(vmUuid,oldServiceOffering,reconfiguringOnExistingHost);
+    VirtualMachine vm=null;
+    try {
+      vm=outcome.get();
     }
-    Answer reconfigureAnswer=_agentMgr.send(vm.getHostId(),reconfigureCmd);
-    if (reconfigureAnswer == null || !reconfigureAnswer.getResult()) {
-      s_logger.error("Unable to scale vm due to " + (reconfigureAnswer == null ? "" : reconfigureAnswer.getDetails()));
-      throw new CloudRuntimeException("Unable to scale vm due to " + (reconfigureAnswer == null ? "" : reconfigureAnswer.getDetails()));
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
     }
-    success=true;
-  }
- catch (  OperationTimedoutException e) {
-    throw new AgentUnavailableException("Operation timed out on reconfiguring " + vm,dstHostId);
-  }
-catch (  AgentUnavailableException e) {
-    throw e;
-  }
- finally {
-    if (!success) {
-      _capacityMgr.releaseVmCapacity(vm,false,false,vm.getHostId());
-      vm.setServiceOfferingId(oldServiceOffering.getId());
-      _capacityMgr.allocateVmCapacity(vm,false);
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    AsyncJobVO jobVo=_entityMgr.findById(AsyncJobVO.class,outcome.getJob().getId());
+    if (jobVo.getResultCode() == JobInfo.Status.SUCCEEDED.ordinal()) {
+      return _entityMgr.findById(VMInstanceVO.class,vm.getId());
+    }
+ else {
+      Throwable jobException=retriveExecutionException(outcome.getJob());
+      if (jobException != null) {
+        if (jobException instanceof ResourceUnavailableException)         throw (ResourceUnavailableException)jobException;
+ else         if (jobException instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobException;
+      }
+      throw new RuntimeException("Failed with un-handled exception");
     }
   }
-  return vm;
 }

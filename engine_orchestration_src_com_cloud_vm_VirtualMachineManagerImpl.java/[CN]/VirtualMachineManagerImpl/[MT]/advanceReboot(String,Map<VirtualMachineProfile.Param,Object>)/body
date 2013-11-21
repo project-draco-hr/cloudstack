@@ -1,25 +1,24 @@
 {
-  VMInstanceVO vm=_vmDao.findByUuid(vmUuid);
-  DataCenter dc=_entityMgr.findById(DataCenter.class,vm.getDataCenterId());
-  Host host=_hostDao.findById(vm.getHostId());
-  Cluster cluster=null;
-  if (host != null) {
-    cluster=_entityMgr.findById(Cluster.class,host.getClusterId());
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkJobDispatcher.VM_WORK_JOB_DISPATCHER)) {
+    orchestrateReboot(vmUuid,params);
   }
-  Pod pod=_entityMgr.findById(Pod.class,host.getPodId());
-  DeployDestination dest=new DeployDestination(dc,pod,cluster,host);
-  try {
-    Commands cmds=new Commands(Command.OnError.Stop);
-    cmds.addCommand(new RebootCommand(vm.getInstanceName()));
-    _agentMgr.send(host.getId(),cmds);
-    Answer rebootAnswer=cmds.getAnswer(RebootAnswer.class);
-    if (rebootAnswer != null && rebootAnswer.getResult()) {
-      return;
+ else {
+    Outcome<VirtualMachine> outcome=rebootVmThroughJobQueue(vmUuid,params);
+    try {
+      VirtualMachine vm=outcome.get();
     }
-    s_logger.info("Unable to reboot VM " + vm + " on "+ dest.getHost()+ " due to "+ (rebootAnswer == null ? " no reboot answer" : rebootAnswer.getDetails()));
-  }
- catch (  OperationTimedoutException e) {
-    s_logger.warn("Unable to send the reboot command to host " + dest.getHost() + " for the vm "+ vm+ " due to operation timeout",e);
-    throw new CloudRuntimeException("Failed to reboot the vm on host " + dest.getHost());
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Throwable jobException=retriveExecutionException(outcome.getJob());
+    if (jobException != null) {
+      if (jobException instanceof ResourceUnavailableException)       throw (ResourceUnavailableException)jobException;
+ else       if (jobException instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobException;
+ else       if (jobException instanceof InsufficientCapacityException)       throw (InsufficientCapacityException)jobException;
+    }
   }
 }
