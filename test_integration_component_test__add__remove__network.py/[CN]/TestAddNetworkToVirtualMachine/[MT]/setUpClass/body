@@ -1,0 +1,31 @@
+@classmethod
+def setUpClass(cls):
+    cls.api_client = super(TestAddNetworkToVirtualMachine, cls).getClsTestClient().getApiClient()
+    hypervisor = get_hypervisor_type(cls.api_client)
+    if (hypervisor.lower() not in ['xenserver', 'kvm']):
+        raise unittest.SkipTest('This feature is supported only on XenServer and KVM')
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client, cls.services)
+    cls.zone = get_zone(cls.api_client, cls.services)
+    template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = template.id
+    cls.services['isolated_network']['zoneid'] = cls.zone.id
+    cls.services['shared_network']['zoneid'] = cls.zone.id
+    cls.account = Account.create(cls.api_client, cls.services['account'], domainid=cls.domain.id)
+    cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+    cls.virtual_machine = VirtualMachine.create(cls.api_client, cls.services['virtual_machine'], accountid=cls.account.name, domainid=cls.account.domainid, serviceofferingid=cls.service_offering.id, mode=cls.zone.networktype)
+    cls.isolated_network_offering = NetworkOffering.create(cls.api_client, cls.services['isolated_network_offering'])
+    cls.isolated_network_offering.update(cls.api_client, state='Enabled')
+    cls.shared_network_offering = NetworkOffering.create(cls.api_client, cls.services['shared_network_offering'])
+    cls.shared_network_offering.update(cls.api_client, state='Enabled')
+    cls.isolated_network = Network.create(cls.api_client, cls.services['isolated_network'], cls.account.name, cls.account.domainid, networkofferingid=cls.isolated_network_offering.id)
+    cls.services['shared_network']['vlan'] = get_free_vlan(cls.api_client, cls.zone.id)[1]
+    shared_network_subnet_number = random.randrange(1, 254)
+    cls.services['shared_network']['gateway'] = (('172.16.' + str(shared_network_subnet_number)) + '.1')
+    cls.services['shared_network']['startip'] = (('172.16.' + str(shared_network_subnet_number)) + '.2')
+    cls.services['shared_network']['endip'] = (('172.16.' + str(shared_network_subnet_number)) + '.20')
+    cls.shared_nw_endip = cls.services['shared_network']['endip']
+    cls.shared_network = Network.create(cls.api_client, cls.services['shared_network'], cls.account.name, cls.account.domainid, networkofferingid=cls.shared_network_offering.id)
+    cls._cleanup = [cls.account, cls.service_offering, cls.shared_network, cls.isolated_network_offering, cls.shared_network_offering]
+    return

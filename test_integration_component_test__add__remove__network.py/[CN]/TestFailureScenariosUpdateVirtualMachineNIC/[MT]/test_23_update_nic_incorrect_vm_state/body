@@ -1,0 +1,47 @@
+@attr(tags=['advanced'])
+def test_23_update_nic_incorrect_vm_state(self):
+    'update default nic of vm when vm is state is not Running or Stopped'
+    self.debug('Creating new account')
+    account = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id)
+    self.debug(('Created account %s' % account.name))
+    self.cleanup.append(account)
+    self.debug(('Creating virtual machine in the account %s' % account.name))
+    virtual_machine = VirtualMachine.create(self.api_client, self.services['virtual_machine'], accountid=account.name, domainid=account.domainid, serviceofferingid=self.service_offering.id, mode=self.zone.networktype)
+    self.debug(('Created virtual machine %s' % virtual_machine.id))
+    self.debug(('Creating isolated network in account %s' % account.name))
+    isolated_network = Network.create(self.apiclient, self.services['isolated_network'], account.name, account.domainid, networkofferingid=self.isolated_network_offering.id)
+    self.debug(('Created isolated network %s' % isolated_network.id))
+    self.debug(('Adding isolated network %s to vm %s' % (isolated_network.id, virtual_machine.id)))
+    virtual_machine.add_nic(self.apiclient, isolated_network.id)
+    self.debug('Listing virtual machine so that to retrive the list of non-default and default nic')
+    vm_list = list_virtual_machines(self.apiclient, id=virtual_machine.id)
+    vm_list_validation_result = validateList(vm_list)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    if (len(vm_list[0].nic) != 2):
+        self.fail('VM should have exactly two NICs')
+    defaultNicIdBeforeUpdate = None
+    nonDefaultNicIdBeforeUpdate = None
+    for nic in vm_list[0].nic:
+        if nic.isdefault:
+            defaultNicIdBeforeUpdate = nic.id
+        else:
+            nonDefaultNicIdBeforeUpdate = nic.id
+    self.debug(('Default nic of VM is %s and non default nic of VM is %s' % (defaultNicIdBeforeUpdate, nonDefaultNicIdBeforeUpdate)))
+    self.debug(('Destroying VM %s' % virtual_machine.id))
+    virtual_machine.delete(self.apiclient)
+    vm_list = list_virtual_machines(self.apiclient, id=virtual_machine.id)
+    vm_list_validation_result = validateList(vm_list)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    vm = vm_list_validation_result[1]
+    vm_state = vm.state.lower()
+    self.debug(('VM state is: %s' % vm_state))
+    if (vm_state in ['running', 'stopped']):
+        self.fail(('failed to destroy the instance: %s' % vm.id))
+    self.debug('Making non default nic as default nic')
+    cmd = updateDefaultNicForVirtualMachine.updateDefaultNicForVirtualMachineCmd()
+    cmd.virtualmachineid = vm.id
+    cmd.nicid = nonDefaultNicIdBeforeUpdate
+    with self.assertRaises(Exception) as e:
+        self.apiclient.updateDefaultNicForVirtualMachine(cmd)
+    self.debug(('updateDefaultNicForVirtualMachine API failed with exception: %s' % e.exception))
+    return
