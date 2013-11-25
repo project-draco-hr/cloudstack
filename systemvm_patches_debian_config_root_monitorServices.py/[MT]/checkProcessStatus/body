@@ -1,80 +1,80 @@
 def checkProcessStatus(process):
+    '\n    Check the process running status, if not running tries to restart\n    '
     process_name = process.get('processname')
     service_name = process.get('servicename')
     pidfile = process.get('pidfile')
     restartFailed = False
-    pidFileMatched = 1
+    pidFileMatched = False
+    pids = ''
     cmd = ''
     if (process_name is None):
-        print '\n Invalid Process Name'
+        printd('\n Invalid Process Name')
         return StatusCodes.INVALID_INP
     else:
-        msg = ('checking the process ' + process_name)
-        printd(msg)
+        printd(('checking the process ' + process_name))
         cmd = ('pidof ' + process_name)
         printd(cmd)
         pout = Popen(cmd, shell=True, stdout=PIPE)
         exitStatus = pout.wait()
         temp_out = pout.communicate()[0]
     if (exitStatus == 0):
+        pids = temp_out.split(' ')
         msg = ('pids: ' + temp_out)
         printd(msg)
-        pids = temp_out.split(' ')
         printd('Checking pid file')
         if (isPidMatchPidFile(pidfile, pids) == StatusCodes.SUCCESS):
-            pidFileMatched = 1
+            pidFileMatched = True
         else:
-            pidFileMatched = 0
-    printd(pidFileMatched)
-    if ((exitStatus == 0) and (pidFileMatched == 1)):
+            pidFileMatched = False
+    if ((exitStatus == 0) and (pidFileMatched == True)):
         printd('The process is running ....')
         return StatusCodes.RUNNING
     else:
         printd(('exit status:' + str(exitStatus)))
         msg = (('The process ' + process_name) + ' is not running trying recover ')
         printd(msg)
-        for i in range(1, 10):
+        for i in range(1, Config.RETRY_ITERATIONS):
             pout = Popen(cmd, shell=True, stdout=PIPE)
             exitStatus = pout.wait()
             temp_out = pout.communicate()[0]
-            if (i < 5):
+            if (i < Config.RETRY_FOR_RESTART):
                 if (exitStatus == 0):
                     pids = temp_out.split(' ')
                     if (isPidMatchPidFile(pidfile, pids) == StatusCodes.SUCCESS):
-                        pidFileMatched = 1
+                        pidFileMatched = True
                         printd('pid file is matched ...')
-                        raisealert(log.ALERT, 'The process detected as running', process_name)
+                        raisealert(Log.ALERT, 'The process detected as running', process_name)
                         break
                     else:
                         printd('pid file is not matched ...')
-                        pidFileMatched = 0
+                        pidFileMatched = False
+                        time.sleep(Config.SLEEP_SEC)
                         continue
-                    time.sleep(1)
             else:
                 msg = (('The process ' + process_name) + ' is not running trying recover ')
-                raisealert(log.INFO, process_name, msg)
+                raisealert(Log.INFO, process_name, msg)
                 if (service_name == 'apache2'):
                     for pid in pids:
                         cmd = ('kill -9 ' + pid)
                         printd(cmd)
                         Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
                 cmd = (('service ' + service_name) + ' restart')
-                time.sleep(1)
+                time.sleep(Config.SLEEP_SEC)
                 cout = Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
                 return_val = cout.wait()
                 if (return_val == 0):
                     printd((('The process' + process_name) + ' recovered successfully '))
                     msg = (('The process ' + process_name) + ' is recovered successfully ')
-                    raisealert(log.INFO, msg, process_name)
+                    raisealert(Log.INFO, msg, process_name)
                     break
                 else:
                     printd('process restart failing trying again ....')
                     restartFailed = True
-                    time.sleep(1)
+                    time.sleep(Config.SLEEP_SEC)
                     continue
         if (restartFailed == True):
             msg = ('The process %s recover failed ' % process_name)
-            raisealert(log.ALERT, process_name, msg)
+            raisealert(Log.ALERT, process_name, msg)
             printd('Restart failed after number of retries')
             return StatusCodes.STOPPED
     return StatusCodes.RUNNING
