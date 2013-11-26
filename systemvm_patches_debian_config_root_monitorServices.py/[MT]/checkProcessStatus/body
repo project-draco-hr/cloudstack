@@ -10,46 +10,22 @@ def checkProcessStatus(process):
     if (process_name is None):
         printd('\n Invalid Process Name')
         return StatusCodes.INVALID_INP
-    else:
-        printd(('checking the process ' + process_name))
-        cmd = ('pidof ' + process_name)
-        printd(cmd)
-        pout = Popen(cmd, shell=True, stdout=PIPE)
-        exitStatus = pout.wait()
-        temp_out = pout.communicate()[0]
-    if (exitStatus == 0):
-        pids = temp_out.split(' ')
-        msg = ('pids: ' + temp_out)
-        printd(msg)
-        printd('Checking pid file')
-        if (isPidMatchPidFile(pidfile, pids) == StatusCodes.SUCCESS):
-            pidFileMatched = True
-        else:
-            pidFileMatched = False
-    if ((exitStatus == 0) and (pidFileMatched == True)):
+    (status, pids) = checkProcessRunningStatus(process_name, pidfile)
+    if (status == True):
         printd('The process is running ....')
         return StatusCodes.RUNNING
     else:
-        printd(('exit status:' + str(exitStatus)))
-        msg = (('The process ' + process_name) + ' is not running trying recover ')
-        printd(msg)
+        printd(('Process %s is not running trying to recover' % process_name))
         for i in range(1, Config.RETRY_ITERATIONS):
-            pout = Popen(cmd, shell=True, stdout=PIPE)
-            exitStatus = pout.wait()
-            temp_out = pout.communicate()[0]
+            time.sleep(Config.SLEEP_SEC)
             if (i < Config.RETRY_FOR_RESTART):
-                if (exitStatus == 0):
-                    pids = temp_out.split(' ')
-                    if (isPidMatchPidFile(pidfile, pids) == StatusCodes.SUCCESS):
-                        pidFileMatched = True
-                        printd('pid file is matched ...')
-                        raisealert(Log.ALERT, 'The process detected as running', process_name)
-                        break
-                    else:
-                        printd('pid file is not matched ...')
-                        pidFileMatched = False
-                        time.sleep(Config.SLEEP_SEC)
-                        continue
+                (status, pids) = checkProcessRunningStatus(process_name, pidfile)
+                if (status == True):
+                    raisealert(Log.ALERT, 'The process detected as running', process_name)
+                    break
+                else:
+                    printd(('Process %s is not running checking the status again...' % process_name))
+                    continue
             else:
                 msg = (('The process ' + process_name) + ' is not running trying recover ')
                 raisealert(Log.INFO, process_name, msg)
@@ -58,19 +34,10 @@ def checkProcessStatus(process):
                         cmd = ('kill -9 ' + pid)
                         printd(cmd)
                         Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
-                cmd = (('service ' + service_name) + ' restart')
-                time.sleep(Config.SLEEP_SEC)
-                cout = Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
-                return_val = cout.wait()
-                if (return_val == 0):
-                    printd((('The process' + process_name) + ' recovered successfully '))
-                    msg = (('The process ' + process_name) + ' is recovered successfully ')
-                    raisealert(Log.INFO, msg, process_name)
+                if (restartService(service_name) == True):
                     break
                 else:
-                    printd('process restart failing trying again ....')
                     restartFailed = True
-                    time.sleep(Config.SLEEP_SEC)
                     continue
         if (restartFailed == True):
             msg = ('The process %s recover failed ' % process_name)
