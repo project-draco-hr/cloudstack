@@ -27,51 +27,53 @@
       s_logger.debug("Discovered plugin " + pluggableService.getClass().getSimpleName());
     }
   }
-  for (  Class<?> cmdClass : cmdClasses) {
-    APICommand at=cmdClass.getAnnotation(APICommand.class);
-    if (at == null) {
-      throw new CloudRuntimeException(String.format("%s is claimed as a API command, but it doesn't have @APICommand annotation",cmdClass.getName()));
-    }
-    String apiName=at.name();
-    List<Class<?>> apiCmdList=_apiNameCmdClassMap.get(apiName);
-    if (apiCmdList == null) {
-      apiCmdList=new ArrayList<Class<?>>();
-      _apiNameCmdClassMap.put(apiName,apiCmdList);
-    }
-    apiCmdList.add(cmdClass);
-    boolean isReadCommand=false;
-    BaseCmd cmdObj;
-    try {
-      cmdObj=(BaseCmd)cmdClass.newInstance();
-      if (cmdObj instanceof BaseListCmd) {
-        isReadCommand=true;
-      }
-    }
- catch (    Exception e) {
-    }
-    for (    RoleType role : at.authorized()) {
-      AclPermissionVO apiPermission=null;
+  SearchBuilder<AclPolicyPermissionVO> sb=_aclPermissionDao.createSearchBuilder();
+  sb.and("policyId",sb.entity().getAclPolicyId(),SearchCriteria.Op.EQ);
+  sb.and("resourceType",sb.entity().getEntityType(),SearchCriteria.Op.NULL);
+  sb.and("scope",sb.entity().getScope(),SearchCriteria.Op.EQ);
+  sb.done();
+  SearchCriteria<AclPolicyPermissionVO> permissionSC=sb.create();
+  for (  RoleType role : RoleType.values()) {
+    permissionSC.setParameters("policyId",role.ordinal() + 1);
 switch (role) {
 case User:
-        apiPermission=new AclPermissionVO(apiName,null,null,PermissionScope.ACCOUNT,null,Permission.Allow);
-      break;
+      permissionSC.setParameters("scope",PermissionScope.ACCOUNT.toString());
+    break;
 case Admin:
-    apiPermission=new AclPermissionVO(apiName,null,null,PermissionScope.ALL,null,Permission.Allow);
-  break;
+  permissionSC.setParameters("scope",PermissionScope.ALL.toString());
+break;
 case DomainAdmin:
-apiPermission=new AclPermissionVO(apiName,null,null,PermissionScope.DOMAIN,null,Permission.Allow);
+permissionSC.setParameters("scope",PermissionScope.DOMAIN.toString());
 break;
 case ResourceAdmin:
-apiPermission=new AclPermissionVO(apiName,null,null,PermissionScope.DOMAIN,null,Permission.Allow);
+permissionSC.setParameters("scope",PermissionScope.DOMAIN.toString());
 break;
 }
-if (apiPermission != null) {
-if (isReadCommand) {
-apiPermission.setAccessType(AccessType.ListEntry);
+_aclPermissionDao.expunge(permissionSC);
 }
-_aclPermissionDao.persist(apiPermission);
-AclPolicyPermissionMapVO policyPermMapEntry=new AclPolicyPermissionMapVO(role.ordinal() + 1,apiPermission.getId());
-_aclPolicyPermissionMapDao.persist(policyPermMapEntry);
+for (Class<?> cmdClass : cmdClasses) {
+APICommand at=cmdClass.getAnnotation(APICommand.class);
+if (at == null) {
+throw new CloudRuntimeException(String.format("%s is claimed as a API command, but it doesn't have @APICommand annotation",cmdClass.getName()));
+}
+String apiName=at.name();
+List<Class<?>> apiCmdList=_apiNameCmdClassMap.get(apiName);
+if (apiCmdList == null) {
+apiCmdList=new ArrayList<Class<?>>();
+_apiNameCmdClassMap.put(apiName,apiCmdList);
+}
+apiCmdList.add(cmdClass);
+if (!commandsPropertiesOverrides.contains(apiName)) {
+for (RoleType role : at.authorized()) {
+addDefaultAclPolicyPermission(apiName,cmdClass,role);
+}
+}
+}
+for (String apiName : commandsPropertiesOverrides) {
+Class<?> cmdClass=getCmdClass(apiName);
+for (RoleType role : RoleType.values()) {
+if (commandsPropertiesRoleBasedApisMap.get(role).contains(apiName)) {
+addDefaultAclPolicyPermission(apiName,cmdClass,role);
 }
 }
 }
