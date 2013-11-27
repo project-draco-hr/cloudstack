@@ -1,0 +1,71 @@
+{
+  boolean hyperv=(pcb != null && !pcb.isEmpty());
+  boolean credssp=hyperv || (password != null && !password.isEmpty());
+  String workstation;
+  try {
+    workstation=InetAddress.getLocalHost().getHostName();
+  }
+ catch (  UnknownHostException e) {
+    workstation="workstation";
+  }
+  RdpState state=new RdpState();
+  NtlmState ntlmState=new NtlmState();
+  int[] channelsToJoin=new int[]{RdpConstants.CHANNEL_IO};
+  if (hyperv) {
+    add(new ClientPreConnectionBlob("pcb",pcb));
+  }
+  int protocol=RdpConstants.RDP_NEG_REQ_PROTOCOL_SSL;
+  if (credssp) {
+    protocol=RdpConstants.RDP_NEG_REQ_PROTOCOL_HYBRID;
+    add(new ClientNtlmsspNegotiate("client_ntlmssp_nego",ntlmState),new ServerNtlmsspChallenge("server_ntlmssp_challenge",ntlmState),new ClientNtlmsspPubKeyAuth("client_ntlmssp_auth",ntlmState,sslState,serverHostName,domain,workstation,userName,password),new ServerNtlmsspPubKeyPlus1("server_ntlmssp_confirm",ntlmState),new ClientNtlmsspUserCredentials("client_ntlmssp_finish",ntlmState));
+  }
+  add(new ClientX224ConnectionRequestPDU("client_connection_req",userName,protocol),new ServerX224ConnectionConfirmPDU("server_connection_conf"),new UpgradeSocketToSSL("upgrade_to_ssl"),new ClientMCSConnectInitial("client_initial_conference_create"),new ServerMCSConnectResponse("server_initial_conference_create"),new ClientMCSErectDomainRequest("client_erect_domain"),new ClientMCSAttachUserRequest("client_atach_user"),new ServerMCSAttachUserConfirmPDU("server_atach_user_confirm",state),new ClientMCSChannelJoinRequestServerMCSChannelConfirmPDUs("client_channel_join_rdprdr",channelsToJoin,state),new ClientInfoPDU("client_info_req",userName),new ServerLicenseErrorPDUValidClient("server_valid_client"),new ServerFastPath("server_fastpath"),new ServerX224DataPdu("server_x224_data"),new ClientTpkt("client_tpkt_ot"),new ClientX224DataPDU("client_x224_data_ot"));
+  if (hyperv) {
+    link("IN","pcb","server_fastpath >tpkt","upgrade_to_ssl","client_ntlmssp_nego","server_ntlmssp_challenge","client_ntlmssp_auth","server_ntlmssp_confirm","client_ntlmssp_finish","client_connection_req","server_connection_conf","client_initial_conference_create");
+    for (    String element : new String[]{"pcb","client_ntlmssp_nego","server_ntlmssp_challenge","client_ntlmssp_auth","server_ntlmssp_confirm","client_ntlmssp_finish"}) {
+      link(element + " >otout",element + "< OUT");
+    }
+  }
+ else {
+    link("IN","server_fastpath >tpkt","client_connection_req","server_connection_conf","upgrade_to_ssl");
+    if (credssp) {
+      link("upgrade_to_ssl","client_ntlmssp_nego","server_ntlmssp_challenge","client_ntlmssp_auth","server_ntlmssp_confirm","client_ntlmssp_finish","client_initial_conference_create");
+      for (      String element : new String[]{"client_ntlmssp_nego","server_ntlmssp_challenge","client_ntlmssp_auth","server_ntlmssp_confirm","client_ntlmssp_finish"}) {
+        link(element + " >otout",element + "< OUT");
+      }
+    }
+ else {
+      link("upgrade_to_ssl","client_initial_conference_create");
+    }
+  }
+  link("client_initial_conference_create","server_initial_conference_create","client_erect_domain","server_x224_data","client_atach_user","server_atach_user_confirm","client_channel_join_rdprdr","client_info_req","server_valid_client");
+  link("client_x224_data_ot","client_tpkt_ot","client_tpkt_ot< OUT");
+  String tpkt_peers[]=new String[]{"client_connection_req","server_connection_conf","upgrade_to_ssl","client_x224_data_ot"};
+  for (  String element : tpkt_peers) {
+    link(element + " >otout",element + "< client_tpkt_ot");
+  }
+  String x224_peers[]=new String[]{"client_initial_conference_create","server_initial_conference_create","client_erect_domain","client_atach_user","server_atach_user_confirm","client_channel_join_rdprdr","client_info_req","server_valid_client"};
+  for (  String element : x224_peers) {
+    link(element + " >otout",element + "< client_x224_data_ot");
+  }
+  add(new Queue("queue"),new ServerMCSPDU("server_mcs"));
+  link(HANDSHAKE_END + " >queue","queue","OUT");
+  link(HANDSHAKE_END,"server_mcs");
+  AwtMouseEventSource mouseEventSource=new AwtMouseEventSource("mouse");
+  AwtKeyEventSource keyEventSource=new AwtKeyEventSource("keyboard");
+  canvas.addMouseListener(mouseEventSource);
+  canvas.addMouseMotionListener(mouseEventSource);
+  canvas.addKeyListener(keyEventSource);
+  add(new ServerIOChannelRouter("server_io_channel",state),new ServerDemandActivePDU("server_demand_active",screen,state),new ClientConfirmActivePDU("client_confirm_active",screen,state),new ServerBitmapUpdate("server_bitmap_update"),new AwtCanvasAdapter("canvas_adapter",canvas,screen),new ServerPaletteUpdate("server_palette",screen),keyEventSource,new AwtRdpKeyboardAdapter("keyboard_adapter"),mouseEventSource,new AwtRdpMouseAdapter("mouse_adapter"),new ClientTpkt("client_tpkt_queue"),new ClientX224DataPDU("client_x224_data_queue"),new ClientFastPathPDU("client_fastpath_queue"));
+  link("server_mcs >channel_1003","server_io_channel");
+  link("server_fastpath >bitmap","fastpath< server_bitmap_update","server_bitmap_update< canvas_adapter");
+  link("server_io_channel >bitmap","slowpath< server_bitmap_update");
+  link("server_fastpath >palette","fastpath< server_palette");
+  link("server_io_channel >palette","slowpath< server_palette");
+  link("server_io_channel >demand_active","slowpath< server_demand_active");
+  link("server_demand_active >confirm_active","client_confirm_active","confirm_active< client_x224_data_queue");
+  link(mouseEventSource.getId(),"mouse_adapter","mouse_adapter< client_fastpath_queue");
+  link(keyEventSource.getId(),"keyboard_adapter","keyboard_adapter< client_fastpath_queue");
+  link("client_fastpath_queue","client_fastpath_queue< queue");
+  link("client_x224_data_queue","client_tpkt_queue","client_tpkt_queue< queue");
+}
