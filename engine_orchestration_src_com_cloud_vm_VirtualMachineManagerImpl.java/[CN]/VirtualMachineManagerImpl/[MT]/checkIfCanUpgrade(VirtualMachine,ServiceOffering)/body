@@ -1,0 +1,30 @@
+{
+  if (newServiceOffering == null) {
+    throw new InvalidParameterValueException("Unable to find a service offering with id " + newServiceOffering.getId());
+  }
+  if (!(vmInstance.getState().equals(State.Stopped) || vmInstance.getState().equals(State.Running))) {
+    s_logger.warn("Unable to upgrade virtual machine " + vmInstance.toString() + " in state "+ vmInstance.getState());
+    throw new InvalidParameterValueException("Unable to upgrade virtual machine " + vmInstance.toString() + " "+ " in state "+ vmInstance.getState()+ "; make sure the virtual machine is stopped/running");
+  }
+  if (!newServiceOffering.isDynamic() && vmInstance.getServiceOfferingId() == newServiceOffering.getId()) {
+    if (s_logger.isInfoEnabled()) {
+      s_logger.info("Not upgrading vm " + vmInstance.toString() + " since it already has the requested "+ "service offering ("+ newServiceOffering.getName()+ ")");
+    }
+    throw new InvalidParameterValueException("Not upgrading vm " + vmInstance.toString() + " since it already "+ "has the requested service offering ("+ newServiceOffering.getName()+ ")");
+  }
+  ServiceOfferingVO currentServiceOffering=_offeringDao.findByIdIncludingRemoved(vmInstance.getId(),vmInstance.getServiceOfferingId());
+  if (currentServiceOffering.getUseLocalStorage() != newServiceOffering.getUseLocalStorage()) {
+    throw new InvalidParameterValueException("Unable to upgrade virtual machine " + vmInstance.toString() + ", cannot switch between local storage and shared storage service offerings.  Current offering "+ "useLocalStorage="+ currentServiceOffering.getUseLocalStorage()+ ", target offering useLocalStorage="+ newServiceOffering.getUseLocalStorage());
+  }
+  if (currentServiceOffering.getSystemUse() != newServiceOffering.getSystemUse()) {
+    throw new InvalidParameterValueException("isSystem property is different for current service offering and new service offering");
+  }
+  if (!isVirtualMachineUpgradable(vmInstance,newServiceOffering)) {
+    throw new InvalidParameterValueException("Unable to upgrade virtual machine, not enough resources available " + "for an offering of " + newServiceOffering.getCpu() + " cpu(s) at "+ newServiceOffering.getSpeed()+ " Mhz, and "+ newServiceOffering.getRamSize()+ " MB of memory");
+  }
+  List<String> currentTags=StringUtils.csvTagsToList(currentServiceOffering.getTags());
+  List<String> newTags=StringUtils.csvTagsToList(newServiceOffering.getTags());
+  if (!newTags.containsAll(currentTags)) {
+    throw new InvalidParameterValueException("Unable to upgrade virtual machine; the new service offering " + "does not have all the tags of the " + "current service offering. Current service offering tags: " + currentTags + "; "+ "new service "+ "offering tags: "+ newTags);
+  }
+}

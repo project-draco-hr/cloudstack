@@ -1,0 +1,99 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  VMInstanceVO vmInstance=_vmInstanceDao.findById(vmId);
+  if (vmInstance.getHypervisorType() != HypervisorType.XenServer && vmInstance.getHypervisorType() != HypervisorType.VMware) {
+    throw new InvalidParameterValueException("This operation not permitted for this hypervisor of the vm");
+  }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
+  ServiceOfferingVO newServiceOffering=(ServiceOfferingVO)_offeringDao.findById(newServiceOfferingId);
+  if (newServiceOffering.isDynamic()) {
+    newServiceOffering.setDynamicFlag(true);
+    validateCustomParameters(newServiceOffering,customParameters);
+    newServiceOffering=_offeringDao.getcomputeOffering(newServiceOffering,customParameters);
+  }
+  _itMgr.checkIfCanUpgrade(vmInstance,newServiceOffering);
+  ServiceOffering currentServiceOffering=_offeringDao.findByIdIncludingRemoved(vmInstance.getId(),vmInstance.getServiceOfferingId());
+  int newCpu=newServiceOffering.getCpu();
+  int newMemory=newServiceOffering.getRamSize();
+  int newSpeed=newServiceOffering.getSpeed();
+  int currentCpu=currentServiceOffering.getCpu();
+  int currentMemory=currentServiceOffering.getRamSize();
+  int currentSpeed=currentServiceOffering.getSpeed();
+  if ((newSpeed < currentSpeed || newMemory < currentMemory || newCpu < currentCpu) || (newSpeed == currentSpeed && newMemory == currentMemory && newCpu == currentCpu)) {
+    throw new InvalidParameterValueException("Only scaling up the vm is supported, new service offering(speed=" + newSpeed + ",cpu="+ newCpu+ ",memory=,"+ newMemory+ ")"+ " should have at least one value(cpu/ram) greater than old value and no resource value less than older(speed="+ currentSpeed+ ",cpu="+ currentCpu+ ",memory=,"+ currentMemory+ ")");
+  }
+  if (newCpu > currentCpu) {
+    _resourceLimitMgr.checkResourceLimit(caller,ResourceType.cpu,newCpu - currentCpu);
+  }
+  if (newMemory > currentMemory) {
+    _resourceLimitMgr.checkResourceLimit(caller,ResourceType.memory,newMemory - currentMemory);
+  }
+  boolean success=false;
+  if (vmInstance.getState().equals(State.Running)) {
+    int retry=_scaleRetry;
+    ExcludeList excludes=new ExcludeList();
+    boolean enableDynamicallyScaleVm=EnableDynamicallyScaleVm.valueIn(vmInstance.getDataCenterId());
+    if (!enableDynamicallyScaleVm) {
+      throw new PermissionDeniedException("Dynamically scaling virtual machines is disabled for this zone, please contact your admin");
+    }
+    if (!vmInstance.isDynamicallyScalable()) {
+      throw new CloudRuntimeException("Unable to Scale the vm: " + vmInstance.getUuid() + " as vm does not have tools to support dynamic scaling");
+    }
+    while (retry-- != 0) {
+      try {
+        boolean existingHostHasCapacity=false;
+        if (newCpu > currentCpu) {
+          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
+        }
+        if (newMemory > currentMemory) {
+          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+        }
+        if (!excludes.shouldAvoid(ApiDBUtils.findHostById(vmInstance.getHostId()))) {
+          existingHostHasCapacity=_capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),newServiceOffering.getSpeed() - currentServiceOffering.getSpeed(),(newServiceOffering.getRamSize() - currentServiceOffering.getRamSize()) * 1024L * 1024L,false,ApiDBUtils.getCpuOverprovisioningFactor(),1f,false);
+          excludes.addHost(vmInstance.getHostId());
+        }
+        if (!existingHostHasCapacity) {
+          _itMgr.findHostAndMigrate(vmInstance.getUuid(),newServiceOfferingId,excludes);
+        }
+        _itMgr.upgradeVmDb(vmId,newServiceOfferingId);
+        if (newServiceOffering.isDynamic()) {
+          saveCustomOfferingDetails(vmId,newServiceOffering);
+        }
+        vmInstance=_vmInstanceDao.findById(vmId);
+        _itMgr.reConfigureVm(vmInstance.getUuid(),currentServiceOffering,existingHostHasCapacity);
+        success=true;
+        if (currentServiceOffering.isDynamic() && !newServiceOffering.isDynamic()) {
+          removeCustomOfferingDetails(vmId);
+        }
+        return success;
+      }
+ catch (      InsufficientCapacityException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      ResourceUnavailableException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      ConcurrentOperationException e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+catch (      Exception e) {
+        s_logger.warn("Received exception while scaling ",e);
+      }
+ finally {
+        if (!success) {
+          _itMgr.upgradeVmDb(vmId,currentServiceOffering.getId());
+          if (newServiceOffering.isDynamic()) {
+            removeCustomOfferingDetails(vmId);
+          }
+          if (newCpu > currentCpu) {
+            _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
+          }
+          if (newMemory > currentMemory) {
+            _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+          }
+        }
+      }
+    }
+  }
+  return success;
+}
