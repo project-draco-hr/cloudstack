@@ -1,0 +1,52 @@
+{
+  if (entity instanceof VirtualMachine) {
+    String entityType=AclEntityType.VM.toString();
+    if (accessType == null) {
+      accessType=AccessType.ListEntry;
+    }
+    if (entity instanceof InternalIdentity) {
+      InternalIdentity entityWithId=(InternalIdentity)entity;
+      List<AclGroupAccountMapVO> acctGroups=_aclGroupAccountMapDao.listByAccountId(caller.getId());
+      for (      AclGroupAccountMapVO groupMapping : acctGroups) {
+        AclEntityPermissionVO entityPermission=_entityPermissionDao.findByGroupAndEntity(groupMapping.getAclGroupId(),entityType,entityWithId.getId(),accessType);
+        if (entityPermission != null) {
+          if (entityPermission.isAllowed()) {
+            return true;
+          }
+ else {
+            if (s_logger.isDebugEnabled()) {
+              s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+            }
+            throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+          }
+        }
+      }
+    }
+    List<AclRole> roles=_aclService.getEffectivePolicies(caller,entity);
+    HashMap<AclRole,Boolean> rolePermissionMap=new HashMap<AclRole,Boolean>();
+    for (    AclRole role : roles) {
+      List<AclRolePermissionVO> permissions=_rolePermissionDao.listByRoleAndEntity(role.getId(),entityType,accessType);
+      for (      AclRolePermissionVO permission : permissions) {
+        if (checkPermissionScope(caller,permission.getScope(),entity)) {
+          if (permission.getEntityType().equals(entityType)) {
+            rolePermissionMap.put(role,permission.isAllowed());
+            break;
+          }
+ else           if (permission.getEntityType().equals("*")) {
+            rolePermissionMap.put(role,permission.isAllowed());
+          }
+        }
+      }
+      if (rolePermissionMap.containsKey(role) && rolePermissionMap.get(role)) {
+        return true;
+      }
+    }
+    if (!roles.isEmpty()) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+      }
+      throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+    }
+  }
+  return false;
+}
