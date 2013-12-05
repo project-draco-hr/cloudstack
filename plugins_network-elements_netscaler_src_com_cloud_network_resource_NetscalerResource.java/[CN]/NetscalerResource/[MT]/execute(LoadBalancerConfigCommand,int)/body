@@ -92,20 +92,46 @@
                 deleteMonitor=true;
               }
             }
-            if (sslCert != null && lbProtocol.equals(NetUtils.SSL_PROTO)) {
+            if (sslCert != null && lbProtocol.equalsIgnoreCase(NetUtils.SSL_PROTO)) {
               if (sslCert.isRevoked()) {
                 deleteCert=true;
               }
  else {
-                String certName=generateSslCertName(srcIp,srcPort);
-                String keyName=generateSslKeyName(srcIp,srcPort);
-                String certKeyName=generateSslCertKeyName(srcIp,srcPort);
-                if (SSL.isSslCertKeyPresent(_netscalerService,certKeyName)) {
-                  SSL.deleteSslCertKey(_netscalerService,certKeyName);
+                String previousCertKeyName=null;
+                if (sslCert.getChain() != null) {
+                  List<Certificate> chainList=CertificateHelper.parseChain(sslCert.getChain());
+                  for (                  Certificate intermediateCert : Lists.reverse(chainList)) {
+                    String fingerPrint=CertificateHelper.generateFingerPrint(intermediateCert);
+                    String intermediateCertKeyName=generateSslCertKeyName(fingerPrint);
+                    String intermediateCertFileName=intermediateCertKeyName + ".pem";
+                    if (!SSL.isSslCertKeyPresent(_netscalerService,intermediateCertKeyName)) {
+                      byte[] certData=intermediateCert.getEncoded();
+                      StringWriter textWriter=new StringWriter();
+                      PEMWriter pemWriter=new PEMWriter(textWriter);
+                      pemWriter.writeObject(intermediateCert);
+                      pemWriter.flush();
+                      SSL.uploadCert(_ip,_username,_password,intermediateCertFileName,textWriter.toString().getBytes());
+                      SSL.createSslCertKey(_netscalerService,intermediateCertFileName,null,intermediateCertKeyName,null);
+                    }
+                    if (previousCertKeyName != null && !SSL.certLinkExists(_netscalerService,intermediateCertKeyName,previousCertKeyName)) {
+                      SSL.linkCerts(_netscalerService,intermediateCertKeyName,previousCertKeyName);
+                    }
+                    previousCertKeyName=intermediateCertKeyName;
+                  }
                 }
-                SSL.uploadCert(_ip,_username,_password,certName,sslCert.getCert().getBytes());
-                SSL.uploadKey(_ip,_username,_password,keyName,sslCert.getKey().getBytes());
-                SSL.createSslCertKey(_netscalerService,certName,keyName,certKeyName,sslCert.getPassword());
+                String certFilename=generateSslCertName(sslCert.getFingerprint()) + ".pem";
+                String keyFilename=generateSslKeyName(sslCert.getFingerprint()) + ".pem";
+                String certKeyName=generateSslCertKeyName(sslCert.getFingerprint());
+                ByteArrayOutputStream certDataStream=new ByteArrayOutputStream();
+                certDataStream.write(sslCert.getCert().getBytes());
+                if (!SSL.isSslCertKeyPresent(_netscalerService,certKeyName)) {
+                  SSL.uploadCert(_ip,_username,_password,certFilename,certDataStream.toByteArray());
+                  SSL.uploadKey(_ip,_username,_password,keyFilename,sslCert.getKey().getBytes());
+                  SSL.createSslCertKey(_netscalerService,certFilename,keyFilename,certKeyName,sslCert.getPassword());
+                }
+                if (previousCertKeyName != null && !SSL.certLinkExists(_netscalerService,certKeyName,previousCertKeyName)) {
+                  SSL.linkCerts(_netscalerService,certKeyName,previousCertKeyName);
+                }
                 SSL.bindCertKeyToVserver(_netscalerService,certKeyName,nsVirtualServerName);
               }
             }
@@ -178,15 +204,32 @@
         removeLBMonitor(nsMonitorName);
       }
       if (sslCert != null && deleteCert) {
-        String certName=generateSslCertName(srcIp,srcPort);
-        String keyName=generateSslKeyName(srcIp,srcPort);
-        String certKeyName=generateSslCertKeyName(srcIp,srcPort);
-        if (nsVirtualServerExists(nsVirtualServerName)) {
+        String certFilename=generateSslCertName(sslCert.getFingerprint()) + ".pem";
+        String keyFilename=generateSslKeyName(sslCert.getFingerprint()) + ".pem";
+        String certKeyName=generateSslCertKeyName(sslCert.getFingerprint());
+        if (nsVirtualServerExists(nsVirtualServerName) && SSL.isSslCertKeyPresent(_netscalerService,certKeyName) && SSL.isBoundToVserver(_netscalerService,certKeyName,nsVirtualServerName)) {
           SSL.unbindCertKeyFromVserver(_netscalerService,certKeyName,nsVirtualServerName);
         }
-        SSL.deleteSslCertKey(_netscalerService,certKeyName);
-        SSL.deleteCertFile(_ip,_username,_password,certName);
-        SSL.deleteKeyFile(_ip,_username,_password,keyName);
+        if (SSL.isSslCertKeyPresent(_netscalerService,certKeyName)) {
+          SSL.deleteSslCertKey(_netscalerService,certKeyName);
+          SSL.deleteCertFile(_ip,_username,_password,certFilename);
+          SSL.deleteKeyFile(_ip,_username,_password,keyFilename);
+        }
+        if (sslCert.getChain() != null) {
+          List<Certificate> chainList=CertificateHelper.parseChain(sslCert.getChain());
+          for (          Certificate intermediateCert : chainList) {
+            String fingerPrint=CertificateHelper.generateFingerPrint(intermediateCert);
+            String intermediateCertKeyName=generateSslCertKeyName(fingerPrint);
+            String intermediateCertFileName=intermediateCertKeyName + ".pem";
+            if (SSL.isSslCertKeyPresent(_netscalerService,intermediateCertKeyName) && !SSL.isCaforCerts(_netscalerService,intermediateCertKeyName)) {
+              SSL.deleteSslCertKey(_netscalerService,intermediateCertKeyName);
+              SSL.deleteCertFile(_ip,_username,_password,intermediateCertFileName);
+            }
+ else {
+              break;
+            }
+          }
+        }
       }
     }
     if (s_logger.isInfoEnabled()) {
