@@ -1,5 +1,6 @@
 {
   String vmName=cmd.getVmName();
+  String platformstring=null;
   try {
     Connection conn=getConnection();
     Set<VM> vms=VM.getByNameLabel(conn,vmName);
@@ -27,6 +28,7 @@ synchronized (_cluster.intern()) {
     }
     for (    VM vm : vms) {
       VM.Record vmr=vm.getRecord(conn);
+      platformstring=StringUtils.mapToString(vmr.platform);
       if (vmr.isControlDomain) {
         String msg="Tring to Shutdown control domain";
         s_logger.warn(msg);
@@ -35,7 +37,7 @@ synchronized (_cluster.intern()) {
       if (vmr.powerState == VmPowerState.RUNNING && !isRefNull(vmr.residentOn) && !vmr.residentOn.getUuid(conn).equals(_host.uuid)) {
         String msg="Stop Vm " + vmName + " failed due to this vm is not running on this host: "+ _host.uuid+ " but host:"+ vmr.residentOn.getUuid(conn);
         s_logger.warn(msg);
-        return new StopAnswer(cmd,msg,false);
+        return new StopAnswer(cmd,msg,platformstring,false);
       }
       State state=s_vms.getState(_cluster,vmName);
 synchronized (_cluster.intern()) {
@@ -60,23 +62,12 @@ synchronized (_cluster.intern()) {
  catch (      Exception e) {
         String msg="Catch exception " + e.getClass().getName() + " when stop VM:"+ cmd.getVmName()+ " due to "+ e.toString();
         s_logger.debug(msg);
-        return new StopAnswer(cmd,msg,false);
+        return new StopAnswer(cmd,msg,platformstring,false);
       }
  finally {
         try {
           if (vm.getPowerState(conn) == VmPowerState.HALTED) {
             disconnectManagedVolumes(conn,vm);
-            Map<String,String> platform=vm.getPlatform(conn);
-            Integer timeoffset=null;
-            try {
-              if (platform.containsKey("timeoffset")) {
-                timeoffset=Integer.valueOf(platform.get("timeoffset"));
-              }
-            }
- catch (            NumberFormatException e) {
-              s_logger.error("Error while reading the platform:timeoffset field of the instance",e);
-            }
-            String xentoolsversion=getVMXenToolsVersion(platform);
             Set<VIF> vifs=vm.getVIFs(conn);
             List<Network> networks=new ArrayList<Network>();
             for (            VIF vif : vifs) {
@@ -95,14 +86,10 @@ synchronized (_cluster.intern()) {
  catch (              Exception e) {
               }
             }
-            return new StopAnswer(cmd,"Stop VM " + vmName + " Succeed",xentoolsversion,timeoffset,true);
+            return new StopAnswer(cmd,"Stop VM " + vmName + " Succeed",platformstring,true);
           }
         }
- catch (        XenAPIException e) {
-          String msg="VM destroy failed in Stop " + vmName + " Command due to "+ e.toString();
-          s_logger.warn(msg,e);
-        }
-catch (        Exception e) {
+ catch (        Exception e) {
           String msg="VM destroy failed in Stop " + vmName + " Command due to "+ e.getMessage();
           s_logger.warn(msg,e);
         }
@@ -115,19 +102,10 @@ synchronized (_cluster.intern()) {
       }
     }
   }
- catch (  XenAPIException e) {
+ catch (  Exception e) {
     String msg="Stop Vm " + vmName + " fail due to "+ e.toString();
     s_logger.warn(msg,e);
-    return new StopAnswer(cmd,msg,false);
+    return new StopAnswer(cmd,msg,platformstring,false);
   }
-catch (  XmlRpcException e) {
-    String msg="Stop Vm " + vmName + " fail due to "+ e.getMessage();
-    s_logger.warn(msg,e);
-    return new StopAnswer(cmd,msg,false);
-  }
-catch (  Exception e) {
-    s_logger.warn("Unable to stop " + vmName + " due to ",e);
-    return new StopAnswer(cmd,e);
-  }
-  return new StopAnswer(cmd,"Stop VM failed",false);
+  return new StopAnswer(cmd,"Stop VM failed",platformstring,false);
 }
