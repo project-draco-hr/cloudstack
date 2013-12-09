@@ -1,5 +1,11 @@
 {
-  String ruleName=genFirewallRuleName(rule.getId());
+  String ruleName;
+  if (rule.getTrafficType() == FirewallRule.TrafficType.Egress) {
+    ruleName=genFirewallRuleName(rule.getId(),rule.getSrcVlanTag());
+  }
+ else {
+    ruleName=genFirewallRuleName(rule.getId());
+  }
 switch (prim) {
 case CHECK_IF_EXISTS:
     Map<String,String> params=new HashMap<String,String>();
@@ -20,6 +26,7 @@ String dstAddressXML;
 String appXML;
 String serviceXML;
 String protocol=rule.getProtocol();
+String action="allow";
 if (protocol.equals(Protocol.ICMP.toString())) {
 appXML="<member>icmp</member><member>ping</member><member>traceroute</member>";
 }
@@ -51,6 +58,16 @@ if (rule.getTrafficType() == FirewallRule.TrafficType.Egress) {
 srcZone=_privateZone;
 dstZone=_publicZone;
 dstAddressXML="<member>any</member>";
+if (rule.getType() == FirewallRule.FirewallRuleType.System) {
+if (!rule.isDefaultEgressPolicy()) {
+action="deny";
+}
+}
+ else {
+if (rule.isDefaultEgressPolicy()) {
+action="deny";
+}
+}
 }
  else {
 srcZone=_publicZone;
@@ -89,14 +106,46 @@ xml+="<source>" + srcCidrXML + "</source>";
 xml+="<destination>" + dstAddressXML + "</destination>";
 xml+="<application>" + appXML + "</application>";
 xml+="<service>" + serviceXML + "</service>";
-xml+="<action>allow</action>";
+xml+="<action>" + action + "</action>";
 xml+="<negate-source>no</negate-source>";
 xml+="<negate-destination>no</negate-destination>";
-if (_threatProfile != null) {
+if (_threatProfile != null && action.equals("allow")) {
 xml+="<profile-setting><group><member>" + _threatProfile + "</member></group></profile-setting>";
 }
-if (_logProfile != null) {
+if (_logProfile != null && action.equals("allow")) {
 xml+="<log-setting>" + _logProfile + "</log-setting>";
+}
+boolean has_default=false;
+String defaultEgressRule="";
+if (rule.getTrafficType() == FirewallRule.TrafficType.Egress) {
+Map<String,String> e_params=new HashMap<String,String>();
+e_params.put("type","config");
+e_params.put("action","get");
+e_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/security/rules/entry[@name='policy_0_" + rule.getSrcVlanTag() + "']");
+String e_response=request(PaloAltoMethod.GET,e_params);
+has_default=(validResponse(e_response) && responseNotEmpty(e_response));
+if (has_default) {
+s_logger.debug("Moving the default egress rule after the new rule: " + ruleName);
+NodeList response_body;
+Document doc=getDocument(e_response);
+XPath xpath=XPathFactory.newInstance().newXPath();
+try {
+XPathExpression expr=xpath.compile("/response[@status='success']/result/entry/node()");
+response_body=(NodeList)expr.evaluate(doc,XPathConstants.NODESET);
+}
+ catch (XPathExpressionException e) {
+throw new ExecutionException(e.getCause().getMessage());
+}
+for (int i=0; i < response_body.getLength(); i++) {
+Node n=response_body.item(i);
+defaultEgressRule+=nodeToString(n);
+}
+Map<String,String> dd_params=new HashMap<String,String>();
+dd_params.put("type","config");
+dd_params.put("action","delete");
+dd_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/security/rules/entry[@name='policy_0_" + rule.getSrcVlanTag() + "']");
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.POST,dd_params));
+}
 }
 Map<String,String> a_params=new HashMap<String,String>();
 a_params.put("type","config");
@@ -104,6 +153,15 @@ a_params.put("action","set");
 a_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/security/rules/entry[@name='" + ruleName + "']");
 a_params.put("element",xml);
 cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.POST,a_params));
+if (rule.getTrafficType() == FirewallRule.TrafficType.Egress && has_default) {
+Map<String,String> da_params=new HashMap<String,String>();
+da_params.put("type","config");
+da_params.put("action","set");
+da_params.put("xpath","/config/devices/entry/vsys/entry[@name='vsys1']/rulebase/security/rules/entry[@name='policy_0_" + rule.getSrcVlanTag() + "']");
+da_params.put("element",defaultEgressRule);
+cmdList.add(new DefaultPaloAltoCommand(PaloAltoMethod.POST,da_params));
+s_logger.debug("Completed move of the default egress rule after rule: " + ruleName);
+}
 return true;
 case DELETE:
 if (!manageFirewallRule(cmdList,PaloAltoPrimative.CHECK_IF_EXISTS,rule)) {
