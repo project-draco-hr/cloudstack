@@ -7,12 +7,6 @@
   String action=cmd.getAction();
   Map<String,String> tags=cmd.getTags();
   Account caller=CallContext.current().getCallingAccount();
-  List<Long> permittedAccounts=new ArrayList<Long>();
-  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
-  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
-  Long domainId=domainIdRecursiveListProject.first();
-  Boolean isRecursive=domainIdRecursiveListProject.second();
-  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
   Filter filter=new Filter(NetworkACLItemVO.class,"id",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<NetworkACLItemVO> sb=_networkACLItemDao.createSearchBuilder();
   sb.and("id",sb.entity().getId(),Op.EQ);
@@ -31,6 +25,11 @@
     sb.groupBy(sb.entity().getId());
     sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
   }
+  if (aclId == null) {
+    SearchBuilder<NetworkACLVO> vpcSearch=_networkACLDao.createSearchBuilder();
+    vpcSearch.and("vpcId",vpcSearch.entity().getVpcId(),Op.IN);
+    sb.join("vpcSearch",vpcSearch,sb.entity().getAclId(),vpcSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  }
   SearchCriteria<NetworkACLItemVO> sc=sb.create();
   if (id != null) {
     sc.setParameters("id",id);
@@ -43,7 +42,39 @@
     sc.setParameters("trafficType",trafficType);
   }
   if (aclId != null) {
+    NetworkACL acl=_networkACLDao.findById(aclId);
+    if (acl.getVpcId() != 0) {
+      Vpc vpc=_vpcDao.findById(acl.getVpcId());
+      if (vpc == null) {
+        throw new InvalidParameterValueException("Unable to find VPC associated with acl");
+      }
+      _accountMgr.checkAccess(caller,null,true,vpc);
+    }
     sc.setParameters("aclId",aclId);
+  }
+ else {
+    List<Long> permittedAccounts=new ArrayList<Long>();
+    Long domainId=cmd.getDomainId();
+    boolean isRecursive=cmd.isRecursive();
+    String accountName=cmd.getAccountName();
+    Long projectId=cmd.getProjectId();
+    boolean listAll=cmd.listAll();
+    Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(domainId,isRecursive,null);
+    _accountMgr.buildACLSearchParameters(caller,id,accountName,projectId,permittedAccounts,domainIdRecursiveListProject,listAll,false);
+    domainId=domainIdRecursiveListProject.first();
+    isRecursive=domainIdRecursiveListProject.second();
+    ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+    SearchBuilder<VpcVO> sbVpc=_vpcDao.createSearchBuilder();
+    _accountMgr.buildACLSearchBuilder(sbVpc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+    SearchCriteria<VpcVO> scVpc=sbVpc.create();
+    _accountMgr.buildACLSearchCriteria(scVpc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+    List<VpcVO> vpcs=_vpcDao.search(scVpc,null);
+    List<Long> vpcIds=new ArrayList<Long>();
+    for (    VpcVO vpc : vpcs) {
+      vpcIds.add(vpc.getId());
+    }
+    vpcIds.add(0L);
+    sc.setJoinParameters("vpcSearch","vpcId",vpcIds.toArray());
   }
   if (protocol != null) {
     sc.setParameters("protocol",protocol);
