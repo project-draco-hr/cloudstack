@@ -19,6 +19,8 @@
   int currentCpu=currentServiceOffering.getCpu();
   int currentMemory=currentServiceOffering.getRamSize();
   int currentSpeed=currentServiceOffering.getSpeed();
+  int memoryDiff=newMemory - currentMemory;
+  int cpuDiff=newCpu * newSpeed - currentCpu * currentSpeed;
   if ((newSpeed < currentSpeed || newMemory < currentMemory || newCpu < currentCpu) || (newSpeed == currentSpeed && newMemory == currentMemory && newCpu == currentCpu)) {
     throw new InvalidParameterValueException("Only scaling up the vm is supported, new service offering(speed=" + newSpeed + ",cpu="+ newCpu+ ",memory=,"+ newMemory+ ")"+ " should have at least one value(cpu/ram) greater than old value and no resource value less than older(speed="+ currentSpeed+ ",cpu="+ currentCpu+ ",memory=,"+ currentMemory+ ")");
   }
@@ -39,17 +41,21 @@
     if (!vmInstance.isDynamicallyScalable()) {
       throw new CloudRuntimeException("Unable to Scale the vm: " + vmInstance.getUuid() + " as vm does not have tools to support dynamic scaling");
     }
+    HostVO host=_hostDao.findById(vmInstance.getHostId());
+    if (_capacityMgr.checkIfClusterCrossesThreshold(host.getClusterId(),cpuDiff,memoryDiff)) {
+      throw new CloudRuntimeException("Unable to scale vm: " + vmInstance.getUuid() + " due to insufficient resources");
+    }
     while (retry-- != 0) {
       try {
         boolean existingHostHasCapacity=false;
         if (newCpu > currentCpu) {
           _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
         }
-        if (newMemory > currentMemory) {
-          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+        if (memoryDiff > 0) {
+          _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(memoryDiff));
         }
         if (!excludes.shouldAvoid(ApiDBUtils.findHostById(vmInstance.getHostId()))) {
-          existingHostHasCapacity=_capacityMgr.checkIfHostHasCpuCapability(vmInstance.getHostId(),newCpu,newSpeed) && _capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),newServiceOffering.getSpeed() - currentServiceOffering.getSpeed(),(newServiceOffering.getRamSize() - currentServiceOffering.getRamSize()) * 1024L * 1024L,false,ApiDBUtils.getCpuOverprovisioningFactor(),1f,false);
+          existingHostHasCapacity=_capacityMgr.checkIfHostHasCpuCapability(vmInstance.getHostId(),newCpu,newSpeed) && _capacityMgr.checkIfHostHasCapacity(vmInstance.getHostId(),cpuDiff,(memoryDiff) * 1024L * 1024L,false,_capacityMgr.getClusterOverProvisioningFactor(host.getClusterId(),Capacity.CAPACITY_TYPE_CPU),_capacityMgr.getClusterOverProvisioningFactor(host.getClusterId(),Capacity.CAPACITY_TYPE_MEMORY),false);
           excludes.addHost(vmInstance.getHostId());
         }
         if (!existingHostHasCapacity) {
@@ -88,8 +94,8 @@ catch (      Exception e) {
           if (newCpu > currentCpu) {
             _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
           }
-          if (newMemory > currentMemory) {
-            _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(newMemory - currentMemory));
+          if (memoryDiff > 0) {
+            _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(memoryDiff));
           }
         }
       }
