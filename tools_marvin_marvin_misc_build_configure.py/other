@@ -1,0 +1,71 @@
+from ConfigParser import ConfigParser
+from bashUtils import bash
+from marvin import configGenerator
+from marvin import sshClient
+from marvin import dbConnection
+from argparse import ArgumentParser
+from time import sleep as delay
+from netaddr import IPNetwork
+from netaddr import IPAddress
+import contextlib
+import telnetlib
+import logging
+import threading
+import Queue
+import sys
+import random
+import string
+import urllib2
+import urlparse
+import socket
+WORKSPACE = '.'
+IPMI_PASS = 'calvin'
+DOMAIN = 'fmt.vmops.com'
+macinfo = {}
+ipmiinfo = {}
+cobblerinfo = {}
+if (__name__ == '__main__'):
+    parser = ArgumentParser()
+    parser.add_argument('-l', '--logging', action='store', default='INFO', dest='loglvl', help='logging level (INFO|DEBUG|)')
+    parser.add_argument('-d', '--distro', action='store', dest='distro', help='management server distro')
+    parser.add_argument('-v', '--hypervisor', action='store', dest='hypervisor', help='hypervisor type')
+    parser.add_argument('-p', '--profile', action='store', default='xen602', dest='profile', help='cobbler profile for hypervisor')
+    parser.add_argument('-e', '--environment', help='environment properties file', dest='system', action='store')
+    options = parser.parse_args()
+    if (options.loglvl == 'DEBUG'):
+        init(logging.DEBUG)
+    elif (options.loglvl == 'INFO'):
+        init(logging.INFO)
+    else:
+        init(logging.INFO)
+    if (options.system is None):
+        logging.error('no environment properties given. exiting')
+        sys.exit((-1))
+    system = ConfigParser()
+    try:
+        with open(options.system, 'r') as cfg:
+            system.readfp(cfg)
+    except IOError as e:
+        logging.error('Specify a valid path for the environment properties')
+        raise e
+    generate_system_tables(system)
+    hosts = []
+    prepare_mgmt = False
+    if (options.distro is not None):
+        mgmt_host = ('cloudstack-' + options.distro)
+        prepare_mgmt = True
+        logging.info(('Configuring management server %s' % mgmt_host))
+        hosts.append(configureManagementServer(mgmt_host))
+    if (options.hypervisor is not None):
+        auto_config = (options.hypervisor + '.cfg')
+        cscfg = configGenerator.getSetupConfig(auto_config)
+        logging.info(('Reimaging hosts with %s profile for the %s                      hypervisor' % (options.profile, options.hypervisor)))
+        hosts.extend(refreshHosts(cscfg, options.hypervisor, options.profile))
+        seedSecondaryStorage(cscfg, options.hypervisor)
+        cleanPrimaryStorage(cscfg)
+    waitForHostReady(hosts)
+    delay(30)
+    waitForHostReady(hosts)
+    if prepare_mgmt:
+        prepareManagementServer(mgmt_host)
+    logging.info('All systems go!')
