@@ -1,0 +1,44 @@
+{
+  try {
+    List<AsyncJobJoinMapVO> joinRecords=_joinMapDao.listJoinRecords(job.getId());
+    if (joinRecords.size() != 1) {
+      s_logger.warn("AsyncJob-" + job.getId() + " received wakeup call with un-supported joining job number: "+ joinRecords.size());
+      job.setSyncSource(null);
+      return;
+    }
+    AsyncJobJoinMapVO joinRecord=joinRecords.get(0);
+    VmWorkJobVO joinedJob=_workjobDao.findById(joinRecord.getJoinJobId());
+    Class<?> workClz=null;
+    try {
+      workClz=Class.forName(job.getCmd());
+    }
+ catch (    ClassNotFoundException e) {
+      s_logger.error("VM work class " + job.getCmd() + " is not found",e);
+      return;
+    }
+    VmWork work=VmWorkSerializer.deserialize(workClz,joinedJob.getCmdInfo());
+    assert(work != null);
+    AccountVO account=_accountDao.findById(work.getAccountId());
+    assert(account != null);
+    VMInstanceVO vm=_instanceDao.findById(work.getVmId());
+    assert(vm != null);
+    CallContext.register(work.getUserId(),work.getAccountId(),job.getRelated());
+    try {
+      Method handler=getHandler(joinRecord.getWakeupHandler());
+      if (handler != null) {
+        handler.invoke(_vmMgr);
+      }
+ else {
+        assert(false);
+        s_logger.error("Unable to find wakeup handler " + joinRecord.getWakeupHandler() + " when waking up job-"+ job.getId());
+      }
+    }
+  finally {
+      CallContext.unregister();
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.warn("Unexpected exception in waking up job-" + job.getId());
+    job.setSyncSource(null);
+  }
+}
