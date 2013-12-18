@@ -1,6 +1,25 @@
 {
-  Long vmId=command.getVirtualMachineId();
-  Long volumeId=command.getId();
-  Long deviceId=command.getDeviceId();
-  return attachVolumeToVM(vmId,volumeId,deviceId);
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateAttachVolumeToVM(command.getVirtualMachineId(),command.getId(),command.getDeviceId());
+  }
+ else {
+    Outcome<Volume> outcome=attachVolumeToVmThroughJobQueue(command.getVirtualMachineId(),command.getId(),command.getDeviceId());
+    Volume vol=null;
+    try {
+      vol=outcome.get();
+    }
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Throwable jobException=retrieveExecutionException(outcome.getJob());
+    if (jobException != null) {
+      if (jobException instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobException;
+ else       throw new RuntimeException("Unexpected exception",jobException);
+    }
+    return vol;
+  }
 }
