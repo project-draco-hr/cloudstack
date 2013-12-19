@@ -1,0 +1,59 @@
+{
+  String errMsg=null;
+  boolean mounted=false;
+  boolean filesrcreated=false;
+  boolean copied=false;
+  if (prevBackupUuid == null) {
+    prevBackupUuid="";
+  }
+  SR ssSR=null;
+  String remoteDir=secondaryStorageMountPath;
+  try {
+    ssSR=createFileSr(conn,remoteDir,path);
+    filesrcreated=true;
+    VDI snapshotvdi=VDI.getByUuid(conn,snapshotUuid);
+    Task task=null;
+    if (wait == 0) {
+      wait=2 * 60 * 60;
+    }
+    VDI dvdi=null;
+    try {
+      VDI previousSnapshotVdi=null;
+      if (prevSnapshotUuid != null) {
+        previousSnapshotVdi=VDI.getByUuid(conn,prevSnapshotUuid);
+      }
+      task=snapshotvdi.copyAsync2(conn,ssSR,previousSnapshotVdi,null);
+      hypervisorResource.waitForTask(conn,task,1000,wait * 1000);
+      hypervisorResource.checkForSuccess(conn,task);
+      dvdi=Types.toVDI(task,conn);
+      copied=true;
+    }
+  finally {
+      if (task != null) {
+        try {
+          task.destroy(conn);
+        }
+ catch (        Exception e1) {
+          s_logger.warn("unable to destroy task(" + task.toString() + ") on host("+ ") due to ",e1);
+        }
+      }
+    }
+    String backupUuid=dvdi.getUuid(conn);
+    return backupUuid;
+  }
+ catch (  Exception e) {
+    String msg="Exception in backupsnapshot stage due to " + e.toString();
+    s_logger.debug(msg);
+    throw new CloudRuntimeException(msg,e);
+  }
+ finally {
+    try {
+      if (filesrcreated && ssSR != null) {
+        hypervisorResource.removeSR(conn,ssSR);
+      }
+    }
+ catch (    Exception e) {
+      s_logger.debug("Exception in backupsnapshot cleanup stage due to " + e.toString());
+    }
+  }
+}

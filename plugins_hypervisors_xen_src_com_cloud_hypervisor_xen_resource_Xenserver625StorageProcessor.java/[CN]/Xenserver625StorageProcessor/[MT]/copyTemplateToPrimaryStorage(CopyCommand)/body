@@ -1,0 +1,73 @@
+{
+  DataTO srcData=cmd.getSrcTO();
+  DataTO destData=cmd.getDestTO();
+  int wait=cmd.getWait();
+  DataStoreTO srcStore=srcData.getDataStore();
+  Connection conn=hypervisorResource.getConnection();
+  SR srcSr=null;
+  try {
+    if ((srcStore instanceof NfsTO) && (srcData.getObjectType() == DataObjectType.TEMPLATE)) {
+      NfsTO srcImageStore=(NfsTO)srcStore;
+      TemplateObjectTO srcTemplate=(TemplateObjectTO)srcData;
+      String storeUrl=srcImageStore.getUrl();
+      URI uri=new URI(storeUrl);
+      String volumePath=srcData.getPath();
+      volumePath=StringUtils.stripEnd(volumePath,"/");
+      String[] splits=volumePath.split("/");
+      String volumeDirectory=volumePath;
+      if (splits.length > 4) {
+        int index=volumePath.lastIndexOf("/");
+        volumeDirectory=volumePath.substring(0,index);
+      }
+      srcSr=createFileSr(conn,uri.getHost() + ":" + uri.getPath(),volumeDirectory);
+      Set<VDI> vdis=srcSr.getVDIs(conn);
+      if (vdis.size() != 1) {
+        return new CopyCmdAnswer("Can't find template VDI under: " + uri.getHost() + ":"+ uri.getPath()+ "/"+ volumeDirectory);
+      }
+      VDI srcVdi=vdis.iterator().next();
+      PrimaryDataStoreTO destStore=(PrimaryDataStoreTO)destData.getDataStore();
+      String poolName=destStore.getUuid();
+      SR poolsr=null;
+      Set<SR> srs=SR.getByNameLabel(conn,poolName);
+      if (srs.size() != 1) {
+        String msg="There are " + srs.size() + " SRs with same name: "+ poolName;
+        s_logger.warn(msg);
+        return new CopyCmdAnswer(msg);
+      }
+ else {
+        poolsr=srs.iterator().next();
+      }
+      String pUuid=poolsr.getUuid(conn);
+      boolean isISCSI=IsISCSI(poolsr.getType(conn));
+      Task task=srcVdi.copyAsync2(conn,poolsr,null,null);
+      hypervisorResource.waitForTask(conn,task,1000,wait * 1000);
+      hypervisorResource.checkForSuccess(conn,task);
+      VDI tmpl=Types.toVDI(task,conn);
+      VDI snapshotvdi=tmpl.snapshot(conn,new HashMap<String,String>());
+      snapshotvdi.setNameLabel(conn,"Template " + srcTemplate.getName());
+      tmpl.destroy(conn);
+      poolsr.scan(conn);
+      try {
+        Thread.sleep(5000);
+      }
+ catch (      Exception e) {
+      }
+      TemplateObjectTO newVol=new TemplateObjectTO();
+      newVol.setUuid(snapshotvdi.getUuid(conn));
+      newVol.setPath(newVol.getUuid());
+      newVol.setFormat(Storage.ImageFormat.VHD);
+      return new CopyCmdAnswer(newVol);
+    }
+  }
+ catch (  Exception e) {
+    String msg="Catch Exception " + e.getClass().getName() + " for template + "+ " due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new CopyCmdAnswer(msg);
+  }
+ finally {
+    if (srcSr != null) {
+      hypervisorResource.removeSR(conn,srcSr);
+    }
+  }
+  return new CopyCmdAnswer("not implemented yet");
+}
