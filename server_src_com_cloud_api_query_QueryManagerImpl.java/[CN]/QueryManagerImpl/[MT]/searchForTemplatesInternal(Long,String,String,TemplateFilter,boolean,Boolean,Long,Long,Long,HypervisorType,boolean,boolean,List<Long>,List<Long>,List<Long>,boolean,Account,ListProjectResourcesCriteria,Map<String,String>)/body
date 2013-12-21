@@ -37,42 +37,6 @@
     sc.addAnd("id",SearchCriteria.Op.EQ,templateId);
   }
  else {
-    DomainVO domain=null;
-    if (!permittedAccounts.isEmpty()) {
-      domain=_domainDao.findById(permittedAccounts.get(0).getDomainId());
-    }
- else {
-      domain=_domainDao.findById(DomainVO.ROOT_DOMAIN);
-    }
-    if (listProjectResourcesCriteria == ListProjectResourcesCriteria.SkipProjectResources) {
-      sc.addAnd("accountType",SearchCriteria.Op.NEQ,Account.ACCOUNT_TYPE_PROJECT);
-    }
- else     if (listProjectResourcesCriteria == ListProjectResourcesCriteria.ListProjectResourcesOnly) {
-      sc.addAnd("accountType",SearchCriteria.Op.EQ,Account.ACCOUNT_TYPE_PROJECT);
-    }
-    if ((templateFilter == TemplateFilter.self || templateFilter == TemplateFilter.selfexecutable) && (_accountMgr.isDomainAdmin(caller.getId()) || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN)) {
-      sc.addAnd("domainPath",SearchCriteria.Op.LIKE,domain.getPath() + "%");
-    }
-    List<Long> relatedDomainIds=new ArrayList<Long>();
-    List<Long> permittedAccountIds=new ArrayList<Long>();
-    if (!permittedAccounts.isEmpty()) {
-      for (      Account account : permittedAccounts) {
-        permittedAccountIds.add(account.getId());
-        DomainVO accountDomain=_domainDao.findById(account.getDomainId());
-        DomainVO domainTreeNode=accountDomain;
-        relatedDomainIds.add(domainTreeNode.getId());
-        while (domainTreeNode.getParent() != null) {
-          domainTreeNode=_domainDao.findById(domainTreeNode.getParent());
-          relatedDomainIds.add(domainTreeNode.getId());
-        }
-        if (_accountMgr.isAdmin(account.getType()) || (templateFilter == TemplateFilter.featured || templateFilter == TemplateFilter.community)) {
-          List<DomainVO> allChildDomains=_domainDao.findAllChildren(accountDomain.getPath(),accountDomain.getId());
-          for (          DomainVO childDomain : allChildDomains) {
-            relatedDomainIds.add(childDomain.getId());
-          }
-        }
-      }
-    }
     if (!isIso) {
       if (hypers != null && !hypers.isEmpty()) {
         String[] relatedHypers=new String[hypers.size()];
@@ -82,6 +46,7 @@
         sc.addAnd("hypervisorType",SearchCriteria.Op.IN,relatedHypers);
       }
     }
+    DomainVO callerDomain=_domainDao.findById(caller.getDomainId());
     if (templateFilter == TemplateFilter.featured || templateFilter == TemplateFilter.community) {
       sc.addAnd("publicTemplate",SearchCriteria.Op.EQ,true);
       if (templateFilter == TemplateFilter.featured) {
@@ -90,29 +55,44 @@
  else {
         sc.addAnd("featured",SearchCriteria.Op.EQ,false);
       }
-      if (!permittedAccounts.isEmpty()) {
-        SearchCriteria<TemplateJoinVO> scc=_templateJoinDao.createSearchCriteria();
-        scc.addOr("domainId",SearchCriteria.Op.IN,relatedDomainIds.toArray());
-        scc.addOr("domainId",SearchCriteria.Op.NULL);
-        sc.addAnd("domainId",SearchCriteria.Op.SC,scc);
+      List<Long> domainTree=new ArrayList<Long>();
+      DomainVO domainTreeNode=callerDomain;
+      domainTree.add(domainTreeNode.getId());
+      while (domainTreeNode.getParent() != null) {
+        domainTreeNode=_domainDao.findById(domainTreeNode.getParent());
+        domainTree.add(domainTreeNode.getId());
       }
+      List<DomainVO> allChildDomains=_domainDao.findAllChildren(callerDomain.getPath(),callerDomain.getId());
+      for (      DomainVO childDomain : allChildDomains) {
+        domainTree.add(childDomain.getId());
+      }
+      SearchCriteria<TemplateJoinVO> scc=_templateJoinDao.createSearchCriteria();
+      scc.addOr("domainId",SearchCriteria.Op.IN,domainTree.toArray());
+      scc.addOr("domainId",SearchCriteria.Op.NULL);
+      sc.addAnd("domainId",SearchCriteria.Op.SC,scc);
     }
  else     if (templateFilter == TemplateFilter.self || templateFilter == TemplateFilter.selfexecutable) {
-      if (!permittedAccounts.isEmpty()) {
-        sc.addAnd("accountId",SearchCriteria.Op.IN,permittedAccountIds.toArray());
+      if (permittedDomains.contains(caller.getDomainId())) {
+        sc.addAnd("domainPath",SearchCriteria.Op.LIKE,callerDomain.getPath() + "%");
+      }
+ else {
+        sc.addAnd("accountId",SearchCriteria.Op.EQ,caller.getAccountId());
       }
     }
  else     if (templateFilter == TemplateFilter.sharedexecutable || templateFilter == TemplateFilter.shared) {
-      SearchCriteria<TemplateJoinVO> scc=_templateJoinDao.createSearchCriteria();
-      scc.addOr("accountId",SearchCriteria.Op.IN,permittedAccountIds.toArray());
-      scc.addOr("sharedAccountId",SearchCriteria.Op.IN,permittedAccountIds.toArray());
-      sc.addAnd("accountId",SearchCriteria.Op.SC,scc);
+      permittedDomains.remove(caller.getDomainId());
+      permittedAccounts.remove(caller.getAccountId());
+      SearchCriteria<TemplateJoinVO> aclSc=_templateJoinDao.createSearchCriteria();
+      _accountMgr.buildACLViewSearchCriteria(sc,aclSc,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
     }
  else     if (templateFilter == TemplateFilter.executable) {
       SearchCriteria<TemplateJoinVO> scc=_templateJoinDao.createSearchCriteria();
       scc.addOr("publicTemplate",SearchCriteria.Op.EQ,true);
-      if (!permittedAccounts.isEmpty()) {
-        scc.addOr("accountId",SearchCriteria.Op.IN,permittedAccountIds.toArray());
+      if (permittedDomains.contains(caller.getDomainId())) {
+        sc.addOr("domainPath",SearchCriteria.Op.LIKE,callerDomain.getPath() + "%");
+      }
+ else {
+        sc.addOr("accountId",SearchCriteria.Op.EQ,caller.getAccountId());
       }
       sc.addAnd("publicTemplate",SearchCriteria.Op.SC,scc);
     }
