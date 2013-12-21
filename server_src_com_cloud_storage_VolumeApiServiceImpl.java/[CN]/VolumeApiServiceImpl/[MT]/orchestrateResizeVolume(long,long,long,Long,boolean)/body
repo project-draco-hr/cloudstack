@@ -1,0 +1,52 @@
+{
+  VolumeVO volume=_volsDao.findById(volumeId);
+  UserVmVO userVm=_userVmDao.findById(volume.getInstanceId());
+  long[] hosts=null;
+  String instanceName="none";
+  if (userVm != null) {
+    instanceName=userVm.getInstanceName();
+    if (userVm.getHostId() != null) {
+      hosts=new long[]{userVm.getHostId()};
+    }
+ else     if (userVm.getLastHostId() != null) {
+      hosts=new long[]{userVm.getLastHostId()};
+    }
+    if (_volsDao.getHypervisorType(volume.getId()) == HypervisorType.XenServer && !userVm.getState().equals(State.Stopped)) {
+      throw new InvalidParameterValueException("VM must be stopped or disk detached in order to resize with the Xen HV");
+    }
+  }
+  ResizeVolumePayload payload=new ResizeVolumePayload(newSize,shrinkOk,instanceName,hosts);
+  try {
+    VolumeInfo vol=volFactory.getVolume(volume.getId());
+    vol.addPayload(payload);
+    AsyncCallFuture<VolumeApiResult> future=volService.resize(vol);
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      s_logger.warn("Failed to resize the volume " + volume);
+      return null;
+    }
+    volume=_volsDao.findById(volume.getId());
+    if (newDiskOfferingId != null) {
+      volume.setDiskOfferingId(newDiskOfferingId);
+    }
+    _volsDao.update(volume.getId(),volume);
+    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_RESIZE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
+    if (!shrinkOk) {
+      _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize));
+    }
+ else {
+      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(currentSize - newSize));
+    }
+    return volume;
+  }
+ catch (  InterruptedException e) {
+    s_logger.warn("failed get resize volume result",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.warn("failed get resize volume result",e);
+  }
+catch (  Exception e) {
+    s_logger.warn("failed get resize volume result",e);
+  }
+  return null;
+}

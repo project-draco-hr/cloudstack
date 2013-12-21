@@ -1,0 +1,29 @@
+{
+  final CallContext context=CallContext.current();
+  final User callingUser=context.getCallingUser();
+  final Account callingAccount=context.getCallingAccount();
+  final VMInstanceVO vm=_vmInstanceDao.findById(vmId);
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      VmWorkJobVO workJob=null;
+      _vmInstanceDao.lockRow(vm.getId(),true);
+      workJob=new VmWorkJobVO(context.getContextId());
+      workJob.setDispatcher(VmWorkConstants.VM_WORK_JOB_DISPATCHER);
+      workJob.setCmd(VmWorkDeleteAllVMSnapshots.class.getName());
+      workJob.setAccountId(callingAccount.getId());
+      workJob.setUserId(callingUser.getId());
+      workJob.setStep(VmWorkJobVO.Step.Starting);
+      workJob.setVmType(vm.getType());
+      workJob.setVmInstanceId(vm.getId());
+      VmWorkDeleteAllVMSnapshots workInfo=new VmWorkDeleteAllVMSnapshots(callingUser.getId(),callingAccount.getId(),vm.getId(),VMSnapshotManagerImpl.VM_WORK_JOB_HANDLER,type);
+      workJob.setCmdInfo(VmWorkSerializer.serialize(workInfo));
+      _jobMgr.submitAsyncJob(workJob,VmWorkConstants.VM_WORK_QUEUE,vm.getId());
+      context.putContextParameter("workJob",workJob);
+      context.putContextParameter("jobId",new Long(workJob.getId()));
+    }
+  }
+);
+  final long jobId=(Long)context.getContextParameter("jobId");
+  AsyncJobExecutionContext.getCurrentExecutionContext().joinJob(jobId);
+  return new VmJobSyncVirtualMachineOutcome((VmWorkJobVO)context.getContextParameter("workJob"),vmId);
+}

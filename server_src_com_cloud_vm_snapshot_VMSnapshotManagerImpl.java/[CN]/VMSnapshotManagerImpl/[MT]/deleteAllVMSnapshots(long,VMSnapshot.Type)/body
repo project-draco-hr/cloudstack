@@ -1,17 +1,25 @@
 {
-  boolean result=true;
-  List<VMSnapshotVO> listVmSnapshots=_vmSnapshotDao.findByVm(vmId);
-  if (listVmSnapshots == null || listVmSnapshots.isEmpty()) {
-    return true;
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateDeleteAllVMSnapshots(vmId,type);
   }
-  for (  VMSnapshotVO snapshot : listVmSnapshots) {
-    VMSnapshotVO target=_vmSnapshotDao.findById(snapshot.getId());
-    if (type != null && target.getType() != type)     continue;
-    VMSnapshotStrategy strategy=findVMSnapshotStrategy(target);
-    if (!strategy.deleteVMSnapshot(target)) {
-      result=false;
-      break;
+ else {
+    Outcome<VirtualMachine> outcome=deleteAllVMSnapshotsThroughJobQueue(vmId,type);
+    try {
+      outcome.get();
     }
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
+ else       if (jobResult instanceof Throwable)       throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+    }
+    if (jobResult instanceof Boolean)     return (Boolean)jobResult;
+    return false;
   }
-  return result;
 }

@@ -75,52 +75,30 @@
   if (!shrinkOk) {
     _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(volume.getAccountId()),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize));
   }
-  long[] hosts=null;
-  String instanceName="none";
   if (userVm != null) {
-    instanceName=userVm.getInstanceName();
-    if (userVm.getHostId() != null) {
-      hosts=new long[]{userVm.getHostId()};
-    }
- else     if (userVm.getLastHostId() != null) {
-      hosts=new long[]{userVm.getLastHostId()};
-    }
-    if (_volsDao.getHypervisorType(volume.getId()) == HypervisorType.XenServer && !userVm.getState().equals(State.Stopped)) {
-      throw new InvalidParameterValueException("VM must be stopped or disk detached in order to resize with the Xen HV");
-    }
-  }
-  ResizeVolumePayload payload=new ResizeVolumePayload(newSize,shrinkOk,instanceName,hosts);
-  try {
-    VolumeInfo vol=volFactory.getVolume(volume.getId());
-    vol.addPayload(payload);
-    AsyncCallFuture<VolumeApiResult> future=volService.resize(vol);
-    VolumeApiResult result=future.get();
-    if (result.isFailed()) {
-      s_logger.warn("Failed to resize the volume " + volume);
-      return null;
-    }
-    volume=_volsDao.findById(volume.getId());
-    if (newDiskOffering != null) {
-      volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
-    }
-    _volsDao.update(volume.getId(),volume);
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VOLUME_RESIZE,volume.getAccountId(),volume.getDataCenterId(),volume.getId(),volume.getName(),volume.getDiskOfferingId(),volume.getTemplateId(),volume.getSize(),Volume.class.getName(),volume.getUuid());
-    if (!shrinkOk) {
-      _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize));
+    AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+    if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+      return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
     }
  else {
-      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(currentSize - newSize));
+      Outcome<Volume> outcome=resizeVolumeThroughJobQueue(userVm.getId(),volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
+      Volume vol=null;
+      try {
+        vol=outcome.get();
+      }
+ catch (      InterruptedException e) {
+        throw new RuntimeException("Operation is interrupted",e);
+      }
+catch (      java.util.concurrent.ExecutionException e) {
+        throw new RuntimeException("Execution excetion",e);
+      }
+      Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+      if (jobResult != null) {
+        if (jobResult instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobResult;
+ else         if (jobResult instanceof Throwable)         throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+      }
+      return volume;
     }
-    return volume;
   }
- catch (  InterruptedException e) {
-    s_logger.warn("failed get resize volume result",e);
-  }
-catch (  ExecutionException e) {
-    s_logger.warn("failed get resize volume result",e);
-  }
-catch (  Exception e) {
-    s_logger.warn("failed get resize volume result",e);
-  }
-  return null;
+  return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
 }
