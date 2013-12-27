@@ -1,0 +1,36 @@
+@attr(tags=['advancedsg'])
+def test__16_AccountSpecificNwAccess(self):
+    ' Test account specific network access of users'
+    self.debug('Creating user account 1')
+    account_1 = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.debug(('Created account : %s' % account_1.name))
+    self.cleanup_accounts.append(account_1)
+    self.debug('Creating user account 2')
+    account_2 = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.debug(('Created account: %s' % account_2.name))
+    self.cleanup_accounts.append(account_2)
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.services['shared_network_sg']['acltype'] = 'account'
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    shared_network_account_1 = Network.create(self.api_client, self.services['shared_network_sg'], accountid=account_1.name, domainid=account_1.domainid, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    shared_network_account_2 = Network.create(self.api_client, self.services['shared_network_sg'], accountid=account_2.name, domainid=account_2.domainid, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    api_client_account_1 = self.testClient.createUserApiClient(UserName=account_1.name, DomainName=account_1.domain)
+    api_client_account_2 = self.testClient.createUserApiClient(UserName=account_2.name, DomainName=account_2.domain)
+    self.debug(('Creating virtual machine in account %s with account specific shared network %s' % (account_1.name, shared_network_account_1.id)))
+    VirtualMachine.create(api_client_account_1, self.services['virtual_machine'], templateid=self.template.id, accountid=account_1.name, domainid=account_1.domainid, networkids=[shared_network_account_1.id], serviceofferingid=self.service_offering.id)
+    self.debug(('Creating virtual machine in account %s with account specific shared network %s' % (account_2.name, shared_network_account_2.id)))
+    VirtualMachine.create(api_client_account_2, self.services['virtual_machine'], templateid=self.template.id, accountid=account_2.name, domainid=account_2.domainid, networkids=[shared_network_account_2.id], serviceofferingid=self.service_offering.id)
+    try:
+        self.debug(('Trying to create virtual machine in account specific shared network of                        account %s using the api client of account %s, this should fail' % (account_2.name, account_1.name)))
+        VirtualMachine.create(api_client_account_2, self.services['virtual_machine'], templateid=self.template.id, accountid=account_1.name, domainid=account_1.domainid, networkids=[shared_network_account_1.id], serviceofferingid=self.service_offering.id)
+        self.fail('Vm creation succeded, should have failed')
+    except Exception as e:
+        self.debug(('VM creation failed as expected with exception: %s' % e))
+    return

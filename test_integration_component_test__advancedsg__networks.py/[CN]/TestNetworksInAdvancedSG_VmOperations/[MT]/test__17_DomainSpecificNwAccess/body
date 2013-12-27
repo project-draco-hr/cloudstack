@@ -1,0 +1,50 @@
+@attr(tags=['advancedsg'])
+def test__17_DomainSpecificNwAccess(self):
+    ' Test domain specific network access of users'
+    self.debug('Creating domain 1')
+    domain_1 = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.domain.id)
+    self.debug(('Created domain %s' % domain_1.name))
+    self.cleanup_domains.append(domain_1)
+    self.debug('Creating domain 2')
+    domain_2 = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.domain.id)
+    self.debug(('Created domain: %s' % domain_2.name))
+    self.cleanup_domains.append(domain_2)
+    self.debug(('Creating user account under domain %s' % domain_1.name))
+    account_1 = Account.create(self.api_client, self.services['account'], domainid=domain_1.id)
+    self.debug(('Created account : %s' % account_1.name))
+    self.cleanup_accounts.append(account_1)
+    self.debug(('Creating user account under domain %s' % domain_2.name))
+    account_2 = Account.create(self.api_client, self.services['account'], domainid=domain_2.id)
+    self.debug(('Created account: %s' % account_2.name))
+    self.cleanup_accounts.append(account_2)
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    shared_network_domain_1 = Network.create(self.api_client, self.services['shared_network_sg'], domainid=domain_1.id, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    self.debug(('Created network: %s' % shared_network_domain_1))
+    self.cleanup_networks.append(shared_network_domain_1)
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    shared_network_domain_2 = Network.create(self.api_client, self.services['shared_network_sg'], domainid=domain_2.id, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    self.debug(('Created network: %s' % shared_network_domain_2.name))
+    self.cleanup_networks.append(shared_network_domain_2)
+    api_client_domain_1 = self.testClient.createUserApiClient(UserName=account_1.name, DomainName=account_1.domain)
+    api_client_domain_2 = self.testClient.createUserApiClient(UserName=account_2.name, DomainName=account_2.domain)
+    self.debug(('Creating virtual machine in domain %s with domain wide shared network %s' % (domain_1.name, shared_network_domain_1.id)))
+    vm_1 = VirtualMachine.create(api_client_domain_1, self.services['virtual_machine'], templateid=self.template.id, domainid=domain_1.id, networkids=[shared_network_domain_1.id], serviceofferingid=self.service_offering.id)
+    self.debug(('created vm: %s' % vm_1.id))
+    self.debug(('Creating virtual machine in domain %s with domain wide shared network %s' % (domain_2.name, shared_network_domain_2.id)))
+    vm_2 = VirtualMachine.create(api_client_domain_2, self.services['virtual_machine'], templateid=self.template.id, domainid=domain_2.id, networkids=[shared_network_domain_2.id], serviceofferingid=self.service_offering.id)
+    self.debug(('created vnm: %s' % vm_2.id))
+    try:
+        self.debug(('Trying to create virtual machine in domain wide shared network of                        domain %s using the api client of account in domain %s, this should fail' % (domain_2.name, domain_1.name)))
+        VirtualMachine.create(api_client_domain_2, self.services['virtual_machine'], templateid=self.template.id, domainid=domain_1.id, networkids=[shared_network_domain_1.id], serviceofferingid=self.service_offering.id)
+        self.fail('Vm creation succeded, should have failed')
+    except Exception as e:
+        self.debug(('VM creation failed as expected with exception: %s' % e))
+    return

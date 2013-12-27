@@ -1,0 +1,34 @@
+@attr(tags=['advancedsg'])
+def test_07_SharedNwSG_DomainWide_SubdomainAcccess(self):
+    ' Test Domain wide shared network with SG, with subdomain access set True'
+    self.debug('Creating parent domain')
+    self.parent_domain = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.domain.id)
+    self.debug(('Created domain %s' % self.parent_domain.id))
+    self.debug('Creating child domain under this domain')
+    self.child_domain = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.parent_domain)
+    self.debug(('Created child domain: %s' % self.child_domain.id))
+    self.services['shared_network_offering_sg']['specifyVlan'] = 'True'
+    self.services['shared_network_offering_sg']['specifyIpRanges'] = 'True'
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    try:
+        self.shared_network_sg = Network.create(self.api_client, self.services['shared_network_sg'], domainid=self.parent_domain.id, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id, subdomainaccess=True)
+    except Exception as e:
+        self.fail(('Exception whle creating domain wide shared network: %s' % e))
+    self.debug(('Created shared network: %s' % self.shared_network_sg.id))
+    self.cleanup_networks.append(self.shared_network_sg)
+    list_networks_response = Network.list(self.api_client, id=self.shared_network_sg.id, listall=True)
+    self.debug(('network response: %s' % list_networks_response))
+    self.assertEqual(validateList(list_networks_response)[0], PASS, 'networks list validation failed')
+    self.debug(('Shared Network created: %s' % self.shared_network_sg.id))
+    try:
+        virtual_machine = VirtualMachine.create(self.api_client, self.services['virtual_machine'], domainid=self.child_domain.id, networkids=[self.shared_network_sg.id], serviceofferingid=self.service_offering.id)
+    except Exception as e:
+        self.fail(('Exception while deploying VM in domain wide shared network: %s' % e))
+    self.debug(('Created virtual machine %s within the shared network' % virtual_machine.id))
+    self.cleanup_vms.append(virtual_machine)
+    return
