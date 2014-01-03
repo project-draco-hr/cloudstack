@@ -2,9 +2,8 @@
   final CallContext context=CallContext.current();
   final User user=context.getCallingUser();
   final Account account=context.getCallingAccount();
-  Transaction.execute(new TransactionCallbackNoReturn(){
-    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
-      _vmDao.lockRow(vm.getId(),true);
+  Object[] result=Transaction.execute(new TransactionCallback<Object[]>(){
+    @Override public Object[] doInTransaction(    TransactionStatus status){
       List<VmWorkJobVO> pendingWorkJobs=_workJobDao.listPendingWorkJobs(VirtualMachine.Type.Instance,vm.getId(),VmWorkRemoveVmFromNetwork.class.getName());
       VmWorkJobVO workJob=null;
       if (pendingWorkJobs != null && pendingWorkJobs.size() > 0) {
@@ -23,12 +22,11 @@
         workJob.setCmdInfo(VmWorkSerializer.serialize(workInfo));
         _jobMgr.submitAsyncJob(workJob,VmWorkConstants.VM_WORK_QUEUE,vm.getId());
       }
-      context.putContextParameter("workJob",workJob);
-      context.putContextParameter("jobId",new Long(workJob.getId()));
+      return new Object[]{workJob,new Long(workJob.getId())};
     }
   }
 );
-  final long jobId=(Long)context.getContextParameter("jobId");
+  final long jobId=(Long)result[1];
   AsyncJobExecutionContext.getCurrentExecutionContext().joinJob(jobId);
-  return new VmJobVirtualMachineOutcome((VmWorkJobVO)context.getContextParameter("workJob"),vm.getId());
+  return new VmJobVirtualMachineOutcome((VmWorkJobVO)result[0],vm.getId());
 }
