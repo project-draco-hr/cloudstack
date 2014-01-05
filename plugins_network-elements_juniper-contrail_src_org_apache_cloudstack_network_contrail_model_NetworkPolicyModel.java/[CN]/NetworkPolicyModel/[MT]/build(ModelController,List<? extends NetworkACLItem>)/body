@@ -1,0 +1,67 @@
+{
+  String projectName=null;
+  if (_project != null) {
+    _fqName=StringUtils.join(_project.getQualifiedName(),':') + ":" + _name;
+    projectName=StringUtils.join(_project.getQualifiedName(),':');
+  }
+ else {
+    _fqName=ContrailManager.VNC_ROOT_DOMAIN + ":" + ContrailManager.VNC_DEFAULT_PROJECT+ ":"+ _name;
+    projectName=ContrailManager.VNC_ROOT_DOMAIN + ":" + ContrailManager.VNC_DEFAULT_PROJECT;
+  }
+  PolicyEntriesType policyMap=new PolicyEntriesType();
+  for (  NetworkACLItem rule : rules) {
+    if (rule.getState() != NetworkACLItem.State.Active && rule.getState() != NetworkACLItem.State.Add) {
+      continue;
+    }
+    String action=null;
+    if (rule.getAction() == Action.Allow) {
+      action="pass";
+    }
+ else     if (rule.getAction() == Action.Deny) {
+      action="deny";
+    }
+    List<String> cidrList=rule.getSourceCidrList();
+    String protocol=rule.getProtocol();
+    if (protocol == null || protocol.equalsIgnoreCase("ALL") || protocol.isEmpty()) {
+      protocol="any";
+    }
+ else {
+      protocol=protocol.toLowerCase();
+    }
+    Integer portStart=rule.getSourcePortStart();
+    Integer portEnd=rule.getSourcePortEnd();
+    if (portStart == null) {
+      portStart=0;
+    }
+    if (portEnd == null) {
+      portEnd=65535;
+    }
+    List<PolicyRuleType.AddressType> srcList=new ArrayList<PolicyRuleType.AddressType>();
+    List<PolicyRuleType.AddressType> dstList=new ArrayList<PolicyRuleType.AddressType>();
+    List<PolicyRuleType.PortType> srcPorts=new ArrayList<PolicyRuleType.PortType>();
+    List<PolicyRuleType.PortType> dstPorts=new ArrayList<PolicyRuleType.PortType>();
+    if (rule.getTrafficType() == NetworkACLItem.TrafficType.Egress) {
+      for (      String cidr : cidrList) {
+        NetworkVO net=cidrToNetwork(controller,cidr);
+        String netName=projectName + ":" + controller.getManager().getCanonicalName(net);
+        dstList.add(new PolicyRuleType.AddressType(null,netName,null));
+      }
+      dstPorts.add(new PolicyRuleType.PortType(portStart,portEnd));
+      srcList.add(new PolicyRuleType.AddressType(null,"local",null));
+      srcPorts.add(new PolicyRuleType.PortType(0,65535));
+    }
+ else {
+      for (      String cidr : cidrList) {
+        NetworkVO net=cidrToNetwork(controller,cidr);
+        String netName=projectName + ":" + controller.getManager().getCanonicalName(net);
+        dstList.add(new PolicyRuleType.AddressType(null,netName,null));
+      }
+      dstPorts.add(new PolicyRuleType.PortType(portStart,portEnd));
+      srcList.add(new PolicyRuleType.AddressType(null,"any",null));
+      srcPorts.add(new PolicyRuleType.PortType(0,65535));
+    }
+    PolicyRuleType vnRule=new PolicyRuleType(new PolicyRuleType.SequenceType(1,0),rule.getUuid(),"<>",protocol,srcList,srcPorts,null,dstList,dstPorts,new PolicyRuleType.ActionListType(action,null,null,null));
+    policyMap.addPolicyRule(vnRule);
+  }
+  _policyMap=policyMap;
+}
