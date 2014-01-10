@@ -1,0 +1,26 @@
+{
+  if (volumeInfo == null || host == null || dataStore == null) {
+    return false;
+  }
+  long sfVolumeId=Long.parseLong(volumeInfo.getFolder());
+  long clusterId=host.getClusterId();
+  long storagePoolId=dataStore.getId();
+  ClusterDetailsVO clusterDetail=_clusterDetailsDao.findDetail(clusterId,getVagKey(storagePoolId));
+  String vagId=clusterDetail != null ? clusterDetail.getValue() : null;
+  List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
+  if (!hostsSupport_iScsi(hosts)) {
+    return false;
+  }
+  SolidFireConnection sfConnection=getSolidFireConnection(storagePoolId);
+  if (vagId != null) {
+    SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),Long.parseLong(vagId));
+    long[] volumeIds=getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
+    SolidFireUtil.modifySolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),sfVag.getId(),getIqnsFromHosts(hosts),volumeIds);
+  }
+ else {
+    long lVagId=SolidFireUtil.createSolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),"CloudStack-" + UUID.randomUUID().toString(),getIqnsFromHosts(hosts),new long[]{sfVolumeId});
+    clusterDetail=new ClusterDetailsVO(clusterId,getVagKey(storagePoolId),String.valueOf(lVagId));
+    _clusterDetailsDao.persist(clusterDetail);
+  }
+  return true;
+}

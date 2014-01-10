@@ -1,6 +1,6 @@
 {
-  String errorMsg="Failed to attach volume: " + volumeToAttach.getName() + " to VM: "+ vm.getHostName();
-  boolean sendCommand=(vm.getState() == State.Running);
+  String errorMsg="Failed to attach volume " + volumeToAttach.getName() + " to VM "+ vm.getHostName();
+  boolean sendCommand=vm.getState() == State.Running;
   AttachAnswer answer=null;
   Long hostId=vm.getHostId();
   if (hostId == null) {
@@ -18,6 +18,17 @@
       sendCommand=true;
     }
   }
+  DataStore dataStore=dataStoreMgr.getDataStore(volumeToAttachStoragePool.getId(),DataStoreRole.Primary);
+  boolean queryForChap=true;
+  if (host != null) {
+    try {
+      queryForChap=!volService.connectVolumeToHost(volFactory.getVolume(volumeToAttach.getId()),host,dataStore);
+    }
+ catch (    Exception e) {
+      volService.disconnectVolumeFromHost(volFactory.getVolume(volumeToAttach.getId()),host,dataStore);
+      throw new CloudRuntimeException(e.getMessage());
+    }
+  }
   if (sendCommand) {
     if (host.getHypervisorType() == HypervisorType.KVM && volumeToAttachStoragePool.isManaged() && volumeToAttach.getPath() == null) {
       volumeToAttach.setPath(volumeToAttach.get_iScsiName());
@@ -26,9 +37,7 @@
     DataTO volTO=volFactory.getVolume(volumeToAttach.getId()).getTO();
     DiskTO disk=new DiskTO(volTO,deviceId,volumeToAttach.getPath(),volumeToAttach.getVolumeType());
     AttachCommand cmd=new AttachCommand(disk,vm.getInstanceName());
-    VolumeInfo volumeInfo=volFactory.getVolume(volumeToAttach.getId());
-    DataStore dataStore=dataStoreMgr.getDataStore(volumeToAttachStoragePool.getId(),DataStoreRole.Primary);
-    ChapInfo chapInfo=volService.getChapInfo(volumeInfo,dataStore);
+    ChapInfo chapInfo=queryForChap ? volService.getChapInfo(volFactory.getVolume(volumeToAttach.getId()),dataStore) : null;
     Map<String,String> details=new HashMap<String,String>();
     disk.setDetails(details);
     details.put(DiskTO.MANAGED,String.valueOf(volumeToAttachStoragePool.isManaged()));
@@ -46,6 +55,7 @@
       answer=(AttachAnswer)_agentMgr.send(hostId,cmd);
     }
  catch (    Exception e) {
+      volService.disconnectVolumeFromHost(volFactory.getVolume(volumeToAttach.getId()),host,dataStore);
       throw new CloudRuntimeException(errorMsg + " due to: " + e.getMessage());
     }
   }
@@ -76,6 +86,7 @@
         errorMsg+="; " + details;
       }
     }
+    volService.disconnectVolumeFromHost(volFactory.getVolume(volumeToAttach.getId()),host,dataStore);
     throw new CloudRuntimeException(errorMsg);
   }
 }
