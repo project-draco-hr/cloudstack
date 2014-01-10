@@ -14,11 +14,25 @@
   SolidFireConnection sfConnection=getSolidFireConnection(storagePoolId);
   if (vagId != null) {
     SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),Long.parseLong(vagId));
+    String[] hostIqns=getNewHostIqns(sfVag.getInitiators(),getIqnsFromHosts(hosts));
     long[] volumeIds=getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
-    SolidFireUtil.modifySolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),sfVag.getId(),getIqnsFromHosts(hosts),volumeIds);
+    SolidFireUtil.modifySolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),sfVag.getId(),hostIqns,volumeIds);
   }
  else {
-    long lVagId=SolidFireUtil.createSolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),"CloudStack-" + UUID.randomUUID().toString(),getIqnsFromHosts(hosts),new long[]{sfVolumeId});
+    long lVagId;
+    try {
+      lVagId=SolidFireUtil.createSolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),"CloudStack-" + UUID.randomUUID().toString(),getIqnsFromHosts(hosts),new long[]{sfVolumeId});
+    }
+ catch (    Exception ex) {
+      String iqnInVagAlready="Exceeded maximum number of Volume Access Groups per initiator";
+      if (!ex.getMessage().contains(iqnInVagAlready)) {
+        throw new CloudRuntimeException(ex.getMessage());
+      }
+      SolidFireUtil.SolidFireVag sfVag=getCompatibleVag(hosts,sfConnection);
+      long[] volumeIds=getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
+      SolidFireUtil.modifySolidFireVag(sfConnection.getManagementVip(),sfConnection.getManagementPort(),sfConnection.getClusterAdminUsername(),sfConnection.getClusterAdminPassword(),sfVag.getId(),sfVag.getInitiators(),volumeIds);
+      lVagId=sfVag.getId();
+    }
     clusterDetail=new ClusterDetailsVO(clusterId,getVagKey(storagePoolId),String.valueOf(lVagId));
     _clusterDetailsDao.persist(clusterDetail);
   }
