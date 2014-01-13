@@ -1,6 +1,6 @@
 {
   AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
-  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkJobDispatcher.VM_WORK_JOB_DISPATCHER)) {
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
     return orchestrateReConfigureVm(vmUuid,oldServiceOffering,reconfiguringOnExistingHost);
   }
  else {
@@ -15,17 +15,16 @@
 catch (    java.util.concurrent.ExecutionException e) {
       throw new RuntimeException("Execution excetion",e);
     }
-    AsyncJobVO jobVo=_entityMgr.findById(AsyncJobVO.class,outcome.getJob().getId());
-    if (jobVo.getResultCode() == JobInfo.Status.SUCCEEDED.ordinal()) {
-      return _entityMgr.findById(VMInstanceVO.class,vm.getId());
-    }
- else {
-      Throwable jobException=retriveExecutionException(outcome.getJob());
-      if (jobException != null) {
-        if (jobException instanceof ResourceUnavailableException)         throw (ResourceUnavailableException)jobException;
- else         if (jobException instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobException;
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof ResourceUnavailableException)       throw (ResourceUnavailableException)jobResult;
+ else       if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
+ else       if (jobResult instanceof InsufficientServerCapacityException)       throw (InsufficientServerCapacityException)jobResult;
+ else       if (jobResult instanceof Throwable) {
+        s_logger.error("Unhandled exception",(Throwable)jobResult);
+        throw new RuntimeException("Unhandled exception",(Throwable)jobResult);
       }
-      throw new RuntimeException("Failed with un-handled exception");
     }
+    return (VMInstanceVO)vm;
   }
 }

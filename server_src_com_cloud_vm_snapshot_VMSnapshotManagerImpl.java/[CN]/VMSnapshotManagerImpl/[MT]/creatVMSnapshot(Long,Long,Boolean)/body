@@ -7,15 +7,27 @@
   if (vmSnapshot == null) {
     throw new CloudRuntimeException("VM snapshot id: " + vmSnapshotId + " can not be found");
   }
-  VMSnapshotOptions options=new VMSnapshotOptions(quiescevm);
-  vmSnapshot.setOptions(options);
-  try {
-    VMSnapshotStrategy strategy=findVMSnapshotStrategy(vmSnapshot);
-    VMSnapshot snapshot=strategy.takeVMSnapshot(vmSnapshot);
-    return snapshot;
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateCreateVMSnapshot(vmId,vmSnapshotId,quiescevm);
   }
- catch (  Exception e) {
-    s_logger.debug("Failed to create vm snapshot: " + vmSnapshotId,e);
-    return null;
+ else {
+    Outcome<VMSnapshot> outcome=createVMSnapshotThroughJobQueue(vmId,vmSnapshotId,quiescevm);
+    VMSnapshot result=null;
+    try {
+      result=outcome.get();
+    }
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
+ else       if (jobResult instanceof Throwable)       throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+    }
+    return result;
   }
 }

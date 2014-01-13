@@ -29,8 +29,8 @@ def test_01_network_services_upgrade(self):
     self.debug(('Associated %s with network %s' % (public_ip_1.ipaddress.ipaddress, network_1.id)))
     self.debug(('Creating LB rule for IP address: %s' % public_ip_1.ipaddress.ipaddress))
     lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=public_ip_1.ipaddress.id, accountid=self.account.name, networkid=network_1.id, vpcid=vpc.id, domainid=self.account.domainid)
-    self.debug(('Adding virtual machines %s and %s to LB rule' % (vm_1.name, vm_2.name)))
-    lb_rule.assign(self.apiclient, [vm_1, vm_2])
+    self.debug(('Adding virtual machines %s to LB rule' % vm_1.name))
+    lb_rule.assign(self.apiclient, [vm_1])
     self.debug(('Associating public IP for network: %s' % network_1.name))
     public_ip_2 = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=network_1.id, vpcid=vpc.id)
     self.debug(('Associated %s with network %s' % (public_ip_2.ipaddress.ipaddress, network_1.id)))
@@ -44,9 +44,9 @@ def test_01_network_services_upgrade(self):
     self.assertEqual(isinstance(public_ips, list), True, 'List public Ip for network should list the Ip addr')
     self.assertEqual(public_ips[0].ipaddress, public_ip_2.ipaddress.ipaddress, 'List public Ip for network should list the Ip addr')
     self.debug('Adding NetwrokACl rules to make PF and LB accessible')
-    nwacl_lb = NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['lbrule'], traffictype='Ingress')
+    NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['lbrule'], traffictype='Ingress')
     self.debug(('Adding Egress rules to network %s to access internet' % network_1.name))
-    nwacl_internet_1 = NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['icmp_rule'], traffictype='Egress')
+    NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['icmp_rule'], traffictype='Egress')
     self.debug(('Checking if we can SSH into VM_1? - IP: %s' % public_ip_1.ipaddress.ipaddress))
     try:
         ssh_1 = vm_1.get_ssh_client(ipaddress=public_ip_1.ipaddress.ipaddress, reconnect=True, port=self.services['lbrule']['publicport'])
@@ -74,7 +74,7 @@ def test_01_network_services_upgrade(self):
     self.debug(('Associated %s with network %s' % (public_ip_3.ipaddress.ipaddress, network_1.id)))
     self.debug('Creatinng NAT rule in network shall through exception?')
     with self.assertRaises(Exception):
-        nat_rule = NATRule.create(self.apiclient, vm_1, self.services['natrule'], ipaddressid=public_ip_3.ipaddress.id, openfirewall=False, networkid=network_1.id, vpcid=vpc.id)
+        NATRule.create(self.apiclient, vm_1, self.services['natrule'], ipaddressid=public_ip_3.ipaddress.id, openfirewall=False, networkid=network_1.id, vpcid=vpc.id)
     self.debug('Create NAT rule failed!')
     self.debug('Stopping all the virtual machines in network before upgrade')
     try:
@@ -83,9 +83,20 @@ def test_01_network_services_upgrade(self):
     except Exception as e:
         self.fail(('Failed to stop VMs, %s' % e))
     wait_for_cleanup(self.apiclient, ['expunge.interval', 'expunge.delay'])
+    retriesCount = 10
+    while True:
+        networks = list_networks(self.apiclient, id=network_1.id)
+        self.assertEqual(validateList(networks)[0], PASS, ('networks list validation failed, list id %s' % networks))
+        self.debug(('network state is %s' % networks[0].state))
+        if (networks[0].state == 'Allocated'):
+            break
+        if (retriesCount == 0):
+            self.fail(('Network state should change to Allocated, it is %s' % networks[0].state))
+        retriesCount -= 1
+        time.sleep(6)
     self.debug('Upgrading network offering to support PF services')
     try:
-        network_1.update(self.apiclient, networkofferingid=nw_off.id, changecidr=True)
+        network_1.update(self.apiclient, networkofferingid=nw_off.id)
     except Exception as e:
         self.fail(('failed to upgrade the network offering- %s' % e))
     self.debug('Starting all the virtual machines in network after upgrade')
@@ -94,9 +105,9 @@ def test_01_network_services_upgrade(self):
         vm_2.start(self.apiclient)
     except Exception as e:
         self.fail(('Failed to start VMs, %s' % e))
-    nat_rule = NATRule.create(self.apiclient, vm_1, self.services['natrule'], ipaddressid=public_ip_3.ipaddress.id, openfirewall=False, networkid=network_1.id, vpcid=vpc.id)
+    NATRule.create(self.apiclient, vm_1, self.services['natrule'], ipaddressid=public_ip_3.ipaddress.id, openfirewall=False, networkid=network_1.id, vpcid=vpc.id)
     self.debug('Adding NetwrokACl rules to make NAT rule accessible')
-    nwacl_nat = NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['natrule'], traffictype='Ingress')
+    NetworkACL.create(self.apiclient, networkid=network_1.id, services=self.services['natrule'], traffictype='Ingress')
     self.debug('Checking if we can SSH into VM using NAT rule?')
     try:
         ssh_3 = vm_1.get_ssh_client(ipaddress=public_ip_3.ipaddress.ipaddress, reconnect=True, port=self.services['natrule']['publicport'])

@@ -1,0 +1,33 @@
+@data('default', 'custom')
+@attr(tags=['advancedsg'])
+def test_20_DeployVM_SecGrp_sharedNetwork(self, value):
+    ' Test deploy VM in default/custom security group and shared network'
+    securityGroup = None
+    if (value == 'default'):
+        self.debug('Listing security groups')
+        securitygroups = SecurityGroup.list(self.api_client)
+        self.assertEqual(validateList(securitygroups)[0], PASS, ('securitygroups list validation                failed, securitygroups list is %s' % securitygroups))
+        securityGroup = securitygroups[0]
+    else:
+        self.services['security_group']['name'] = ('Custom_sec_grp_' + random_gen())
+        securityGroup = SecurityGroup.create(self.api_client, self.services['security_group'])
+        self.cleanup_secGrps.append(securityGroup)
+    self.debug(('%s security group: %s' % (value, securityGroup.id)))
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.setSharedNetworkParams('shared_network_sg')
+    self.debug('Creating shared network')
+    shared_network = Network.create(self.api_client, self.services['shared_network_sg'], networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    self.debug(('Created shared network: %s' % shared_network.id))
+    self.cleanup_networks.append(shared_network)
+    try:
+        self.debug(('Trying to create virtual machine with the default security group %s and                    shared network %s' % (securityGroup.id, shared_network.id)))
+        vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, securitygroupids=[securityGroup.id], serviceofferingid=self.service_offering.id, networkids=[shared_network.id])
+        self.debug(('Deployed Vm: %s' % vm.name))
+        self.cleanup_vms.append(vm)
+    except Exception as e:
+        self.fail(('VM creation failed with exception: %s' % e))
+    return

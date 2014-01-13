@@ -1,0 +1,47 @@
+@attr(tags=['advancedsg'])
+def test_22_DeployVM_WithoutSG(self):
+    ' Test deploy VM without passing any security group id'
+    ingress_rule_ids = []
+    self.debug('Listing security groups')
+    securitygroups = SecurityGroup.list(self.api_client)
+    self.assertEqual(validateList(securitygroups)[0], PASS, ('securitygroups list validation                failed, securitygroups list is %s' % securitygroups))
+    defaultSecurityGroup = securitygroups[0]
+    self.debug(('Default security group: %s' % defaultSecurityGroup.id))
+    cmd = authorizeSecurityGroupIngress.authorizeSecurityGroupIngressCmd()
+    cmd.securitygroupid = defaultSecurityGroup.id
+    cmd.protocol = 'TCP'
+    cmd.startport = 22
+    cmd.endport = 80
+    cmd.cidrlist = '0.0.0.0/0'
+    ingress_rule_1 = self.api_client.authorizeSecurityGroupIngress(cmd)
+    ingress_rule_ids.append(ingress_rule_1.ingressrule[0].ruleid)
+    self.services['security_group']['name'] = ('Custom_sec_grp_' + random_gen())
+    custom_sec_grp = SecurityGroup.create(self.api_client, self.services['security_group'])
+    self.debug(('Created security groups: %s' % custom_sec_grp.id))
+    self.cleanup_secGrps.append(custom_sec_grp)
+    ingress_rule_2 = custom_sec_grp.authorize(self.api_client, self.services['ingress_rule'])
+    ingress_rule_ids.append(ingress_rule_2['ingressrule'][0].ruleid)
+    self.debug(('Authorized ingress rule for security group: %s' % custom_sec_grp.id))
+    vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, serviceofferingid=self.service_offering.id, securitygroupids=[custom_sec_grp.id])
+    self.debug(('Created VM : %s' % vm.id))
+    self.cleanup_vms.append(vm)
+    self.debug('listing virtual machines')
+    vm_list = list_virtual_machines(self.api_client, id=vm.id)
+    self.assertEqual(validateList(vm_list)[0], PASS, ('vm list validation failed, list is %s' % vm_list))
+    self.assertEqual(len(vm_list[0].securitygroup), 1, ('There should be exactly one security group associated                 with the vm, vm security group list is : %s' % vm_list[0].securitygroup))
+    self.assertEqual(custom_sec_grp.id, vm_list[0].securitygroup[0].id, ('Vm should be deployed in custom security group %s                 instead it is deployed in security group %s' % (custom_sec_grp.id, vm_list[0].securitygroup[0].id)))
+    try:
+        try:
+            self.debug(('SSH into VM: %s' % vm.nic[0].ipaddress))
+            ssh = vm.get_ssh_client(ipaddress=vm.nic[0].ipaddress)
+            res = ssh.execute('ping -c 1 www.google.com')
+        except Exception as e:
+            self.fail(('SSH Access failed for %s: %s' % (vm.ssh_ip, e)))
+    finally:
+        cmd = revokeSecurityGroupIngress.revokeSecurityGroupIngressCmd()
+        for rule_id in ingress_rule_ids:
+            cmd.id = rule_id
+            self.api_client.revokeSecurityGroupIngress(cmd)
+    result = str(res)
+    self.assertEqual(result.count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    return

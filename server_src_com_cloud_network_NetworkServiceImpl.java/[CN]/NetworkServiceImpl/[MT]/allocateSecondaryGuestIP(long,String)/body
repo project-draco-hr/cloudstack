@@ -1,0 +1,79 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  final NicVO nicVO=_nicDao.findById(nicId);
+  if (nicVO == null) {
+    throw new InvalidParameterValueException("There is no nic for the " + nicId);
+  }
+  if (nicVO.getVmType() != VirtualMachine.Type.User) {
+    throw new InvalidParameterValueException("The nic is not belongs to user vm");
+  }
+  VirtualMachine vm=_userVmDao.findById(nicVO.getInstanceId());
+  if (vm == null) {
+    throw new InvalidParameterValueException("There is no vm with the nic");
+  }
+  final long networkId=nicVO.getNetworkId();
+  final Account ipOwner=_accountMgr.getAccount(vm.getAccountId());
+  _accountMgr.checkAccess(caller,null,true,vm);
+  Network network=_networksDao.findById(networkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Invalid network id is given");
+  }
+  s_logger.debug("Calling the ip allocation ...");
+  String ipaddr=null;
+  if (network.getGuestType() == Network.GuestType.Isolated) {
+    try {
+      ipaddr=_ipAddrMgr.allocateGuestIP(network,requestedIp);
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      throw new InvalidParameterValueException("Allocating guest ip for nic failed");
+    }
+  }
+ else   if (network.getGuestType() == Network.GuestType.Shared) {
+    Long podId=null;
+    DataCenter dc=_dcDao.findById(network.getDataCenterId());
+    if (dc.getNetworkType() == NetworkType.Basic) {
+      VMInstanceVO vmi=(VMInstanceVO)vm;
+      podId=vmi.getPodIdToDeployIn();
+      if (podId == null) {
+        throw new InvalidParameterValueException("vm pod id is null in Basic zone; can't decide the range for ip allocation");
+      }
+    }
+    try {
+      ipaddr=_ipAddrMgr.allocatePublicIpForGuestNic(network,podId,ipOwner,requestedIp);
+      if (ipaddr == null) {
+        throw new InvalidParameterValueException("Allocating ip to guest nic " + nicId + " failed");
+      }
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      s_logger.error("Allocating ip to guest nic " + nicId + " failed");
+      return null;
+    }
+  }
+ else {
+    s_logger.error("AddIpToVMNic is not supported in this network...");
+    return null;
+  }
+  if (ipaddr != null) {
+    final String addrFinal=ipaddr;
+    long id=Transaction.execute(new TransactionCallback<Long>(){
+      @Override public Long doInTransaction(      TransactionStatus status){
+        boolean nicSecondaryIpSet=nicVO.getSecondaryIp();
+        if (!nicSecondaryIpSet) {
+          nicVO.setSecondaryIp(true);
+          s_logger.debug("Setting nics table ...");
+          _nicDao.update(nicId,nicVO);
+        }
+        s_logger.debug("Setting nic_secondary_ip table ...");
+        Long vmId=nicVO.getInstanceId();
+        NicSecondaryIpVO secondaryIpVO=new NicSecondaryIpVO(nicId,addrFinal,vmId,ipOwner.getId(),ipOwner.getDomainId(),networkId);
+        _nicSecondaryIpDao.persist(secondaryIpVO);
+        return secondaryIpVO.getId();
+      }
+    }
+);
+    return getNicSecondaryIp(id);
+  }
+ else {
+    return null;
+  }
+}

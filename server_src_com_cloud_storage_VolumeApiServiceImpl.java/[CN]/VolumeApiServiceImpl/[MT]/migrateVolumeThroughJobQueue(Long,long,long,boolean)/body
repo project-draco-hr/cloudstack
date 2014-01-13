@@ -1,0 +1,29 @@
+{
+  final CallContext context=CallContext.current();
+  final User callingUser=context.getCallingUser();
+  final Account callingAccount=context.getCallingAccount();
+  final VMInstanceVO vm=_vmInstanceDao.findById(vmId);
+  Object[] result=Transaction.execute(new TransactionCallback<Object[]>(){
+    @Override public Object[] doInTransaction(    TransactionStatus status){
+      VmWorkJobVO workJob=null;
+      _vmInstanceDao.lockRow(vm.getId(),true);
+      workJob=new VmWorkJobVO(context.getContextId());
+      workJob.setDispatcher(VmWorkConstants.VM_WORK_JOB_DISPATCHER);
+      workJob.setCmd(VmWorkMigrateVolume.class.getName());
+      workJob.setAccountId(callingAccount.getId());
+      workJob.setUserId(callingUser.getId());
+      workJob.setStep(VmWorkJobVO.Step.Starting);
+      workJob.setVmType(vm.getType());
+      workJob.setVmInstanceId(vm.getId());
+      workJob.setRelated(AsyncJobExecutionContext.getOriginJobContextId());
+      VmWorkMigrateVolume workInfo=new VmWorkMigrateVolume(callingUser.getId(),callingAccount.getId(),vm.getId(),VolumeApiServiceImpl.VM_WORK_JOB_HANDLER,volumeId,destPoolId,liveMigrate);
+      workJob.setCmdInfo(VmWorkSerializer.serialize(workInfo));
+      _jobMgr.submitAsyncJob(workJob,VmWorkConstants.VM_WORK_QUEUE,vm.getId());
+      return new Object[]{workJob,new Long(workJob.getId())};
+    }
+  }
+);
+  final long jobId=(Long)result[1];
+  AsyncJobExecutionContext.getCurrentExecutionContext().joinJob(jobId);
+  return new VmJobVolumeOutcome((VmWorkJobVO)result[0],volumeId);
+}

@@ -1,0 +1,71 @@
+{
+  try {
+    Protocol protocol=parseOptions(args);
+    if (protocol == Protocol.NONE)     return;
+    System.setProperty("streamer.Link.debug","" + debugLink.used);
+    System.setProperty("streamer.Element.debug","" + debugElement.used);
+    System.setProperty("streamer.Pipeline.debug","" + debugPipeline.used);
+    SSLState sslState=new SSLState();
+    if ("jre".equals(sslImplementation.value)) {
+      socket=new SocketWrapperImpl("socket",sslState);
+    }
+ else     if ("apr".equals(sslImplementation.value)) {
+      socket=new AprSocketWrapperImpl("socket",sslState);
+    }
+ else     if ("bco".equals(sslImplementation.value)) {
+      socket=new BcoSocketWrapperImpl("socket",sslState);
+    }
+ else {
+      throw new RuntimeException("Unexpected option value: \"" + sslImplementation.value + "\". "+ sslImplementation.help());
+    }
+    screen=new ScreenDescription();
+    canvas=new BufferedImageCanvas(canvasWidth.value,canvasHeight.value);
+    screen.addSizeChangeListener(new SizeChangeListener(){
+      @Override public void sizeChanged(      int width,      int height){
+        if (canvas != null) {
+          canvas.setCanvasSize(width,height);
+          if (scroller != null)           scroller.setSize(canvas.getWidth(),canvas.getHeight());
+        }
+      }
+    }
+);
+    InetSocketAddress address;
+    Element main;
+switch (protocol) {
+case VNC:
+      address=new InetSocketAddress(hostName.value,vncPort.value);
+    main=new VncClient("client",password.value,screen,canvas);
+  break;
+case RDP:
+address=new InetSocketAddress(hostName.value,rdpPort.value);
+main=new RdpClient("client",hostName.value,domain.value,userName.value,rdpPassword.value,null,screen,canvas,sslState);
+break;
+case HYPERV:
+address=new InetSocketAddress(hostName.value,hyperVPort.value);
+main=new RdpClient("client",hostName.value,domain.value,userName.value,password.value,hyperVInstanceId.value,screen,canvas,sslState);
+break;
+default :
+address=null;
+main=null;
+}
+Pipeline pipeline=new PipelineImpl("Client");
+pipeline.add(socket,main);
+pipeline.link("socket",main.getId(),"socket");
+pipeline.validate();
+frame=createVncClientMainWindow(canvas,protocol.toString() + " " + hostName.value,new WindowAdapter(){
+@Override public void windowClosing(WindowEvent evt){
+shutdown();
+}
+}
+);
+try {
+socket.connect(address);
+}
+  finally {
+shutdown();
+}
+}
+ catch (Exception e) {
+e.printStackTrace(System.err);
+}
+}

@@ -1,13 +1,25 @@
 {
-  String vmName=cmd.getVmName();
-  String vdiNameLabel=vmName + "-DATA";
   DiskTO disk=cmd.getDisk();
   DataTO data=disk.getData();
   try {
-    Connection conn=hypervisorResource.getConnection();
-    VDI vdi=null;
+    String vmName=cmd.getVmName();
+    String vdiNameLabel=vmName + "-DATA";
+    Connection conn=this.hypervisorResource.getConnection();
+    VM vm=null;
+    boolean vmNotRunning=true;
+    try {
+      vm=this.hypervisorResource.getVM(conn,vmName);
+      VM.Record vmr=vm.getRecord(conn);
+      vmNotRunning=vmr.powerState != VmPowerState.RUNNING;
+    }
+ catch (    CloudRuntimeException ex) {
+    }
     Map<String,String> details=cmd.getDisk().getDetails();
     boolean isManaged=Boolean.parseBoolean(details.get(DiskTO.MANAGED));
+    if (vmNotRunning && !isManaged) {
+      return new AttachAnswer(disk);
+    }
+    VDI vdi=null;
     if (isManaged) {
       String iScsiName=details.get(DiskTO.IQN);
       String storageHost=details.get(DiskTO.STORAGE_HOST);
@@ -19,21 +31,18 @@
       if (vdi == null) {
         vdi=hypervisorResource.createVdi(sr,vdiNameLabel,volumeSize);
       }
+      if (vmNotRunning) {
+        DiskTO newDisk=new DiskTO(disk.getData(),disk.getDiskSeq(),vdi.getUuid(conn),disk.getType());
+        return new AttachAnswer(newDisk);
+      }
     }
  else {
       vdi=hypervisorResource.mount(conn,null,null,data.getPath());
     }
-    VM vm=hypervisorResource.getVM(conn,vmName);
-    boolean isHVM;
-    if (vm.getPVBootloader(conn).equalsIgnoreCase("")) {
-      isHVM=true;
-    }
- else {
-      isHVM=false;
-    }
+    boolean isHVM=vm.getPVBootloader(conn).equalsIgnoreCase("");
     VMGuestMetrics vgm=vm.getGuestMetrics(conn);
     boolean pvDrvInstalled=false;
-    if (!hypervisorResource.isRefNull(vgm) && vgm.getPVDriversUpToDate(conn)) {
+    if (!this.hypervisorResource.isRefNull(vgm) && vgm.getPVDriversUpToDate(conn)) {
       pvDrvInstalled=true;
     }
     if (isHVM && !pvDrvInstalled) {
