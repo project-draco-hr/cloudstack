@@ -1,0 +1,40 @@
+@data('accessByIp', 'accessByName')
+@attr(tags=['advancedsg'])
+def test_39_ssh_vm_other_sg_from_multiple_sg_vm(self, value):
+    ' Test access VM in other security group from vm belonging to multiple security groups'
+    cmd = authorizeSecurityGroupIngress.authorizeSecurityGroupIngressCmd()
+    cmd.protocol = 'TCP'
+    cmd.startport = 22
+    cmd.endport = 80
+    cmd.cidrlist = '0.0.0.0/0'
+    cmd.securitygroupid = self.sec_grp_1.id
+    self.api_client.authorizeSecurityGroupIngress(cmd)
+    cmd.securitygroupid = self.sec_grp_2.id
+    cmd.cidrlist = []
+    cmd.usersecuritygrouplist = [{'account': str(self.account_1.name), 'group': str(self.sec_grp_1.name), }]
+    self.api_client.authorizeSecurityGroupIngress(cmd)
+    self.sec_grp_3 = SecurityGroup.create(self.api_client, self.services['security_group'], account=self.account_1.name, domainid=self.account_1.domainid)
+    self.sec_grp_3.authorize(self.api_client, self.services['ingress_rule'])
+    self.debug(('Deploying virtual machine in account 1: %s, with sec groups %s and %s' % (self.account_1.name, self.sec_grp_1.id, self.sec_grp_3.id)))
+    self.virtual_machine_3 = VirtualMachine.create(self.api_client, self.services['virtual_machine'], accountid=self.account_1.name, domainid=self.account_1.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[self.sec_grp_1.id, self.sec_grp_3.id])
+    self.cleanup_vms.append(self.virtual_machine_3)
+    self.debug(('Deployed vm: %s' % self.virtual_machine_3.id))
+    self.debug(('Getting SSH client of virtual machine 1: %s' % self.virtual_machine_3.id))
+    sshClient = self.virtual_machine_3.get_ssh_client(ipaddress=self.virtual_machine_3.nic[0].ipaddress)
+    try:
+        if (value == 'accessByIp'):
+            self.debug(('SSHing into vm_2 %s from vm_3 %s' % (self.virtual_machine_2.nic[0].ipaddress, self.virtual_machine_3.nic[0].ipaddress)))
+            command = ('ssh -t -t root@%s' % self.virtual_machine_2.nic[0].ipaddress)
+        elif (value == 'accessByName'):
+            self.debug(('SSHing into vm_2 %s from vm_3 %s' % (self.virtual_machine_2.name, self.virtual_machine_3.name)))
+            command = ('ssh -t -t root@%s' % self.virtual_machine_2.name)
+        else:
+            self.fail('Invalid value passed to the test case')
+        self.debug(('command: --> %s' % command))
+        res = sshClient.execute(command)
+        self.debug(('SSH result: %s' % str(res)))
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (self.virtual_machine_3.nic[0].ipaddress, e)))
+    result = str(res)
+    self.assertNotEqual(result.count('No route to host'), 1, 'SSH should be successful')
+    return
