@@ -1,0 +1,30 @@
+@attr(tags=['advancedsg'])
+def test_26_Destroy_Deploy_VM_NoFreeIPs(self):
+    ' Test destroy VM in zone wide shared nw when IPs are full and then try to deploy vm'
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg', range=2)
+    shared_network = Network.create(self.api_client, self.services['shared_network_sg'], networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(shared_network)
+    self.debug(('Creating virtual machine shared network %s' % shared_network.id))
+    vm_1 = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, networkids=[shared_network.id], serviceofferingid=self.service_offering.id)
+    try:
+        self.debug('Trying to create virtual machine when all the IPs are consumed')
+        vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, networkids=[shared_network.id], serviceofferingid=self.service_offering.id)
+        self.cleanup_vms.append(vm)
+        self.fail('Vm creation succeded, should have failed')
+    except Exception as e:
+        self.debug(('VM creation failed as expected with exception: %s' % e))
+    vm_1.delete(self.api_client)
+    wait_for_cleanup(self.api_client, ['expunge.delay', 'expunge.interval'])
+    try:
+        self.debug('Trying to create virtual machine when all the IPs are consumed')
+        vm_2 = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, networkids=[shared_network.id], serviceofferingid=self.service_offering.id)
+        self.cleanup_vms.append(vm_2)
+        self.debug(('Deployed VM %s in the shared network %s' % (vm_2.id, shared_network.id)))
+    except Exception as e:
+        self.fail(('VM creation failed with exception: %s' % e))
+    return

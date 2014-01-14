@@ -1,0 +1,41 @@
+@unittest.skip('Testing pending on multihost setup')
+@data('account', 'domain', 'zone')
+@attr(tags=['advancedsg'])
+def test_33_VM_Migrate_SharedNwSG(self, value):
+    ' Test migration of VM deployed in Account specific shared network'
+    hosts = Host.list(self.api_client, zoneid=self.zone.id)
+    self.assertEqual(validateList(hosts)[0], PASS, ('hosts list validation failed, list is %s' % hosts))
+    if (len(hosts) < 2):
+        self.skipTest('This test requires at least two hosts present in the zone')
+    domain = self.domain
+    account = None
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    if (value == 'domain'):
+        domain = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.domain.id)
+        self.cleanup_domains.append(domain)
+    elif (value == 'account'):
+        account = Account.create(self.api_client, self.services['account'], admin=True, domainid=self.domain.id)
+        self.cleanup_accounts.append(account)
+        self.services['shared_network_sg']['acltype'] = 'account'
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg')
+    shared_network_sg = Network.create(self.api_client, self.services['shared_network_sg'], accountid=(account.name if account else None), domainid=domain.id, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    if ((value == 'domain') or (value == 'zone')):
+        self.cleanup_networks.append(shared_network_sg)
+    self.debug(('Created %s wide shared network %s' % (value, shared_network_sg.id)))
+    virtual_machine = VirtualMachine.create(self.api_client, self.services['virtual_machine'], accountid=(account.name if account else None), domainid=domain.id, networkids=[shared_network_sg.id], serviceofferingid=self.service_offering.id)
+    self.cleanup_vms.append(virtual_machine)
+    hosts_to_migrate = [host for host in hosts if (host.id != virtual_machine.hostid)]
+    self.assertTrue((len(hosts_to_migrate) > 1), 'At least one suitable host should be present to migrate VM')
+    try:
+        self.debug(('trying to migrate virtual machine from host %s to host %s' % (virtual_machine.hostid, hosts_to_migrate[0].id)))
+        virtual_machine.migrate(self.api_client, hosts_to_migrate[0].id)
+    except Exception as e:
+        self.fail(('VM migration failed with exception %s' % e))
+    vm_list = list_virtual_machines(self.api_client, id=virtual_machine.id)
+    self.assertEqual(validateList(vm_list)[0], PASS, ('vm list validation failed, vm list is %s' % vm_list))
+    self.assertEqual(vm_list[0].hostid, hosts_to_migrate[0].id, 'VM host id does not reflect the migration')
+    return

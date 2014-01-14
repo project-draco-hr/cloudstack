@@ -1,0 +1,38 @@
+@data('stopStart', 'reboot')
+@attr(tags=['advancedsg'])
+def test_27_start_stop_vm(self, value):
+    ' Test start and stop vm'
+    user_account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.debug(('Created user account : %s' % user_account.name))
+    self.cleanup_accounts.append(user_account)
+    ingress_rule_ids = []
+    self.services['security_group']['name'] = ('Custom_sec_grp_' + random_gen())
+    custom_sec_grp = SecurityGroup.create(self.api_client, self.services['security_group'], account=user_account.name, domainid=self.domain.id)
+    self.debug(('Created security groups: %s' % custom_sec_grp.id))
+    self.cleanup_secGrps.append(custom_sec_grp)
+    ingress_rule = custom_sec_grp.authorize(self.api_client, self.services['ingress_rule'])
+    ingress_rule_ids.append(ingress_rule['ingressrule'][0].ruleid)
+    self.debug(('Authorized ingress rule for security group: %s' % custom_sec_grp.id))
+    vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, accountid=user_account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, securitygroupids=[custom_sec_grp.id])
+    self.debug(('Created VM : %s' % vm.id))
+    self.cleanup_vms.append(vm)
+    try:
+        try:
+            self.debug(('SSH into VM: %s' % vm.nic[0].ipaddress))
+            vm.get_ssh_client(ipaddress=vm.nic[0].ipaddress)
+            self.debug(('SSH to VM successful, proceeding for %s operation' % value))
+            if (value == 'stopStart'):
+                self.setVmState(vm, 'stopped')
+                self.setVmState(vm, 'running')
+            elif (value == 'reboot'):
+                vm.reboot(self.api_client)
+            self.debug(('SSH into VM: %s' % vm.nic[0].ipaddress))
+            vm.get_ssh_client(ipaddress=vm.nic[0].ipaddress)
+        except Exception as e:
+            self.fail(('SSH Access failed for %s: %s, failed at line %s' % (vm.nic[0].ipaddress, e, sys.exc_info()[2].tb_lineno)))
+    finally:
+        cmd = revokeSecurityGroupIngress.revokeSecurityGroupIngressCmd()
+        for rule_id in ingress_rule_ids:
+            cmd.id = rule_id
+            self.api_client.revokeSecurityGroupIngress(cmd)
+    return
