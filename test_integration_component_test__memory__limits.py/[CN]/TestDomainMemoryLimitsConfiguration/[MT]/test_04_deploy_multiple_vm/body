@@ -1,0 +1,52 @@
+@attr(tags=['advanced', 'advancedns', 'simulator'])
+@attr(configuration='max.account.memory')
+def test_04_deploy_multiple_vm(self):
+    'Test Deploy multiple VM with 2 GB memory & verify the usage'
+    self.debug('Creating service offering with 2 GB RAM')
+    self.service_offering = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.cleanup.append(self.service_offering)
+    self.debug('Setting up account and domain hierarchy')
+    self.setupAccounts()
+    users = {self.child_domain_1: self.child_do_admin_1, self.child_domain_2: self.child_do_admin_2, }
+    for (domain, admin) in users.items():
+        self.account = admin
+        self.domain = domain
+        memory_account_gc = Resources.list(self.apiclient, resourcetype=9, account=self.account.name, domainid=self.domain.id)
+        if (memory_account_gc[0].max != 8192):
+            self.skipTest('This test case requires configuration value max.account.memory to be 8192')
+            api_client = self.testClient.createUserApiClient(UserName=self.account.name, DomainName=self.account.domain)
+        self.debug(('Creating an instance with service offering: %s' % self.service_offering.name))
+        vm_1 = self.createInstance(service_off=self.service_offering, api_client=api_client)
+        vm_2 = self.createInstance(service_off=self.service_offering, api_client=api_client)
+        self.createInstance(service_off=self.service_offering, api_client=api_client)
+        self.createInstance(service_off=self.service_offering, api_client=api_client)
+        self.debug('Deploying instance - memory capacity is fully utilized')
+        with self.assertRaises(Exception):
+            self.createInstance(service_off=self.service_offering, api_client=api_client)
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count = account_list[0].memorytotal
+        expected_resource_count = (int(self.services['service_offering']['memory']) * 4)
+        self.assertEqual(resource_count, expected_resource_count, 'Initial resource count should with the expected resource count')
+        self.debug(('Destroying instance: %s' % vm_1.name))
+        try:
+            vm_1.delete(self.apiclient)
+        except Exception as e:
+            self.fail(('Failed to delete instance: %s' % e))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_delete = account_list[0].memorytotal
+        expected_resource_count -= int(self.services['service_offering']['memory'])
+        self.assertEqual(resource_count_after_delete, expected_resource_count, 'Resource count should match with the expected resource count')
+        host = find_suitable_host(self.apiclient, vm_2)
+        self.debug(('Migrating instance: %s to host: %s' % (vm_2.name, host.name)))
+        try:
+            vm_2.migrate(self.apiclient, host.id)
+        except Exception as e:
+            self.fail(('Failed to migrate instance: %s' % e))
+        account_list = Account.list(self.apiclient, id=self.account.id)
+        self.assertIsInstance(account_list, list, 'List Accounts should return a valid response')
+        resource_count_after_migrate = account_list[0].memorytotal
+        self.debug(resource_count_after_migrate)
+        self.assertEqual(resource_count_after_delete, resource_count_after_migrate, 'Resource count should be same after migrating the instance')
+    return

@@ -1,0 +1,91 @@
+{
+  Account account=_entityMgr.findById(Account.class,volume.getAccountId());
+  final HashSet<StoragePool> poolsToAvoid=new HashSet<StoragePool>();
+  StoragePool pool=null;
+  Set<Long> podsToAvoid=new HashSet<Long>();
+  Pair<Pod,Long> pod=null;
+  DiskOffering diskOffering=_entityMgr.findById(DiskOffering.class,volume.getDiskOfferingId());
+  DataCenter dc=_entityMgr.findById(DataCenter.class,volume.getDataCenterId());
+  DiskProfile dskCh=new DiskProfile(volume,diskOffering,snapshot.getHypervisorType());
+  String msg="There are no available storage pools to store the volume in";
+  if (vm != null) {
+    Pod podofVM=_entityMgr.findById(Pod.class,vm.getPodIdToDeployIn());
+    if (podofVM != null) {
+      pod=new Pair<Pod,Long>(podofVM,podofVM.getId());
+    }
+  }
+  if (vm != null && pod != null) {
+    Long hostId=null;
+    Long clusterId=null;
+    if (vm.getState() == State.Running) {
+      hostId=vm.getHostId();
+      if (hostId != null) {
+        Host vmHost=_entityMgr.findById(Host.class,hostId);
+        clusterId=vmHost.getClusterId();
+      }
+    }
+ else {
+      List<VolumeVO> rootVolumesOfVm=_volsDao.findByInstanceAndType(vm.getId(),Volume.Type.ROOT);
+      if (rootVolumesOfVm.size() != 1) {
+        throw new CloudRuntimeException("The VM " + vm.getHostName() + " has more than one ROOT volume and is in an invalid state. Please contact Cloud Support.");
+      }
+ else {
+        VolumeVO rootVolumeOfVm=rootVolumesOfVm.get(0);
+        StoragePoolVO rootDiskPool=_storagePoolDao.findById(rootVolumeOfVm.getPoolId());
+        clusterId=(rootDiskPool == null ? null : rootDiskPool.getClusterId());
+      }
+    }
+    while ((pool=findStoragePool(dskCh,dc,pod.first(),clusterId,hostId,vm,poolsToAvoid)) != null) {
+      break;
+    }
+    if (pool == null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Could not find any storage pool to create Volume in the pod/cluster of the provided VM " + vm.getUuid());
+      }
+      StringBuilder addDetails=new StringBuilder(msg);
+      addDetails.append(", Could not find any storage pool to create Volume in the pod/cluster of the VM ");
+      addDetails.append(vm.getUuid());
+      msg=addDetails.toString();
+    }
+  }
+ else {
+    while ((pod=findPod(null,null,dc,account.getId(),podsToAvoid)) != null) {
+      podsToAvoid.add(pod.first().getId());
+      while ((pool=findStoragePool(dskCh,dc,pod.first(),null,null,null,poolsToAvoid)) != null) {
+        break;
+      }
+    }
+  }
+  if (pool == null) {
+    s_logger.info(msg);
+    throw new StorageUnavailableException(msg,-1);
+  }
+  VolumeInfo vol=volFactory.getVolume(volume.getId());
+  DataStore store=dataStoreMgr.getDataStore(pool.getId(),DataStoreRole.Primary);
+  SnapshotInfo snapInfo=snapshotFactory.getSnapshot(snapshot.getId(),DataStoreRole.Image);
+  DataStore snapStore=snapInfo.getDataStore();
+  long snapVolId=snapInfo.getVolumeId();
+  try {
+    _snapshotSrv.syncVolumeSnapshotsToRegionStore(snapVolId,snapStore);
+  }
+ catch (  Exception ex) {
+    s_logger.warn(ex.getMessage(),ex);
+  }
+  AsyncCallFuture<VolumeApiResult> future=volService.createVolumeFromSnapshot(vol,store,snapInfo);
+  try {
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      s_logger.debug("Failed to create volume from snapshot:" + result.getResult());
+      throw new CloudRuntimeException("Failed to create volume from snapshot:" + result.getResult());
+    }
+    return result.getVolume();
+  }
+ catch (  InterruptedException e) {
+    s_logger.debug("Failed to create volume from snapshot",e);
+    throw new CloudRuntimeException("Failed to create volume from snapshot",e);
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("Failed to create volume from snapshot",e);
+    throw new CloudRuntimeException("Failed to create volume from snapshot",e);
+  }
+}

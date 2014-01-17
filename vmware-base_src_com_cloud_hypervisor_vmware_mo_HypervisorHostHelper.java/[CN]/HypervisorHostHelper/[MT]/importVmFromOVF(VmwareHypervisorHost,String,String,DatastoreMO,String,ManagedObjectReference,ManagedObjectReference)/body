@@ -14,6 +14,17 @@
     s_logger.error(msg);
     throw new Exception(msg);
   }
+  if (!ovfImportResult.getError().isEmpty()) {
+    for (    LocalizedMethodFault fault : ovfImportResult.getError()) {
+      s_logger.error("createImportSpec error: " + fault.getLocalizedMessage());
+    }
+    throw new CloudException("Failed to create an import spec from " + ovfFilePath + ". Check log for details.");
+  }
+  if (!ovfImportResult.getWarning().isEmpty()) {
+    for (    LocalizedMethodFault fault : ovfImportResult.getError()) {
+      s_logger.warn("createImportSpec warning: " + fault.getLocalizedMessage());
+    }
+  }
   DatacenterMO dcMo=new DatacenterMO(context,host.getHyperHostDatacenter());
   ManagedObjectReference morLease=context.getService().importVApp(morRp,ovfImportResult.getImportSpec(),dcMo.getVmFolder(),morHost);
   if (morLease == null) {
@@ -52,9 +63,16 @@
         }
       }
  catch (      Exception e) {
-        s_logger.error("Failed to complete file upload task. " + e.getMessage());
+        String erroMsg="File upload task failed to complete due to: " + e.getMessage();
+        s_logger.error(erroMsg);
         importSuccess=false;
-        throw e;
+        throw new Exception(erroMsg);
+      }
+catch (      Throwable th) {
+        String errorMsg="throwable caught during file upload task: " + th.getMessage();
+        s_logger.error(errorMsg);
+        importSuccess=false;
+        throw new Exception(errorMsg,th);
       }
  finally {
         progressReporter.close();
@@ -62,6 +80,13 @@
       if (bytesAlreadyWritten == totalBytes) {
         leaseMo.updateLeaseProgress(100);
       }
+    }
+ else     if (state == HttpNfcLeaseState.ERROR) {
+      LocalizedMethodFault error=leaseMo.getLeaseError();
+      MethodFault fault=error.getFault();
+      String erroMsg="Object creation on vCenter failed due to: Exception: " + fault.getClass().getName() + ", message: "+ error.getLocalizedMessage();
+      s_logger.error(erroMsg);
+      throw new Exception(erroMsg);
     }
   }
   finally {

@@ -1,56 +1,22 @@
 {
-  VMInstanceVO vm=_vmDao.findByUuid(vmUuid);
-  try {
-    stateTransitTo(vm,VirtualMachine.Event.StorageMigrationRequested,null);
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    orchestrateStorageMigration(vmUuid,destPool);
   }
- catch (  NoTransitionException e) {
-    s_logger.debug("Unable to migrate vm: " + e.toString());
-    throw new CloudRuntimeException("Unable to migrate vm: " + e.toString());
-  }
-  VirtualMachineProfile profile=new VirtualMachineProfileImpl(vm);
-  boolean migrationResult=false;
-  try {
-    migrationResult=volumeMgr.storageMigration(profile,destPool);
-    if (migrationResult) {
-      if (!vm.getPodIdToDeployIn().equals(destPool.getPodId())) {
-        DataCenterDeployment plan=new DataCenterDeployment(vm.getDataCenterId(),destPool.getPodId(),null,null,null,null);
-        VirtualMachineProfileImpl vmProfile=new VirtualMachineProfileImpl(vm,null,null,null,null);
-        _networkMgr.reallocate(vmProfile,plan);
-      }
-      vm.setLastHostId(null);
-      vm.setPodId(destPool.getPodId());
-    }
  else {
-      s_logger.debug("Storage migration failed");
-    }
-  }
- catch (  ConcurrentOperationException e) {
-    s_logger.debug("Failed to migration: " + e.toString());
-    throw new CloudRuntimeException("Failed to migration: " + e.toString());
-  }
-catch (  InsufficientVirtualNetworkCapcityException e) {
-    s_logger.debug("Failed to migration: " + e.toString());
-    throw new CloudRuntimeException("Failed to migration: " + e.toString());
-  }
-catch (  InsufficientAddressCapacityException e) {
-    s_logger.debug("Failed to migration: " + e.toString());
-    throw new CloudRuntimeException("Failed to migration: " + e.toString());
-  }
-catch (  InsufficientCapacityException e) {
-    s_logger.debug("Failed to migration: " + e.toString());
-    throw new CloudRuntimeException("Failed to migration: " + e.toString());
-  }
-catch (  StorageUnavailableException e) {
-    s_logger.debug("Failed to migration: " + e.toString());
-    throw new CloudRuntimeException("Failed to migration: " + e.toString());
-  }
- finally {
+    Outcome<VirtualMachine> outcome=migrateVmStorageThroughJobQueue(vmUuid,destPool);
     try {
-      stateTransitTo(vm,VirtualMachine.Event.AgentReportStopped,null);
+      VirtualMachine vm=outcome.get();
     }
- catch (    NoTransitionException e) {
-      s_logger.debug("Failed to change vm state: " + e.toString());
-      throw new CloudRuntimeException("Failed to change vm state: " + e.toString());
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof RuntimeException)       throw (RuntimeException)jobResult;
     }
   }
 }

@@ -1,0 +1,53 @@
+{
+  Connection conn=hypervisorResource.getConnection();
+  DataTO srcData=cmd.getSrcTO();
+  DataTO destData=cmd.getDestTO();
+  int wait=cmd.getWait();
+  VolumeObjectTO srcVolume=(VolumeObjectTO)srcData;
+  VolumeObjectTO destVolume=(VolumeObjectTO)destData;
+  PrimaryDataStoreTO primaryStore=(PrimaryDataStoreTO)destVolume.getDataStore();
+  DataStoreTO srcStore=srcVolume.getDataStore();
+  if (srcStore instanceof NfsTO) {
+    NfsTO nfsStore=(NfsTO)srcStore;
+    String volumePath=srcVolume.getPath();
+    int index=volumePath.lastIndexOf("/");
+    String volumeDirectory=volumePath.substring(0,index);
+    String volumeUuid=volumePath.substring(index + 1);
+    index=volumeUuid.indexOf(".");
+    if (index != -1) {
+      volumeUuid=volumeUuid.substring(0,index);
+    }
+    URI uri=null;
+    try {
+      uri=new URI(nfsStore.getUrl());
+    }
+ catch (    Exception e) {
+      return new CopyCmdAnswer(e.toString());
+    }
+    SR srcSr=createFileSr(conn,uri.getHost() + ":" + uri.getPath(),volumeDirectory);
+    try {
+      SR primaryStoragePool=hypervisorResource.getStorageRepository(conn,primaryStore.getUuid());
+      VDI srcVdi=VDI.getByUuid(conn,volumeUuid);
+      Task task=srcVdi.copyAsync2(conn,primaryStoragePool,null,null);
+      hypervisorResource.waitForTask(conn,task,1000,wait * 1000);
+      hypervisorResource.checkForSuccess(conn,task);
+      VDI destVdi=Types.toVDI(task,conn);
+      VolumeObjectTO newVol=new VolumeObjectTO();
+      newVol.setPath(destVdi.getUuid(conn));
+      newVol.setSize(srcVolume.getSize());
+      return new CopyCmdAnswer(newVol);
+    }
+ catch (    Exception e) {
+      String msg="Catch Exception " + e.getClass().getName() + " due to "+ e.toString();
+      s_logger.warn(msg,e);
+      return new CopyCmdAnswer(e.toString());
+    }
+ finally {
+      if (srcSr != null) {
+        hypervisorResource.removeSR(conn,srcSr);
+      }
+    }
+  }
+  s_logger.debug("unsupported protocol");
+  return new CopyCmdAnswer("unsupported protocol");
+}

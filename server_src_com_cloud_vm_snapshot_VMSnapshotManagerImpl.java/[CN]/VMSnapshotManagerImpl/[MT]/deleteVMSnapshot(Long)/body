@@ -13,17 +13,28 @@
     if (expungingSnapshots.size() > 0 && expungingSnapshots.get(0).getId() == vmSnapshot.getId())     s_logger.debug("Target VM snapshot already in expunging state, go on deleting it: " + vmSnapshot.getDisplayName());
  else     throw new InvalidParameterValueException("There is other active vm snapshot tasks on the instance, please try again later");
   }
-  if (vmSnapshot.getState() == VMSnapshot.State.Allocated) {
-    return _vmSnapshotDao.remove(vmSnapshot.getId());
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateDeleteVMSnapshot(vmSnapshotId);
   }
  else {
+    Outcome<VMSnapshot> outcome=deleteVMSnapshotThroughJobQueue(vmSnapshot.getVmId(),vmSnapshotId);
+    VMSnapshot result=null;
     try {
-      VMSnapshotStrategy strategy=findVMSnapshotStrategy(vmSnapshot);
-      return strategy.deleteVMSnapshot(vmSnapshot);
+      result=outcome.get();
     }
- catch (    Exception e) {
-      s_logger.debug("Failed to delete vm snapshot: " + vmSnapshotId,e);
-      return false;
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
     }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
+ else       if (jobResult instanceof Throwable)       throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+    }
+    if (jobResult instanceof Boolean)     return ((Boolean)jobResult).booleanValue();
+    return false;
   }
 }

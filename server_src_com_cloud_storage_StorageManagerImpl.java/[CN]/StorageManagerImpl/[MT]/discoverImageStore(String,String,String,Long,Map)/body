@@ -1,0 +1,70 @@
+{
+  DataStoreProvider storeProvider=_dataStoreProviderMgr.getDataStoreProvider(providerName);
+  if (storeProvider == null) {
+    storeProvider=_dataStoreProviderMgr.getDefaultImageDataStoreProvider();
+    if (storeProvider == null) {
+      throw new InvalidParameterValueException("can't find image store provider: " + providerName);
+    }
+    providerName=storeProvider.getName();
+  }
+  ScopeType scopeType=ScopeType.ZONE;
+  if (dcId == null) {
+    scopeType=ScopeType.REGION;
+  }
+  if (name == null) {
+    name=url;
+  }
+  ImageStoreVO imageStore=_imageStoreDao.findByName(name);
+  if (imageStore != null) {
+    throw new InvalidParameterValueException("The image store with name " + name + " already exists, try creating with another name");
+  }
+  if (!((ImageStoreProvider)storeProvider).isScopeSupported(scopeType)) {
+    throw new InvalidParameterValueException("Image store provider " + providerName + " does not support scope "+ scopeType);
+  }
+  List<ImageStoreVO> imageStores=_imageStoreDao.listImageStores();
+  for (  ImageStoreVO store : imageStores) {
+    if (!store.getProviderName().equalsIgnoreCase(providerName)) {
+      throw new InvalidParameterValueException("You can only add new image stores from the same provider " + store.getProviderName() + " already added");
+    }
+  }
+  if (dcId != null) {
+    DataCenterVO zone=_dcDao.findById(dcId);
+    if (zone == null) {
+      throw new InvalidParameterValueException("Can't find zone by id " + dcId);
+    }
+    Account account=CallContext.current().getCallingAccount();
+    if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(account.getId())) {
+      PermissionDeniedException ex=new PermissionDeniedException("Cannot perform this operation, Zone with specified id is currently disabled");
+      ex.addProxyObject(zone.getUuid(),"dcId");
+      throw ex;
+    }
+  }
+  Map<String,Object> params=new HashMap<String,Object>();
+  params.put("zoneId",dcId);
+  params.put("url",url);
+  params.put("name",name);
+  params.put("details",details);
+  params.put("scope",scopeType);
+  params.put("providerName",storeProvider.getName());
+  params.put("role",DataStoreRole.Image);
+  DataStoreLifeCycle lifeCycle=storeProvider.getDataStoreLifeCycle();
+  DataStore store;
+  try {
+    store=lifeCycle.initialize(params);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Failed to add data store: " + e.getMessage(),e);
+    throw new CloudRuntimeException("Failed to add data store: " + e.getMessage(),e);
+  }
+  if (((ImageStoreProvider)storeProvider).needDownloadSysTemplate()) {
+    _imageSrv.downloadBootstrapSysTemplate(store);
+  }
+ else {
+    _imageSrv.addSystemVMTemplatesToSecondary(store);
+  }
+  associateCrosszoneTemplatesToZone(dcId);
+  if (scopeType == ScopeType.REGION) {
+    duplicateCacheStoreRecordsToRegionStore(store.getId());
+  }
+  return (ImageStore)_dataStoreMgr.getDataStore(store.getId(),DataStoreRole.Image);
+}

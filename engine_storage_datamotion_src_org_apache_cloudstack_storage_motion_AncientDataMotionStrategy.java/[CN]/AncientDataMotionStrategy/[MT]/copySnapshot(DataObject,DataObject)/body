@@ -2,13 +2,22 @@
   String value=configDao.getValue(Config.BackupSnapshotWait.toString());
   int _backupsnapshotwait=NumbersUtil.parseInt(value,Integer.parseInt(Config.BackupSnapshotWait.getDefaultValue()));
   DataObject cacheData=null;
+  SnapshotInfo snapshotInfo=(SnapshotInfo)srcData;
+  Object payload=snapshotInfo.getPayload();
+  Boolean fullSnapshot=true;
+  if (payload != null) {
+    fullSnapshot=(Boolean)payload;
+  }
+  Map<String,String> options=new HashMap<String,String>();
+  options.put("fullSnapshot",fullSnapshot.toString());
   Answer answer=null;
   try {
     if (needCacheStorage(srcData,destData)) {
       Scope selectedScope=pickCacheScopeForCopy(srcData,destData);
       cacheData=cacheMgr.getCacheObject(srcData,selectedScope);
-      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait,_mgmtServer.getExecuteInSequence());
+      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait,VirtualMachineManager.ExecuteInSequence.value());
       cmd.setCacheTO(cacheData.getTO());
+      cmd.setOptions(options);
       EndPoint ep=selector.select(srcData,destData);
       if (ep == null) {
         String errMsg="No remote endpoint to send command, check if host or ssvm is down?";
@@ -20,8 +29,9 @@
       }
     }
  else {
-      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait,_mgmtServer.getExecuteInSequence());
-      EndPoint ep=selector.select(srcData,destData);
+      CopyCommand cmd=new CopyCommand(srcData.getTO(),destData.getTO(),_backupsnapshotwait,VirtualMachineManager.ExecuteInSequence.value());
+      cmd.setOptions(options);
+      EndPoint ep=selector.select(srcData,destData,StorageAction.BACKUPSNAPSHOT);
       if (ep == null) {
         String errMsg="No remote endpoint to send command, check if host or ssvm is down?";
         s_logger.error(errMsg);
@@ -31,10 +41,8 @@
         answer=ep.sendMessage(cmd);
       }
     }
-    if (answer == null || !answer.getResult()) {
-      if (cacheData != null) {
-        cacheMgr.deleteCacheObject(cacheData);
-      }
+    if (cacheData != null) {
+      cacheMgr.deleteCacheObject(cacheData);
     }
     return answer;
   }

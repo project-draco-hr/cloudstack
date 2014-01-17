@@ -10,11 +10,9 @@ def test_multiple_account_egress_rule_negative(self):
     user_secgrp_list = {self.accountB.name: 'default', }
     egress_rule = security_group.authorizeEgress(self.apiclient, self.services['sg_account'], account=self.accountA.name, domainid=self.accountA.domainid, user_secgrp_list=user_secgrp_list)
     self.assertEqual(isinstance(egress_rule, dict), True, 'Check egress rule created properly')
-    ssh_egress_rule = egress_rule['egressrule'][0].__dict__
     self.debug(('Authorizing ingress rule for sec group ID: %s for ssh access' % security_group.id))
     ingress_rule = security_group.authorize(self.apiclient, self.services['security_group'], account=self.accountA.name, domainid=self.accountA.domainid)
     self.assertEqual(isinstance(ingress_rule, dict), True, 'Check ingress rule created properly')
-    ssh_rule = ingress_rule['ingressrule'][0].__dict__
     self.virtual_machineA = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.accountA.name, domainid=self.accountA.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[security_group.id])
     self.cleanup.append(self.virtual_machineA)
     self.debug(('Deploying VM in account: %s' % self.accountA.name))
@@ -39,10 +37,10 @@ def test_multiple_account_egress_rule_negative(self):
     try:
         self.debug('SSHing into VM type B from VM A')
         self.debug(('VM IP: %s' % self.virtual_machineB.ssh_ip))
-        res = ssh.execute(('ssh %s@%s' % (self.services['virtual_machine']['username'], self.virtual_machineB.ssh_ip)))
+        res = ssh.execute(("ssh -o 'BatchMode=yes' %s" % self.virtual_machineB.ssh_ip))
         self.debug(('SSH result: %s' % str(res)))
     except Exception as e:
         self.fail(('SSH Access failed for %s: %s' % (self.virtual_machineA.ipaddress, e)))
-    result = str(res)
-    self.assertEqual(result.count('Connection timed out'), 1, 'SSH into management server from VM should not be successful')
+    ssh_failure_result_set = [('ssh: connect to host %s port 22: No route to host' % self.virtual_machineB.ssh_ip), ('ssh: connect to host %s port 22: Connection timed out' % self.virtual_machineB.ssh_ip), 'Host key verification failed.']
+    self.assertFalse(set(res).isdisjoint(ssh_failure_result_set), 'SSH into VM of other account should not be successful')
     return

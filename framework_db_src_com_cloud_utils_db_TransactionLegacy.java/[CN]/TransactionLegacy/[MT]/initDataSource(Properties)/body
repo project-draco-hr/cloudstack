@@ -1,6 +1,9 @@
 {
   try {
     if (dbProps.size() == 0)     return;
+    s_dbHAEnabled=Boolean.valueOf(dbProps.getProperty("db.ha.enabled"));
+    s_logger.info("Is Data Base High Availiability enabled? Ans : " + s_dbHAEnabled);
+    String loadBalanceStrategy=dbProps.getProperty("db.ha.loadBalanceStrategy");
     final int cloudMaxActive=Integer.parseInt(dbProps.getProperty("db.cloud.maxActive"));
     final int cloudMaxIdle=Integer.parseInt(dbProps.getProperty("db.cloud.maxIdle"));
     final long cloudMaxWait=Long.parseLong(dbProps.getProperty("db.cloud.maxWait"));
@@ -37,6 +40,13 @@
     final long cloudMinEvcitableIdleTimeMillis=Long.parseLong(dbProps.getProperty("db.cloud.minEvictableIdleTimeMillis"));
     final boolean cloudPoolPreparedStatements=Boolean.parseBoolean(dbProps.getProperty("db.cloud.poolPreparedStatements"));
     final String url=dbProps.getProperty("db.cloud.url.params");
+    String cloudDbHAParams=null;
+    String cloudSlaves=null;
+    if (s_dbHAEnabled) {
+      cloudDbHAParams=getDBHAParams("cloud",dbProps);
+      cloudSlaves=dbProps.getProperty("db.cloud.slaves");
+      s_logger.info("The slaves configured for Cloud Data base is/are : " + cloudSlaves);
+    }
     final boolean useSSL=Boolean.parseBoolean(dbProps.getProperty("db.cloud.useSSL"));
     if (useSSL) {
       System.setProperty("javax.net.ssl.keyStore",dbProps.getProperty("db.cloud.keyStore"));
@@ -45,7 +55,7 @@
       System.setProperty("javax.net.ssl.trustStorePassword",dbProps.getProperty("db.cloud.trustStorePassword"));
     }
     final GenericObjectPool cloudConnectionPool=new GenericObjectPool(null,cloudMaxActive,GenericObjectPool.DEFAULT_WHEN_EXHAUSTED_ACTION,cloudMaxWait,cloudMaxIdle,cloudTestOnBorrow,false,cloudTimeBtwEvictionRunsMillis,1,cloudMinEvcitableIdleTimeMillis,cloudTestWhileIdle);
-    final ConnectionFactory cloudConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + cloudHost + ":"+ cloudPort+ "/"+ cloudDbName+ "?autoReconnect="+ cloudAutoReconnect+ (url != null ? "&" + url : "")+ (useSSL ? "&useSSL=true" : ""),cloudUsername,cloudPassword);
+    final ConnectionFactory cloudConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + cloudHost + (s_dbHAEnabled ? "," + cloudSlaves : "")+ ":"+ cloudPort+ "/"+ cloudDbName+ "?autoReconnect="+ cloudAutoReconnect+ (url != null ? "&" + url : "")+ (useSSL ? "&useSSL=true" : "")+ (s_dbHAEnabled ? "&" + cloudDbHAParams : "")+ (s_dbHAEnabled ? "&loadBalanceStrategy=" + loadBalanceStrategy : ""),cloudUsername,cloudPassword);
     final KeyedObjectPoolFactory poolableObjFactory=(cloudPoolPreparedStatements ? new StackKeyedObjectPoolFactory() : null);
     final PoolableConnectionFactory cloudPoolableConnectionFactory=new PoolableConnectionFactory(cloudConnectionFactory,cloudConnectionPool,poolableObjFactory,cloudValidationQuery,false,false,isolationLevel);
     s_ds=new PoolingDataSource(cloudPoolableConnectionFactory.getPool());
@@ -60,12 +70,12 @@
     final boolean usageAutoReconnect=Boolean.parseBoolean(dbProps.getProperty("db.usage.autoReconnect"));
     final String usageUrl=dbProps.getProperty("db.usage.url.params");
     final GenericObjectPool usageConnectionPool=new GenericObjectPool(null,usageMaxActive,GenericObjectPool.DEFAULT_WHEN_EXHAUSTED_ACTION,usageMaxWait,usageMaxIdle);
-    final ConnectionFactory usageConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + usageHost + ":"+ usagePort+ "/"+ usageDbName+ "?autoReconnect="+ usageAutoReconnect+ (usageUrl != null ? "&" + usageUrl : ""),usageUsername,usagePassword);
+    final ConnectionFactory usageConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + usageHost + (s_dbHAEnabled ? "," + dbProps.getProperty("db.cloud.slaves") : "")+ ":"+ usagePort+ "/"+ usageDbName+ "?autoReconnect="+ usageAutoReconnect+ (usageUrl != null ? "&" + usageUrl : "")+ (s_dbHAEnabled ? "&" + getDBHAParams("usage",dbProps) : "")+ (s_dbHAEnabled ? "&loadBalanceStrategy=" + loadBalanceStrategy : ""),usageUsername,usagePassword);
     final PoolableConnectionFactory usagePoolableConnectionFactory=new PoolableConnectionFactory(usageConnectionFactory,usageConnectionPool,new StackKeyedObjectPoolFactory(),null,false,false);
     s_usageDS=new PoolingDataSource(usagePoolableConnectionFactory.getPool());
     final String awsapiDbName=dbProps.getProperty("db.awsapi.name");
     final GenericObjectPool awsapiConnectionPool=new GenericObjectPool(null,usageMaxActive,GenericObjectPool.DEFAULT_WHEN_EXHAUSTED_ACTION,usageMaxWait,usageMaxIdle);
-    final ConnectionFactory awsapiConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + cloudHost + ":"+ cloudPort+ "/"+ awsapiDbName+ "?autoReconnect="+ usageAutoReconnect,cloudUsername,cloudPassword);
+    final ConnectionFactory awsapiConnectionFactory=new DriverManagerConnectionFactory("jdbc:mysql://" + cloudHost + (s_dbHAEnabled ? "," + cloudSlaves : "")+ ":"+ cloudPort+ "/"+ awsapiDbName+ "?autoReconnect="+ cloudAutoReconnect+ (s_dbHAEnabled ? "&" + cloudDbHAParams : "")+ (s_dbHAEnabled ? "&loadBalanceStrategy=" + loadBalanceStrategy : ""),cloudUsername,cloudPassword);
     final PoolableConnectionFactory awsapiPoolableConnectionFactory=new PoolableConnectionFactory(awsapiConnectionFactory,awsapiConnectionPool,new StackKeyedObjectPoolFactory(),null,false,false);
     s_awsapiDS=new PoolingDataSource(awsapiPoolableConnectionFactory.getPool());
     try {

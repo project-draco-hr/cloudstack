@@ -1,0 +1,47 @@
+{
+  List<AutoScaleVmGroupPolicyMapVO> listMap=_asGroupPolicyDao.listByVmGroupId(groupId);
+  if ((listMap == null) || (listMap.size() == 0))   return null;
+  for (  AutoScaleVmGroupPolicyMapVO asVmgPmap : listMap) {
+    AutoScalePolicyVO policyVO=_asPolicyDao.findById(asVmgPmap.getPolicyId());
+    if (policyVO != null) {
+      Integer quitetime=policyVO.getQuietTime();
+      Date quitetimeDate=policyVO.getLastQuiteTime();
+      long last_quitetime=0L;
+      if (quitetimeDate != null) {
+        last_quitetime=policyVO.getLastQuiteTime().getTime();
+      }
+      long current_time=(new Date()).getTime();
+      if ((current_time - last_quitetime) >= (long)quitetime) {
+        boolean bValid=true;
+        List<ConditionVO> lstConditions=getConditionsbyPolicyId(policyVO.getId());
+        if ((lstConditions != null) && (lstConditions.size() > 0)) {
+          for (          ConditionVO conditionVO : lstConditions) {
+            long thresholdValue=conditionVO.getThreshold();
+            Double thresholdPercent=(double)thresholdValue / 100;
+            CounterVO counterVO=_asCounterDao.findById(conditionVO.getCounterid());
+            long counter_count=1;
+            do {
+              String counter_param=params.get("counter" + String.valueOf(counter_count));
+              Counter.Source counter_source=counterVO.getSource();
+              if (counter_param.equals(counter_source.toString()))               break;
+              counter_count++;
+            }
+ while (1 == 1);
+            Double sum=avgCounter.get(counter_count);
+            Double avg=sum / currentVM;
+            Operator op=conditionVO.getRelationalOperator();
+            boolean bConditionCheck=((op == com.cloud.network.as.Condition.Operator.EQ) && (thresholdPercent == avg)) || ((op == com.cloud.network.as.Condition.Operator.GE) && (avg >= thresholdPercent)) || ((op == com.cloud.network.as.Condition.Operator.GT) && (avg > thresholdPercent))|| ((op == com.cloud.network.as.Condition.Operator.LE) && (avg <= thresholdPercent))|| ((op == com.cloud.network.as.Condition.Operator.LT) && (avg < thresholdPercent));
+            if (!bConditionCheck) {
+              bValid=false;
+              break;
+            }
+          }
+          if (bValid) {
+            return policyVO.getAction();
+          }
+        }
+      }
+    }
+  }
+  return null;
+}

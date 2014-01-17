@@ -19,40 +19,29 @@
   if (vmSnapshotVo.getState() != VMSnapshot.State.Ready) {
     throw new InvalidParameterValueException("VM Snapshot reverting failed due to vm snapshot is not in the state of Created.");
   }
-  UserVmVO vm=null;
-  Long hostId=null;
-  if (userVm.getState() == VirtualMachine.State.Stopped && vmSnapshotVo.getType() == VMSnapshot.Type.DiskAndMemory) {
-    try {
-      _itMgr.advanceStart(userVm.getUuid(),new HashMap<VirtualMachineProfile.Param,Object>());
-      vm=_userVMDao.findById(userVm.getId());
-      hostId=vm.getHostId();
-    }
- catch (    Exception e) {
-      s_logger.error("Start VM " + userVm.getInstanceName() + " before reverting failed due to "+ e.getMessage());
-      throw new CloudRuntimeException(e.getMessage());
-    }
+  AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+  if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+    return orchestrateRevertToVMSnapshot(vmSnapshotId);
   }
  else {
-    if (userVm.getState() == VirtualMachine.State.Running && vmSnapshotVo.getType() == VMSnapshot.Type.Disk) {
-      try {
-        _itMgr.advanceStop(userVm.getUuid(),true);
-      }
- catch (      Exception e) {
-        s_logger.error("Stop VM " + userVm.getInstanceName() + " before reverting failed due to "+ e.getMessage());
-        throw new CloudRuntimeException(e.getMessage());
-      }
+    Outcome<VMSnapshot> outcome=revertToVMSnapshotThroughJobQueue(vmSnapshotVo.getVmId(),vmSnapshotId);
+    VMSnapshot result=null;
+    try {
+      result=outcome.get();
     }
-  }
-  if (hasActiveVMSnapshotTasks(userVm.getId())) {
-    throw new InvalidParameterValueException("There is other active vm snapshot tasks on the instance, please try again later");
-  }
-  try {
-    VMSnapshotStrategy strategy=findVMSnapshotStrategy(vmSnapshotVo);
-    strategy.revertVMSnapshot(vmSnapshotVo);
+ catch (    InterruptedException e) {
+      throw new RuntimeException("Operation is interrupted",e);
+    }
+catch (    java.util.concurrent.ExecutionException e) {
+      throw new RuntimeException("Execution excetion",e);
+    }
+    Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+    if (jobResult != null) {
+      if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
+ else       if (jobResult instanceof InsufficientCapacityException)       throw (InsufficientCapacityException)jobResult;
+ else       if (jobResult instanceof ResourceUnavailableException)       throw (ResourceUnavailableException)jobResult;
+ else       if (jobResult instanceof Throwable)       throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+    }
     return userVm;
-  }
- catch (  Exception e) {
-    s_logger.debug("Failed to revert vmsnapshot: " + vmSnapshotId,e);
-    return null;
   }
 }

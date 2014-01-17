@@ -4,9 +4,9 @@
   String vmSnapshotName=cmd.getTarget().getSnapshotName();
   String vmSnapshotDesc=cmd.getTarget().getDescription();
   boolean snapshotMemory=cmd.getTarget().getType() == VMSnapshot.Type.DiskAndMemory;
+  boolean quiescevm=cmd.getTarget().getQuiescevm();
   VirtualMachineMO vmMo=null;
   VmwareContext context=hostService.getServiceContext(cmd);
-  Map<String,String> mapNewDisk=new HashMap<String,String>();
   try {
     VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
     ManagedObjectReference taskmgr=context.getServiceContent().getTaskManager();
@@ -31,32 +31,11 @@
       if (vmMo.getSnapshotMor(vmSnapshotName) != null) {
         s_logger.debug("VM snapshot " + vmSnapshotName + " already exists");
       }
- else       if (!vmMo.createSnapshot(vmSnapshotName,vmSnapshotDesc,snapshotMemory,true)) {
+ else       if (!vmMo.createSnapshot(vmSnapshotName,vmSnapshotDesc,snapshotMemory,quiescevm)) {
         return new CreateVMSnapshotAnswer(cmd,false,"Unable to create snapshot due to esxi internal failed");
       }
-      VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
-      for (int i=0; i < vdisks.length; i++) {
-        List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
-        for (        Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
-          String vmdkName=fileItem.first().split(" ")[1];
-          if (vmdkName.endsWith(".vmdk")) {
-            vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
-          }
-          String baseName=extractSnapshotBaseFileName(vmdkName);
-          mapNewDisk.put(baseName,vmdkName);
-        }
-      }
-      for (      VolumeObjectTO volumeTO : volumeTOs) {
-        String baseName=extractSnapshotBaseFileName(volumeTO.getPath());
-        String newPath=mapNewDisk.get(baseName);
-        DataStoreTO store=volumeTO.getDataStore();
-        long size=getVMSnapshotChainSize(context,hyperHost,baseName + "*.vmdk",store.getUuid(),newPath);
-        if (volumeTO.getVolumeType() == Volume.Type.ROOT) {
-          size=size + getVMSnapshotChainSize(context,hyperHost,cmd.getVmName() + "*.vmsn",store.getUuid(),null);
-        }
-        volumeTO.setSize(size);
-        volumeTO.setPath(newPath);
-      }
+      Map<String,String> mapNewDisk=getNewDiskMap(vmMo);
+      setVolumeToPathAndSize(volumeTOs,mapNewDisk,context,hyperHost,cmd.getVmName());
       return new CreateVMSnapshotAnswer(cmd,cmd.getTarget(),volumeTOs);
     }
   }

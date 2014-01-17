@@ -1,0 +1,42 @@
+{
+  ExcludeList allocatorAvoidOutput=new ExcludeList(avoids.getDataCentersToAvoid(),avoids.getPodsToAvoid(),avoids.getClustersToAvoid(),avoids.getHostsToAvoid(),avoids.getPoolsToAvoid());
+  resetAvoidSet(allocatorAvoidOutput,plannerAvoidOutput);
+  boolean avoidAllHosts=true, avoidAllPools=true;
+  List<HostVO> allhostsInCluster=_hostDao.listAllUpAndEnabledNonHAHosts(Host.Type.Routing,clusterVO.getId(),clusterVO.getPodId(),clusterVO.getDataCenterId(),null);
+  for (  HostVO host : allhostsInCluster) {
+    if (!allocatorAvoidOutput.shouldAvoid(host)) {
+      avoidAllHosts=false;
+      break;
+    }
+  }
+  if (avoidAllHosts) {
+    return true;
+  }
+  if (allocatorAvoidOutput.getPoolsToAvoid() != null && !allocatorAvoidOutput.getPoolsToAvoid().isEmpty()) {
+    Pair<Boolean,Boolean> storageRequirements=findVMStorageRequirements(vmProfile);
+    boolean vmRequiresSharedStorage=storageRequirements.first();
+    boolean vmRequiresLocalStorege=storageRequirements.second();
+    if (vmRequiresSharedStorage) {
+      List<StoragePoolVO> allPoolsInCluster=_storagePoolDao.findPoolsByTags(clusterVO.getDataCenterId(),clusterVO.getPodId(),clusterVO.getId(),null);
+      for (      StoragePoolVO pool : allPoolsInCluster) {
+        if (!allocatorAvoidOutput.shouldAvoid(pool)) {
+          avoidAllPools=false;
+          break;
+        }
+      }
+    }
+    if (vmRequiresLocalStorege) {
+      List<StoragePoolVO> allLocalPoolsInCluster=_storagePoolDao.findLocalStoragePoolsByTags(clusterVO.getDataCenterId(),clusterVO.getPodId(),clusterVO.getId(),null);
+      for (      StoragePoolVO pool : allLocalPoolsInCluster) {
+        if (!allocatorAvoidOutput.shouldAvoid(pool)) {
+          avoidAllPools=false;
+          break;
+        }
+      }
+    }
+  }
+  if (avoidAllHosts || avoidAllPools) {
+    return true;
+  }
+  return false;
+}

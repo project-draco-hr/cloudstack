@@ -1,0 +1,31 @@
+@data('account', 'domain')
+@attr(tags=['advancedsg'])
+def test_18_DeployVM_NoFreeIPs(self, value):
+    ' Test deploy VM in account/domain specific SG enabled shared network when no free IPs are available'
+    self.debug('Creating domain')
+    domain = Domain.create(self.api_client, services=self.services['domain'], parentdomainid=self.domain.id)
+    self.cleanup_domains.append(domain)
+    self.debug(('Created domain: %s' % domain.name))
+    self.debug('Creating account')
+    account = Account.create(self.api_client, self.services['account'], domainid=domain.id)
+    self.debug(('Created account : %s' % account.name))
+    self.cleanup_accounts.append(account)
+    self.services['shared_network_sg']['acltype'] = value
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    self.setSharedNetworkParams('shared_network_sg', range=2)
+    shared_network = Network.create(self.api_client, self.services['shared_network_sg'], accountid=account.name, domainid=domain.id, networkofferingid=self.shared_network_offering_sg.id, zoneid=self.zone.id)
+    if (value == 'domain'):
+        self.cleanup_networks.append(shared_network)
+    self.debug(('Creating virtual machine in %s wide shared network %s' % (value, shared_network.id)))
+    VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, accountid=account.name, domainid=domain.id, networkids=[shared_network.id], serviceofferingid=self.service_offering.id)
+    try:
+        self.debug('Trying to create virtual machine when all the IPs are consumed')
+        vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=self.template.id, accountid=account.name, domainid=domain.id, networkids=[shared_network.id], serviceofferingid=self.service_offering.id)
+        self.cleanup_vms.append(vm)
+        self.fail('Vm creation succeded, should have failed')
+    except Exception as e:
+        self.debug(('VM creation failed as expected with exception: %s' % e))
+    return

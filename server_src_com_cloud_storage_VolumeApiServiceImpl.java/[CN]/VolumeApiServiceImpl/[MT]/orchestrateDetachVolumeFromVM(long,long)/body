@@ -1,0 +1,53 @@
+{
+  Volume volume=_volumeDao.findById(volumeId);
+  VMInstanceVO vm=_vmInstanceDao.findById(vmId);
+  String errorMsg="Failed to detach volume " + volume.getName() + " from VM "+ vm.getHostName();
+  boolean sendCommand=vm.getState() == State.Running;
+  Long hostId=vm.getHostId();
+  if (hostId == null) {
+    hostId=vm.getLastHostId();
+    HostVO host=_hostDao.findById(hostId);
+    if (host != null && host.getHypervisorType() == HypervisorType.VMware) {
+      sendCommand=true;
+    }
+  }
+  HostVO host=null;
+  StoragePoolVO volumePool=_storagePoolDao.findById(volume.getPoolId());
+  if (hostId != null) {
+    host=_hostDao.findById(hostId);
+    if (host != null && host.getHypervisorType() == HypervisorType.XenServer && volumePool.isManaged()) {
+      sendCommand=true;
+    }
+  }
+  Answer answer=null;
+  if (sendCommand) {
+    DataTO volTO=volFactory.getVolume(volume.getId()).getTO();
+    DiskTO disk=new DiskTO(volTO,volume.getDeviceId(),volume.getPath(),volume.getVolumeType());
+    DettachCommand cmd=new DettachCommand(disk,vm.getInstanceName());
+    cmd.setManaged(volumePool.isManaged());
+    cmd.setStorageHost(volumePool.getHostAddress());
+    cmd.setStoragePort(volumePool.getPort());
+    cmd.set_iScsiName(volume.get_iScsiName());
+    try {
+      answer=_agentMgr.send(hostId,cmd);
+    }
+ catch (    Exception e) {
+      throw new CloudRuntimeException(errorMsg + " due to: " + e.getMessage());
+    }
+  }
+  DataStore dataStore=dataStoreMgr.getDataStore(volume.getPoolId(),DataStoreRole.Primary);
+  if (!sendCommand || (answer != null && answer.getResult())) {
+    _volsDao.detachVolume(volume.getId());
+    volService.disconnectVolumeFromHost(volFactory.getVolume(volume.getId()),host,dataStore);
+    return _volsDao.findById(volumeId);
+  }
+ else {
+    if (answer != null) {
+      String details=answer.getDetails();
+      if (details != null && !details.isEmpty()) {
+        errorMsg+="; " + details;
+      }
+    }
+    throw new CloudRuntimeException(errorMsg);
+  }
+}

@@ -6,7 +6,6 @@
   VirtualMachine.State vmState=VirtualMachine.State.Running;
   VirtualMachineMO vmMo=null;
   VmwareContext context=hostService.getServiceContext(cmd);
-  Map<String,String> mapNewDisk=new HashMap<String,String>();
   try {
     VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,cmd);
     ManagedObjectReference taskmgr=context.getServiceContent().getTaskManager();
@@ -29,6 +28,9 @@
       return new RevertToVMSnapshotAnswer(cmd,false,msg);
     }
  else {
+      if (cmd.isReloadVm()) {
+        vmMo.reload();
+      }
       boolean result=false;
       if (snapshotName != null) {
         ManagedObjectReference morSnapshot=vmMo.getSnapshotMor(snapshotName);
@@ -38,32 +40,15 @@
         return new RevertToVMSnapshotAnswer(cmd,false,"Unable to find the snapshot by name " + snapshotName);
       }
       if (result) {
-        VirtualDisk[] vdisks=vmMo.getAllDiskDevice();
-        for (int i=0; i < vdisks.length; i++) {
-          @SuppressWarnings("deprecation") List<Pair<String,ManagedObjectReference>> vmdkFiles=vmMo.getDiskDatastorePathChain(vdisks[i],false);
-          for (          Pair<String,ManagedObjectReference> fileItem : vmdkFiles) {
-            String vmdkName=fileItem.first().split(" ")[1];
-            if (vmdkName.endsWith(".vmdk")) {
-              vmdkName=vmdkName.substring(0,vmdkName.length() - (".vmdk").length());
-            }
-            String[] s=vmdkName.split("-");
-            mapNewDisk.put(s[0],vmdkName);
-          }
-        }
-        String key=null;
-        for (        VolumeObjectTO volumeTo : listVolumeTo) {
-          String parentUUID=volumeTo.getPath();
-          String[] s=parentUUID.split("-");
-          key=s[0];
-          volumeTo.setPath(mapNewDisk.get(key));
-        }
+        Map<String,String> mapNewDisk=getNewDiskMap(vmMo);
+        setVolumeToPathAndSize(listVolumeTo,mapNewDisk,context,hyperHost,cmd.getVmName());
         if (!snapshotMemory) {
           vmState=VirtualMachine.State.Stopped;
         }
         return new RevertToVMSnapshotAnswer(cmd,listVolumeTo,vmState);
       }
  else {
-        return new RevertToVMSnapshotAnswer(cmd,false,"Error while reverting to snapshot due to execute in esxi");
+        return new RevertToVMSnapshotAnswer(cmd,false,"Error while reverting to snapshot due to execute in ESXi");
       }
     }
   }

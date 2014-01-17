@@ -45,17 +45,32 @@
  else {
     throw new InvalidParameterValueException("Migration of volume from local storage pool is not supported");
   }
-  Volume newVol=null;
-  if (liveMigrateVolume) {
-    newVol=liveMigrateVolume(vol,destPool);
-  }
+  if (vm != null) {
+    AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+    if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+      return orchestrateMigrateVolume(vol.getId(),destPool.getId(),liveMigrateVolume);
+    }
  else {
-    try {
-      newVol=_volumeMgr.migrateVolume(vol,destPool);
-    }
- catch (    StorageUnavailableException e) {
-      s_logger.debug("Failed to migrate volume",e);
+      Outcome<Volume> outcome=migrateVolumeThroughJobQueue(vm.getId(),vol.getId(),destPool.getId(),liveMigrateVolume);
+      try {
+        outcome.get();
+      }
+ catch (      InterruptedException e) {
+        throw new RuntimeException("Operation is interrupted",e);
+      }
+catch (      java.util.concurrent.ExecutionException e) {
+        throw new RuntimeException("Execution excetion",e);
+      }
+      Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+      if (jobResult != null) {
+        if (jobResult instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobResult;
+ else         if (jobResult instanceof Throwable)         throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+      }
+      if (jobResult != null && jobResult instanceof Long) {
+        return _entityMgr.findById(VolumeVO.class,((Long)jobResult).longValue());
+      }
+      return null;
     }
   }
-  return newVol;
+  return orchestrateMigrateVolume(vol.getId(),destPool.getId(),liveMigrateVolume);
 }

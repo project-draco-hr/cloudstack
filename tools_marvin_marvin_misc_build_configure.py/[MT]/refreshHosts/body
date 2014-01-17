@@ -1,0 +1,29 @@
+def refreshHosts(cscfg, hypervisor='xen', profile='xen602'):
+    '\n    Removes cobbler system from previous run. \n    Creates a new system for current run.\n    Ipmi boots from PXE - default to Xenserver profile\n    '
+    for zone in cscfg.zones:
+        for pod in zone.pods:
+            for cluster in pod.clusters:
+                for host in cluster.hosts:
+                    hostname = urlparse.urlsplit(host.url).hostname
+                    logging.debug(('attempting to refresh host %s' % hostname))
+                    bash(('puppet cert clean %s.%s' % (hostname, DOMAIN)))
+                    try:
+                        hostmac = macinfo[hostname]['ethernet']
+                        hostip = macinfo[hostname]['address']
+                        bash(('cobbler system remove                              --name=%s' % hostname))
+                        bash(('cobbler system add --name=%s --hostname=%s                              --mac-address=%s --netboot-enabled=yes                              --enable-gpxe=no --profile=%s --server=%s                              --gateway=%s' % (hostname, hostname, hostmac, profile, cobblerHomeResolve(hostip, param='cblrgw'), cobblerHomeResolve(hostip))))
+                        bash('cobbler sync')
+                    except KeyError:
+                        logging.error(('No mac found against host %s. Exiting' % hostname))
+                        sys.exit(2)
+                    try:
+                        ipmi_hostname = ipmiinfo[hostname]
+                        logging.debug(('found IPMI nic on %s for host %s' % (ipmi_hostname, hostname)))
+                        bash(('ipmitool -Uroot -P%s -H%s chassis bootdev                              pxe' % (IPMI_PASS, ipmi_hostname)))
+                        bash(('ipmitool -Uroot -P%s -H%s chassis power cycle' % (IPMI_PASS, ipmi_hostname)))
+                        logging.debug(('Sent PXE boot for %s' % ipmi_hostname))
+                    except KeyError:
+                        logging.error(('No ipmi host found against %s. Exiting' % hostname))
+                        sys.exit(2)
+                    yield hostname
+    delay(5)

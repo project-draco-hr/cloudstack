@@ -4,13 +4,31 @@ def tearDown(self):
             self.debug(('remove egress rule id=%s' % self.egressruleid))
             self.deleteEgressRule()
         self.debug('Cleaning up the resources')
-        self.virtual_machine.delete(self.apiclient)
-        wait_for_cleanup(self.apiclient, ['expunge.interval', 'expunge.delay'])
-        self.debug('Sleep for VM cleanup to complete.')
-        self.network.delete(self.apiclient)
+        try:
+            for vm in self.cleanup_vms:
+                if (str(vm.state).lower() != 'error'):
+                    vm.delete(self.api_client)
+        except Exception as e:
+            self.fail(('Warning: Exception during virtual machines cleanup : %s' % e))
+        wait_for_cleanup(self.api_client, ['expunge.delay', 'expunge.interval'])
+        if (len(self.cleanup_vms) > 0):
+            retriesCount = 10
+            while True:
+                vms = list_virtual_machines(self.api_client, id=self.virtual_machine.id)
+                if (vms is None):
+                    break
+                elif (retriesCount == 0):
+                    self.fail('Failed to expunge vm even after 10 minutes')
+                time.sleep(60)
+                retriesCount -= 1
+        try:
+            for network in self.cleanup_networks:
+                network.delete(self.api_client)
+        except Exception as e:
+            self.fail(('Warning: Exception during networks cleanup : %s' % e))
         self.debug('Sleep for Network cleanup to complete.')
         wait_for_cleanup(self.apiclient, ['network.gc.wait', 'network.gc.interval'])
         cleanup_resources(self.apiclient, reversed(self.cleanup))
         self.debug('Cleanup complete!')
     except Exception as e:
-        self.debug(('Warning! Exception in tearDown: %s' % e))
+        self.fail(('Warning! Cleanup failed: %s' % e))

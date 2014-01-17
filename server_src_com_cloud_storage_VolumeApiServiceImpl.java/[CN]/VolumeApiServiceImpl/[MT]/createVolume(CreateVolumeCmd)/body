@@ -3,9 +3,26 @@
   boolean created=true;
   try {
     if (cmd.getSnapshotId() != null) {
-      volume=createVolumeFromSnapshot(volume,cmd.getSnapshotId());
+      volume=createVolumeFromSnapshot(volume,cmd.getSnapshotId(),cmd.getVirtualMachineId());
       if (volume.getState() != Volume.State.Ready) {
         created=false;
+      }
+      if (cmd.getVirtualMachineId() != null) {
+        try {
+          attachVolumeToVM(cmd.getVirtualMachineId(),volume.getId(),volume.getDeviceId());
+        }
+ catch (        Exception ex) {
+          StringBuilder message=new StringBuilder("Volume: ");
+          message.append(volume.getUuid());
+          message.append(" created successfully, but failed to attach the newly created volume to VM: ");
+          message.append(cmd.getVirtualMachineId());
+          message.append(" due to error: ");
+          message.append(ex.getMessage());
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug(message,ex);
+          }
+          throw new CloudRuntimeException(message.toString());
+        }
       }
     }
     return volume;
@@ -18,8 +35,8 @@
  finally {
     if (!created) {
       s_logger.trace("Decrementing volume resource count for account id=" + volume.getAccountId() + " as volume failed to create on the backend");
-      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.volume);
-      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.primary_storage,new Long(volume.getSize()));
+      _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.volume,cmd.getDisplayVolume());
+      _resourceLimitMgr.recalculateResourceCount(volume.getAccountId(),volume.getDomainId(),ResourceType.primary_storage.getOrdinal());
     }
   }
 }

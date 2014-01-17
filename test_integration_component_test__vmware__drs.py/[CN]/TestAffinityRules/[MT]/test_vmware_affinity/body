@@ -1,0 +1,35 @@
+@attr(tags=['advanced', 'vmware', 'multihost'])
+def test_vmware_affinity(self):
+    ' Test Set up affinity rules\n\n            The test requires following pre-requisites\n            - VMWare cluster configured in fully automated mode\n        '
+    hosts = Host.list(self.apiclient, zoneid=self.zone.id, resourcestate='Enabled', type='Routing')
+    self.assertEqual(isinstance(hosts, list), True, 'List hosts should return valid host response')
+    self.assertGreaterEqual(len(hosts), 2, 'There must be two hosts present in a cluster')
+    host_1 = hosts[0].id
+    host_2 = hosts[1].id
+    aff_grp = self.create_aff_grp(aff_grp=self.services['host_affinity'], acc=self.account.name, domainid=self.domain.id)
+    vm_1 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, affinitygroupnames=[aff_grp.name], hostid=host_1)
+    vm_2 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.service_offering.id, affinitygroupnames=[aff_grp.name])
+    vms = VirtualMachine.list(self.apiclient, id=vm_1.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    virtual_machine_1 = vm_list_validation_result[1]
+    self.assertEqual(virtual_machine_1.state, 'Running', 'Deployed VM should be in RUnning state')
+    self.debug(('Deploying VM on account: %s' % self.account.name))
+    vms = VirtualMachine.list(self.apiclient, id=vm_2.id, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    virtual_machine_2 = vm_list_validation_result[1]
+    self.assertEqual(virtual_machine_2.state, 'Running', 'Deployed VM should be in RUnning state')
+    self.debug('Migrate VM from host_1 to host_2')
+    cmd = migrateVirtualMachine.migrateVirtualMachineCmd()
+    cmd.virtualmachineid = virtual_machine_2.id
+    cmd.hostid = host_2
+    self.apiclient.migrateVirtualMachine(cmd)
+    self.debug('Migrated VM from host_1 to host_2')
+    vms = VirtualMachine.list(self.apiclient, hostid=host_2, listall=True)
+    vm_list_validation_result = validateList(vms)
+    self.assertEqual(vm_list_validation_result[0], PASS, ('vm list validation failed due to %s' % vm_list_validation_result[2]))
+    vmids = [vm.id for vm in vms]
+    self.assertIn(virtual_machine_1.id, vmids, 'VM 1 should be successfully migrated to host 2')
+    self.assertIn(virtual_machine_2.id, vmids, 'VM 2 should be automatically migrated to host 2')
+    return

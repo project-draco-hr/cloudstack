@@ -6,9 +6,18 @@
   if (vmInstance == null) {
     throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
   }
+ else   if (!(vmInstance.getState().equals(State.Stopped))) {
+    throw new InvalidParameterValueException("Unable to upgrade virtual machine " + vmInstance.toString() + " "+ " in state "+ vmInstance.getState()+ "; make sure the virtual machine is stopped");
+  }
   _accountMgr.checkAccess(caller,null,true,vmInstance);
+  Map<String,String> customParameters=cmd.getDetails();
   ServiceOfferingVO newServiceOffering=_offeringDao.findById(svcOffId);
-  ServiceOfferingVO currentServiceOffering=_offeringDao.findByIdIncludingRemoved(vmInstance.getServiceOfferingId());
+  if (newServiceOffering.isDynamic()) {
+    newServiceOffering.setDynamicFlag(true);
+    validateCustomParameters(newServiceOffering,cmd.getDetails());
+    newServiceOffering=_offeringDao.getcomputeOffering(newServiceOffering,customParameters);
+  }
+  ServiceOfferingVO currentServiceOffering=_offeringDao.findByIdIncludingRemoved(vmInstance.getId(),vmInstance.getServiceOfferingId());
   int newCpu=newServiceOffering.getCpu();
   int newMemory=newServiceOffering.getRamSize();
   int currentCpu=currentServiceOffering.getCpu();
@@ -19,7 +28,7 @@
   if (newMemory > currentMemory) {
     _resourceLimitMgr.checkResourceLimit(caller,ResourceType.memory,newMemory - currentMemory);
   }
-  _itMgr.checkIfCanUpgrade(vmInstance,svcOffId);
+  _itMgr.checkIfCanUpgrade(vmInstance,newServiceOffering);
   List<VMSnapshotVO> vmSnapshots=_vmSnapshotDao.findByVm(vmId);
   for (  VMSnapshotVO vmSnapshotVO : vmSnapshots) {
     if (vmSnapshotVO.getType() == VMSnapshot.Type.DiskAndMemory) {
@@ -31,6 +40,12 @@
     }
   }
   _itMgr.upgradeVmDb(vmId,svcOffId);
+  if (newServiceOffering.isDynamic()) {
+    saveCustomOfferingDetails(vmId,newServiceOffering);
+  }
+  if (currentServiceOffering.isDynamic() && !newServiceOffering.isDynamic()) {
+    removeCustomOfferingDetails(vmId);
+  }
   if (newCpu > currentCpu) {
     _resourceLimitMgr.incrementResourceCount(caller.getAccountId(),ResourceType.cpu,new Long(newCpu - currentCpu));
   }
@@ -43,6 +58,6 @@
  else   if (currentMemory > newMemory) {
     _resourceLimitMgr.decrementResourceCount(caller.getAccountId(),ResourceType.memory,new Long(currentMemory - newMemory));
   }
-  UsageEventUtils.publishUsageEvent(EventTypes.EVENT_VM_UPGRADE,vmInstance.getAccountId(),vmInstance.getDataCenterId(),vmInstance.getId(),vmInstance.getHostName(),vmInstance.getServiceOfferingId(),vmInstance.getTemplateId(),vmInstance.getHypervisorType().toString(),VirtualMachine.class.getName(),vmInstance.getUuid());
+  generateUsageEvent(newServiceOffering,cmd.getDetails(),_vmDao.findById(vmId),EventTypes.EVENT_VM_UPGRADE);
   return _vmDao.findById(vmInstance.getId());
 }

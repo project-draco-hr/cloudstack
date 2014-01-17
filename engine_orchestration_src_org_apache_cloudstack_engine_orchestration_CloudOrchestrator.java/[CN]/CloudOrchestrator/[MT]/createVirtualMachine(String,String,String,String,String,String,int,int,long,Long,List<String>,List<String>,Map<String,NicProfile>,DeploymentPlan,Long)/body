@@ -1,0 +1,35 @@
+{
+  LinkedHashMap<NetworkVO,NicProfile> networkIpMap=new LinkedHashMap<NetworkVO,NicProfile>();
+  for (  String uuid : networkNicMap.keySet()) {
+    NetworkVO network=_networkDao.findByUuid(uuid);
+    if (network != null) {
+      networkIpMap.put(network,networkNicMap.get(uuid));
+    }
+  }
+  VirtualMachineEntityImpl vmEntity=ComponentContext.inject(VirtualMachineEntityImpl.class);
+  vmEntity.init(id,owner,hostName,displayName,cpu,speed,memory,computeTags,rootDiskTags,new ArrayList<String>(networkNicMap.keySet()));
+  HypervisorType hypervisorType=HypervisorType.valueOf(hypervisor);
+  VMInstanceVO vm=_vmDao.findByUuid(id);
+  Pair<DiskOfferingVO,Long> rootDiskOffering=new Pair<DiskOfferingVO,Long>(null,null);
+  LinkedHashMap<DiskOfferingVO,Long> dataDiskOfferings=new LinkedHashMap<DiskOfferingVO,Long>();
+  ServiceOfferingVO offering=_serviceOfferingDao.findById(vm.getId(),vm.getServiceOfferingId());
+  rootDiskOffering.first(offering);
+  rootDiskOffering.second(rootDiskSize);
+  if (vm.getDiskOfferingId() != null) {
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(vm.getDiskOfferingId());
+    if (diskOffering == null) {
+      throw new InvalidParameterValueException("Unable to find disk offering " + vm.getDiskOfferingId());
+    }
+    Long size=null;
+    if (diskOffering.getDiskSize() == 0) {
+      size=diskSize;
+      if (size == null) {
+        throw new InvalidParameterValueException("Disk offering " + diskOffering + " requires size parameter.");
+      }
+      _volumeMgr.validateVolumeSizeRange(size * 1024 * 1024* 1024);
+    }
+    dataDiskOfferings.put(diskOffering,size);
+  }
+  _itMgr.allocate(vm.getInstanceName(),_templateDao.findById(new Long(templateId)),offering,rootDiskOffering,dataDiskOfferings,networkIpMap,plan,hypervisorType);
+  return vmEntity;
+}
