@@ -1,0 +1,48 @@
+{
+  Connection conn=getConnection();
+  String[] results=new String[cmd.getIpAddresses().length];
+  int i=0;
+  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+  String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
+  try {
+    IpAddressTO[] ips=cmd.getIpAddresses();
+    for (    IpAddressTO ip : ips) {
+      VM router=getVM(conn,routerName);
+      NicTO nic=new NicTO();
+      nic.setMac(ip.getVifMacAddress());
+      nic.setType(ip.getTrafficType());
+      if (ip.getBroadcastUri() == null) {
+        nic.setBroadcastType(BroadcastDomainType.Native);
+      }
+ else {
+        URI uri=BroadcastDomainType.fromString(ip.getBroadcastUri());
+        nic.setBroadcastType(BroadcastDomainType.getSchemeValue(uri));
+        nic.setBroadcastUri(uri);
+      }
+      nic.setDeviceId(0);
+      nic.setNetworkRateMbps(ip.getNetworkRate());
+      nic.setName(ip.getNetworkName());
+      Network network=getNetwork(conn,nic);
+      VIF correctVif=getCorrectVif(conn,router,network);
+      boolean removeVif=false;
+      if (correctVif == null) {
+        throw new InternalErrorException("Failed to find DomR VIF to associate/disassociate IP with.");
+      }
+      if (removeVif) {
+        network=correctVif.getNetwork(conn);
+        networkUsage(conn,routerIp,"deleteVif","eth" + correctVif.getDevice(conn));
+        correctVif.unplug(conn);
+        correctVif.destroy(conn);
+        disableVlanNetwork(conn,network);
+      }
+    }
+  }
+ catch (  InternalErrorException e) {
+    s_logger.error("Ip Assoc failure on applying one ip due to exception:  ",e);
+    return new ExecutionResult(false,e.getMessage());
+  }
+catch (  Exception e) {
+    return new ExecutionResult(false,e.getMessage());
+  }
+  return new ExecutionResult(true,null);
+}
