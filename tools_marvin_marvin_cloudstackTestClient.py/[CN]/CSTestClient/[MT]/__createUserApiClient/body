@@ -1,0 +1,56 @@
+def __createUserApiClient(self, UserName, DomainName, acctType=0):
+    '\n        @Name : ___createUserApiClient\n        @Desc : Creates a User API Client with given\n                UserName\\DomainName Parameters\n        '
+    try:
+        if (not self.isAdminContext()):
+            return self.__apiClient
+        listDomain = listDomains.listDomainsCmd()
+        listDomain.listall = True
+        listDomain.name = DomainName
+        try:
+            domains = self.__apiClient.listDomains(listDomain)
+            domId = domains[0].id
+        except:
+            cdomain = createDomain.createDomainCmd()
+            cdomain.name = DomainName
+            domain = self.__apiClient.createDomain(cdomain)
+            domId = domain.id
+        cmd = listAccounts.listAccountsCmd()
+        cmd.name = UserName
+        cmd.domainid = domId
+        try:
+            accounts = self.__apiClient.listAccounts(cmd)
+            acctId = accounts[0].id
+        except:
+            createAcctCmd = createAccount.createAccountCmd()
+            createAcctCmd.accounttype = acctType
+            createAcctCmd.domainid = domId
+            createAcctCmd.email = (('test-' + random_gen()) + '@cloudstack.org')
+            createAcctCmd.firstname = UserName
+            createAcctCmd.lastname = UserName
+            createAcctCmd.password = 'password'
+            createAcctCmd.username = UserName
+            acct = self.__apiClient.createAccount(createAcctCmd)
+            acctId = acct.id
+        listuser = listUsers.listUsersCmd()
+        listuser.username = UserName
+        listuserRes = self.__apiClient.listUsers(listuser)
+        userId = listuserRes[0].id
+        apiKey = listuserRes[0].apikey
+        securityKey = listuserRes[0].secretkey
+        if (apiKey is None):
+            ret = self.__getKeys(userId)
+            if (ret != FAILED):
+                mgtDetails = self.__mgmtDetails
+                mgtDetails.apiKey = ret[0]
+                mgtDetails.securityKey = ret[1]
+            else:
+                self.__logger.error('__createUserApiClient: User API Client Creation. While Registering User Failed')
+                return FAILED
+        newUserConnection = CSConnection(mgtDetails, self.__csConnection.asyncTimeout, self.__csConnection.logger)
+        self.__userApiClient = CloudStackAPIClient(newUserConnection)
+        self.__userApiClient.connection = newUserConnection
+        self.__userApiClient.hypervisor = self.__apiClient.hypervisor
+        return self.__userApiClient
+    except Exception as e:
+        self.__logger.exception(('Exception Occurred Under getUserApiClient : %s' % GetDetailExceptionInfo(e)))
+        return FAILED
