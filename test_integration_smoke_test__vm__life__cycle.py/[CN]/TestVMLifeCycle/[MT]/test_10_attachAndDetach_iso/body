@@ -1,0 +1,49 @@
+@attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'sg'])
+def test_10_attachAndDetach_iso(self):
+    'Test for attach and detach ISO to virtual machine'
+    iso = Iso.create(self.apiclient, self.services['iso1'], account=self.account.name, domainid=self.account.domainid)
+    self.debug(('Successfully created ISO with ID: %s' % iso.id))
+    try:
+        iso.download(self.apiclient)
+    except Exception as e:
+        self.fail(('Exception while downloading ISO %s: %s' % (iso.id, e)))
+    self.debug(('Attach ISO with ID: %s to VM ID: %s' % (iso.id, self.virtual_machine.id)))
+    cmd = attachIso.attachIsoCmd()
+    cmd.id = iso.id
+    cmd.virtualmachineid = self.virtual_machine.id
+    self.apiclient.attachIso(cmd)
+    try:
+        ssh_client = self.virtual_machine.get_ssh_client()
+    except Exception as e:
+        self.fail(('SSH failed for virtual machine: %s - %s' % (self.virtual_machine.ipaddress, e)))
+    mount_dir = '/mnt/tmp'
+    cmds = ('mkdir -p %s' % mount_dir)
+    self.assert_((ssh_client.execute(cmds) == []), 'mkdir failed within guest')
+    for diskdevice in self.services['diskdevice']:
+        res = ssh_client.execute('mount -rt iso9660 {} {}'.format(diskdevice, mount_dir))
+        if (res == []):
+            self.services['mount'] = diskdevice
+            break
+    else:
+        self.fail('No mount points matched. Mount was unsuccessful')
+    c = ('mount |grep %s|head -1' % self.services['mount'])
+    res = ssh_client.execute(c)
+    size = ssh_client.execute(('du %s | tail -1' % self.services['mount']))
+    self.debug(('Found a mount point at %s with size %s' % (res, size)))
+    iso_response = list_isos(self.apiclient, id=iso.id)
+    self.assertEqual(isinstance(iso_response, list), True, 'Check list response returns a valid list')
+    try:
+        command = ('umount %s' % mount_dir)
+        ssh_client.execute(command)
+    except Exception as e:
+        self.fail(('SSH failed for virtual machine: %s - %s' % (self.virtual_machine.ipaddress, e)))
+    cmd = detachIso.detachIsoCmd()
+    cmd.virtualmachineid = self.virtual_machine.id
+    self.apiclient.detachIso(cmd)
+    try:
+        res = ssh_client.execute(c)
+    except Exception as e:
+        self.fail(('SSH failed for virtual machine: %s - %s' % (self.virtual_machine.ipaddress, e)))
+    result = (self.services['mount'] in str(res))
+    self.assertEqual(result, False, 'Check if ISO is detached from virtual machine')
+    return
