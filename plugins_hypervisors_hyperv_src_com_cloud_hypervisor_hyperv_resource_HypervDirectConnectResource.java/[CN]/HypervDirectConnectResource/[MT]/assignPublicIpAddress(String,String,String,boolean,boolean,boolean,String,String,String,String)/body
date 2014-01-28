@@ -1,12 +1,36 @@
 {
+  URI broadcastUri=BroadcastDomainType.fromString(broadcastId);
+  if (BroadcastDomainType.getSchemeValue(broadcastUri) != BroadcastDomainType.Vlan) {
+    throw new InternalErrorException("Unable to assign a public IP to a VIF on network " + broadcastId);
+  }
+  int vlanId=Integer.parseInt(BroadcastDomainType.getValue(broadcastUri));
+  int publicNicInfo=-1;
+  publicNicInfo=getVmNics(vmName,vlanId);
   boolean addVif=false;
-  if (add) {
+  if (add && publicNicInfo == -1) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Plug new NIC to associate" + privateIpAddress + " to "+ publicIpAddress);
     }
     addVif=true;
   }
  else   if (!add && firstIP) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Unplug NIC " + publicNicInfo);
+    }
+  }
+  if (addVif) {
+    Pair<Integer,String> nicdevice=findRouterFreeEthDeviceIndex(privateIpAddress);
+    publicNicInfo=nicdevice.first();
+    if (publicNicInfo > 0) {
+      modifyNicVlan(vmName,vlanId,nicdevice.second());
+      publicNicInfo=getVmNics(vmName,vlanId);
+      networkUsage(privateIpAddress,"addVif","eth" + publicNicInfo);
+    }
+ else {
+      String msg="No Nic is available on DomR VIF to associate/disassociate IP with.";
+      s_logger.error(msg);
+      throw new InternalErrorException(msg);
+    }
   }
   String args=null;
   if (add) {
@@ -25,7 +49,7 @@
   args+=" -l ";
   args+=publicIpAddress + "/" + cidrSize;
   args+=" -c ";
-  args+="eth" + "2";
+  args+="eth" + publicNicInfo;
   args+=" -g ";
   args+=vlanGateway;
   if (addVif) {
