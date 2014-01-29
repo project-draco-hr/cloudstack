@@ -1,32 +1,54 @@
 {
-  if (cmd.getVpcId() != null) {
-    return VPCLoadBalancerConfig(cmd);
-  }
   String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
-  File tmpCfgFile=null;
-  try {
-    String cfgFilePath="";
-    LoadBalancerConfigurator cfgtr=new HAProxyConfigurator();
-    String[] config=cfgtr.generateConfiguration(cmd);
-    String[][] rules=cfgtr.generateFwRules(cmd);
-    if (routerIp != null) {
-      tmpCfgFile=File.createTempFile(routerIp.replace('.','_'),"cfg");
-      final PrintWriter out=new PrintWriter(new BufferedWriter(new FileWriter(tmpCfgFile)));
-      for (int i=0; i < config.length; i++) {
-        out.println(config[i]);
-      }
-      out.close();
-      cfgFilePath=tmpCfgFile.getAbsolutePath();
+  if (routerIp == null) {
+    return new Answer(cmd);
+  }
+  LoadBalancerConfigurator cfgtr=new HAProxyConfigurator();
+  String[] config=cfgtr.generateConfiguration(cmd);
+  String tmpCfgFileContents="";
+  for (int i=0; i < config.length; i++) {
+    tmpCfgFileContents+=config[i];
+    tmpCfgFileContents+="\n";
+  }
+  String tmpCfgFilePath="/etc/haproxy/";
+  String tmpCfgFileName="haproxy.cfg.new";
+  ExecutionResult result=_vrDeployer.createFileInVR(cmd.getRouterAccessIp(),tmpCfgFilePath,tmpCfgFileName,tmpCfgFileContents);
+  if (!result.isSuccess()) {
+    return new Answer(cmd,false,"Fail to copy LB config file to VR");
+  }
+  String[][] rules=cfgtr.generateFwRules(cmd);
+  String[] addRules=rules[LoadBalancerConfigurator.ADD];
+  String[] removeRules=rules[LoadBalancerConfigurator.REMOVE];
+  String[] statRules=rules[LoadBalancerConfigurator.STATS];
+  String args="";
+  StringBuilder sb=new StringBuilder();
+  if (addRules.length > 0) {
+    for (int i=0; i < addRules.length; i++) {
+      sb.append(addRules[i]).append(',');
     }
-    final String result=setLoadBalancerConfig(cfgFilePath,rules[LoadBalancerConfigurator.ADD],rules[LoadBalancerConfigurator.REMOVE],rules[LoadBalancerConfigurator.STATS],routerIp);
-    return new Answer(cmd,result == null,result);
+    args+=" -a " + sb.toString();
   }
- catch (  final IOException e) {
-    return new Answer(cmd,false,e.getMessage());
-  }
- finally {
-    if (tmpCfgFile != null) {
-      tmpCfgFile.delete();
+  sb=new StringBuilder();
+  if (removeRules.length > 0) {
+    for (int i=0; i < removeRules.length; i++) {
+      sb.append(removeRules[i]).append(',');
     }
+    args+=" -d " + sb.toString();
   }
+  sb=new StringBuilder();
+  if (statRules.length > 0) {
+    for (int i=0; i < statRules.length; i++) {
+      sb.append(statRules[i]).append(',');
+    }
+    args+=" -s " + sb.toString();
+  }
+  if (cmd.getVpcId() == null) {
+    args=" -i " + routerIp + args;
+    result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),"loadbalancer.sh",args);
+  }
+ else {
+    args=" -i " + cmd.getNic().getIp() + args;
+    result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),"vpc_loadbalancer.sh",args);
+  }
+  return new Answer(cmd,result.isSuccess(),result.getDetails());
 }

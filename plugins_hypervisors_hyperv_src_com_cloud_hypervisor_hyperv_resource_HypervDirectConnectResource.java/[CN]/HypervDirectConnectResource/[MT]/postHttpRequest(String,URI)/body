@@ -1,13 +1,40 @@
 {
-  s_logger.debug("POST request to" + agentUri.toString() + " with contents"+ jsonCmd);
-  HttpClient httpClient=new DefaultHttpClient();
+  String logMessage=StringEscapeUtils.unescapeJava(jsonCmd);
+  logMessage=cleanPassword(logMessage);
+  s_logger.debug("POST request to " + agentUri.toString() + " with contents "+ logMessage);
+  HttpClient httpClient=null;
+  TrustStrategy easyStrategy=new TrustStrategy(){
+    @Override public boolean isTrusted(    X509Certificate[] chain,    String authType) throws CertificateException {
+      return true;
+    }
+  }
+;
+  try {
+    SSLSocketFactory sf=new SSLSocketFactory(easyStrategy,new AllowAllHostnameVerifier());
+    SchemeRegistry registry=new SchemeRegistry();
+    registry.register(new Scheme("https",DEFAULT_AGENT_PORT,sf));
+    ClientConnectionManager ccm=new BasicClientConnectionManager(registry);
+    httpClient=new DefaultHttpClient(ccm);
+  }
+ catch (  KeyManagementException e) {
+    s_logger.error("failed to initialize http client " + e.getMessage());
+  }
+catch (  UnrecoverableKeyException e) {
+    s_logger.error("failed to initialize http client " + e.getMessage());
+  }
+catch (  NoSuchAlgorithmException e) {
+    s_logger.error("failed to initialize http client " + e.getMessage());
+  }
+catch (  KeyStoreException e) {
+    s_logger.error("failed to initialize http client " + e.getMessage());
+  }
   String result=null;
   try {
     HttpPost request=new HttpPost(agentUri);
     StringEntity cmdJson=new StringEntity(jsonCmd);
     request.addHeader("content-type","application/json");
     request.setEntity(cmdJson);
-    s_logger.debug("Sending cmd to " + agentUri.toString() + " cmd data:"+ jsonCmd);
+    s_logger.debug("Sending cmd to " + agentUri.toString() + " cmd data:"+ logMessage);
     HttpResponse response=httpClient.execute(request);
     if (response.getStatusLine().getStatusCode() == HttpStatus.SC_NOT_FOUND) {
       String errMsg="Failed to send : HTTP error code : " + response.getStatusLine().getStatusCode();
@@ -24,7 +51,8 @@
     }
  else {
       result=EntityUtils.toString(response.getEntity());
-      s_logger.debug("POST response is" + result);
+      String logResult=cleanPassword(StringEscapeUtils.unescapeJava(result));
+      s_logger.debug("POST response is " + logResult);
     }
   }
  catch (  ClientProtocolException protocolEx) {

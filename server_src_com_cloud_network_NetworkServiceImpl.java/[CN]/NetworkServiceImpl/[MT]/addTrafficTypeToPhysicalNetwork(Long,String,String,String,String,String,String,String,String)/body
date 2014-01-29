@@ -1,0 +1,55 @@
+{
+  PhysicalNetworkVO network=_physicalNetworkDao.findById(physicalNetworkId);
+  if (network == null) {
+    throw new InvalidParameterValueException("Physical Network id=" + physicalNetworkId + "doesn't exist in the system");
+  }
+  Networks.TrafficType trafficType=null;
+  if (trafficTypeStr != null && !trafficTypeStr.isEmpty()) {
+    try {
+      trafficType=Networks.TrafficType.valueOf(trafficTypeStr);
+    }
+ catch (    IllegalArgumentException ex) {
+      throw new InvalidParameterValueException("Unable to resolve trafficType '" + trafficTypeStr + "' to a supported value");
+    }
+  }
+  if (_pNTrafficTypeDao.isTrafficTypeSupported(physicalNetworkId,trafficType)) {
+    throw new CloudRuntimeException("This physical network already supports the traffic type: " + trafficType);
+  }
+  if (TrafficType.isSystemNetwork(trafficType) || TrafficType.Public.equals(trafficType) || TrafficType.Storage.equals(trafficType)) {
+    if (!_physicalNetworkDao.listByZoneAndTrafficType(network.getDataCenterId(),trafficType).isEmpty()) {
+      throw new CloudRuntimeException("Fail to add the traffic type to physical network because Zone already has a physical network with this traffic type: " + trafficType);
+    }
+  }
+  if (TrafficType.Storage.equals(trafficType)) {
+    List<SecondaryStorageVmVO> ssvms=_stnwMgr.getSSVMWithNoStorageNetwork(network.getDataCenterId());
+    if (!ssvms.isEmpty()) {
+      StringBuilder sb=new StringBuilder("Cannot add " + trafficType + " traffic type as there are below secondary storage vm still running. Please stop them all and add Storage traffic type again, then destory them all to allow CloudStack recreate them with storage network(If you have added storage network ip range)");
+      sb.append("SSVMs:");
+      for (      SecondaryStorageVmVO ssvm : ssvms) {
+        sb.append(ssvm.getInstanceName()).append(":").append(ssvm.getState());
+      }
+      throw new CloudRuntimeException(sb.toString());
+    }
+  }
+  try {
+    if (xenLabel == null) {
+      xenLabel=getDefaultXenNetworkLabel(trafficType);
+    }
+    PhysicalNetworkTrafficTypeVO pNetworktrafficType=new PhysicalNetworkTrafficTypeVO(physicalNetworkId,trafficType,xenLabel,kvmLabel,vmwareLabel,simulatorLabel,vlan,hypervLabel);
+    pNetworktrafficType=_pNTrafficTypeDao.persist(pNetworktrafficType);
+    List<String> isolationMethods=network.getIsolationMethods();
+    if ((isolationMethods.size() == 1 && isolationMethods.get(0).toLowerCase().equals("vxlan")) || (isolationMethod != null && isolationMethods.contains(isolationMethod) && isolationMethod.toLowerCase().equals("vxlan"))) {
+      NetworkVO publicNetwork=_networksDao.listByZoneAndTrafficType(network.getDataCenterId(),TrafficType.Public).get(0);
+      if (publicNetwork != null) {
+        s_logger.debug("setting public network " + publicNetwork + " to broadcast type vxlan");
+        publicNetwork.setBroadcastDomainType(BroadcastDomainType.Vxlan);
+        _networksDao.persist(publicNetwork);
+      }
+    }
+    return pNetworktrafficType;
+  }
+ catch (  Exception ex) {
+    s_logger.warn("Exception: ",ex);
+    throw new CloudRuntimeException("Fail to add a traffic type to physical network");
+  }
+}
