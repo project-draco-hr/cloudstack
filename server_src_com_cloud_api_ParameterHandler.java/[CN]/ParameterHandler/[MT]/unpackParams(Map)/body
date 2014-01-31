@@ -1,0 +1,80 @@
+{
+  final Map<String,String> stringMap=new HashMap<String,String>();
+  final Set keys=params.keySet();
+  final Iterator keysIter=keys.iterator();
+  while (keysIter.hasNext()) {
+    final String key=(String)keysIter.next();
+    final String[] value=(String[])params.get(key);
+    if (value[0] != null) {
+      final Pattern pattern=Pattern.compile(CONTROL_CHARACTERS);
+      final Matcher matcher=pattern.matcher(value[0]);
+      if (matcher.find()) {
+        throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Received value " + value[0] + " for parameter "+ key+ " is invalid, contains illegal ASCII non-printable characters");
+      }
+    }
+    stringMap.put(key,value[0]);
+  }
+  final Map<String,Object> lowercaseParams=new HashMap<String,Object>();
+  for (  final Object keyObject : stringMap.keySet()) {
+    final String key=(String)keyObject;
+    final int arrayStartIndex=key.indexOf('[');
+    final int arrayStartLastIndex=key.lastIndexOf('[');
+    if (arrayStartIndex != arrayStartLastIndex) {
+      throw new ServerApiException(ApiErrorCode.MALFORMED_PARAMETER_ERROR,"Unable to decode parameter " + key + "; if specifying an object array, please use parameter[index].field=XXX, e.g. userGroupList[0].group=httpGroup");
+    }
+    if (arrayStartIndex > 0) {
+      final int arrayEndIndex=key.indexOf(']');
+      final int arrayEndLastIndex=key.lastIndexOf(']');
+      if ((arrayEndIndex < arrayStartIndex) || (arrayEndIndex != arrayEndLastIndex)) {
+        throw new ServerApiException(ApiErrorCode.MALFORMED_PARAMETER_ERROR,"Unable to decode parameter " + key + "; if specifying an object array, please use parameter[index].field=XXX, e.g. userGroupList[0].group=httpGroup");
+      }
+      final int fieldIndex=key.indexOf('.');
+      String fieldName=null;
+      if (fieldIndex < arrayEndIndex) {
+        throw new ServerApiException(ApiErrorCode.MALFORMED_PARAMETER_ERROR,"Unable to decode parameter " + key + "; if specifying an object array, please use parameter[index].field=XXX, e.g. userGroupList[0].group=httpGroup");
+      }
+ else {
+        fieldName=key.substring(fieldIndex + 1);
+      }
+      String paramName=key.substring(0,arrayStartIndex);
+      paramName=paramName.toLowerCase();
+      Map<Integer,Map> mapArray=null;
+      Map<String,Object> mapValue=null;
+      final String indexStr=key.substring(arrayStartIndex + 1,arrayEndIndex);
+      int index=0;
+      boolean parsedIndex=false;
+      try {
+        if (indexStr != null) {
+          index=Integer.parseInt(indexStr);
+          parsedIndex=true;
+        }
+      }
+ catch (      final NumberFormatException nfe) {
+        s_logger.warn("Invalid parameter " + key + " received, unable to parse object array, returning an error.");
+      }
+      if (!parsedIndex) {
+        throw new ServerApiException(ApiErrorCode.MALFORMED_PARAMETER_ERROR,"Unable to decode parameter " + key + "; if specifying an object array, please use parameter[index].field=XXX, e.g. userGroupList[0].group=httpGroup");
+      }
+      final Object value=lowercaseParams.get(paramName);
+      if (value == null) {
+        mapArray=new HashMap<Integer,Map>();
+        mapValue=new HashMap<String,Object>();
+        mapArray.put(Integer.valueOf(index),mapValue);
+      }
+ else       if (value instanceof Map) {
+        mapArray=(HashMap)value;
+        mapValue=mapArray.get(Integer.valueOf(index));
+        if (mapValue == null) {
+          mapValue=new HashMap<String,Object>();
+          mapArray.put(Integer.valueOf(index),mapValue);
+        }
+      }
+      mapValue.put(fieldName,stringMap.get(key));
+      lowercaseParams.put(paramName,mapArray);
+    }
+ else {
+      lowercaseParams.put(key.toLowerCase(),stringMap.get(key));
+    }
+  }
+  return lowercaseParams;
+}

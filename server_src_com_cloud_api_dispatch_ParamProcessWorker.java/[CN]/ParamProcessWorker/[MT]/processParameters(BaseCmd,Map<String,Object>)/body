@@ -1,0 +1,90 @@
+{
+  final Map<Object,AccessType> entitiesToAccess=new HashMap<Object,AccessType>();
+  final List<Field> cmdFields=cmd.getParamFields();
+  for (  final Field field : cmdFields) {
+    final Parameter parameterAnnotation=field.getAnnotation(Parameter.class);
+    final Object paramObj=params.get(parameterAnnotation.name());
+    if (paramObj == null) {
+      if (parameterAnnotation.required()) {
+        throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to missing parameter "+ parameterAnnotation.name());
+      }
+      continue;
+    }
+    try {
+      setFieldValue(field,cmd,paramObj,parameterAnnotation);
+    }
+ catch (    final IllegalArgumentException argEx) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unable to execute API command " + cmd.getCommandName() + " due to invalid value "+ paramObj+ " for parameter "+ parameterAnnotation.name());
+      }
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to invalid value "+ paramObj+ " for parameter "+ parameterAnnotation.name());
+    }
+catch (    final ParseException parseEx) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Invalid date parameter " + paramObj + " passed to command "+ cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8));
+      }
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to parse date " + paramObj + " for command "+ cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8)+ ", please pass dates in the format mentioned in the api documentation");
+    }
+catch (    final InvalidParameterValueException invEx) {
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,"Unable to execute API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8) + " due to invalid value. "+ invEx.getMessage());
+    }
+catch (    final CloudRuntimeException cloudEx) {
+      s_logger.error("CloudRuntimeException",cloudEx);
+      throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,"Internal error executing API command " + cmd.getCommandName().substring(0,cmd.getCommandName().length() - 8));
+    }
+    try {
+      final ACL checkAccess=field.getAnnotation(ACL.class);
+      final CommandType fieldType=parameterAnnotation.type();
+      if (checkAccess != null) {
+        if (parameterAnnotation.entityType() != null) {
+          final Class<?>[] entityList=parameterAnnotation.entityType()[0].getAnnotation(EntityReference.class).value();
+          for (          final Class entity : entityList) {
+switch (fieldType) {
+case LIST:
+              final CommandType listType=parameterAnnotation.collectionType();
+switch (listType) {
+case LONG:
+case UUID:
+              final List<Long> listParam=(List<Long>)field.get(cmd);
+            for (            final Long entityId : listParam) {
+              final Object entityObj=_entityMgr.findById(entity,entityId);
+              entitiesToAccess.put(entityObj,checkAccess.accessType());
+            }
+          break;
+default :
+        break;
+    }
+  break;
+case LONG:
+case UUID:
+final Object entityObj=_entityMgr.findById(entity,(Long)field.get(cmd));
+entitiesToAccess.put(entityObj,checkAccess.accessType());
+break;
+default :
+break;
+}
+if (ControlledEntity.class.isAssignableFrom(entity)) {
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("ControlledEntity name is:" + entity.getName());
+}
+}
+if (InfrastructureEntity.class.isAssignableFrom(entity)) {
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("InfrastructureEntity name is:" + entity.getName());
+}
+}
+}
+}
+}
+}
+ catch (final IllegalArgumentException e) {
+s_logger.error("Error initializing command " + cmd.getCommandName() + ", field "+ field.getName()+ " is not accessible.");
+throw new CloudRuntimeException("Internal error initializing parameters for command " + cmd.getCommandName() + " [field "+ field.getName()+ " is not accessible]");
+}
+catch (final IllegalAccessException e) {
+s_logger.error("Error initializing command " + cmd.getCommandName() + ", field "+ field.getName()+ " is not accessible.");
+throw new CloudRuntimeException("Internal error initializing parameters for command " + cmd.getCommandName() + " [field "+ field.getName()+ " is not accessible]");
+}
+}
+doAccessChecks(cmd,entitiesToAccess);
+}
