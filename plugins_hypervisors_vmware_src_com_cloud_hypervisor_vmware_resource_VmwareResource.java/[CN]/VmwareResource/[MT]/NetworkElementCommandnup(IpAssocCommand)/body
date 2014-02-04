@@ -1,0 +1,66 @@
+{
+  String[] results=new String[cmd.getIpAddresses().length];
+  VmwareContext context=getServiceContext();
+  try {
+    VmwareHypervisorHost hyperHost=getHyperHost(context);
+    IpAddressTO[] ips=cmd.getIpAddresses();
+    String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+    String controlIp=VmwareResource.getRouterSshControlIp(cmd);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(routerName);
+    if (vmMo == null) {
+      if (hyperHost instanceof HostMO) {
+        ClusterMO clusterMo=new ClusterMO(hyperHost.getContext(),((HostMO)hyperHost).getParentMor());
+        vmMo=clusterMo.findVmOnHyperHost(routerName);
+      }
+    }
+    if (vmMo == null) {
+      String msg="Router " + routerName + " no longer exists to execute IPAssoc command";
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    for (    IpAddressTO ip : ips) {
+      URI broadcastUri=BroadcastDomainType.fromString(ip.getBroadcastUri());
+      if (BroadcastDomainType.getSchemeValue(broadcastUri) != BroadcastDomainType.Vlan) {
+        throw new InternalErrorException("Unable to assign a public IP to a VIF on network " + ip.getBroadcastUri());
+      }
+      String vlanId=BroadcastDomainType.getValue(broadcastUri);
+      String publicNeworkName=HypervisorHostHelper.getPublicNetworkNamePrefix(vlanId);
+      Pair<Integer,VirtualDevice> publicNicInfo=vmMo.getNicDeviceIndex(publicNeworkName);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Find public NIC index, public network name: " + publicNeworkName + ", index: "+ publicNicInfo.first());
+      }
+      boolean removeVif=false;
+      if (!ip.isAdd() && ip.isFirstIP()) {
+        removeVif=true;
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Unplug NIC " + publicNicInfo.first());
+        }
+      }
+      if (publicNicInfo.first().intValue() < 0) {
+        String msg="Failed to find DomR VIF to associate/disassociate IP with.";
+        s_logger.error(msg);
+        throw new InternalErrorException(msg);
+      }
+      if (removeVif) {
+        String nicMasksStr=vmMo.getCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK);
+        int nicMasks=Integer.parseInt(nicMasksStr);
+        nicMasks&=~(1 << publicNicInfo.first().intValue());
+        vmMo.setCustomFieldValue(CustomFieldConstants.CLOUD_NIC_MASK,String.valueOf(nicMasks));
+        HostMO hostMo=vmMo.getRunningHost();
+        List<NetworkDetails> networks=vmMo.getNetworksWithDetails();
+        for (        NetworkDetails netDetails : networks) {
+          if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {
+            if (netDetails.getVMMorsOnNetwork() == null || netDetails.getVMMorsOnNetwork().length == 1) {
+              cleanupNetwork(hostMo,netDetails);
+            }
+          }
+        }
+      }
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception: " + e.toString() + " will shortcut rest of IPAssoc commands",e);
+    return new ExecutionResult(false,e.toString());
+  }
+  return new ExecutionResult(true,null);
+}

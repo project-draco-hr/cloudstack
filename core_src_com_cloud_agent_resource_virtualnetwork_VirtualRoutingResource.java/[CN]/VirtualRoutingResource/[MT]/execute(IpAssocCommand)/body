@@ -1,18 +1,41 @@
 {
-  IpAddressTO[] ips=cmd.getIpAddresses();
   String[] results=new String[cmd.getIpAddresses().length];
+  for (int i=0; i < results.length; i++) {
+    results[i]=IpAssocAnswer.errorResult;
+  }
   int i=0;
-  String result=null;
-  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
-  String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
-  for (  IpAddressTO ip : ips) {
-    result=assignPublicIpAddress(routerName,routerIp,ip.getPublicIp(),ip.isAdd(),ip.isFirstIP(),ip.isSourceNat(),ip.getBroadcastUri(),ip.getVlanGateway(),ip.getVlanNetmask(),ip.getVifMacAddress(),2,false);
-    if (result != null) {
-      results[i++]=IpAssocAnswer.errorResult;
+  for (  IpAddressTO ip : cmd.getIpAddresses()) {
+    String args="";
+    if (ip.isAdd()) {
+      args+="-A";
     }
  else {
+      args+="-D";
+    }
+    String cidrSize=Long.toString(NetUtils.getCidrSize(ip.getVlanNetmask()));
+    if (ip.isSourceNat()) {
+      args+=" -s";
+    }
+    if (ip.isFirstIP()) {
+      args+=" -f";
+    }
+    args+=" -l ";
+    args+=ip.getPublicIp() + "/" + cidrSize;
+    String publicNic="eth" + ip.getNicDevId();
+    args+=" -c ";
+    args+=publicNic;
+    args+=" -g ";
+    args+=ip.getVlanGateway();
+    if (ip.isNewNic()) {
+      args+=" -n";
+    }
+    ExecutionResult result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),"ipassoc.sh",args);
+    if (result.isSuccess()) {
       results[i++]=ip.getPublicIp() + " - success";
-      ;
+    }
+ else {
+      results[i++]=ip.getPublicIp() + " - failed:" + result.getDetails();
+      break;
     }
   }
   return new IpAssocAnswer(cmd,results);

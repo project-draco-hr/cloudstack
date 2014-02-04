@@ -37,6 +37,47 @@
     sc.addAnd("id",SearchCriteria.Op.EQ,templateId);
   }
  else {
+    DomainVO domain=null;
+    if (!permittedAccounts.isEmpty()) {
+      domain=_domainDao.findById(permittedAccounts.get(0));
+    }
+ else {
+      domain=_domainDao.findById(Domain.ROOT_DOMAIN);
+    }
+    if (listProjectResourcesCriteria == ListProjectResourcesCriteria.SkipProjectResources) {
+      sc.addAnd("accountType",SearchCriteria.Op.NEQ,Account.ACCOUNT_TYPE_PROJECT);
+    }
+ else     if (listProjectResourcesCriteria == ListProjectResourcesCriteria.ListProjectResourcesOnly) {
+      sc.addAnd("accountType",SearchCriteria.Op.EQ,Account.ACCOUNT_TYPE_PROJECT);
+    }
+    if ((templateFilter == TemplateFilter.self || templateFilter == TemplateFilter.selfexecutable) && (caller.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN || caller.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN)) {
+      sc.addAnd("domainPath",SearchCriteria.Op.LIKE,domain.getPath() + "%");
+    }
+    List<Long> relatedDomainIds=new ArrayList<Long>();
+    if (!permittedAccounts.isEmpty()) {
+      for (      Long accountId : permittedAccounts) {
+        Account account=_accountDao.findById(accountId);
+        boolean publicTemplates=(templateFilter == TemplateFilter.featured || templateFilter == TemplateFilter.community);
+        DomainVO domainTreeNode=null;
+        if (publicTemplates) {
+          domainTreeNode=_domainDao.findById(Domain.ROOT_DOMAIN);
+        }
+ else {
+          domainTreeNode=_domainDao.findById(account.getDomainId());
+        }
+        relatedDomainIds.add(domainTreeNode.getId());
+        while (domainTreeNode.getParent() != null) {
+          domainTreeNode=_domainDao.findById(domainTreeNode.getParent());
+          relatedDomainIds.add(domainTreeNode.getId());
+        }
+        if (_accountMgr.isAdmin(account.getType()) || publicTemplates) {
+          List<DomainVO> allChildDomains=_domainDao.findAllChildren(domainTreeNode.getPath(),domainTreeNode.getId());
+          for (          DomainVO childDomain : allChildDomains) {
+            relatedDomainIds.add(childDomain.getId());
+          }
+        }
+      }
+    }
     if (!isIso) {
       if (hypers != null && !hypers.isEmpty()) {
         String[] relatedHypers=new String[hypers.size()];
