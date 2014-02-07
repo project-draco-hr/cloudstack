@@ -23,26 +23,35 @@
  else     if (srcData.getObjectType() == DataObjectType.TEMPLATE) {
       storageManager.createOvaForTemplate((TemplateObjectTO)srcData);
     }
- else     if (srcData.getObjectType() == DataObjectType.SNAPSHOT && destData.getObjectType() == DataObjectType.TEMPLATE) {
-      TemplateObjectTO cacheTemplate=(TemplateObjectTO)destData;
-      cacheTemplate.setDataStore(srcDataStore);
-      CopyCmdAnswer answer=(CopyCmdAnswer)processor.createTemplateFromSnapshot(cmd);
-      if (!answer.getResult()) {
-        return answer;
+ else     if (srcData.getObjectType() == DataObjectType.SNAPSHOT) {
+      String parentPath=storageResource.getRootDir(srcDataStore.getUrl());
+      SnapshotObjectTO snap=(SnapshotObjectTO)srcData;
+      String path=snap.getPath();
+      int index=path.lastIndexOf(File.separator);
+      String name=path.substring(index + 1);
+      String snapDir=path.substring(0,index);
+      storageManager.createOva(parentPath + File.separator + snapDir,name);
+      if (destData.getObjectType() == DataObjectType.TEMPLATE) {
+        TemplateObjectTO cacheTemplate=(TemplateObjectTO)destData;
+        cacheTemplate.setDataStore(srcDataStore);
+        CopyCmdAnswer answer=(CopyCmdAnswer)processor.createTemplateFromSnapshot(cmd);
+        if (!answer.getResult()) {
+          return answer;
+        }
+        cacheTemplate.setDataStore(destDataStore);
+        TemplateObjectTO template=(TemplateObjectTO)answer.getNewData();
+        template.setDataStore(srcDataStore);
+        CopyCommand newCmd=new CopyCommand(template,destData,cmd.getWait(),cmd.executeInSequence());
+        Answer result=storageResource.defaultAction(newCmd);
+        try {
+          DeleteCommand deleteCommand=new DeleteCommand(template);
+          storageResource.defaultAction(deleteCommand);
+        }
+ catch (        Exception e) {
+          s_logger.debug("Failed to clean up staging area:",e);
+        }
+        return result;
       }
-      cacheTemplate.setDataStore(destDataStore);
-      TemplateObjectTO template=(TemplateObjectTO)answer.getNewData();
-      template.setDataStore(srcDataStore);
-      CopyCommand newCmd=new CopyCommand(template,destData,cmd.getWait(),cmd.executeInSequence());
-      Answer result=storageResource.defaultAction(newCmd);
-      try {
-        DeleteCommand deleteCommand=new DeleteCommand(template);
-        storageResource.defaultAction(deleteCommand);
-      }
- catch (      Exception e) {
-        s_logger.debug("Failed to clean up staging area:",e);
-      }
-      return result;
     }
     needDelegation=true;
   }
