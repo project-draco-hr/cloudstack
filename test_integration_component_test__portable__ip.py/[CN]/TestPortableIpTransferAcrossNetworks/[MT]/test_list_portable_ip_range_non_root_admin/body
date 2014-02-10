@@ -2,11 +2,19 @@
 def test_list_portable_ip_range_non_root_admin(self):
     'Test list portable ip ranges with non admin root account\n        '
     portableip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.network1.id, isportable=True)
+    ipInCorrectState = is_public_ip_in_correct_state(self.apiclient, portableip.ipaddress.id, state='allocated')
+    if (not ipInCorrectState):
+        portableip.delete(self.apiclient)
+        self.fail('Portable IP not in allocated state even after 10 mins')
     self.debug(('created public ip address (portable): %s' % portableip.ipaddress.ipaddress))
     self.debug('Creating NAT rule on the portable public ip')
-    StaticNATRule.enable(self.apiclient, portableip.ipaddress.id, self.virtual_machine2.id, networkid=self.network2.id)
-    self.debug('Opening firewall on the portable public ip')
-    fw_rule = FireWallRule.create(self.apiclient, ipaddressid=portableip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=[self.services['natrule']['cidr']], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
+    try:
+        StaticNATRule.enable(self.apiclient, portableip.ipaddress.id, self.virtual_machine2.id, networkid=self.network2.id)
+        self.debug('Opening firewall on the portable public ip')
+        FireWallRule.create(self.apiclient, ipaddressid=portableip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=[self.services['natrule']['cidr']], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
+    except Exception as e:
+        portableip.delete(self.apiclient)
+        self.fail(('Error: %s' % e))
     static_nat_list = PublicIPAddress.list(self.apiclient, associatednetworkid=self.network2.id, listall=True, isstaticnat=True, ipaddress=portableip.ipaddress.ipaddress)
     self.assertEqual(isinstance(static_nat_list, list), True, 'List Public IP should return a valid static NAT info that was created on portable ip')
     self.assertTrue(((static_nat_list[0].ipaddress == portableip.ipaddress.ipaddress) and (static_nat_list[0].virtualmachineid == self.virtual_machine2.id)), 'There is some issue in transferring portable ip {} across networks'.format(portableip.ipaddress.ipaddress))

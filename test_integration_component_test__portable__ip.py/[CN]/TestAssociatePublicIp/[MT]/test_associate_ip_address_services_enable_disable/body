@@ -1,4 +1,3 @@
-@unittest.skip('SSH failing to portable ip, need to investigate the issue')
 @attr(tags=['advanced'])
 def test_associate_ip_address_services_enable_disable(self):
     ' Test enabling and disabling NAT, Firewall services on portable ip\n        '
@@ -12,10 +11,18 @@ def test_associate_ip_address_services_enable_disable(self):
         self.fail(('Exception while deploying vm : %s' % e))
     portableip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.network.id, isportable=True)
     self.debug(('created public ip address (portable): %s' % portableip.ipaddress.ipaddress))
-    self.debug('Opening firewall on the portable public ip')
-    fw_rule = FireWallRule.create(self.apiclient, ipaddressid=portableip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=[self.services['natrule']['cidr']], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
-    self.debug('Creating NAT rule on the portable public ip')
-    nat_rule = NATRule.create(self.apiclient, self.virtual_machine, self.services['natrule'], portableip.ipaddress.id)
+    ipInCorrectState = is_public_ip_in_correct_state(self.apiclient, portableip.ipaddress.id, state='allocated')
+    if (not ipInCorrectState):
+        portableip.delete(self.apiclient)
+        self.fail('Portable IP not in allocated state even after 10 mins')
+    try:
+        self.debug('Opening firewall on the portable public ip')
+        fw_rule = FireWallRule.create(self.apiclient, ipaddressid=portableip.ipaddress.id, protocol=self.services['natrule']['protocol'], cidrlist=[self.services['natrule']['cidr']], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
+        self.debug('Creating NAT rule on the portable public ip')
+        nat_rule = NATRule.create(self.apiclient, self.virtual_machine, self.services['natrule'], portableip.ipaddress.id)
+    except Exception as e:
+        portableip.delete(self.apiclient)
+        self.fail(('Error: %s' % e))
     try:
         try:
             self.debug(('Trying to SSH to ip: %s' % portableip.ipaddress.ipaddress))
