@@ -1,0 +1,67 @@
+{
+  Long ipId=null;
+  boolean newIp=false;
+  List<LoadBalancerVO> existingLbs=findExistingLoadBalancers(lb.getName(),lb.getSourceIpAddressId(),lb.getAccountId(),lb.getDomainId(),lb.getSourcePortStart());
+  if (existingLbs == null) {
+    existingLbs=findExistingLoadBalancers(lb.getName(),lb.getSourceIpAddressId(),lb.getAccountId(),lb.getDomainId(),null);
+    if (existingLbs == null) {
+      if (lb.getSourceIpAddressId() != null) {
+        throwExceptionIfSuppliedlLbNameIsNotAssociatedWithIpAddress(lb);
+      }
+ else {
+        s_logger.debug("Could not find any existing frontend ips for this account for this LB rule, acquiring a new frontent IP for ELB");
+        PublicIp ip=allocDirectIp(account,networkId);
+        ipId=ip.getId();
+        newIp=true;
+      }
+    }
+ else {
+      ipId=existingLbs.get(0).getSourceIpAddressId();
+      s_logger.debug("ELB: Found existing frontend ip for this account for this LB rule " + ipId);
+    }
+  }
+ else {
+    s_logger.warn("ELB: Found existing load balancers matching requested new LB");
+    throw new NetworkRuleConflictException("ELB: Found existing load balancers matching requested new LB");
+  }
+  IPAddressVO ipAddr=_ipAddressDao.findById(ipId);
+  LoadBalancer result=null;
+  try {
+    lb.setSourceIpAddressId(ipId);
+    result=_lbMgr.createPublicLoadBalancer(lb.getXid(),lb.getName(),lb.getDescription(),lb.getSourcePortStart(),lb.getDefaultPortStart(),ipId.longValue(),lb.getProtocol(),lb.getAlgorithm(),false,CallContext.current(),lb.getLbProtocol());
+  }
+ catch (  NetworkRuleConflictException e) {
+    s_logger.warn("Failed to create LB rule, not continuing with ELB deployment");
+    if (newIp) {
+      releaseIp(ipId,CallContext.current().getCallingUserId(),account);
+    }
+    throw e;
+  }
+  DomainRouterVO elbVm=null;
+  if (existingLbs == null) {
+    elbVm=findElbVmWithCapacity(ipAddr);
+    if (elbVm == null) {
+      elbVm=deployLoadBalancerVM(networkId,ipAddr);
+      if (elbVm == null) {
+        Network network=_networkModel.getNetwork(networkId);
+        s_logger.warn("Failed to deploy a new ELB vm for ip " + ipAddr + " in network "+ network+ "lb name="+ lb.getName());
+        if (newIp)         releaseIp(ipId,CallContext.current().getCallingUserId(),account);
+      }
+    }
+  }
+ else {
+    ElasticLbVmMapVO elbVmMap=_elbVmMapDao.findOneByIp(ipId);
+    if (elbVmMap != null) {
+      elbVm=_routerDao.findById(elbVmMap.getElbVmId());
+    }
+  }
+  if (elbVm == null) {
+    s_logger.warn("No ELB VM can be found or deployed");
+    s_logger.warn("Deleting LB since we failed to deploy ELB VM");
+    _lbDao.remove(result.getId());
+    return null;
+  }
+  ElasticLbVmMapVO mapping=new ElasticLbVmMapVO(ipId,elbVm.getId(),result.getId());
+  _elbVmMapDao.persist(mapping);
+  return result;
+}
