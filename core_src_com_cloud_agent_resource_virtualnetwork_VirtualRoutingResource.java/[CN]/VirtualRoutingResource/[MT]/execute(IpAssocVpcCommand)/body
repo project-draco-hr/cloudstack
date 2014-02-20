@@ -1,46 +1,17 @@
 {
   String[] results=new String[cmd.getIpAddresses().length];
-  String args="";
-  String snatArgs="";
   for (int i=0; i < cmd.getIpAddresses().length; i++) {
     results[i]="Failed";
   }
   int i=0;
-  for (  IpAddressTO ip : cmd.getIpAddresses()) {
-    if (ip.isAdd()) {
-      args+=" -A ";
-      snatArgs+=" -A ";
-    }
- else {
-      args+=" -D ";
-      snatArgs+=" -D ";
-    }
-    args+=" -l ";
-    args+=ip.getPublicIp();
-    String nicName="eth" + ip.getNicDevId();
-    args+=" -c ";
-    args+=nicName;
-    args+=" -g ";
-    args+=ip.getVlanGateway();
-    args+=" -m ";
-    args+=Long.toString(NetUtils.getCidrSize(ip.getVlanNetmask()));
-    args+=" -n ";
-    args+=NetUtils.getSubNet(ip.getPublicIp(),ip.getVlanNetmask());
-    ExecutionResult result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),VRScripts.VPC_IPASSOC,args);
+  List<ConfigItem> cfg=generateConfig(cmd);
+  for (  ConfigItem c : cfg) {
+    ExecutionResult result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),c.getScript(),c.getArgs());
     if (!result.isSuccess()) {
-      results[i++]=ip.getPublicIp() + " - vpc_ipassoc failed:" + result.getDetails();
+      results[i++]=c.getInfo() + " failed: " + result.getDetails();
       break;
     }
-    if (ip.isSourceNat()) {
-      snatArgs+=" -l " + ip.getPublicIp();
-      snatArgs+=" -c " + nicName;
-      result=_vrDeployer.executeInVR(cmd.getRouterAccessIp(),VRScripts.VPC_PRIVATEGW,snatArgs);
-      if (result != null) {
-        results[i++]=ip.getPublicIp() + " - vpc_privateGateway failed:" + result.getDetails();
-        break;
-      }
-    }
-    results[i++]=ip.getPublicIp() + " - success ";
+    results[i++]=c.getInfo() + " - success ";
   }
   return new IpAssocAnswer(cmd,results);
 }
