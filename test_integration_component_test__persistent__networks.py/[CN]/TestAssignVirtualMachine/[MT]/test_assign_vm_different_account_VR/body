@@ -1,0 +1,32 @@
+@data('VR', 'RVR', 'LB-NS')
+@attr(tags=['advanced', 'advancedns'])
+def test_assign_vm_different_account_VR(self, value):
+    account_1 = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account_1)
+    account_2 = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account_2)
+    if (value == 'VR'):
+        network_offering = self.isolated_persistent_network_offering
+    elif (value == 'RVR'):
+        network_offering = self.isolated_persistent_network_offering_RVR
+    elif (value == 'LB-NS'):
+        if self.ns_configured:
+            network_offering = self.persistent_network_offering_netscaler
+        else:
+            self.skipTest('This test requires netscaler to be configured in the network')
+    network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=network_offering.id, accountid=account_1.name, domainid=self.domain.id, zoneid=self.zone.id)
+    verifyNetworkState(self.api_client, network.id, 'implemented')
+    self.assertIsNotNone(network.vlan, 'vlan must not be null for persistent network')
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[network.id], serviceofferingid=self.service_offering.id, accountid=account_1.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    virtual_machine.stop(self.apiclient)
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine.id)
+    self.assertEqual(validateList(vms)[0], PASS, ('vm list validation failed, vm list is %s' % vms))
+    self.assertEqual(str(vms[0].state).lower(), 'stopped', ('vm state should be stopped, it is %s' % vms[0].state))
+    virtual_machine.assign_virtual_machine(self.apiclient, account=account_2.name, domainid=self.domain.id)
+    virtual_machine.start(self.apiclient)
+    networks = Network.list(self.apiclient, account=account_2.name, domainid=account_2.domainid)
+    self.assertEqual(validateList(networks)[0], PASS, ('networks list validation failed, list is %s' % networks))
+    return

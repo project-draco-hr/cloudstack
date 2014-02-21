@@ -1,0 +1,33 @@
+@data('true', 'false')
+@attr(tags=['advanced', 'advancedns'])
+def test_cleanup_persistent_network_lb_netscaler(self, value):
+    if (not self.ns_configured):
+        self.skipTest('This test required netscaler to be configured in the network')
+    account = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    isolated_persistent_network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_persistent_network_offering_netscaler.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    verifyNetworkState(self.apiclient, isolated_persistent_network.id, 'implemented')
+    self.assertIsNotNone(isolated_persistent_network.vlan, 'vlan must not be null for persistent network')
+    self.debug(('Listing routers for network: %s' % isolated_persistent_network.name))
+    routers = Router.list(self.api_client, listall=True, networkid=isolated_persistent_network.id)
+    self.assertEqual(validateList(routers)[0], PASS, ('Routers list validation failed, list is %s' % routers))
+    for router in routers:
+        self.checkRouterAccessibility(router)
+    self.debug(('Associating public IP for network: %s' % isolated_persistent_network.id))
+    ipaddress = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=isolated_persistent_network.id)
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.services['lbrule'], ipaddressid=ipaddress.ipaddress.id, accountid=account.name, networkid=isolated_persistent_network.id, domainid=account.domainid)
+    isolated_persistent_network.restart(self.apiclient, cleanup=value)
+    networks = Network.list(self.apiclient, account=account.name, domainid=account.domainid)
+    self.assertEqual(validateList(networks)[0], PASS, ('networks list validation failed, list is %s' % networks))
+    verifyNetworkState(self.apiclient, networks[0].id, 'implemented')
+    self.assertIsNotNone(networks[0].vlan, 'vlan must not be null for persistent network')
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[isolated_persistent_network.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    lb_rule.assign(self.api_client, [virtual_machine])
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress.ipaddress.ipaddress)))
+    return
