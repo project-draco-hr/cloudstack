@@ -5,35 +5,37 @@ def configureProviders(self, phynetwrk, providers):
         pnetprov.physicalnetworkid = phynetwrk.id
         pnetprov.state = 'Disabled'
         pnetprov.name = provider.name
-        pnetprovres = self.apiClient.listNetworkServiceProviders(pnetprov)
+        pnetprovres = self.__apiClient.listNetworkServiceProviders(pnetprov)
         if (pnetprovres == FAILED):
-            self.tcRunLogger.exception('====List Network Service Providers Failed=====')
-            exit(1)
+            self.__tcRunLogger.exception('====List Network Service Providers Failed=====')
+            self.__cleanAndExit()
         if (pnetprovres and (len(pnetprovres) > 0)):
             if ((provider.name == 'VirtualRouter') or (provider.name == 'VpcVirtualRouter')):
                 vrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
                 vrprov.nspid = pnetprovres[0].id
-                vrprovresponse = self.apiClient.listVirtualRouterElements(vrprov)
+                vrprovresponse = self.__apiClient.listVirtualRouterElements(vrprov)
                 vrprovid = vrprovresponse[0].id
                 vrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
                 vrconfig.enabled = 'true'
                 vrconfig.id = vrprovid
-                if (self.apiClient.configureVirtualRouterElement(vrconfig) == FAILED):
-                    self.tcRunLogger.exception('====ConfigureVirtualRouterElement Failed=====')
-                    exit(1)
+                if (self.__apiClient.configureVirtualRouterElement(vrconfig) == FAILED):
+                    self.__tcRunLogger.exception('====ConfigureVirtualRouterElement Failed=====')
+                    self.__cleanAndExit()
                 self.enableProvider(pnetprovres[0].id)
             elif (provider.name == 'InternalLbVm'):
                 internallbprov = listInternalLoadBalancerElements.listInternalLoadBalancerElementsCmd()
                 internallbprov.nspid = pnetprovres[0].id
-                internallbresponse = self.apiClient.listInternalLoadBalancerElements(internallbprov)
+                internallbresponse = self.__apiClient.listInternalLoadBalancerElements(internallbprov)
                 if (internallbresponse == FAILED):
-                    self.tcRunLogger.exception('====List InternalLoadBalancerElements Failed=====')
-                    exit(1)
+                    self.__tcRunLogger.exception('====List InternalLoadBalancerElements Failed=====')
+                    self.__cleanAndExit()
                 internallbid = internallbresponse[0].id
                 internallbconfig = configureInternalLoadBalancerElement.configureInternalLoadBalancerElementCmd()
                 internallbconfig.enabled = 'true'
                 internallbconfig.id = internallbid
-                self.apiClient.configureInternalLoadBalancerElement(internallbconfig)
+                if (self.__apiClient.configureInternalLoadBalancerElement(internallbconfig) == FAILED):
+                    self.__tcRunLogger.exception('==== Configure Internal LB Failed===')
+                    self.__cleanAndExit()
                 self.enableProvider(pnetprovres[0].id)
             elif (provider.name == 'SecurityGroupProvider'):
                 self.enableProvider(pnetprovres[0].id)
@@ -41,7 +43,13 @@ def configureProviders(self, phynetwrk, providers):
             netprov = addNetworkServiceProvider.addNetworkServiceProviderCmd()
             netprov.name = provider.name
             netprov.physicalnetworkid = phynetwrk.id
-            result = self.apiClient.addNetworkServiceProvider(netprov)
+            result = self.__apiClient.addNetworkServiceProvider(netprov)
+            if ((result != FAILED) and result.id):
+                self.__tcRunLogger.debug('==== AddNetworkServiceProvider Successful=====')
+                self.__addToCleanUp('NetworkServiceProvider', result.id)
+            else:
+                self.__tcRunLogger.exception('==== AddNetworkServiceProvider Failed=====')
+                self.__cleanAndExit()
             for device in provider.devices:
                 if (provider.name == 'Netscaler'):
                     dev = addNetscalerLoadBalancer.addNetscalerLoadBalancerCmd()
@@ -50,7 +58,13 @@ def configureProviders(self, phynetwrk, providers):
                     dev.networkdevicetype = device.networkdevicetype
                     dev.url = configGenerator.getDeviceUrl(device)
                     dev.physicalnetworkid = phynetwrk.id
-                    self.apiClient.addNetscalerLoadBalancer(dev)
+                    ret = self.__apiClient.addNetscalerLoadBalancer(dev)
+                    if ((ret != FAILED) and ret.id):
+                        self.__tcRunLogger.debug('==== AddNetScalerLB Successful=====')
+                        self.__addToCleanUp('NetscalerLoadBalancer', ret.id)
+                    else:
+                        self.__tcRunLogger.exception('===AddNetScalerLB Failed===')
+                        self.__cleanAndExit()
                 elif (provider.name == 'JuniperSRX'):
                     dev = addSrxFirewall.addSrxFirewallCmd()
                     dev.username = device.username
@@ -58,7 +72,13 @@ def configureProviders(self, phynetwrk, providers):
                     dev.networkdevicetype = device.networkdevicetype
                     dev.url = configGenerator.getDeviceUrl(device)
                     dev.physicalnetworkid = phynetwrk.id
-                    self.apiClient.addSrxFirewall(dev)
+                    ret = self.__apiClient.addSrxFirewall(dev)
+                    if ((ret != FAILED) and ret.id):
+                        self.__tcRunLogger.debug('==== AddSrx Successful=====')
+                        self.__addToCleanUp('SrxFirewall', ret.id)
+                    else:
+                        self.__tcRunLogger.exception('===AddSrx Failed===')
+                        self.__cleanAndExit()
                 elif (provider.name == 'F5BigIp'):
                     dev = addF5LoadBalancer.addF5LoadBalancerCmd()
                     dev.username = device.username
@@ -66,7 +86,13 @@ def configureProviders(self, phynetwrk, providers):
                     dev.networkdevicetype = device.networkdevicetype
                     dev.url = configGenerator.getDeviceUrl(device)
                     dev.physicalnetworkid = phynetwrk.id
-                    self.apiClient.addF5LoadBalancer(dev)
+                    ret = self.__apiClient.addF5LoadBalancer(dev)
+                    if ((ret != FAILED) and ret.id):
+                        self.__tcRunLogger.debug('==== AddF5 Successful=====')
+                        self.__addToCleanUp('F5LoadBalancer', ret.id)
+                    else:
+                        self.__tcRunLogger.exception('===AddF5 Failed===')
+                        self.__cleanAndExit()
                 else:
                     raise InvalidParameterException(("Device %s doesn't match any know provider type" % device))
             self.enableProvider(result.id)

@@ -11,11 +11,10 @@ def createZones(self, zones):
         zonecmd.networktype = zone.networktype
         if (zone.securitygroupenabled != 'true'):
             zonecmd.guestcidraddress = zone.guestcidraddress
-        ret = self.createZone(zonecmd)
-        if (ret == FAILED):
-            self.tcRunLogger.exception('====Zone Creation Failed. So Exiting=====')
-            exit(1)
-        zoneId = ret
+        zoneId = self.createZone(zonecmd)
+        if (zoneId == FAILED):
+            self.__tcRunLogger.exception(('====Zone: %s Creation Failed. So Exiting=====' % str(zone.name)))
+            self.__cleanAndExit()
         for pnet in zone.physical_networks:
             phynetwrk = self.createPhysicalNetwork(pnet, zoneId)
             self.configureProviders(phynetwrk, pnet.providers)
@@ -25,10 +24,10 @@ def createZones(self, zones):
             listnetworkoffering.name = ('DefaultSharedNetscalerEIPandELBNetworkOffering' if (len(filter((lambda x: (x.typ == 'Public')), zone.physical_networks[0].traffictypes)) > 0) else 'DefaultSharedNetworkOfferingWithSGService')
             if (zone.networkofferingname is not None):
                 listnetworkoffering.name = zone.networkofferingname
-            listnetworkofferingresponse = self.apiClient.listNetworkOfferings(listnetworkoffering)
+            listnetworkofferingresponse = self.__apiClient.listNetworkOfferings(listnetworkoffering)
             if (listnetworkofferingresponse == FAILED):
-                self.tcRunLogger.exception('==== ListNetworkOfferingResponse Failed=====')
-                exit(1)
+                self.__tcRunLogger.exception('==== ListNetworkOfferingResponse Failed=====')
+                self.__cleanAndExit()
             guestntwrk = configGenerator.network()
             guestntwrk.displaytext = 'guestNetworkForBasicZone'
             guestntwrk.name = 'guestNetworkForBasicZone'
@@ -47,10 +46,10 @@ def createZones(self, zones):
             listnetworkoffering.name = 'DefaultSharedNetworkOfferingWithSGService'
             if (zone.networkofferingname is not None):
                 listnetworkoffering.name = zone.networkofferingname
-            listnetworkofferingresponse = self.apiClient.listNetworkOfferings(listnetworkoffering)
+            listnetworkofferingresponse = self.__apiClient.listNetworkOfferings(listnetworkoffering)
             if (listnetworkofferingresponse == FAILED):
-                self.tcRunLogger.exception('==== ListNetworkOfferingResponse Failed=====')
-                exit(1)
+                self.__tcRunLogger.exception('==== ListNetworkOfferingResponse Failed=====')
+                self.__cleanAndExit()
             networkcmd = createNetwork.createNetworkCmd()
             networkcmd.displaytext = 'Shared SG enabled network'
             networkcmd.name = 'Shared SG enabled network'
@@ -64,14 +63,14 @@ def createZones(self, zones):
                 networkcmd.gateway = iprange.gateway
                 networkcmd.netmask = iprange.netmask
                 networkcmd.vlan = iprange.vlan
-            networkcmdresponse = self.apiClient.createNetwork(networkcmd)
-            if ((networkcmdresponse != FAILED) and (networkcmdresponse.id is not None)):
-                networkId = networkcmdresponse.id
-                self.tcRunLogger.debug(('Network Id : %s Created Successfully' % str(networkId)))
+            networkcmdresponse = self.__apiClient.createNetwork(networkcmd)
+            if ((networkcmdresponse != FAILED) and networkcmdresponse.id):
+                self.__addToCleanUp('Network', networkcmdresponse.id)
+                self.__tcRunLogger.debug(('create Network Successful. NetworkId : %s ' % str(networkcmdresponse.id)))
             else:
-                self.tcRunLogger.exception('====Network Creation Failed=====')
-                exit(1)
-            self.createPods(zone.pods, zoneId, networkId)
+                self.__tcRunLogger.exception('====Create Network Failed=====')
+                self.__cleanAndExit()
+            self.createPods(zone.pods, zoneId, networkcmdresponse.id)
         'Note: Swift needs cache storage first'
         self.createCacheStorages(zone.cacheStorages, zoneId)
         self.createSecondaryStorages(zone.secondaryStorages, zoneId)
