@@ -19,10 +19,11 @@
     public void reallyRun(){
       try {
         s_logger.trace("Begin cleanup expired async-jobs");
-        Date cutTime=new Date(DateUtil.currentGMTTime().getTime() - JobExpireMinutes.value() * 1000);
+        Date cutTime=new Date(DateUtil.currentGMTTime().getTime() - JobExpireMinutes.value() * 60000);
         List<AsyncJobVO> l=_jobDao.getExpiredUnfinishedJobs(cutTime,100);
         for (        AsyncJobVO job : l) {
-          s_logger.trace("Expunging unfinished job " + job);
+          s_logger.info("Expunging unfinished job " + job);
+          _jobMonitor.unregisterByJobId(job.getId());
           expungeAsyncJob(job);
         }
         List<AsyncJobVO> completedJobs=_jobDao.getExpiredCompletedJobs(cutTime,100);
@@ -30,11 +31,13 @@
           s_logger.trace("Expunging completed job " + job);
           expungeAsyncJob(job);
         }
-        List<SyncQueueItemVO> blockItems=_queueMgr.getBlockedQueueItems(JobCancelThresholdMinutes.value() * 1000,false);
+        List<SyncQueueItemVO> blockItems=_queueMgr.getBlockedQueueItems(JobCancelThresholdMinutes.value() * 60000,false);
         if (blockItems != null && blockItems.size() > 0) {
           for (          SyncQueueItemVO item : blockItems) {
             if (item.getContentType().equalsIgnoreCase(SyncQueueItem.AsyncJobContentType)) {
+              s_logger.info("Remove Job-" + item.getContentId() + " from Queue-"+ item.getId()+ " since it has been blocked for too long");
               completeAsyncJob(item.getContentId(),JobInfo.Status.FAILED,0,"Job is cancelled as it has been blocking others for too long");
+              _jobMonitor.unregisterByJobId(item.getContentId());
             }
             _queueMgr.purgeItem(item.getId());
           }
