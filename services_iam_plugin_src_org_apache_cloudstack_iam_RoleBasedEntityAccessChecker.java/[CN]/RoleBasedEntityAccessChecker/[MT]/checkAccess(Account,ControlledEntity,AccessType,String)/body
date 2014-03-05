@@ -1,0 +1,53 @@
+{
+  if (entity == null && action != null) {
+    List<IAMPolicy> policies=_iamSrv.listIAMPolicies(caller.getAccountId());
+    boolean isAllowed=_iamSrv.isActionAllowedForPolicies(action,policies);
+    if (!isAllowed) {
+      throw new PermissionDeniedException("The action '" + action + "' not allowed for account "+ caller);
+    }
+    return true;
+  }
+  String entityType=entity.getEntityType().toString();
+  if (accessType == null) {
+    accessType=AccessType.UseEntry;
+  }
+  List<IAMPolicy> policies=getEffectivePolicies(caller,entity);
+  HashMap<IAMPolicy,Boolean> policyPermissionMap=new HashMap<IAMPolicy,Boolean>();
+  for (  IAMPolicy policy : policies) {
+    List<IAMPolicyPermission> permissions=new ArrayList<IAMPolicyPermission>();
+    if (action != null) {
+      permissions=_iamSrv.listPolicyPermissionByActionAndEntity(policy.getId(),action,entityType);
+      if (permissions.isEmpty()) {
+        if (accessType != null) {
+          permissions.addAll(_iamSrv.listPolicyPermissionByAccessAndEntity(policy.getId(),accessType.toString(),entityType));
+        }
+      }
+    }
+ else {
+      if (accessType != null) {
+        permissions.addAll(_iamSrv.listPolicyPermissionByAccessAndEntity(policy.getId(),accessType.toString(),entityType));
+      }
+    }
+    for (    IAMPolicyPermission permission : permissions) {
+      if (checkPermissionScope(caller,permission.getScope(),permission.getScopeId(),entity)) {
+        if (permission.getEntityType().equals(entityType)) {
+          policyPermissionMap.put(policy,permission.getPermission().isGranted());
+          break;
+        }
+ else         if (permission.getEntityType().equals("*")) {
+          policyPermissionMap.put(policy,permission.getPermission().isGranted());
+        }
+      }
+    }
+    if (policyPermissionMap.containsKey(policy) && policyPermissionMap.get(policy)) {
+      return true;
+    }
+  }
+  if (!policies.isEmpty()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+    }
+    throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+  }
+  return false;
+}
