@@ -1,0 +1,34 @@
+@attr(tags=['advanced'])
+def test_vpc_force_delete_domain(self):
+    child_domain = Domain.create(self.apiclient, services=self.services['domain'], parentdomainid=self.domain.id)
+    account_1 = Account.create(self.apiclient, self.services['account'], domainid=child_domain.id)
+    account_2 = Account.create(self.apiclient, self.services['account'], domainid=child_domain.id)
+    self.services['vpc']['cidr'] = '10.1.1.1/16'
+    vpc_1 = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=account_1.name, domainid=account_1.domainid)
+    vpcs = VPC.list(self.apiclient, id=vpc_1.id)
+    self.assertEqual(validateList(vpcs)[0], PASS, ('VPC list validation failed, vpc list is %s' % vpcs))
+    vpc_2 = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=account_2.name, domainid=account_2.domainid)
+    vpcs = VPC.list(self.apiclient, id=vpc_2.id)
+    self.assertEqual(validateList(vpcs)[0], PASS, ('VPC list validation failed, vpc list is %s' % vpcs))
+    persistent_network_1 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.persistent_network_offering_NoLB.id, accountid=account_1.name, domainid=account_1.domainid, zoneid=self.zone.id, vpcid=vpc_1.id, gateway='10.1.1.1', netmask='255.255.255.0')
+    verifyNetworkState(self.apiclient, persistent_network_1.id, 'implemented')
+    self.assertIsNotNone(persistent_network_1.vlan, ('vlan must not be null for persistent network %s' % persistent_network_1.id))
+    persistent_network_2 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.persistent_network_offering_NoLB.id, accountid=account_2.name, domainid=account_2.domainid, zoneid=self.zone.id, vpcid=vpc_2.id, gateway='10.1.1.1', netmask='255.255.255.0')
+    verifyNetworkState(self.apiclient, persistent_network_2.id, 'implemented')
+    self.assertIsNotNone(persistent_network_2.vlan, ('vlan must not be null for persistent network: %s' % persistent_network_2.id))
+    try:
+        child_domain.delete(self.apiclient, cleanup=True)
+    except Exception as e:
+        self.fail(('Failed to delete domain: %s' % e))
+    self.debug(('Waiting for account.cleanup.interval' + ' to cleanup any remaining resouces'))
+    wait_for_cleanup(self.apiclient, (['account.cleanup.interval'] * 3))
+    self.VerifyDomainCleanup(child_domain.id)
+    with self.assertRaises(Exception) as e:
+        Account.list(self.apiclient, name=account_1.name, domainid=account_1.domainid, listall=True)
+    with self.assertRaises(Exception) as e:
+        Account.list(self.apiclient, name=account_2.name, domainid=account_2.domainid, listall=True)
+    self.VerifyVpcCleanup(vpc_1.id)
+    self.VerifyVpcCleanup(vpc_2.id)
+    self.VerifyNetworkClenaup(persistent_network_1.id)
+    self.VerifyNetworkCleanup(persistent_network_2.id)
+    return

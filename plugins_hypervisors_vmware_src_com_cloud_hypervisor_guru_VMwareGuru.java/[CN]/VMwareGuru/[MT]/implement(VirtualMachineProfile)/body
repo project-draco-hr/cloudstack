@@ -3,8 +3,10 @@
   to.setBootloader(BootloaderType.HVM);
   Map<String,String> details=to.getDetails();
   if (details == null)   details=new HashMap<String,String>();
+  Type vmType=vm.getType();
+  boolean userVm=!(vmType.equals(VirtualMachine.Type.DomainRouter) || vmType.equals(VirtualMachine.Type.ConsoleProxy) || vmType.equals(VirtualMachine.Type.SecondaryStorageVm));
   String nicDeviceType=details.get(VmDetailConstants.NIC_ADAPTER);
-  if (vm.getVirtualMachine() instanceof DomainRouterVO || vm.getVirtualMachine() instanceof ConsoleProxyVO || vm.getVirtualMachine() instanceof SecondaryStorageVmVO) {
+  if (!userVm) {
     if (nicDeviceType == null) {
       details.put(VmDetailConstants.NIC_ADAPTER,_vmwareMgr.getSystemVMDefaultNicAdapterType());
     }
@@ -33,7 +35,7 @@
     }
   }
   String diskDeviceType=details.get(VmDetailConstants.ROOK_DISK_CONTROLLER);
-  if (!(vm.getVirtualMachine() instanceof DomainRouterVO || vm.getVirtualMachine() instanceof ConsoleProxyVO || vm.getVirtualMachine() instanceof SecondaryStorageVmVO)) {
+  if (userVm) {
     if (diskDeviceType == null) {
       details.put(VmDetailConstants.ROOK_DISK_CONTROLLER,_vmwareMgr.getRootDiskController());
     }
@@ -51,7 +53,7 @@
   details.put(Config.VmwareReserveCpu.key(),VmwareReserveCpu.valueIn(clusterId).toString());
   details.put(Config.VmwareReserveMem.key(),VmwareReserveMemory.valueIn(clusterId).toString());
   to.setDetails(details);
-  if (vm.getVirtualMachine() instanceof DomainRouterVO) {
+  if (vmType.equals(VirtualMachine.Type.DomainRouter)) {
     NicProfile publicNicProfile=null;
     for (    NicProfile nicProfile : nicProfiles) {
       if (nicProfile.getTrafficType() == TrafficType.Public) {
@@ -106,11 +108,13 @@
     for (    NicTO nicTo : sortNicsByDeviceId(to.getNics())) {
       sbMacSequence.append(nicTo.getMac()).append("|");
     }
-    sbMacSequence.deleteCharAt(sbMacSequence.length() - 1);
-    String bootArgs=to.getBootArgs();
-    to.setBootArgs(bootArgs + " nic_macs=" + sbMacSequence.toString());
+    if (!sbMacSequence.toString().isEmpty()) {
+      sbMacSequence.deleteCharAt(sbMacSequence.length() - 1);
+      String bootArgs=to.getBootArgs();
+      to.setBootArgs(bootArgs + " nic_macs=" + sbMacSequence.toString());
+    }
   }
-  if (!(vm.getVirtualMachine() instanceof DomainRouterVO || vm.getVirtualMachine() instanceof ConsoleProxyVO || vm.getVirtualMachine() instanceof SecondaryStorageVmVO)) {
+  if (userVm) {
     String nestedVirt=_configDao.getValue(Config.VmwareEnableNestedVirtualization.key());
     if (nestedVirt != null) {
       s_logger.debug("Nested virtualization requested, adding flag to vm configuration");

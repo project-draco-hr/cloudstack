@@ -1,0 +1,26 @@
+@attr(tags=['advanced', 'advancedns'])
+def test_upgrade_network_NS_to_persistent_NS(self):
+    if (not self.ns_configured):
+        self.skipTest('Skipping - this test required netscaler configured in the network')
+    account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    isolated_network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_network_offering_netscaler.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    verifyNetworkState(self.api_client, isolated_network.id, 'allocated')
+    isolated_network.update(self.apiclient, networkofferingid=self.isolated_persistent_network_offering_netscaler.id, changecidr=True)
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[isolated_network.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.debug(('Associating public IP for network: %s' % isolated_network.id))
+    ipaddress = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=isolated_network.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress.ipaddress.id, networkid=isolated_network.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress.ipaddress.ipaddress)))
+    virtual_machine.delete(self.api_client)
+    self.verifyVmExpungement(virtual_machine)
+    wait_for_cleanup(self.api_client, ['network.gc.interval', 'network.gc.wait'])
+    verifyNetworkState(self.api_client, isolated_network.id, 'implemented')
+    return

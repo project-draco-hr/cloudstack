@@ -1,0 +1,51 @@
+{
+  String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+  String routerIp=cmd.getAccessDetail(NetworkElementCommand.ROUTER_IP);
+  Connect conn;
+  try {
+    conn=LibvirtConnection.getConnectionByVmName(routerName);
+    List<InterfaceDef> nics=getInterfaces(conn,routerName);
+    Map<String,Integer> broadcastUriAllocatedToVM=new HashMap<String,Integer>();
+    Integer nicPos=0;
+    for (    InterfaceDef nic : nics) {
+      if (nic.getBrName().equalsIgnoreCase(_linkLocalBridgeName)) {
+        broadcastUriAllocatedToVM.put("LinkLocal",nicPos);
+      }
+ else {
+        if (nic.getBrName().equalsIgnoreCase(_publicBridgeName) || nic.getBrName().equalsIgnoreCase(_privBridgeName) || nic.getBrName().equalsIgnoreCase(_guestBridgeName)) {
+          broadcastUriAllocatedToVM.put(BroadcastDomainType.Vlan.toUri(Vlan.UNTAGGED).toString(),nicPos);
+        }
+ else {
+          String broadcastUri=getBroadcastUriFromBridge(nic.getBrName());
+          broadcastUriAllocatedToVM.put(broadcastUri,nicPos);
+        }
+      }
+      nicPos++;
+    }
+    IpAddressTO[] ips=cmd.getIpAddresses();
+    int numOfIps=ips.length;
+    int nicNum=0;
+    for (    IpAddressTO ip : ips) {
+      boolean newNic=false;
+      if (!broadcastUriAllocatedToVM.containsKey(ip.getBroadcastUri())) {
+        VifHotPlug(conn,routerName,ip.getBroadcastUri(),ip.getVifMacAddress());
+        broadcastUriAllocatedToVM.put(ip.getBroadcastUri(),nicPos++);
+        newNic=true;
+      }
+      nicNum=broadcastUriAllocatedToVM.get(ip.getBroadcastUri());
+      if (numOfIps == 1 && !ip.isAdd()) {
+        vifHotUnPlug(conn,routerName,ip.getVifMacAddress());
+        networkUsage(routerIp,"deleteVif","eth" + nicNum);
+      }
+    }
+  }
+ catch (  LibvirtException e) {
+    s_logger.error("ipassoccmd failed",e);
+    return new ExecutionResult(false,e.getMessage());
+  }
+catch (  InternalErrorException e) {
+    s_logger.error("ipassoccmd failed",e);
+    return new ExecutionResult(false,e.getMessage());
+  }
+  return new ExecutionResult(true,null);
+}

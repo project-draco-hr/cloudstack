@@ -1,0 +1,22 @@
+@attr(tags=['advanced'])
+def test_delete_account(self):
+    account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_persistent_network_offering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[network.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.debug(('Associating public IP for network: %s' % network.id))
+    ipaddress = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=network.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress.ipaddress.id, networkid=network.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress.ipaddress.ipaddress)))
+    account.delete(self.api_client)
+    networks = Network.list(self.apiclient, id=network.id)
+    self.assertEqual(validateList(networks)[0], FAIL, ('network list should be enmpty, it is %s' % networks))
+    public_ips = PublicIPAddress.list(self.apiclient, id=ipaddress.ipaddress.id)
+    self.assertEqual(validateList(public_ips)[0], FAIL, ('Public Ip list be empty, it is %s' % public_ips))
+    return

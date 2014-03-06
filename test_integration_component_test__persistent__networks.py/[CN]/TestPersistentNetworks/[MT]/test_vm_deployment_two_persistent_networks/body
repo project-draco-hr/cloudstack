@@ -1,0 +1,41 @@
+@attr(tags=['advanced'])
+def test_vm_deployment_two_persistent_networks(self):
+    account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    isolated_persistent_network_1 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_persistent_network_offering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    self.assertEqual(str(isolated_persistent_network_1.state).lower(), 'implemented', ('network state should be implemented, it is %s' % isolated_persistent_network_1.state))
+    self.assertIsNotNone(isolated_persistent_network_1.vlan, 'vlan must not be null for persistent network')
+    isolated_persistent_network_2 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_persistent_network_offering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    self.assertEqual(str(isolated_persistent_network_2.state).lower(), 'implemented', ('network state should be implemented, it is %s' % isolated_persistent_network_2.state))
+    self.assertIsNotNone(isolated_persistent_network_2.vlan, 'vlan must not be null for persistent network')
+    self.debug(('Listing routers for network: %s' % isolated_persistent_network_1.name))
+    routers_nw_1 = Router.list(self.api_client, listall=True, networkid=isolated_persistent_network_1.id)
+    self.assertEqual(validateList(routers_nw_1)[0], PASS, ('Routers list validation failed, list is %s' % routers_nw_1))
+    for router in routers_nw_1:
+        self.checkRouterAccessibility(router)
+    self.debug(('Listing routers for network: %s' % isolated_persistent_network_2.name))
+    routers_nw_2 = Router.list(self.api_client, listall=True, networkid=isolated_persistent_network_2.id)
+    self.assertEqual(validateList(routers_nw_2)[0], PASS, ('Routers list validation failed, list is %s' % routers_nw_2))
+    for router in routers_nw_2:
+        self.checkRouterAccessibility(router)
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[isolated_persistent_network_1.id, isolated_persistent_network_2.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.debug(('Associating public IP for network: %s' % isolated_persistent_network_1.id))
+    ipaddress_nw_1 = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=isolated_persistent_network_1.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress_nw_1.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    self.debug(('Associating public IP for network: %s' % isolated_persistent_network_2.id))
+    ipaddress_nw_2 = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=isolated_persistent_network_2.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress_nw_2.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress_nw_1.ipaddress.id, networkid=isolated_persistent_network_1.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress_nw_1.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress_nw_1.ipaddress.ipaddress)))
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress_nw_2.ipaddress.id, networkid=isolated_persistent_network_2.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress_nw_2.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress_nw_2.ipaddress.ipaddress)))
+    return

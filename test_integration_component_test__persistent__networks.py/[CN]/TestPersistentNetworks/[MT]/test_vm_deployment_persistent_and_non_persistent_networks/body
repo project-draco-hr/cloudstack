@@ -1,0 +1,29 @@
+@attr(tags=['advanced'])
+def test_vm_deployment_persistent_and_non_persistent_networks(self):
+    account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    network_1 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_persistent_network_offering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    self.assertEqual(str(network_1.state).lower(), 'implemented', ('network state should be implemented, it is %s' % network_1.state))
+    self.assertIsNotNone(network_1.vlan, 'vlan must not be null for persistent network')
+    network_2 = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_network_offering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[network_1.id, network_2.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.debug(('Associating public IP for network: %s' % network_1.id))
+    ipaddress_nw_1 = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=network_1.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress_nw_1.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress_nw_1.ipaddress.id, networkid=network_1.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress_nw_1.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress_nw_1.ipaddress.ipaddress)))
+    self.debug(('Associating public IP for network: %s' % network_2.id))
+    ipaddress_nw_2 = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=network_2.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress_nw_2.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress_nw_2.ipaddress.id, networkid=network_2.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress_nw_2.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress_nw_2.ipaddress.ipaddress)))
+    return
