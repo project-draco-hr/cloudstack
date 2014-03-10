@@ -1,0 +1,70 @@
+{
+  long hostId=host.getId();
+  List<? extends Network> vpcNetworks=_vpcMgr.getVpcNetworks(vpcId);
+  List<Long> vpcSpannedHostIds=_ovsNetworkToplogyGuru.getVpcSpannedHosts(vpcId);
+  String bridgeName=generateBridgeNameForVpc(vpcId);
+  for (  Network vpcNetwork : vpcNetworks) {
+    int key=getGreKey(vpcNetwork);
+    List<Long> toHostIds=new ArrayList<Long>();
+    List<Long> fromHostIds=new ArrayList<Long>();
+    for (    Long rh : vpcSpannedHostIds) {
+      if (rh == hostId) {
+        continue;
+      }
+      OvsTunnelNetworkVO ta=_tunnelNetworkDao.getByFromToNetwork(hostId,rh.longValue(),vpcNetwork.getId());
+      if (ta == null || ta.getState().equals(OvsTunnel.State.Failed.name())) {
+        s_logger.debug("Attempting to create tunnel from:" + hostId + " to:"+ rh.longValue());
+        if (ta == null) {
+          createTunnelRecord(hostId,rh.longValue(),vpcNetwork.getId(),key);
+        }
+        if (!toHostIds.contains(rh)) {
+          toHostIds.add(rh);
+        }
+      }
+      ta=_tunnelNetworkDao.getByFromToNetwork(rh.longValue(),hostId,vpcNetwork.getId());
+      if (ta == null || ta.getState().equals(OvsTunnel.State.Failed.name())) {
+        s_logger.debug("Attempting to create tunnel from:" + rh.longValue() + " to:"+ hostId);
+        if (ta == null) {
+          createTunnelRecord(rh.longValue(),hostId,vpcNetwork.getId(),key);
+        }
+        if (!fromHostIds.contains(rh)) {
+          fromHostIds.add(rh);
+        }
+      }
+    }
+    try {
+      String myIp=getGreEndpointIP(host,vpcNetwork);
+      if (myIp == null)       throw new GreTunnelException("Unable to retrieve the source " + "endpoint for the GRE tunnel." + "Failure is on host:"+ host.getId());
+      boolean noHost=true;
+      for (      Long i : toHostIds) {
+        HostVO rHost=_hostDao.findById(i);
+        String otherIp=getGreEndpointIP(rHost,vpcNetwork);
+        if (otherIp == null)         throw new GreTunnelException("Unable to retrieve the remote " + "endpoint for the GRE tunnel." + "Failure is on host:"+ rHost.getId());
+        Commands cmds=new Commands(new OvsCreateTunnelCommand(otherIp,key,Long.valueOf(hostId),i,vpcNetwork.getId(),myIp,bridgeName,vpcNetwork.getUuid()));
+        s_logger.debug("Attempting to create tunnel from:" + hostId + " to:"+ i+ " for the network "+ vpcNetwork.getId());
+        s_logger.debug("Ask host " + hostId + " to create gre tunnel to "+ i);
+        Answer[] answers=_agentMgr.send(hostId,cmds);
+        handleCreateTunnelAnswer(answers);
+        noHost=false;
+      }
+      for (      Long i : fromHostIds) {
+        HostVO rHost=_hostDao.findById(i);
+        String otherIp=getGreEndpointIP(rHost,vpcNetwork);
+        Commands cmds=new Commands(new OvsCreateTunnelCommand(myIp,key,i,Long.valueOf(hostId),vpcNetwork.getId(),otherIp,bridgeName,vpcNetwork.getUuid()));
+        s_logger.debug("Ask host " + i + " to create gre tunnel to "+ hostId);
+        Answer[] answers=_agentMgr.send(i,cmds);
+        handleCreateTunnelAnswer(answers);
+        noHost=false;
+      }
+    }
+ catch (    GreTunnelException|OperationTimedoutException|AgentUnavailableException e) {
+      s_logger.warn("Ovs Tunnel network created tunnel failed",e);
+    }
+  }
+  OvsVpcPhysicalTopologyConfigCommand topologyConfigCommand=prepareVpcTopologyUpdate(vpcId);
+  for (  Long id : vpcSpannedHostIds) {
+    if (!sendVpcTopologyChangeUpdate(topologyConfigCommand,id,bridgeName)) {
+      s_logger.debug("Failed to send VPC topology change update to host : " + id + ". Moving on with rest of"+ "the host update.");
+    }
+  }
+}
