@@ -1,22 +1,56 @@
 {
-  try {
-    int key=getGreKey(nw);
-    String bridgeName=generateBridgeName(nw,key);
-    Command cmd=new OvsDestroyBridgeCommand(nw.getId(),bridgeName);
-    s_logger.debug("Destroying bridge for network " + nw.getId() + " on host:"+ host.getId());
-    Answer ans=_agentMgr.send(host.getId(),cmd);
-    handleDestroyBridgeAnswer(ans,host.getId(),nw.getId());
-    List<OvsTunnelNetworkVO> peers=_tunnelNetworkDao.listByToNetwork(host.getId(),nw.getId());
-    for (    OvsTunnelNetworkVO p : peers) {
-      if (p.getState().equals(OvsTunnel.State.Established.name())) {
-        cmd=new OvsDestroyTunnelCommand(p.getNetworkId(),bridgeName,p.getPortName());
-        s_logger.debug("Destroying tunnel to " + host.getId() + " from "+ p.getFrom());
-        ans=_agentMgr.send(p.getFrom(),cmd);
-        handleDestroyTunnelAnswer(ans,p.getFrom(),p.getTo(),p.getNetworkId());
+  if (nw.getVpcId() != null && isVpcEnabledForDistributedRouter(nw.getVpcId())) {
+    List<Long> vmIds=_ovsNetworkToplogyGuru.getActiveVmsInVpcOnHost(nw.getVpcId(),host.getId());
+    if (vmIds != null && !vmIds.isEmpty()) {
+      return;
+    }
+    List<? extends Network> vpcNetworks=_vpcMgr.getVpcNetworks(nw.getVpcId());
+    try {
+      for (      Network network : vpcNetworks) {
+        int key=getGreKey(nw);
+        String bridgeName=generateBridgeName(nw,key);
+        List<OvsTunnelNetworkVO> peers=_tunnelNetworkDao.listByToNetwork(host.getId(),nw.getId());
+        for (        OvsTunnelNetworkVO p : peers) {
+          if (p.getState().equals(OvsTunnel.State.Established.name())) {
+            Command cmd=new OvsDestroyTunnelCommand(p.getNetworkId(),bridgeName,p.getPortName());
+            s_logger.debug("Destroying tunnel to " + host.getId() + " from "+ p.getFrom());
+            Answer ans=_agentMgr.send(p.getFrom(),cmd);
+            handleDestroyTunnelAnswer(ans,p.getFrom(),p.getTo(),p.getNetworkId());
+          }
+        }
       }
+      Command cmd=new OvsDestroyBridgeCommand(nw.getId(),generateBridgeNameForVpc(nw.getVpcId()));
+      s_logger.debug("Destroying bridge for network " + nw.getId() + " on host:"+ host.getId());
+      Answer ans=_agentMgr.send(host.getId(),cmd);
+      handleDestroyBridgeAnswer(ans,host.getId(),nw.getId());
+    }
+ catch (    Exception e) {
     }
   }
- catch (  Exception e) {
-    s_logger.warn(String.format("Destroy tunnel failed",e));
+ else {
+    List<Long> vmIds=_ovsNetworkToplogyGuru.getActiveVmsInNetworkOnHost(nw.getId(),host.getId());
+    if (vmIds != null && !vmIds.isEmpty()) {
+      return;
+    }
+    try {
+      int key=getGreKey(nw);
+      String bridgeName=generateBridgeName(nw,key);
+      Command cmd=new OvsDestroyBridgeCommand(nw.getId(),bridgeName);
+      s_logger.debug("Destroying bridge for network " + nw.getId() + " on host:"+ host.getId());
+      Answer ans=_agentMgr.send(host.getId(),cmd);
+      handleDestroyBridgeAnswer(ans,host.getId(),nw.getId());
+      List<OvsTunnelNetworkVO> peers=_tunnelNetworkDao.listByToNetwork(host.getId(),nw.getId());
+      for (      OvsTunnelNetworkVO p : peers) {
+        if (p.getState().equals(OvsTunnel.State.Established.name())) {
+          cmd=new OvsDestroyTunnelCommand(p.getNetworkId(),bridgeName,p.getPortName());
+          s_logger.debug("Destroying tunnel to " + host.getId() + " from "+ p.getFrom());
+          ans=_agentMgr.send(p.getFrom(),cmd);
+          handleDestroyTunnelAnswer(ans,p.getFrom(),p.getTo(),p.getNetworkId());
+        }
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn(String.format("Destroy tunnel failed",e));
+    }
   }
 }
