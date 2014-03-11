@@ -38,9 +38,17 @@ def create_tunnel(bridge, remote_ip, key, src_host, dst_host):
         tun_ofport = lib.do_cmd(cmd_tun_ofport)
         if tun_ofport.endswith('\n'):
             tun_ofport = tun_ofport[:(-1)]
-        lib.add_flow(bridge, priority=1000, in_port=tun_ofport, dl_dst='ff:ff:ff:ff:ff:ff', actions='drop')
-        lib.add_flow(bridge, priority=1000, in_port=tun_ofport, nw_dst='224.0.0.0/24', actions='drop')
-        drop_flow_setup = True
+        ovs_tunnel_network = lib.do_cmd([lib.VSCTL_PATH, 'get', 'bridge', bridge, 'other_config:is-ovs-tun-network'])
+        ovs_vpc_distributed_vr_network = lib.do_cmd([lib.VSCTL_PATH, 'get', 'bridge', bridge, 'other_config:is-ovs_vpc_distributed_vr_network'])
+        if (ovs_tunnel_network == 'True'):
+            lib.add_flow(bridge, priority=1000, in_port=tun_ofport, dl_dst='ff:ff:ff:ff:ff:ff', actions='drop')
+            lib.add_flow(bridge, priority=1000, in_port=tun_ofport, nw_dst='224.0.0.0/24', actions='drop')
+            drop_flow_setup = True
+        if (ovs_vpc_distributed_vr_network == 'True'):
+            lib.add_flow(bridge, priority=1000, in_port=tun_ofport, table=0, dl_dst='ff:ff:ff:ff:ff:ff', actions='drop')
+            lib.add_flow(bridge, priority=1000, in_port=tun_ofport, table=0, nw_dst='224.0.0.0/24', actions='drop')
+            lib.add_flow(bridge, priority=1000, in_port=tun_ofport, table=0, actions='resubmit(,1)')
+            lib.do_cmd([lib.VSCTL_PATH, 'set', 'interface', name, ('options:cloudstack-network-id=%s' % network_uuid)])
         logging.debug('Broadcast drop rules added')
         return 'true'
     except:

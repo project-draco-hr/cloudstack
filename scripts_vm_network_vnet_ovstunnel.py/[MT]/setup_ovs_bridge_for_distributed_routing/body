@@ -1,0 +1,27 @@
+@echo
+def setup_ovs_bridge_for_distributed_routing(bridge, cs_host_id):
+    res = lib.check_switch()
+    if (res != 'SUCCESS'):
+        return ('FAILURE:%s' % res)
+    logging.debug(('About to manually create the bridge:%s' % bridge))
+    res = lib.do_cmd([lib.VSCTL_PATH, '--', '--may-exist', 'add-br', bridge])
+    logging.debug(('Bridge has been manually created:%s' % res))
+    if res:
+        result = ('FAILURE:%s' % res)
+    else:
+        res = lib.do_cmd([lib.VSCTL_PATH, 'list', 'bridge', bridge])
+        res = lib.do_cmd([lib.VSCTL_PATH, 'set', 'bridge', bridge, 'other_config:is-ovs_vpc_distributed_vr_network=True'])
+        conf_hosts = lib.do_cmd([lib.VSCTL_PATH, 'get', 'bridge', bridge, 'other:ovs-host-setup'])
+        conf_hosts = (cs_host_id + ((conf_hosts and (',%s' % conf_hosts)) or ''))
+        lib.do_cmd([lib.VSCTL_PATH, 'set', 'bridge', bridge, ('other_config:ovs-host-setup=%s' % conf_hosts)])
+        lib.add_flow(bridge, priority=1000, dl_dst='ff:ff:ff:ff:ff:ff', table=0, actions='resubmit(,2)')
+        lib.add_flow(bridge, priority=1000, nw_dst='224.0.0.0/24', table=0, actions='resubmit(,2)')
+        lib.add_flow(bridge, priority=0, table=0, actions='resubmit(,1)')
+        lib.add_flow(bridge, priority=0, table=1, actions='resubmit(,2)')
+        lib.add_flow(bridge, priority=0, table=2, actions='drop')
+        lib.add_flow(bridge, priority=0, table=3, actions='resubmit(,4)')
+        lib.add_flow(bridge, priority=0, table=4, actions='resubmit(,1)')
+        lib.add_flow(bridge, priority=0, table=5, actions='drop')
+        result = 'SUCCESS: successfully setup bridge with flow rules'
+        logging.debug(('Setup_ovs_bridge completed with result:%s' % result))
+    return result
