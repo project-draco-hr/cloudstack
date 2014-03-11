@@ -1,0 +1,50 @@
+@unittest.skip('Skip - WIP')
+@attr(tags=['advanced'])
+def test_RVR_network(self):
+    ' Test IP reservation in network with RVR\n        # steps\n        # 1. create vm in isolated network with RVR and ip in guestvmcidr\n        # 2. update guestvmcidr\n        # 3. List routers and stop the master router, wait till backup router comes up\n        # 4. create another VM\n        #\n        # validation\n        # 1. Guest vm cidr should be successfully updated with correct value\n        # 2. Existing guest vm ip should not be changed after reservation\n        # 3. Newly created VM should get ip in guestvmcidr\n        # 4. Verify that the network has two routers associated with it\n        # 5. Backup router should come up when master router is stopped'
+    subnet = ('10.1.' + str(random.randrange(1, 254)))
+    gateway = (subnet + '.1')
+    resultSet = createIsolatedNetwork(self, self.isolated_network_offering_RVR.id, gateway=gateway)
+    if (resultSet[0] == FAIL):
+        self.fail('Failed to create isolated network')
+    else:
+        isolated_network_RVR = resultSet[1]
+    guest_vm_cidr = (subnet + '.0/29')
+    try:
+        virtual_machine_1 = createVirtualMachine(self, network_id=isolated_network_RVR.id, ip_address=(subnet + '.3'))
+    except Exception as e:
+        self.fail(('VM creation failed: %s' % e))
+    isolated_network_RVR.update(self.apiclient, guestvmcidr=guest_vm_cidr)
+    matchNetworkGuestVmCIDR(self, isolated_network_RVR.id, guest_vm_cidr)
+    vms = VirtualMachine.list(self.apiclient, id=virtual_machine_1.id)
+    self.assertEqual(validateList(vms)[0], PASS, 'vm list validation failed')
+    self.assertEqual(vms[0].nic[0].ipaddress, virtual_machine_1.ipaddress, 'VM IP should not change after reservation')
+    self.debug(('Listing routers for network: %s' % isolated_network_RVR.name))
+    routers = Router.list(self.apiclient, networkid=isolated_network_RVR.id, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'Routers list validation failed')
+    self.assertEqual(len(routers), 2, 'Length of the list router should be 2 (Backup & master)')
+    if (routers[0].redundantstate == MASTER):
+        master_router = routers[0]
+        backup_router = routers[1]
+    else:
+        master_router = routers[1]
+        backup_router = routers[0]
+    self.debug(('Stopping router ID: %s' % master_router.id))
+    try:
+        Router.stop(self.apiclient, id=master_router.id)
+    except Exception as e:
+        self.fail(('Failed to stop master router due to error %s' % e))
+    wait_for_cleanup(self.apiclient, ['router.check.interval'])
+    result = verifyRouterState(master_router.id, [UNKNOWN, FAULT])
+    if (result[0] == FAIL):
+        self.fail(result[1])
+    result = verifyRouterState(backup_router.id, [MASTER])
+    if (result[0] == FAIL):
+        self.fail(result[1])
+    try:
+        virtual_machine_2 = createVirtualMachine(self, network_id=isolated_network_RVR.id)
+        if (netaddr.IPAddress(virtual_machine_2.ipaddress) not in netaddr.IPNetwork(guest_vm_cidr)):
+            self.fail("Newly created VM doesn't get IP from reserverd CIDR")
+    except Exception as e:
+        self.fail(('VM creation failed, cannot validate the condition: %s' % e))
+    return
