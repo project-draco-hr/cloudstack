@@ -17,13 +17,29 @@
     if (translatedInfo.get(instance.getId()) != null)     it.remove();
   }
   if (vmsThatAreMissingReport.size() > 0) {
+    Date currentTime=DateUtil.currentGMTTime();
+    if (s_logger.isDebugEnabled())     s_logger.debug("Run missing VM report. current time: " + currentTime.getTime());
+    long milliSecondsGracefullPeriod=PingInterval.value() * 2000;
     for (    VMInstanceVO instance : vmsThatAreMissingReport) {
-      if (_instanceDao.updatePowerState(instance.getId(),hostId,VirtualMachine.PowerState.PowerReportMissing)) {
-        if (s_logger.isDebugEnabled())         s_logger.debug("VM state report is updated. host: " + hostId + ", vm id: "+ instance.getId()+ ", power state: PowerReportMissing ");
-        _messageBus.publish(null,VirtualMachineManager.Topics.VM_POWER_STATE,PublishScope.GLOBAL,instance.getId());
+      Date vmStateUpdateTime=instance.getUpdateTime();
+      if (vmStateUpdateTime == null) {
+        s_logger.warn("VM state was updated but update time is null?! vm id: " + instance.getId());
+        vmStateUpdateTime=currentTime;
+      }
+      if (s_logger.isDebugEnabled())       s_logger.debug("Detected missing VM. host: " + hostId + ", vm id: "+ instance.getId()+ ", power state: PowerReportMissing, last state update: "+ vmStateUpdateTime.getTime());
+      long milliSecondsSinceLastStateUpdate=currentTime.getTime() - vmStateUpdateTime.getTime();
+      if (milliSecondsSinceLastStateUpdate > milliSecondsGracefullPeriod) {
+        s_logger.debug("vm id: " + instance.getId() + " - time since last state update("+ milliSecondsSinceLastStateUpdate+ "ms) has passed graceful period");
+        if (_instanceDao.updatePowerState(instance.getId(),hostId,VirtualMachine.PowerState.PowerReportMissing)) {
+          if (s_logger.isDebugEnabled())           s_logger.debug("VM state report is updated. host: " + hostId + ", vm id: "+ instance.getId()+ ", power state: PowerReportMissing ");
+          _messageBus.publish(null,VirtualMachineManager.Topics.VM_POWER_STATE,PublishScope.GLOBAL,instance.getId());
+        }
+ else {
+          if (s_logger.isDebugEnabled())           s_logger.debug("VM power state does not change, skip DB writing. vm id: " + instance.getId());
+        }
       }
  else {
-        if (s_logger.isDebugEnabled())         s_logger.debug("VM power state does not change, skip DB writing. vm id: " + instance.getId());
+        s_logger.debug("vm id: " + instance.getId() + " - time since last state update("+ milliSecondsSinceLastStateUpdate+ "ms) has not passed graceful period yet");
       }
     }
   }
