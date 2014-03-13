@@ -1,0 +1,84 @@
+{
+  Account callerAccount=CallContext.current().getCallingAccount();
+  UserVO callerUser=_userDao.findById(CallContext.current().getCallingUserId());
+  if (callerAccount != null && callerAccount.getRemoved() != null) {
+    throw new InvalidParameterValueException("The account " + callerAccount.getId() + " is removed");
+  }
+  UserVmVO vm=_vmDao.findById(vmId);
+  if (vm == null) {
+    throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
+  }
+  _accountMgr.checkAccess(callerAccount,null,true,vm);
+  Account owner=_accountDao.findById(vm.getAccountId());
+  if (owner == null) {
+    throw new InvalidParameterValueException("The owner of " + vm + " does not exist: "+ vm.getAccountId());
+  }
+  if (owner.getState() == Account.State.disabled) {
+    throw new PermissionDeniedException("The owner of " + vm + " is disabled: "+ vm.getAccountId());
+  }
+  Host destinationHost=null;
+  if (hostId != null) {
+    Account account=CallContext.current().getCallingAccount();
+    if (!_accountService.isRootAdmin(account.getId())) {
+      throw new PermissionDeniedException("Parameter hostid can only be specified by a Root Admin, permission denied");
+    }
+    destinationHost=_hostDao.findById(hostId);
+    if (destinationHost == null) {
+      throw new InvalidParameterValueException("Unable to find the host to deploy the VM, host id=" + hostId);
+    }
+  }
+  if (_securityGroupMgr.isVmSecurityGroupEnabled(vmId) && _securityGroupMgr.getSecurityGroupsForVm(vmId).isEmpty() && !_securityGroupMgr.isVmMappedToDefaultSecurityGroup(vmId)&& _networkModel.canAddDefaultSecurityGroup()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Vm " + vm + " is security group enabled, but not mapped to default security group; creating the mapping automatically");
+    }
+    SecurityGroup defaultSecurityGroup=_securityGroupMgr.getDefaultSecurityGroup(vm.getAccountId());
+    if (defaultSecurityGroup != null) {
+      List<Long> groupList=new ArrayList<Long>();
+      groupList.add(defaultSecurityGroup.getId());
+      _securityGroupMgr.addInstanceToGroups(vmId,groupList);
+    }
+  }
+  DataCenterDeployment plan=null;
+  if (destinationHost != null) {
+    s_logger.debug("Destination Host to deploy the VM is specified, specifying a deployment plan to deploy the VM");
+    plan=new DataCenterDeployment(vm.getDataCenterId(),destinationHost.getPodId(),destinationHost.getClusterId(),destinationHost.getId(),null,null);
+  }
+  Map<VirtualMachineProfile.Param,Object> params=null;
+  VMTemplateVO template=null;
+  if (vm.isUpdateParameters()) {
+    _vmDao.loadDetails(vm);
+    template=_templateDao.findByIdIncludingRemoved(vm.getTemplateId());
+    String password="saved_password";
+    if (template.getEnablePassword()) {
+      password=generateRandomPassword();
+    }
+    if (!validPassword(password)) {
+      throw new InvalidParameterValueException("A valid password for this virtual machine was not provided.");
+    }
+    encryptAndStorePassword(vm,password);
+    params=new HashMap<VirtualMachineProfile.Param,Object>();
+    if (additionalParams != null) {
+      params.putAll(additionalParams);
+    }
+    params.put(VirtualMachineProfile.Param.VmPassword,password);
+  }
+  VirtualMachineEntity vmEntity=_orchSrvc.getVirtualMachine(vm.getUuid());
+  DeploymentPlanner planner=null;
+  if (deploymentPlannerToUse != null) {
+    planner=_planningMgr.getDeploymentPlannerByName(deploymentPlannerToUse);
+    if (planner == null) {
+      throw new InvalidParameterValueException("Can't find a planner by name " + deploymentPlannerToUse);
+    }
+  }
+  String reservationId=vmEntity.reserve(planner,plan,new ExcludeList(),Long.toString(callerUser.getId()));
+  vmEntity.deploy(reservationId,Long.toString(callerUser.getId()),params);
+  Pair<UserVmVO,Map<VirtualMachineProfile.Param,Object>> vmParamPair=new Pair(vm,params);
+  if (vm != null && vm.isUpdateParameters()) {
+    if (template.getEnablePassword()) {
+      vm.setPassword((String)vmParamPair.second().get(VirtualMachineProfile.Param.VmPassword));
+      vm.setUpdateParameters(false);
+      _vmDao.update(vm.getId(),vm);
+    }
+  }
+  return vmParamPair;
+}
