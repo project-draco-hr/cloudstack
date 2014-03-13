@@ -14,19 +14,69 @@ synchronized (_vms) {
   Connect conn=null;
   String xmlDesc=null;
   try {
-    conn=LibvirtConnection.getConnectionByVmName(cmd.getVmName());
+    conn=LibvirtConnection.getConnectionByVmName(vmName);
     ifaces=getInterfaces(conn,vmName);
     disks=getDisks(conn,vmName);
     dm=conn.domainLookupByName(vmName);
     xmlDesc=dm.getXMLDesc(0).replace(_privateIp,cmd.getDestinationIp());
     dconn=new Connect("qemu+tcp://" + cmd.getDestinationIp() + "/system");
-    destDomain=dm.migrate(dconn,(1 << 0),xmlDesc,vmName,"tcp:" + cmd.getDestinationIp(),_migrateSpeed);
-    for (    DiskDef disk : disks) {
-      cleanupDisk(disk);
+    s_logger.info("Live migration of instance " + vmName + " initiated");
+    ExecutorService executor=Executors.newFixedThreadPool(1);
+    Callable<Domain> worker=new MigrateKVMAsync(dm,dconn,vmName,cmd.getDestinationIp());
+    Future<Domain> migrateThread=executor.submit(worker);
+    executor.shutdown();
+    long sleeptime=0;
+    while (!executor.isTerminated()) {
+      Thread.sleep(100);
+      sleeptime+=100;
+      if (sleeptime == 1000) {
+        if (_migrateDowntime > 0) {
+          try {
+            int setDowntime=dm.migrateSetMaxDowntime(_migrateDowntime);
+            if (setDowntime == 0) {
+              s_logger.debug("Set max downtime for migration of " + vmName + " to "+ String.valueOf(_migrateDowntime)+ "ms");
+            }
+          }
+ catch (          LibvirtException e) {
+            s_logger.debug("Failed to set max downtime for migration, perhaps migration completed? Error: " + e.getMessage());
+          }
+        }
+      }
+      if ((sleeptime % 1000) == 0) {
+        s_logger.info("Waiting for migration of " + vmName + " to complete, waited "+ sleeptime+ "ms");
+      }
+      if (_migratePauseAfter > 0 && sleeptime > _migratePauseAfter && dm.getInfo().state == DomainInfo.DomainState.VIR_DOMAIN_RUNNING) {
+        s_logger.info("Pausing VM " + vmName + " due to property vm.migrate.pauseafter setting to "+ _migratePauseAfter+ "ms to complete migration");
+        try {
+          dm.suspend();
+        }
+ catch (        LibvirtException e) {
+          s_logger.info("Failed to pause vm " + vmName + " : "+ e.getMessage());
+        }
+      }
+    }
+    s_logger.info("Migration thread for " + vmName + " is done");
+    destDomain=migrateThread.get(10,TimeUnit.SECONDS);
+    if (destDomain != null) {
+      for (      DiskDef disk : disks) {
+        cleanupDisk(disk);
+      }
     }
   }
  catch (  LibvirtException e) {
     s_logger.debug("Can't migrate domain: " + e.getMessage());
+    result=e.getMessage();
+  }
+catch (  InterruptedException e) {
+    s_logger.debug("Interrupted while migrating domain: " + e.getMessage());
+    result=e.getMessage();
+  }
+catch (  ExecutionException e) {
+    s_logger.debug("Failed to execute while migrating domain: " + e.getMessage());
+    result=e.getMessage();
+  }
+catch (  TimeoutException e) {
+    s_logger.debug("Timed out while migrating domain: " + e.getMessage());
     result=e.getMessage();
   }
  finally {

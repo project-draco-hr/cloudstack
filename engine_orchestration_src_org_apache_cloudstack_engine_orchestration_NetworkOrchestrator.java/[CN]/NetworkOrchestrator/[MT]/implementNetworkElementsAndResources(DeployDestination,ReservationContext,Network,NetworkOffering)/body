@@ -36,11 +36,35 @@
       }
     }
   }
-  s_logger.debug("Reprogramming network " + network + " as a part of network implement");
-  if (!reprogramNetworkRules(network.getId(),CallContext.current().getCallingAccount(),network)) {
-    s_logger.warn("Failed to re-program the network as a part of network " + network + " implement");
-    ResourceUnavailableException ex=new ResourceUnavailableException("Unable to apply network rules as a part of network " + network + " implement",DataCenter.class,network.getDataCenterId());
-    ex.addProxyObject(_entityMgr.findById(DataCenter.class,network.getDataCenterId()).getUuid());
-    throw ex;
+  for (  NetworkElement element : networkElements) {
+    if ((element instanceof AggregatedCommandExecutor) && (providersToImplement.contains(element.getProvider()))) {
+      ((AggregatedCommandExecutor)element).prepareAggregatedExecution(network,dest);
+    }
+  }
+  try {
+    s_logger.debug("Reprogramming network " + network + " as a part of network implement");
+    if (!reprogramNetworkRules(network.getId(),CallContext.current().getCallingAccount(),network)) {
+      s_logger.warn("Failed to re-program the network as a part of network " + network + " implement");
+      ResourceUnavailableException ex=new ResourceUnavailableException("Unable to apply network rules as a part of network " + network + " implement",DataCenter.class,network.getDataCenterId());
+      ex.addProxyObject(_entityMgr.findById(DataCenter.class,network.getDataCenterId()).getUuid());
+      throw ex;
+    }
+    for (    NetworkElement element : networkElements) {
+      if ((element instanceof AggregatedCommandExecutor) && (providersToImplement.contains(element.getProvider()))) {
+        if (!((AggregatedCommandExecutor)element).completeAggregatedExecution(network,dest)) {
+          s_logger.warn("Failed to re-program the network as a part of network " + network + " implement due to aggregated commands execution failure!");
+          ResourceUnavailableException ex=new ResourceUnavailableException("Unable to apply network rules as a part of network " + network + " implement",DataCenter.class,network.getDataCenterId());
+          ex.addProxyObject(_entityMgr.findById(DataCenter.class,network.getDataCenterId()).getUuid());
+          throw ex;
+        }
+      }
+    }
+  }
+  finally {
+    for (    NetworkElement element : networkElements) {
+      if ((element instanceof AggregatedCommandExecutor) && (providersToImplement.contains(element.getProvider()))) {
+        ((AggregatedCommandExecutor)element).cleanupAggregatedExecution(network,dest);
+      }
+    }
   }
 }

@@ -1,31 +1,41 @@
 {
-  CallContext ctx=CallContext.current();
-  Long callerUserId=ctx.getCallingUserId();
-  Account caller=ctx.getCallingAccount();
-  ctx.setEventDisplayEnabled(cmdObj.isDisplayResourceEnabled());
+  final CallContext ctx=CallContext.current();
+  final Long callerUserId=ctx.getCallingUserId();
+  final Account caller=ctx.getCallingAccount();
+  String vmUUID=params.get(ApiConstants.VIRTUAL_MACHINE_ID);
   if (cmdObj instanceof BaseAsyncCmd) {
     Long objectId=null;
     String objectUuid=null;
     if (cmdObj instanceof BaseAsyncCreateCmd) {
-      BaseAsyncCreateCmd createCmd=(BaseAsyncCreateCmd)cmdObj;
+      final BaseAsyncCreateCmd createCmd=(BaseAsyncCreateCmd)cmdObj;
       _dispatcher.dispatchCreateCmd(createCmd,params);
       objectId=createCmd.getEntityId();
       objectUuid=createCmd.getEntityUuid();
       params.put("id",objectId.toString());
     }
  else {
-      ApiDispatcher.processParameters(cmdObj,params);
+      objectUuid=params.get(ApiConstants.ID);
+      dispatchChainFactory.getStandardDispatchChain().dispatch(new DispatchTask(cmdObj,params));
     }
-    BaseAsyncCmd asyncCmd=(BaseAsyncCmd)cmdObj;
+    final BaseAsyncCmd asyncCmd=(BaseAsyncCmd)cmdObj;
     if (callerUserId != null) {
       params.put("ctxUserId",callerUserId.toString());
     }
     if (caller != null) {
       params.put("ctxAccountId",String.valueOf(caller.getId()));
     }
+    if (objectUuid != null) {
+      params.put("uuid",objectUuid);
+    }
     long startEventId=ctx.getStartEventId();
     asyncCmd.setStartEventId(startEventId);
-    Long eventId=ActionEventUtils.onScheduledActionEvent((callerUserId == null) ? User.UID_SYSTEM : callerUserId,asyncCmd.getEntityOwnerId(),asyncCmd.getEventType(),asyncCmd.getEventDescription(),asyncCmd.isDisplayResourceEnabled(),startEventId);
+    if (EventTypes.getEntityForEvent(asyncCmd.getEventType()) != null) {
+      ctx.putContextParameter(EventTypes.getEntityForEvent(asyncCmd.getEventType()),objectUuid);
+    }
+    if (vmUUID != null) {
+      ctx.putContextParameter(ReflectUtil.getEntityName(VirtualMachine.class),vmUUID);
+    }
+    final Long eventId=ActionEventUtils.onScheduledActionEvent((callerUserId == null) ? User.UID_SYSTEM : callerUserId,asyncCmd.getEntityOwnerId(),asyncCmd.getEventType(),asyncCmd.getEventDescription(),asyncCmd.isDisplayResourceEnabled(),startEventId);
     if (startEventId == 0) {
       startEventId=eventId;
     }
@@ -34,14 +44,14 @@
     Long instanceId=(objectId == null) ? asyncCmd.getInstanceId() : objectId;
     AsyncJobVO job=new AsyncJobVO("",callerUserId,caller.getId(),cmdObj.getClass().getName(),ApiGsonHelper.getBuilder().create().toJson(params),instanceId,asyncCmd.getInstanceType() != null ? asyncCmd.getInstanceType().toString() : null);
     job.setDispatcher(_asyncDispatcher.getName());
-    long jobId=_asyncMgr.submitAsyncJob(job);
+    final long jobId=_asyncMgr.submitAsyncJob(job);
     if (jobId == 0L) {
-      String errorMsg="Unable to schedule async job for command " + job.getCmd();
+      final String errorMsg="Unable to schedule async job for command " + job.getCmd();
       s_logger.warn(errorMsg);
       throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,errorMsg);
     }
     if (objectId != null) {
-      String objUuid=(objectUuid == null) ? objectId.toString() : objectUuid;
+      final String objUuid=(objectUuid == null) ? objectId.toString() : objectUuid;
       return getBaseAsyncCreateResponse(jobId,(BaseAsyncCreateCmd)asyncCmd,objUuid);
     }
  else {
