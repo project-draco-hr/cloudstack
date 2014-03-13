@@ -1,0 +1,165 @@
+{
+  NetworkProfile profile=ApiDBUtils.getNetworkProfile(network.getId());
+  NetworkResponse response=new NetworkResponse();
+  response.setId(network.getUuid());
+  response.setName(network.getName());
+  response.setDisplaytext(network.getDisplayText());
+  if (network.getBroadcastDomainType() != null) {
+    response.setBroadcastDomainType(network.getBroadcastDomainType().toString());
+  }
+  if (network.getTrafficType() != null) {
+    response.setTrafficType(network.getTrafficType().name());
+  }
+  if (network.getGuestType() != null) {
+    response.setType(network.getGuestType().toString());
+  }
+  response.setGateway(network.getGateway());
+  response.setCidr(network.getCidr());
+  response.setNetworkCidr((network.getNetworkCidr()));
+  if (network.getNetworkCidr() != null) {
+    response.setNetmask(NetUtils.cidr2Netmask(network.getNetworkCidr()));
+  }
+  if (((network.getCidr()) != null) && (network.getNetworkCidr() == null)) {
+    response.setNetmask(NetUtils.cidr2Netmask(network.getCidr()));
+  }
+  response.setIp6Gateway(network.getIp6Gateway());
+  response.setIp6Cidr(network.getIp6Cidr());
+  String reservation=null;
+  if ((network.getCidr() != null) && (NetUtils.isNetworkAWithinNetworkB(network.getCidr(),network.getNetworkCidr()))) {
+    String[] guestVmCidrPair=network.getCidr().split("\\/");
+    String[] guestCidrPair=network.getNetworkCidr().split("\\/");
+    Long guestVmCidrSize=Long.valueOf(guestVmCidrPair[1]);
+    Long guestCidrSize=Long.valueOf(guestCidrPair[1]);
+    String[] guestVmIpRange=NetUtils.getIpRangeFromCidr(guestVmCidrPair[0],guestVmCidrSize);
+    String[] guestIpRange=NetUtils.getIpRangeFromCidr(guestCidrPair[0],guestCidrSize);
+    long startGuestIp=NetUtils.ip2Long(guestIpRange[0]);
+    long endGuestIp=NetUtils.ip2Long(guestIpRange[1]);
+    long startVmIp=NetUtils.ip2Long(guestVmIpRange[0]);
+    long endVmIp=NetUtils.ip2Long(guestVmIpRange[1]);
+    if (startVmIp == startGuestIp && endVmIp < endGuestIp - 1) {
+      reservation=(NetUtils.long2Ip(endVmIp + 1) + "-" + NetUtils.long2Ip(endGuestIp));
+    }
+    if (endVmIp == endGuestIp && startVmIp > startGuestIp + 1) {
+      reservation=(NetUtils.long2Ip(startGuestIp) + "-" + NetUtils.long2Ip(startVmIp - 1));
+    }
+    if (startVmIp > startGuestIp + 1 && endVmIp < endGuestIp - 1) {
+      reservation=(NetUtils.long2Ip(startGuestIp) + "-" + NetUtils.long2Ip(startVmIp - 1)+ " ,  "+ NetUtils.long2Ip(endVmIp + 1)+ "-"+ NetUtils.long2Ip(endGuestIp));
+    }
+  }
+  response.setReservedIpRange(reservation);
+  if (network.getBroadcastUri() != null && view == ResponseView.Full) {
+    String broadcastUri=network.getBroadcastUri().toString();
+    response.setBroadcastUri(broadcastUri);
+    String vlan="N/A";
+switch (BroadcastDomainType.getSchemeValue(network.getBroadcastUri())) {
+case Vlan:
+case Vxlan:
+      vlan=BroadcastDomainType.getValue(network.getBroadcastUri());
+    break;
+}
+response.setVlan(vlan);
+}
+DataCenter zone=ApiDBUtils.findZoneById(network.getDataCenterId());
+if (zone != null) {
+response.setZoneId(zone.getUuid());
+response.setZoneName(zone.getName());
+}
+if (network.getPhysicalNetworkId() != null) {
+PhysicalNetworkVO pnet=ApiDBUtils.findPhysicalNetworkById(network.getPhysicalNetworkId());
+response.setPhysicalNetworkId(pnet.getUuid());
+}
+NetworkOffering networkOffering=ApiDBUtils.findNetworkOfferingById(network.getNetworkOfferingId());
+if (networkOffering != null) {
+response.setNetworkOfferingId(networkOffering.getUuid());
+response.setNetworkOfferingName(networkOffering.getName());
+response.setNetworkOfferingDisplayText(networkOffering.getDisplayText());
+response.setNetworkOfferingConserveMode(networkOffering.isConserveMode());
+response.setIsSystem(networkOffering.isSystemOnly());
+response.setNetworkOfferingAvailability(networkOffering.getAvailability().toString());
+response.setIsPersistent(networkOffering.getIsPersistent());
+}
+if (network.getAclType() != null) {
+response.setAclType(network.getAclType().toString());
+}
+response.setDisplayNetwork(network.getDisplayNetwork());
+response.setState(network.getState().toString());
+response.setRestartRequired(network.isRestartRequired());
+NetworkVO nw=ApiDBUtils.findNetworkById(network.getRelated());
+if (nw != null) {
+response.setRelated(nw.getUuid());
+}
+response.setNetworkDomain(network.getNetworkDomain());
+response.setDns1(profile.getDns1());
+response.setDns2(profile.getDns2());
+Map<Service,Map<Capability,String>> serviceCapabilitiesMap=ApiDBUtils.getNetworkCapabilities(network.getId(),network.getDataCenterId());
+List<ServiceResponse> serviceResponses=new ArrayList<ServiceResponse>();
+if (serviceCapabilitiesMap != null) {
+for (Service service : serviceCapabilitiesMap.keySet()) {
+  ServiceResponse serviceResponse=new ServiceResponse();
+  if (service == Service.Gateway) {
+    continue;
+  }
+  serviceResponse.setName(service.getName());
+  List<CapabilityResponse> capabilityResponses=new ArrayList<CapabilityResponse>();
+  Map<Capability,String> serviceCapabilities=serviceCapabilitiesMap.get(service);
+  if (serviceCapabilities != null) {
+    for (    Capability capability : serviceCapabilities.keySet()) {
+      CapabilityResponse capabilityResponse=new CapabilityResponse();
+      String capabilityValue=serviceCapabilities.get(capability);
+      capabilityResponse.setName(capability.getName());
+      capabilityResponse.setValue(capabilityValue);
+      capabilityResponse.setObjectName("capability");
+      capabilityResponses.add(capabilityResponse);
+    }
+    serviceResponse.setCapabilities(capabilityResponses);
+  }
+  serviceResponse.setObjectName("service");
+  serviceResponses.add(serviceResponse);
+}
+}
+response.setServices(serviceResponses);
+if (network.getAclType() == null || network.getAclType() == ACLType.Account) {
+populateOwner(response,network);
+}
+ else {
+Pair<Long,Boolean> domainNetworkDetails=ApiDBUtils.getDomainNetworkDetails(network.getId());
+if (domainNetworkDetails.first() != null) {
+  Domain domain=ApiDBUtils.findDomainById(domainNetworkDetails.first());
+  if (domain != null) {
+    response.setDomainId(domain.getUuid());
+  }
+}
+response.setSubdomainAccess(domainNetworkDetails.second());
+}
+Long dedicatedDomainId=ApiDBUtils.getDedicatedNetworkDomain(network.getId());
+if (dedicatedDomainId != null) {
+Domain domain=ApiDBUtils.findDomainById(dedicatedDomainId);
+if (domain != null) {
+  response.setDomainId(domain.getUuid());
+}
+response.setDomainName(domain.getName());
+}
+response.setSpecifyIpRanges(network.getSpecifyIpRanges());
+if (network.getVpcId() != null) {
+Vpc vpc=ApiDBUtils.findVpcById(network.getVpcId());
+if (vpc != null) {
+  response.setVpcId(vpc.getUuid());
+}
+}
+response.setCanUseForDeploy(ApiDBUtils.canUseForDeploy(network));
+List<? extends ResourceTag> tags=ApiDBUtils.listByResourceTypeAndId(ResourceObjectType.Network,network.getId());
+List<ResourceTagResponse> tagResponses=new ArrayList<ResourceTagResponse>();
+for (ResourceTag tag : tags) {
+ResourceTagResponse tagResponse=createResourceTagResponse(tag,true);
+tagResponses.add(tagResponse);
+}
+response.setTags(tagResponses);
+if (network.getNetworkACLId() != null) {
+NetworkACL acl=ApiDBUtils.findByNetworkACLId(network.getNetworkACLId());
+if (acl != null) {
+  response.setAclId(acl.getUuid());
+}
+}
+response.setObjectName("network");
+return response;
+}
