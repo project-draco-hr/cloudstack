@@ -5,19 +5,52 @@
   if (loadBalancer == null) {
     throw new InvalidParameterValueException("Failed to assign to load balancer " + loadBalancerId + ", the load balancer was not found.");
   }
+  if (instanceIds == null && vmIdIpMap == null) {
+    throw new InvalidParameterValueException("Both instanceids and vmidipmap  can't be null");
+  }
+  if (instanceIds != null && vmIdIpMap != null) {
+    for (    long instanceId : instanceIds) {
+      if (!vmIdIpMap.containsKey(instanceId)) {
+        vmIdIpMap.put(instanceId,null);
+      }
+    }
+  }
+  if (instanceIds != null && vmIdIpMap == null) {
+    vmIdIpMap=new HashMap<Long,List<String>>();
+    for (    long instanceId : instanceIds) {
+      vmIdIpMap.put(instanceId,null);
+    }
+  }
   List<LoadBalancerVMMapVO> mappedInstances=_lb2VmMapDao.listByLoadBalancerId(loadBalancerId,false);
   Set<Long> mappedInstanceIds=new HashSet<Long>();
   for (  LoadBalancerVMMapVO mappedInstance : mappedInstances) {
     mappedInstanceIds.add(Long.valueOf(mappedInstance.getInstanceId()));
   }
-  final List<UserVm> vmsToAdd=new ArrayList<UserVm>();
-  if (instanceIds == null || instanceIds.isEmpty()) {
-    s_logger.warn("List of vms to assign to the lb, is empty");
-    return false;
+  Map<Long,List<String>> existingVmIdIps=new HashMap<Long,List<String>>();
+  for (  LoadBalancerVMMapVO mappedInstance : mappedInstances) {
+    List<String> ipsList=null;
+    if (existingVmIdIps.containsKey(mappedInstance.getInstanceId())) {
+      ipsList=existingVmIdIps.get(mappedInstance.getInstanceId());
+    }
+ else {
+      ipsList=new ArrayList<String>();
+    }
+    ipsList.add(mappedInstance.getInstanceIp());
+    existingVmIdIps.put(mappedInstance.getInstanceId(),ipsList);
   }
-  for (  Long instanceId : instanceIds) {
-    if (mappedInstanceIds.contains(instanceId)) {
-      throw new InvalidParameterValueException("VM " + instanceId + " is already mapped to load balancer.");
+  final List<UserVm> vmsToAdd=new ArrayList<UserVm>();
+  Set<Long> passedInstanceIds=vmIdIpMap.keySet();
+  for (  Long instanceId : passedInstanceIds) {
+    if (existingVmIdIps.containsKey(instanceId)) {
+      List<String> mappedIps=existingVmIdIps.get(instanceId);
+      List<String> newIps=vmIdIpMap.get(instanceId);
+      if (newIps != null) {
+        for (        String newIp : newIps) {
+          if (mappedIps.contains(newIp)) {
+            throw new InvalidParameterValueException("VM " + instanceId + " with "+ newIp+ " is already mapped to load balancer.");
+          }
+        }
+      }
     }
     UserVm vm=_vmDao.findById(instanceId);
     if (vm == null || vm.getState() == State.Destroyed || vm.getState() == State.Expunging) {
@@ -47,16 +80,36 @@
       ex.addProxyObject(vm.getUuid(),"instanceId");
       throw ex;
     }
+    String priIp=nicInSameNetwork.getIp4Address();
+    List<String> vmIpsList=vmIdIpMap.get(instanceId);
+    String vmLbIp=null;
+    if (vmIpsList == null) {
+      vmIpsList=new ArrayList<String>();
+      vmIpsList.add(priIp);
+      vmIdIpMap.put(instanceId,vmIpsList);
+    }
+ else {
+      for (      String ip : vmIpsList) {
+        if (_nicSecondaryIpDao.findByIp4AddressAndNicId(ip,nicInSameNetwork.getId()) == null) {
+          throw new InvalidParameterValueException("VM ip specified  " + ip + " is not belongs to nic in network "+ nicInSameNetwork.getNetworkId());
+        }
+      }
+    }
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Adding " + vm + " to the load balancer pool");
     }
     vmsToAdd.add(vm);
   }
+  final Set<Long> vmIds=vmIdIpMap.keySet();
+  final Map<Long,List<String>> newMap=vmIdIpMap;
   Transaction.execute(new TransactionCallbackNoReturn(){
     @Override public void doInTransactionWithoutResult(    TransactionStatus status){
-      for (      UserVm vm : vmsToAdd) {
-        LoadBalancerVMMapVO map=new LoadBalancerVMMapVO(loadBalancer.getId(),vm.getId(),false);
-        map=_lb2VmMapDao.persist(map);
+      for (      Long vmId : vmIds) {
+        final List<String> lbVmIps=newMap.get(vmId);
+        for (        String vmIp : lbVmIps) {
+          LoadBalancerVMMapVO map=new LoadBalancerVMMapVO(loadBalancer.getId(),vmId,vmIp,false);
+          map=_lb2VmMapDao.persist(map);
+        }
       }
     }
   }
@@ -77,8 +130,8 @@
       final List<Long> vmInstanceIds=new ArrayList<Long>();
       Transaction.execute(new TransactionCallbackNoReturn(){
         @Override public void doInTransactionWithoutResult(        TransactionStatus status){
-          for (          UserVm vm : vmsToAdd) {
-            vmInstanceIds.add(vm.getId());
+          for (          Long vmId : vmIds) {
+            vmInstanceIds.add(vmId);
           }
         }
       }
