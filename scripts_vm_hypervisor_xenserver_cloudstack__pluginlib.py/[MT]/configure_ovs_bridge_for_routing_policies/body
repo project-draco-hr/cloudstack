@@ -3,43 +3,59 @@ def configure_ovs_bridge_for_routing_policies(bridge, json_config):
     if (vpconfig is None):
         logging.debug("WARNING:Can't find VPC info in json config file")
         return 'FAILURE:IMPROPER_JSON_CONFG_FILE'
-    del_flows(bridge, table=3)
-    egress_rules_added = False
-    ingress_rules_added = False
-    tiers = vpconfig.tiers
-    for tier in tiers:
-        tier_cidr = tier.cidr
-        acl = get_acl(vpconfig, tier.aclid)
-        acl_items = acl.aclitems
-        for acl_item in acl_items:
-            number = acl_item.number
-            action = acl_item.action
-            direction = acl_item.direction
-            source_port_start = acl_item.sourceportstart
-            source_port_end = acl_item.sourceportend
-            protocol = acl_item.protocol
-            source_cidrs = acl_item.sourcecidrs
-            acl_priority = (1000 + number)
-            for source_cidr in source_cidrs:
-                if (direction is 'ingress'):
-                    ingress_rules_added = True
-                    port = source_port_start
-                    while (port < source_port_end):
-                        if (action is 'deny'):
-                            add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, tp_dst=port, nw_proto=protocol, actions='drop')
-                        if (action is 'allow'):
-                            add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, tp_dst=port, nw_proto=protocol, actions='resubmit(,1)')
-                        port = (port + 1)
-                elif (direction in 'egress'):
-                    egress_rules_added = True
-                    port = source_port_start
-                    while (port < source_port_end):
-                        if (action is 'deny'):
-                            add_flow(bridge, priority=acl_priority, table=5, nw_src=tier_cidr, nw_dst=source_cidr, tp_dst=port, nw_proto=protocol, actions='drop')
-                        if (action is 'allow'):
-                            add_flow(bridge, priority=acl_priority, table=5, nw_src=tier_cidr, nw_dst=source_cidr, tp_dst=port, nw_proto=protocol, actions='resubmit(,1)')
-                        port = (port + 1)
-    if (egress_rules_added is False):
-        add_flow(bridge, priority=0, table=3, actions='resubmit(,4)')
-    if (ingress_rules_added is False):
-        add_flow(bridge, priority=0, table=5, actions='drop')
+    try:
+        del_flows(bridge, table=3)
+        egress_rules_added = False
+        ingress_rules_added = False
+        tiers = vpconfig.tiers
+        for tier in tiers:
+            tier_cidr = tier.cidr
+            acl = get_acl(vpconfig, tier.aclid)
+            acl_items = acl.aclitems
+            for acl_item in acl_items:
+                number = acl_item.number
+                action = acl_item.action
+                direction = acl_item.direction
+                source_port_start = acl_item.sourceportstart
+                source_port_end = acl_item.sourceportend
+                protocol = acl_item.protocol
+                source_cidrs = acl_item.sourcecidrs
+                acl_priority = (1000 + number)
+                for source_cidr in source_cidrs:
+                    if (direction is 'ingress'):
+                        ingress_rules_added = True
+                        if ((source_port_start is None) and (source_port_end is None)):
+                            if (action is 'deny'):
+                                add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, nw_proto=protocol, actions='drop')
+                            if (action is 'allow'):
+                                add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, nw_proto=protocol, actions='resubmit(,1)')
+                            continue
+                        port = source_port_start
+                        while (port < source_port_end):
+                            if (action is 'deny'):
+                                add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, tp_dst=port, nw_proto=protocol, actions='drop')
+                            if (action is 'allow'):
+                                add_flow(bridge, priority=acl_priority, table=5, nw_src=source_cidr, nw_dst=tier_cidr, tp_dst=port, nw_proto=protocol, actions='resubmit(,1)')
+                            port = (port + 1)
+                    elif (direction in 'egress'):
+                        egress_rules_added = True
+                        if ((source_port_start is None) and (source_port_end is None)):
+                            if (action is 'deny'):
+                                add_flow(bridge, priority=acl_priority, table=3, nw_src=source_cidr, nw_dst=tier_cidr, nw_proto=protocol, actions='drop')
+                            if (action is 'allow'):
+                                add_flow(bridge, priority=acl_priority, table=3, nw_src=source_cidr, nw_dst=tier_cidr, nw_proto=protocol, actions='resubmit(,1)')
+                            continue
+                        port = source_port_start
+                        while (port < source_port_end):
+                            if (action is 'deny'):
+                                add_flow(bridge, priority=acl_priority, table=3, nw_src=tier_cidr, nw_dst=source_cidr, tp_dst=port, nw_proto=protocol, actions='drop')
+                            if (action is 'allow'):
+                                add_flow(bridge, priority=acl_priority, table=3, nw_src=tier_cidr, nw_dst=source_cidr, tp_dst=port, nw_proto=protocol, actions='resubmit(,1)')
+                            port = (port + 1)
+        if (egress_rules_added is False):
+            add_flow(bridge, priority=0, table=3, actions='resubmit(,4)')
+        if (ingress_rules_added is False):
+            add_flow(bridge, priority=0, table=5, actions='drop')
+    except:
+        logging.debug("An unexpected error occurred while configuring bridge as per VPC's routing policies.")
+        raise
