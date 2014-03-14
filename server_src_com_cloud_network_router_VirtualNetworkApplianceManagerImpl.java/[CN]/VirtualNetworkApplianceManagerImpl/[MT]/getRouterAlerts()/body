@@ -1,0 +1,54 @@
+{
+  try {
+    List<DomainRouterVO> routersInIsolatedNetwork=_routerDao.listByStateAndNetworkType(State.Running,GuestType.Isolated,mgmtSrvrId);
+    List<DomainRouterVO> routersInSharedNetwork=_routerDao.listByStateAndNetworkType(State.Running,GuestType.Shared,mgmtSrvrId);
+    List<DomainRouterVO> routers=new ArrayList<DomainRouterVO>();
+    routers.addAll(routersInIsolatedNetwork);
+    routers.addAll(routersInSharedNetwork);
+    s_logger.debug("Found " + routers.size() + " running routers. ");
+    for (    final DomainRouterVO router : routers) {
+      if (router.getVpcId() != null) {
+        continue;
+      }
+      String privateIP=router.getPrivateIpAddress();
+      if (privateIP != null) {
+        OpRouterMonitorServiceVO opRouterMonitorServiceVO=_opRouterMonitorServiceDao.findById(router.getId());
+        GetRouterAlertsCommand command=null;
+        if (opRouterMonitorServiceVO == null) {
+          command=new GetRouterAlertsCommand(null);
+        }
+ else {
+          command=new GetRouterAlertsCommand(opRouterMonitorServiceVO.getLastAlertTimestamp());
+        }
+        command.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
+        command.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
+        GetRouterAlertsAnswer answer=null;
+        try {
+          answer=(GetRouterAlertsAnswer)_agentMgr.easySend(router.getHostId(),command);
+          String alerts[]=answer.getAlerts();
+          if (alerts != null) {
+            for (            String alert : alerts) {
+              _alertMgr.sendAlert(AlertType.ALERT_TYPE_DOMAIN_ROUTER,router.getDataCenterId(),router.getPodIdToDeployIn(),"Monitoring Service on VR " + router.getInstanceName(),alert);
+            }
+            String lastAlertTimeStamp=answer.getTimeStamp();
+            if (opRouterMonitorServiceVO == null) {
+              opRouterMonitorServiceVO=new OpRouterMonitorServiceVO(router.getId(),router.getHostName(),lastAlertTimeStamp);
+              _opRouterMonitorServiceDao.persist(opRouterMonitorServiceVO);
+            }
+ else {
+              opRouterMonitorServiceVO.setLastAlertTimestamp(lastAlertTimeStamp);
+              _opRouterMonitorServiceDao.update(opRouterMonitorServiceVO.getId(),opRouterMonitorServiceVO);
+            }
+          }
+        }
+ catch (        Exception e) {
+          s_logger.warn("Error while collecting alerts from router: " + router.getInstanceName() + " from host: "+ router.getHostId(),e);
+          continue;
+        }
+      }
+    }
+  }
+ catch (  Exception e) {
+    s_logger.warn("Error while collecting alerts from router",e);
+  }
+}

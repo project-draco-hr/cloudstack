@@ -1,0 +1,29 @@
+@attr(hypervisor='xenserver')
+@attr(tags=['advanced', 'basic'])
+def test_01_VRServiceFailureAlerting(self):
+    if (self.zone.networktype == 'Basic'):
+        list_router_response = list_routers(self.apiclient, listall='true')
+    else:
+        list_router_response = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(list_router_response, list), True, 'Check list response returns a valid list')
+    router = list_router_response[0]
+    hosts = list_hosts(self.apiclient, zoneid=router.zoneid, type='Routing', state='Up', id=router.hostid)
+    self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+    host = hosts[0]
+    self.debug(('Router ID: %s, state: %s' % (router.id, router.state)))
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    alertSubject = ('Monitoring Service on VR ' + router.name)
+    if (self.apiclient.hypervisor.lower() == 'vmware'):
+        result = get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, router.linklocalip, 'service dnsmasq status', hypervisor=self.apiclient.hypervisor)
+    else:
+        try:
+            (host.user, host.passwd) = get_host_credentials(self.config, host.ipaddress)
+            result = get_process_status(host.ipaddress, 22, host.user, host.passwd, router.linklocalip, 'service apache2 stop')
+        except KeyError:
+            self.skipTest('Marvin configuration has no host credentials to check router services')
+    res = str(result)
+    self.debug(('apache process status: %s' % res))
+    time.sleep(300)
+    qresultset = self.dbclient.execute(("select id from alert where subject = '%s' ORDER BY id DESC LIMIT 1;" % str(alertSubject)))
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    return
