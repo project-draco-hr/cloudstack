@@ -9,9 +9,22 @@ synchronized (poolUuid.intern()) {
     mConn=getConnect(poolUuid);
     if (mConn != null) {
       try {
-        Host.getByUuid(mConn,hostUuid);
+        Host host=Host.getByUuid(mConn,hostUuid);
+        if (!host.getEnabled(mConn)) {
+          String msg="Cannot connect this host " + ipAddress + " due to the host is not enabled";
+          s_logger.debug(msg);
+          if (mConn.getIp().equalsIgnoreCase(ipAddress)) {
+            removeConnect(poolUuid);
+            mConn=null;
+          }
+          throw new CloudRuntimeException(msg);
+        }
+        return mConn;
       }
- catch (      Exception e) {
+ catch (      CloudRuntimeException e) {
+        throw e;
+      }
+catch (      Exception e) {
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("connect through IP(" + mConn.getIp() + " for pool("+ poolUuid+ ") is broken due to "+ e.toString());
         }
@@ -20,21 +33,47 @@ synchronized (poolUuid.intern()) {
       }
     }
     if (mConn == null) {
-      mConn=new XenServerConnection(getURL(ipAddress),ipAddress,username,password,_retries,_interval,wait);
       try {
+        Connection conn=new Connection(getURL(ipAddress),5);
+        Session sess=loginWithPassword(conn,username,password,APIVersion.latest().toString());
+        Host host=sess.getThisHost(conn);
+        Boolean hostenabled=host.getEnabled(conn);
+        if (sess != null) {
+          try {
+            Session.logout(conn);
+          }
+ catch (          Exception e) {
+          }
+          conn.dispose();
+        }
+        if (!hostenabled) {
+          String msg="Unable to create master connection, due to master Host " + ipAddress + " is not enabled";
+          s_logger.debug(msg);
+          throw new CloudRuntimeException(msg);
+        }
+        mConn=new XenServerConnection(getURL(ipAddress),ipAddress,username,password,_retries,_interval,wait);
         loginWithPassword(mConn,username,password,APIVersion.latest().toString());
       }
  catch (      Types.HostIsSlave e) {
         String maddress=e.masterIPAddress;
         mConn=new XenServerConnection(getURL(maddress),maddress,username,password,_retries,_interval,wait);
         try {
-          loginWithPassword(mConn,username,password,APIVersion.latest().toString());
+          Session session=loginWithPassword(mConn,username,password,APIVersion.latest().toString());
+          Host host=session.getThisHost(mConn);
+          if (!host.getEnabled(mConn)) {
+            String msg="Unable to create master connection, due to master Host " + maddress + " is not enabled";
+            s_logger.debug(msg);
+            throw new CloudRuntimeException(msg);
+          }
         }
  catch (        Exception e1) {
           String msg="Unable to create master connection to host(" + maddress + ") , due to "+ e1.toString();
           s_logger.debug(msg);
           throw new CloudRuntimeException(msg,e1);
         }
+      }
+catch (      CloudRuntimeException e) {
+        throw e;
       }
 catch (      Exception e) {
         String msg="Unable to create master connection to host(" + ipAddress + ") , due to "+ e.toString();
