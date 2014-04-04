@@ -1,0 +1,98 @@
+{
+  CallContext caller=CallContext.current();
+  LoadBalancerVO loadBalancer=_lbDao.findById(Long.valueOf(loadBalancerId));
+  if (loadBalancer == null) {
+    throw new InvalidParameterException("Invalid load balancer value: " + loadBalancerId);
+  }
+  _accountMgr.checkAccess(caller.getCallingAccount(),null,true,loadBalancer);
+  if (instanceIds == null && vmIdIpMap.isEmpty()) {
+    throw new InvalidParameterValueException("Both instanceids and vmidipmap  can't be null");
+  }
+  if (instanceIds != null && !vmIdIpMap.isEmpty()) {
+    for (    long instanceId : instanceIds) {
+      if (!vmIdIpMap.containsKey(instanceId)) {
+        vmIdIpMap.put(instanceId,null);
+      }
+    }
+  }
+  if (instanceIds != null && vmIdIpMap.isEmpty()) {
+    vmIdIpMap=new HashMap<Long,List<String>>();
+    for (    long instanceId : instanceIds) {
+      vmIdIpMap.put(instanceId,null);
+    }
+  }
+  boolean success=false;
+  FirewallRule.State backupState=loadBalancer.getState();
+  Set<Long> vmIds=vmIdIpMap.keySet();
+  try {
+    loadBalancer.setState(FirewallRule.State.Add);
+    _lbDao.persist(loadBalancer);
+    for (    long instanceId : vmIds) {
+      List<String> lbVmIps=vmIdIpMap.get(instanceId);
+      if (lbVmIps == null || lbVmIps.isEmpty()) {
+        List<LoadBalancerVMMapVO> lbVms=_lb2VmMapDao.listByLoadBalancerIdAndVmId(loadBalancerId,instanceId);
+        if (lbVms == null) {
+          throw new InvalidParameterValueException("The instance id: " + instanceId + " is not configured "+ " for LB rule id "+ loadBalancerId);
+        }
+        for (        LoadBalancerVMMapVO lbvm : lbVms) {
+          lbvm.setRevoke(true);
+          _lb2VmMapDao.persist(lbvm);
+        }
+        s_logger.debug("Set load balancer rule for revoke: rule id " + loadBalancerId + ", vmId "+ instanceId);
+      }
+ else {
+        for (        String vmIp : lbVmIps) {
+          LoadBalancerVMMapVO map=_lb2VmMapDao.findByLoadBalancerIdAndVmIdVmIp(loadBalancerId,instanceId,vmIp);
+          if (map == null) {
+            throw new InvalidParameterValueException("The instance id: " + instanceId + " is not configured "+ " for LB rule id "+ loadBalancerId);
+          }
+          map.setRevoke(true);
+          _lb2VmMapDao.persist(map);
+          s_logger.debug("Set load balancer rule for revoke: rule id " + loadBalancerId + ", vmId "+ instanceId+ ", vmip "+ vmIp);
+        }
+      }
+    }
+    if (_autoScaleVmGroupDao.isAutoScaleLoadBalancer(loadBalancerId)) {
+      _lb2VmMapDao.remove(loadBalancer.getId(),instanceIds,null);
+      return true;
+    }
+    if (!applyLoadBalancerConfig(loadBalancerId)) {
+      s_logger.warn("Failed to remove load balancer rule id " + loadBalancerId + " for vms "+ instanceIds);
+      CloudRuntimeException ex=new CloudRuntimeException("Failed to remove specified load balancer rule id for vms " + instanceIds);
+      ex.addProxyObject(loadBalancer.getUuid(),"loadBalancerId");
+      throw ex;
+    }
+    success=true;
+  }
+ catch (  ResourceUnavailableException e) {
+    if (rollBack && isRollBackAllowedForProvider(loadBalancer)) {
+      for (      long instanceId : vmIds) {
+        List<String> lbVmIps=vmIdIpMap.get(instanceId);
+        if (lbVmIps == null || lbVmIps.isEmpty()) {
+          LoadBalancerVMMapVO map=_lb2VmMapDao.findByLoadBalancerIdAndVmId(loadBalancerId,instanceId);
+          map.setRevoke(false);
+          _lb2VmMapDao.persist(map);
+          s_logger.debug("LB Rollback rule id: " + loadBalancerId + ",while removing vmId "+ instanceId);
+        }
+ else {
+          for (          String vmIp : lbVmIps) {
+            LoadBalancerVMMapVO map=_lb2VmMapDao.findByLoadBalancerIdAndVmIdVmIp(loadBalancerId,instanceId,vmIp);
+            map.setRevoke(true);
+            _lb2VmMapDao.persist(map);
+            s_logger.debug("LB Rollback rule id: " + loadBalancerId + ",while removing vmId "+ instanceId+ ", vmip "+ vmIp);
+          }
+        }
+      }
+      loadBalancer.setState(backupState);
+      _lbDao.persist(loadBalancer);
+      s_logger.debug("LB Rollback rule id: " + loadBalancerId + " while removing vm instances");
+    }
+    s_logger.warn("Unable to apply the load balancer config because resource is unavaliable.",e);
+  }
+  if (!success) {
+    CloudRuntimeException ex=new CloudRuntimeException("Failed to remove specified load balancer rule id for vms " + instanceIds);
+    ex.addProxyObject(loadBalancer.getUuid(),"loadBalancerId");
+    throw ex;
+  }
+  return success;
+}
