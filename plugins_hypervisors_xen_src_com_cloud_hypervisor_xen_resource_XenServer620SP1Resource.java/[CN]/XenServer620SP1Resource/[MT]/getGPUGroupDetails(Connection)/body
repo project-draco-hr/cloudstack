@@ -1,5 +1,5 @@
 {
-  HashMap<String,HashMap<String,Long>> groupDetails=new HashMap<String,HashMap<String,Long>>();
+  HashMap<String,HashMap<String,VgpuTypesInfo>> groupDetails=new HashMap<String,HashMap<String,VgpuTypesInfo>>();
   Host host=Host.getByUuid(conn,_host.uuid);
   Set<PGPU> pgpus=host.getPGPUs(conn);
   Iterator<PGPU> iter=pgpus.iterator();
@@ -8,7 +8,7 @@
     GPUGroup gpuGroup=pgpu.getGPUGroup(conn);
     Set<VGPUType> enabledVGPUTypes=gpuGroup.getEnabledVGPUTypes(conn);
     String groupName=gpuGroup.getNameLabel(conn);
-    HashMap<String,Long> gpuCapacity=new HashMap<String,Long>();
+    HashMap<String,VgpuTypesInfo> gpuCapacity=new HashMap<String,VgpuTypesInfo>();
     if (groupDetails.get(groupName) != null) {
       gpuCapacity=groupDetails.get(groupName);
     }
@@ -16,14 +16,20 @@
       Iterator<VGPUType> it=enabledVGPUTypes.iterator();
       while (it.hasNext()) {
         VGPUType type=it.next();
-        String modelName=type.getModelName(conn);
+        Record record=type.getRecord(conn);
         Long remainingCapacity=pgpu.getRemainingCapacity(conn,type);
-        if (gpuCapacity.get(modelName) != null) {
-          long newRemainingCapacity=gpuCapacity.get(modelName) + remainingCapacity;
-          gpuCapacity.put(modelName,newRemainingCapacity);
+        Long maxCapacity=pgpu.getSupportedVGPUMaxCapacities(conn).get(type);
+        VgpuTypesInfo entry;
+        if ((entry=gpuCapacity.get(record.modelName)) != null) {
+          remainingCapacity+=entry.getRemainingCapacity();
+          maxCapacity+=entry.getMaxCapacity();
+          entry.setRemainingCapacity(remainingCapacity);
+          entry.setMaxVmCapacity(maxCapacity);
+          gpuCapacity.put(record.modelName,entry);
         }
  else {
-          gpuCapacity.put(modelName,remainingCapacity);
+          VgpuTypesInfo vgpuTypeRecord=new VgpuTypesInfo(record.modelName,record.framebufferSize,record.maxHeads,record.maxResolutionX,record.maxResolutionY,maxCapacity,remainingCapacity,maxCapacity);
+          gpuCapacity.put(record.modelName,vgpuTypeRecord);
         }
       }
     }
