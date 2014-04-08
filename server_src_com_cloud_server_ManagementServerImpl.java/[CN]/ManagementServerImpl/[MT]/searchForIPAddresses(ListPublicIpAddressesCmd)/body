@@ -11,6 +11,7 @@
   Boolean sourceNat=cmd.getIsSourceNat();
   Boolean staticNat=cmd.getIsStaticNat();
   Long vpcId=cmd.getVpcId();
+  Boolean forDisplay=cmd.getDisplay();
   Map<String,String> tags=cmd.getTags();
   Boolean isAllocated=cmd.isAllocatedOnly();
   if (isAllocated == null) {
@@ -20,16 +21,17 @@
   SearchBuilder<IPAddressVO> sb=_publicIpAddressDao.createSearchBuilder();
   Long domainId=null;
   Boolean isRecursive=null;
+  List<Long> permittedDomains=new ArrayList<Long>();
   List<Long> permittedAccounts=new ArrayList<Long>();
+  List<Long> permittedResources=new ArrayList<Long>();
   ListProjectResourcesCriteria listProjectResourcesCriteria=null;
   if (isAllocated) {
     Account caller=CallContext.current().getCallingAccount();
     Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
-    _accountMgr.buildACLSearchParameters(caller,cmd.getId(),cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
-    domainId=domainIdRecursiveListProject.first();
+    _accountMgr.buildACLSearchParameters(caller,cmd.getId(),cmd.getAccountName(),cmd.getProjectId(),permittedDomains,permittedAccounts,permittedResources,domainIdRecursiveListProject,cmd.listAll(),false,"listPublicIpAddresses");
     isRecursive=domainIdRecursiveListProject.second();
     listProjectResourcesCriteria=domainIdRecursiveListProject.third();
-    _accountMgr.buildACLSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+    _accountMgr.buildACLSearchBuilder(sb,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
   }
   sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
   sb.and("address",sb.entity().getAddress(),SearchCriteria.Op.EQ);
@@ -40,6 +42,7 @@
   sb.and("isSourceNat",sb.entity().isSourceNat(),SearchCriteria.Op.EQ);
   sb.and("isStaticNat",sb.entity().isOneToOneNat(),SearchCriteria.Op.EQ);
   sb.and("vpcId",sb.entity().getVpcId(),SearchCriteria.Op.EQ);
+  sb.and("display",sb.entity().isDisplay(),SearchCriteria.Op.EQ);
   if (forLoadBalancing != null && forLoadBalancing) {
     SearchBuilder<LoadBalancerVO> lbSearch=_loadbalancerDao.createSearchBuilder();
     sb.join("lbSearch",lbSearch,sb.entity().getId(),lbSearch.entity().getSourceIpAddressId(),JoinType.INNER);
@@ -76,7 +79,7 @@
   }
   SearchCriteria<IPAddressVO> sc=sb.create();
   if (isAllocated) {
-    _accountMgr.buildACLSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+    _accountMgr.buildACLSearchCriteria(sc,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
   }
   sc.setJoinParameters("vlanSearch","vlanType",vlanType);
   if (tags != null && !tags.isEmpty()) {
@@ -117,6 +120,9 @@
   }
   if (associatedNetworkId != null) {
     sc.setParameters("associatedNetworkIdEq",associatedNetworkId);
+  }
+  if (forDisplay != null) {
+    sc.setParameters("display",forDisplay);
   }
   Pair<List<IPAddressVO>,Integer> result=_publicIpAddressDao.searchAndCount(sc,searchFilter);
   return new Pair<List<? extends IpAddress>,Integer>(result.first(),result.second());

@@ -8,20 +8,14 @@
   DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
   DiskOfferingVO newDiskOffering=null;
   newDiskOffering=_diskOfferingDao.findById(cmd.getNewDiskOfferingId());
-  if (_volsDao.getHypervisorType(volume.getId()) == HypervisorType.None) {
-    throw new InvalidParameterValueException("Can't resize a volume that has never been attached, not sure which hypervisor type. Recreate volume to resize.");
+  if (_volsDao.getHypervisorType(volume.getId()) != HypervisorType.KVM && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.XenServer && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.VMware && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.None) {
+    throw new InvalidParameterValueException("Cloudstack currently only supports volumes marked as KVM, VMware, XenServer hypervisor for resize");
   }
-  if (_volsDao.getHypervisorType(volume.getId()) != HypervisorType.KVM && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.XenServer && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.VMware) {
-    throw new InvalidParameterValueException("Cloudstack currently only supports volumes marked as KVM or XenServer hypervisor for resize");
-  }
-  if (volume.getState() != Volume.State.Ready) {
-    throw new InvalidParameterValueException("Volume should be in ready state before attempting a resize");
-  }
-  if (!volume.getVolumeType().equals(Volume.Type.DATADISK)) {
-    throw new InvalidParameterValueException("Can only resize DATA volumes");
+  if (volume.getState() != Volume.State.Ready && volume.getState() != Volume.State.Allocated) {
+    throw new InvalidParameterValueException("Volume should be in ready or allocated state before attempting a resize. " + "Volume " + volume.getUuid() + " state is:"+ volume.getState());
   }
   if (newDiskOffering == null) {
-    if (diskOffering.isCustomized()) {
+    if (diskOffering.isCustomized() || volume.getVolumeType().equals(Volume.Type.ROOT)) {
       newSize=cmd.getSize();
       if (newSize == null) {
         throw new InvalidParameterValueException("new offering is of custom size, need to specify a size");
@@ -33,6 +27,9 @@
     }
   }
  else {
+    if (!volume.getVolumeType().equals(Volume.Type.DATADISK)) {
+      throw new InvalidParameterValueException("Can only resize Data volumes via new disk offering");
+    }
     if (newDiskOffering.getRemoved() != null || !DiskOfferingVO.Type.Disk.equals(newDiskOffering.getType())) {
       throw new InvalidParameterValueException("Disk offering ID is missing or invalid");
     }
@@ -66,8 +63,7 @@
   if (!validateVolumeSizeRange(newSize)) {
     throw new InvalidParameterValueException("Requested size out of range");
   }
-  _accountMgr.checkAccess(CallContext.current().getCallingAccount(),null,true,volume);
-  UserVmVO userVm=_userVmDao.findById(volume.getInstanceId());
+  _accountMgr.checkAccess(CallContext.current().getCallingAccount(),null,volume);
   long currentSize=volume.getSize();
   if (currentSize > newSize && !shrinkOk) {
     throw new InvalidParameterValueException("Going from existing size of " + currentSize + " to size of "+ newSize+ " would shrink the volume, need to sign off by supplying the shrinkok parameter with value of true");
@@ -75,6 +71,16 @@
   if (!shrinkOk) {
     _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(volume.getAccountId()),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize));
   }
+  if (volume.getState() == Volume.State.Allocated) {
+    s_logger.debug("Volume is allocated, but never created, simply updating database with new size");
+    volume.setSize(newSize);
+    if (newDiskOffering != null) {
+      volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
+    }
+    _volsDao.update(volume.getId(),volume);
+    return volume;
+  }
+  UserVmVO userVm=_userVmDao.findById(volume.getInstanceId());
   if (userVm != null) {
     AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
     if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
@@ -93,7 +99,7 @@
       Outcome<Volume> outcome=resizeVolumeThroughJobQueue(userVm.getId(),volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
       Volume vol=null;
       try {
-        vol=outcome.get();
+        outcome.get();
       }
  catch (      InterruptedException e) {
         throw new RuntimeException("Operation is interrupted",e);
@@ -105,6 +111,9 @@ catch (      java.util.concurrent.ExecutionException e) {
       if (jobResult != null) {
         if (jobResult instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobResult;
  else         if (jobResult instanceof Throwable)         throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+ else         if (jobResult instanceof Long) {
+          vol=_volsDao.findById((Long)jobResult);
+        }
       }
       return volume;
     }

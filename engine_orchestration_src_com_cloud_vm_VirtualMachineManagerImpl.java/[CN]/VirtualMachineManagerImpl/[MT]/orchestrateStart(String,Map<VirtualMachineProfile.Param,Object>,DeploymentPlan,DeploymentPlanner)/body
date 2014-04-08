@@ -112,12 +112,12 @@
       ClusterDetailsVO cluster_detail_cpu=_clusterDetailsDao.findDetail(cluster_id,"cpuOvercommitRatio");
       ClusterDetailsVO cluster_detail_ram=_clusterDetailsDao.findDetail(cluster_id,"memoryOvercommitRatio");
       if (_uservmDetailsDao.findDetail(vm.getId(),"cpuOvercommitRatio") == null && ((Float.parseFloat(cluster_detail_cpu.getValue()) > 1f || Float.parseFloat(cluster_detail_ram.getValue()) > 1f))) {
-        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue());
-        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue());
+        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue(),true);
+        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue(),true);
       }
  else       if (_uservmDetailsDao.findDetail(vm.getId(),"cpuOvercommitRatio") != null) {
-        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue());
-        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue());
+        _uservmDetailsDao.addDetail(vm.getId(),"cpuOvercommitRatio",cluster_detail_cpu.getValue(),true);
+        _uservmDetailsDao.addDetail(vm.getId(),"memoryOvercommitRatio",cluster_detail_ram.getValue(),true);
       }
       vmProfile.setCpuOvercommitRatio(Float.parseFloat(cluster_detail_cpu.getValue()));
       vmProfile.setMemoryOvercommitRatio(Float.parseFloat(cluster_detail_ram.getValue()));
@@ -146,7 +146,7 @@
         VirtualMachineTO vmTO=hvGuru.implement(vmProfile);
         handlePath(vmTO.getDisks(),vm.getHypervisorType());
         cmds=new Commands(Command.OnError.Stop);
-        cmds.addCommand(new StartCommand(vmTO,dest.getHost(),ExecuteInSequence.value()));
+        cmds.addCommand(new StartCommand(vmTO,dest.getHost(),getExecuteInSequence(vm.getHypervisorType())));
         vmGuru.finalizeDeployment(cmds,vmProfile,dest,ctx);
         work=_workDao.findById(work.getId());
         if (work == null || work.getStep() != Step.Prepare) {
@@ -171,6 +171,10 @@
             if (!changeState(vm,Event.OperationSucceeded,destHostId,work,Step.Done)) {
               throw new ConcurrentOperationException("Unable to transition to a new state.");
             }
+            GPUDeviceTO gpuDevice=startAnswer.getVirtualMachine().getGpuDevice();
+            if (gpuDevice != null) {
+              _resourceMgr.updateGPUDetails(destHostId,gpuDevice.getGroupDetails());
+            }
             startedVm=vm;
             if (s_logger.isDebugEnabled()) {
               s_logger.debug("Start completed for VM " + vm);
@@ -181,16 +185,15 @@
             if (s_logger.isDebugEnabled()) {
               s_logger.info("The guru did not like the answers so stopping " + vm);
             }
-            StopCommand cmd=new StopCommand(vm,ExecuteInSequence.value());
+            StopCommand cmd=new StopCommand(vm,getExecuteInSequence(vm.getHypervisorType()));
             StopAnswer answer=(StopAnswer)_agentMgr.easySend(destHostId,cmd);
             if (answer != null) {
               if (vm.getType() == VirtualMachine.Type.User) {
                 String platform=answer.getPlatform();
                 if (platform != null) {
-                  UserVmVO userVm=_userVmDao.findById(vm.getId());
-                  _userVmDao.loadDetails(userVm);
-                  userVm.setDetail("platform",platform);
-                  _userVmDao.saveDetails(userVm);
+                  Map<String,String> vmmetadata=new HashMap<String,String>();
+                  vmmetadata.put(vm.getInstanceName(),platform);
+                  syncVMMetaData(vmmetadata);
                 }
               }
             }

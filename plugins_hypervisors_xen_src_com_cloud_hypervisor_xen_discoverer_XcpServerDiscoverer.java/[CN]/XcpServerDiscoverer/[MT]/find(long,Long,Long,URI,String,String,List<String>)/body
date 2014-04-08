@@ -22,11 +22,6 @@
     return null;
   }
   try {
-    List<HostVO> eHosts=_resourceMgr.listAllHostsInCluster(clusterId);
-    if (eHosts.size() > 0) {
-      HostVO eHost=eHosts.get(0);
-      _hostDao.loadDetails(eHost);
-    }
     String hostname=url.getHost();
     InetAddress ia=InetAddress.getByName(hostname);
     String hostIp=ia.getHostAddress();
@@ -43,6 +38,13 @@
     Pool.Record pr=pool.getRecord(conn);
     String poolUuid=pr.uuid;
     Map<Host,Host.Record> hosts=Host.getAllRecords(conn);
+    String latestHotFix="";
+    if (poolHasHotFix(conn,hostIp,XenserverConfigs.XSHotFix62ESP1004)) {
+      latestHotFix=XenserverConfigs.XSHotFix62ESP1004;
+    }
+ else     if (poolHasHotFix(conn,hostIp,XenserverConfigs.XSHotFix62ESP1)) {
+      latestHotFix=XenserverConfigs.XSHotFix62ESP1;
+    }
     ClusterVO clu=_clusterDao.findById(clusterId);
     if (clu.getGuid() == null) {
       setClusterGuid(clu,poolUuid);
@@ -51,18 +53,9 @@
       List<HostVO> clusterHosts=_resourceMgr.listAllHostsInCluster(clusterId);
       if (clusterHosts != null && clusterHosts.size() > 0) {
         if (!clu.getGuid().equals(poolUuid)) {
-          if (hosts.size() == 1) {
-            if (!addHostsToPool(conn,hostIp,clusterId)) {
-              String msg="Unable to add host(" + hostIp + ") to cluster "+ clusterId;
-              s_logger.warn(msg);
-              throw new DiscoveryException(msg);
-            }
-          }
- else {
-            String msg="Host (" + hostIp + ") is already in pool("+ poolUuid+ "), can to join pool("+ clu.getGuid()+ ")";
-            s_logger.warn(msg);
-            throw new DiscoveryException(msg);
-          }
+          String msg="Please join the host " + hostIp + " to XS pool  "+ clu.getGuid()+ " through XC/XS before adding it through CS UI";
+          s_logger.warn(msg);
+          throw new DiscoveryException(msg);
         }
       }
  else {
@@ -110,14 +103,13 @@
       if (hostOS == null) {
         hostOS=record.softwareVersion.get("platform_name");
       }
-      Boolean xs620hotfix=xenserverHotFixEnabled();
       String hostOSVer=prodVersion;
       String hostKernelVer=record.softwareVersion.get("linux");
       if (_resourceMgr.findHostByGuid(record.uuid) != null) {
         s_logger.debug("Skipping " + record.address + " because "+ record.uuid+ " is already in the database.");
         continue;
       }
-      CitrixResourceBase resource=createServerResource(dcId,podId,record);
+      CitrixResourceBase resource=createServerResource(dcId,podId,record,latestHotFix);
       s_logger.info("Found host " + record.hostname + " ip="+ record.address+ " product version="+ prodVersion);
       Map<String,String> details=new HashMap<String,String>();
       Map<String,Object> params=new HashMap<String,Object>();
@@ -136,7 +128,6 @@
       details.put(HostInfo.HOST_OS_VERSION,hostOSVer);
       details.put(HostInfo.HOST_OS_KERNEL_VERSION,hostKernelVer);
       details.put(HostInfo.HYPERVISOR_VERSION,xenVersion);
-      details.put(HostInfo.XS620_SNAPSHOT_HOTFIX,xs620hotfix.toString());
       String privateNetworkLabel=_networkMgr.getDefaultManagementTrafficLabel(dcId,HypervisorType.XenServer);
       String storageNetworkLabel=_networkMgr.getDefaultStorageTrafficLabel(dcId,HypervisorType.XenServer);
       if (!params.containsKey("private.network.device") && privateNetworkLabel != null) {

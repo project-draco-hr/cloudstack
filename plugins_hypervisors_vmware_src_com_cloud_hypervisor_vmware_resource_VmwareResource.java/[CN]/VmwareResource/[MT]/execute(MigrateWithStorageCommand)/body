@@ -28,6 +28,8 @@ synchronized (_vms) {
   VolumeTO volume;
   StorageFilerTO filerTo;
   Set<String> mountedDatastoresAtSource=new HashSet<String>();
+  List<VolumeObjectTO> volumeToList=new ArrayList<VolumeObjectTO>();
+  Map<Long,Integer> volumeDeviceKey=new HashMap<Long,Integer>();
   Map<VolumeTO,StorageFilerTO> volToFiler=cmd.getVolumeToFiler();
   String tgtHost=cmd.getTargetHost();
   String tgtHostMorInfo=tgtHost.split("@")[0];
@@ -79,8 +81,10 @@ synchronized (_vms) {
       VmwareStorageLayoutHelper.getVmwareDatastorePathFromVmdkFileName(new DatastoreMO(srcHyperHost.getContext(),morDsAtSource),vmName,volume.getPath() + ".vmdk");
       diskLocator=new VirtualMachineRelocateSpecDiskLocator();
       diskLocator.setDatastore(morDsAtSource);
-      diskLocator.setDiskId(getVirtualDiskInfo(vmMo,volume.getPath() + ".vmdk"));
+      int diskId=getVirtualDiskInfo(vmMo,volume.getPath() + ".vmdk");
+      diskLocator.setDiskId(diskId);
       diskLocators.add(diskLocator);
+      volumeDeviceKey.put(volume.getId(),diskId);
     }
     relocateSpec.getDisk().addAll(diskLocators);
     NicTO[] nics=vmTo.getNics();
@@ -104,6 +108,20 @@ synchronized (_vms) {
  else {
       s_logger.debug("Successfully migrated storage of VM " + vmName + " to target datastore(s)");
     }
+    for (    Entry<VolumeTO,StorageFilerTO> entry : volToFiler.entrySet()) {
+      volume=entry.getKey();
+      long volumeId=volume.getId();
+      VirtualDisk[] disks=vmMo.getAllDiskDevice();
+      for (      VirtualDisk disk : disks) {
+        if (volumeDeviceKey.get(volumeId) == disk.getKey()) {
+          VolumeObjectTO newVol=new VolumeObjectTO();
+          newVol.setId(volumeId);
+          newVol.setPath(vmMo.getVmdkFileBaseName(disk));
+          volumeToList.add(newVol);
+          break;
+        }
+      }
+    }
     ManagedObjectReference morPool=tgtHyperHost.getHyperHostOwnerResourcePool();
     if (!vmMo.migrate(morPool,tgtHyperHost.getMor())) {
       throw new Exception("Change datastore operation failed during storage migration");
@@ -112,7 +130,6 @@ synchronized (_vms) {
       s_logger.debug("Successfully relocated VM " + vmName + " from "+ _hostName+ " to "+ tgtHyperHost.getHyperHostName());
     }
     state=State.Stopping;
-    List<VolumeObjectTO> volumeToList=null;
     return new MigrateWithStorageAnswer(cmd,volumeToList);
   }
  catch (  Throwable e) {

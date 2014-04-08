@@ -1,13 +1,13 @@
 {
   Account caller=CallContext.current().getCallingAccount();
-  VolumeInfo volume=volFactory.getVolume(volumeId);
-  if (volume == null || volume.getVolumeType() != Volume.Type.DATADISK) {
-    throw new InvalidParameterValueException("Please specify a valid data volume.");
+  VolumeInfo volumeToAttach=volFactory.getVolume(volumeId);
+  if (volumeToAttach == null || !(volumeToAttach.getVolumeType() == Volume.Type.DATADISK || volumeToAttach.getVolumeType() == Volume.Type.ROOT)) {
+    throw new InvalidParameterValueException("Please specify a volume with the valid type: " + Volume.Type.ROOT.toString() + " or "+ Volume.Type.DATADISK.toString());
   }
-  if (volume.getInstanceId() != null) {
+  if (volumeToAttach.getInstanceId() != null) {
     throw new InvalidParameterValueException("Please specify a volume that is not attached to any VM.");
   }
-  if (volume.getState() == Volume.State.Destroy) {
+  if (volumeToAttach.getState() == Volume.State.Destroy) {
     throw new InvalidParameterValueException("Please specify a volume that is not destroyed.");
   }
   UserVmVO vm=_userVmDao.findById(vmId);
@@ -17,22 +17,32 @@
   if (vm.getState() != State.Running && vm.getState() != State.Stopped) {
     throw new InvalidParameterValueException("Please specify a VM that is either running or stopped.");
   }
-  if (deviceId != null) {
-    if (deviceId.longValue() == 0) {
-      throw new InvalidParameterValueException("deviceId can't be 0, which is used by Root device");
-    }
-  }
-  List<VolumeVO> existingDataVolumes=_volsDao.findByInstanceAndType(vmId,Volume.Type.DATADISK);
-  int maxDataVolumesSupported=getMaxDataVolumesSupported(vm);
-  if (existingDataVolumes.size() >= maxDataVolumesSupported) {
-    throw new InvalidParameterValueException("The specified VM already has the maximum number of data disks (" + maxDataVolumesSupported + "). Please specify another VM.");
-  }
-  if (vm.getDataCenterId() != volume.getDataCenterId()) {
+  if (vm.getDataCenterId() != volumeToAttach.getDataCenterId()) {
     throw new InvalidParameterValueException("Please specify a VM that is in the same zone as the volume.");
   }
-  DataCenterVO dataCenter=_dcDao.findById(volume.getDataCenterId());
+  _accountMgr.checkAccess(caller,null,true,volumeToAttach,vm);
+  if (deviceId != null) {
+    if (deviceId.longValue() == 0) {
+      validateRootVolumeDetachAttach(_volsDao.findById(volumeToAttach.getId()),vm);
+      if (!_volsDao.findByInstanceAndDeviceId(vm.getId(),0).isEmpty()) {
+        throw new InvalidParameterValueException("Vm already has root volume attached to it");
+      }
+      if (volumeToAttach.getState() == Volume.State.Uploaded) {
+        throw new InvalidParameterValueException("No support for Root volume attach in state " + Volume.State.Uploaded);
+      }
+    }
+  }
+  if (deviceId == null || deviceId.longValue() != 0) {
+    List<VolumeVO> existingDataVolumes=_volsDao.findByInstanceAndType(vmId,Volume.Type.DATADISK);
+    int maxDataVolumesSupported=getMaxDataVolumesSupported(vm);
+    if (existingDataVolumes.size() >= maxDataVolumesSupported) {
+      throw new InvalidParameterValueException("The specified VM already has the maximum number of data disks (" + maxDataVolumesSupported + "). Please specify another VM.");
+    }
+  }
+  deviceId=getDeviceId(vmId,deviceId);
+  DataCenterVO dataCenter=_dcDao.findById(volumeToAttach.getDataCenterId());
   if (!dataCenter.isLocalStorageEnabled()) {
-    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volumeToAttach.getDiskOfferingId());
     if (diskOffering.getUseLocalStorage()) {
       throw new InvalidParameterValueException("Zone is not configured to use local storage but volume's disk offering " + diskOffering.getName() + " uses it");
     }
@@ -41,53 +51,61 @@
   if (vmSnapshots.size() > 0) {
     throw new InvalidParameterValueException("Unable to attach volume, please specify a VM that does not have VM snapshots");
   }
-  _accountMgr.checkAccess(caller,null,true,volume,vm);
-  if (!(Volume.State.Allocated.equals(volume.getState()) || Volume.State.Ready.equals(volume.getState()) || Volume.State.Uploaded.equals(volume.getState()))) {
+  _accountMgr.checkAccess(caller,AccessType.OperateEntry,volumeToAttach,vm);
+  if (!(Volume.State.Allocated.equals(volumeToAttach.getState()) || Volume.State.Ready.equals(volumeToAttach.getState()) || Volume.State.Uploaded.equals(volumeToAttach.getState()))) {
     throw new InvalidParameterValueException("Volume state must be in Allocated, Ready or in Uploaded state");
   }
-  VolumeVO rootVolumeOfVm=null;
+  VolumeVO exstingVolumeOfVm=null;
   List<VolumeVO> rootVolumesOfVm=_volsDao.findByInstanceAndType(vmId,Volume.Type.ROOT);
-  if (rootVolumesOfVm.size() != 1) {
+  if (rootVolumesOfVm.size() > 1) {
     throw new CloudRuntimeException("The VM " + vm.getHostName() + " has more than one ROOT volume and is in an invalid state.");
   }
  else {
-    rootVolumeOfVm=rootVolumesOfVm.get(0);
-  }
-  HypervisorType rootDiskHyperType=vm.getHypervisorType();
-  HypervisorType dataDiskHyperType=_volsDao.getHypervisorType(volume.getId());
-  VolumeVO dataDiskVol=_volsDao.findById(volume.getId());
-  StoragePoolVO dataDiskStoragePool=_storagePoolDao.findById(dataDiskVol.getPoolId());
-  if (dataDiskStoragePool != null && !dataDiskStoragePool.isManaged()) {
-    if (dataDiskHyperType != HypervisorType.None && rootDiskHyperType != dataDiskHyperType) {
-      throw new InvalidParameterValueException("Can't attach a volume created by: " + dataDiskHyperType + " to a "+ rootDiskHyperType+ " vm");
+    if (!rootVolumesOfVm.isEmpty()) {
+      exstingVolumeOfVm=rootVolumesOfVm.get(0);
+    }
+ else {
+      List<VolumeVO> diskVolumesOfVm=_volsDao.findByInstanceAndType(vmId,Volume.Type.DATADISK);
+      for (      VolumeVO diskVolume : diskVolumesOfVm) {
+        if (diskVolume.getState() != Volume.State.Allocated) {
+          exstingVolumeOfVm=diskVolume;
+          break;
+        }
+      }
     }
   }
-  deviceId=getDeviceId(vmId,deviceId);
-  VolumeInfo volumeOnPrimaryStorage=volume;
-  List<VolumeVO> existingRootVolumes=_volsDao.findByInstanceAndType(vmId,Volume.Type.ROOT);
-  boolean rootVolumeCreatedOnPrimary=true;
-  if (existingRootVolumes.get(0).getState().equals(Volume.State.Allocated)) {
-    rootVolumeCreatedOnPrimary=false;
+  HypervisorType rootDiskHyperType=vm.getHypervisorType();
+  HypervisorType volumeToAttachHyperType=_volsDao.getHypervisorType(volumeToAttach.getId());
+  StoragePoolVO volumeToAttachStoragePool=_storagePoolDao.findById(volumeToAttach.getPoolId());
+  if (volumeToAttachStoragePool != null && !volumeToAttachStoragePool.isManaged()) {
+    if (volumeToAttachHyperType != HypervisorType.None && rootDiskHyperType != volumeToAttachHyperType) {
+      throw new InvalidParameterValueException("Can't attach a volume created by: " + volumeToAttachHyperType + " to a "+ rootDiskHyperType+ " vm");
+    }
   }
-  if ((volume.getState().equals(Volume.State.Allocated) && rootVolumeCreatedOnPrimary) || volume.getState() == Volume.State.Uploaded) {
+  VolumeInfo newVolumeOnPrimaryStorage=volumeToAttach;
+  StoragePoolVO destPrimaryStorage=null;
+  if (exstingVolumeOfVm != null && !exstingVolumeOfVm.getState().equals(Volume.State.Allocated)) {
+    destPrimaryStorage=_storagePoolDao.findById(exstingVolumeOfVm.getPoolId());
+  }
+  if (destPrimaryStorage != null && (volumeToAttach.getState() == Volume.State.Allocated || volumeToAttach.getState() == Volume.State.Uploaded)) {
     try {
-      volumeOnPrimaryStorage=_volumeMgr.createVolumeOnPrimaryStorage(vm,rootVolumeOfVm,volume,rootDiskHyperType);
+      newVolumeOnPrimaryStorage=_volumeMgr.createVolumeOnPrimaryStorage(vm,volumeToAttach,rootDiskHyperType,destPrimaryStorage);
     }
  catch (    NoTransitionException e) {
       s_logger.debug("Failed to create volume on primary storage",e);
       throw new CloudRuntimeException("Failed to create volume on primary storage",e);
     }
   }
-  volumeOnPrimaryStorage=volFactory.getVolume(volumeOnPrimaryStorage.getId());
-  boolean moveVolumeNeeded=needMoveVolume(rootVolumeOfVm,volumeOnPrimaryStorage);
+  newVolumeOnPrimaryStorage=volFactory.getVolume(newVolumeOnPrimaryStorage.getId());
+  boolean moveVolumeNeeded=needMoveVolume(exstingVolumeOfVm,newVolumeOnPrimaryStorage);
   if (moveVolumeNeeded) {
-    PrimaryDataStoreInfo primaryStore=(PrimaryDataStoreInfo)volumeOnPrimaryStorage.getDataStore();
+    PrimaryDataStoreInfo primaryStore=(PrimaryDataStoreInfo)newVolumeOnPrimaryStorage.getDataStore();
     if (primaryStore.isLocal()) {
-      throw new CloudRuntimeException("Failed to attach local data volume " + volume.getName() + " to VM "+ vm.getDisplayName()+ " as migration of local data volume is not allowed");
+      throw new CloudRuntimeException("Failed to attach local data volume " + volumeToAttach.getName() + " to VM "+ vm.getDisplayName()+ " as migration of local data volume is not allowed");
     }
-    StoragePoolVO vmRootVolumePool=_storagePoolDao.findById(rootVolumeOfVm.getPoolId());
+    StoragePoolVO vmRootVolumePool=_storagePoolDao.findById(exstingVolumeOfVm.getPoolId());
     try {
-      volumeOnPrimaryStorage=_volumeMgr.moveVolume(volumeOnPrimaryStorage,vmRootVolumePool.getDataCenterId(),vmRootVolumePool.getPodId(),vmRootVolumePool.getClusterId(),dataDiskHyperType);
+      newVolumeOnPrimaryStorage=_volumeMgr.moveVolume(newVolumeOnPrimaryStorage,vmRootVolumePool.getDataCenterId(),vmRootVolumePool.getPodId(),vmRootVolumePool.getClusterId(),volumeToAttachHyperType);
     }
  catch (    ConcurrentOperationException e) {
       s_logger.debug("move volume failed",e);
@@ -104,9 +122,9 @@ catch (    StorageUnavailableException e) {
     if (s_logger.isInfoEnabled()) {
       s_logger.info("Trying to attaching volume " + volumeId + " to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
     }
-    _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
+    _jobMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
   }
-  VolumeVO newVol=_volumeDao.findById(volumeOnPrimaryStorage.getId());
+  VolumeVO newVol=_volsDao.findById(newVolumeOnPrimaryStorage.getId());
   newVol=sendAttachVolumeCommand(vm,newVol,deviceId);
   return newVol;
 }

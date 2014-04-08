@@ -1,0 +1,74 @@
+{
+  if (caller == null) {
+    throw new InvalidParameterValueException("Caller cannot be passed as NULL to IAM!");
+  }
+  if (entity == null && action != null) {
+    List<IAMPolicy> policies=_iamSrv.listIAMPolicies(caller.getAccountId());
+    boolean isAllowed=_iamSrv.isActionAllowedForPolicies(action,policies);
+    if (!isAllowed) {
+      throw new PermissionDeniedException("The action '" + action + "' not allowed for account "+ caller);
+    }
+    return true;
+  }
+  if (entity == null) {
+    throw new InvalidParameterValueException("Entity and action cannot be both NULL in checkAccess!");
+  }
+  Account entityAccount=_accountService.getAccount(entity.getAccountId());
+  if (entityAccount != null && entityAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    return false;
+  }
+  String entityType=null;
+  if (entity.getEntityType() != null) {
+    entityType=entity.getEntityType().getSimpleName();
+  }
+  if (accessType == null) {
+    accessType=AccessType.UseEntry;
+  }
+  List<IAMPolicy> policies=getEffectivePolicies(caller,entity);
+  HashMap<IAMPolicy,Boolean> policyPermissionMap=new HashMap<IAMPolicy,Boolean>();
+  for (  IAMPolicy policy : policies) {
+    List<IAMPolicyPermission> permissions=new ArrayList<IAMPolicyPermission>();
+    if (action != null) {
+      permissions=_iamSrv.listPolicyPermissionByActionAndEntity(policy.getId(),action,entityType);
+      if (permissions.isEmpty()) {
+        if (accessType != null) {
+          for (          AccessType type : AccessType.values()) {
+            if (type.ordinal() >= accessType.ordinal()) {
+              permissions.addAll(_iamSrv.listPolicyPermissionByAccessAndEntity(policy.getId(),type.toString(),entityType));
+            }
+          }
+        }
+      }
+    }
+ else {
+      if (accessType != null) {
+        for (        AccessType type : AccessType.values()) {
+          if (type.ordinal() >= accessType.ordinal()) {
+            permissions.addAll(_iamSrv.listPolicyPermissionByAccessAndEntity(policy.getId(),type.toString(),entityType));
+          }
+        }
+      }
+    }
+    for (    IAMPolicyPermission permission : permissions) {
+      if (checkPermissionScope(caller,permission.getScope(),permission.getScopeId(),entity)) {
+        if (permission.getEntityType().equals(entityType)) {
+          policyPermissionMap.put(policy,permission.getPermission().isGranted());
+          break;
+        }
+ else         if (permission.getEntityType().equals("*")) {
+          policyPermissionMap.put(policy,permission.getPermission().isGranted());
+        }
+      }
+    }
+    if (policyPermissionMap.containsKey(policy) && policyPermissionMap.get(policy)) {
+      return true;
+    }
+  }
+  if (!policies.isEmpty()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+    }
+    throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+  }
+  return false;
+}

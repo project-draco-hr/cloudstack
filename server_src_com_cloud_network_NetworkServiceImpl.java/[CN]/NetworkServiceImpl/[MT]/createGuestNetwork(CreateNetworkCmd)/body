@@ -5,7 +5,10 @@
   String endIP=cmd.getEndIp();
   String netmask=cmd.getNetmask();
   String networkDomain=cmd.getNetworkDomain();
-  String vlanId=cmd.getVlan();
+  String vlanId=null;
+  if (cmd instanceof CreateNetworkCmdByAdmin) {
+    vlanId=((CreateNetworkCmdByAdmin)cmd).getVlan();
+  }
   String name=cmd.getNetworkName();
   String displayText=cmd.getDisplayText();
   Account caller=CallContext.current().getCallingAccount();
@@ -41,19 +44,14 @@
   if (zoneId == null) {
     zoneId=pNtwk.getDataCenterId();
   }
-  if (displayNetwork != null) {
-    if (!_accountMgr.isRootAdmin(caller.getType())) {
-      throw new PermissionDeniedException("Only admin allowed to update displaynetwork parameter");
-    }
-  }
- else {
+  if (displayNetwork == null) {
     displayNetwork=true;
   }
   DataCenter zone=_dcDao.findById(zoneId);
   if (zone == null) {
     throw new InvalidParameterValueException("Specified zone id was not found");
   }
-  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getType())) {
+  if (Grouping.AllocationState.Disabled == zone.getAllocationState() && !_accountMgr.isRootAdmin(caller.getId())) {
     PermissionDeniedException ex=new PermissionDeniedException("Cannot perform this operation since specified Zone is currently disabled");
     ex.addProxyObject(zone.getUuid(),"zoneId");
     throw ex;
@@ -185,14 +183,14 @@
   if (isolatedPvlan != null && ipv6) {
     throw new InvalidParameterValueException("Can only support create Private VLAN network with IPv4!");
   }
-  if (caller.getType() == Account.ACCOUNT_TYPE_NORMAL && (ntwkOff.getTrafficType() != TrafficType.Guest || ntwkOff.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))) {
+  if (_accountMgr.isNormalUser(caller.getId()) && (ntwkOff.getTrafficType() != TrafficType.Guest || ntwkOff.getGuestType() != Network.GuestType.Isolated && areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))) {
     throw new InvalidParameterValueException("Regular user can create a network only from the network" + " offering having traffic type " + TrafficType.Guest + " and network type "+ Network.GuestType.Isolated+ " with a service "+ Service.SourceNat.getName()+ " enabled");
   }
-  if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && (ntwkOff.getSpecifyVlan() || vlanId != null)) {
+  if (!_accountMgr.isRootAdmin(caller.getId()) && (ntwkOff.getSpecifyVlan() || vlanId != null)) {
     throw new InvalidParameterValueException("Only ROOT admin is allowed to specify vlanId");
   }
   if (ipv4) {
-    if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN && cidr != null) {
+    if (!_accountMgr.isRootAdmin(caller.getId()) && cidr != null) {
       String[] cidrPair=cidr.split("\\/");
       int cidrSize=Integer.valueOf(cidrPair[1]);
       if (cidrSize < _cidrLimit) {
@@ -215,7 +213,7 @@
       if (vpcId == null)       throw new InvalidParameterValueException("Cannot specify CIDR when using network offering with external devices!");
     }
   }
-  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && (ntwkOff.getGuestType() == Network.GuestType.Shared));
+  boolean createVlan=(startIP != null && endIP != null && zone.getNetworkType() == NetworkType.Advanced && ((ntwkOff.getGuestType() == Network.GuestType.Shared) || (ntwkOff.getGuestType() == GuestType.Isolated && !areServicesSupportedByNetworkOffering(ntwkOff.getId(),Service.SourceNat))));
   if (!createVlan) {
     if (ipv6) {
       createVlan=true;

@@ -17,45 +17,57 @@
   Long clusterId=agent.getClusterId();
   long agentId=agent.getId();
   if (agent.getHypervisorType() == HypervisorType.XenServer) {
-    StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
-    HashMap<String,Ternary<String,State,String>> allStates=startup.getClusterVMStateChanges();
-    if (allStates != null) {
-      fullSync(clusterId,allStates);
+    if (!VmJobEnabled.value()) {
+      StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+      HashMap<String,Pair<String,State>> allStates=startup.getClusterVMStateChanges();
+      if (allStates != null) {
+        fullSync(clusterId,allStates);
+      }
+      ClusterSyncCommand syncCmd=new ClusterSyncCommand(ClusterDeltaSyncInterval.value(),clusterId);
+      try {
+        long seq_no=_agentMgr.send(agentId,new Commands(syncCmd),this);
+        s_logger.debug("Cluster VM sync started with jobid " + seq_no);
+      }
+ catch (      AgentUnavailableException e) {
+        s_logger.fatal("The Cluster VM sync process failed for cluster id " + clusterId + " with ",e);
+      }
     }
-    ClusterSyncCommand syncCmd=new ClusterSyncCommand(ClusterDeltaSyncInterval.value(),clusterId);
+    ClusterVMMetaDataSyncCommand syncVMMetaDataCmd=new ClusterVMMetaDataSyncCommand(ClusterVMMetaDataSyncInterval.value(),clusterId);
     try {
-      long seq_no=_agentMgr.send(agentId,new Commands(syncCmd),this);
-      s_logger.debug("Cluster VM sync started with jobid " + seq_no);
+      long seq_no=_agentMgr.send(agentId,new Commands(syncVMMetaDataCmd),this);
+      s_logger.debug("Cluster VM metadata sync started with jobid " + seq_no);
     }
  catch (    AgentUnavailableException e) {
-      s_logger.fatal("The Cluster VM sync process failed for cluster id " + clusterId + " with ",e);
+      s_logger.fatal("The Cluster VM metadata sync process failed for cluster id " + clusterId + " with ",e);
     }
   }
  else {
-    StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
-    Commands commands=fullHostSync(agentId,startup);
-    if (commands.size() > 0) {
-      s_logger.debug("Sending clean commands to the agent");
-      try {
-        boolean error=false;
-        Answer[] answers=_agentMgr.send(agentId,commands);
-        for (        Answer answer : answers) {
-          if (!answer.getResult()) {
-            s_logger.warn("Unable to stop a VM due to " + answer.getDetails());
-            error=true;
+    if (!VmJobEnabled.value()) {
+      StartupRoutingCommand startup=(StartupRoutingCommand)cmd;
+      Commands commands=fullHostSync(agentId,startup);
+      if (commands.size() > 0) {
+        s_logger.debug("Sending clean commands to the agent");
+        try {
+          boolean error=false;
+          Answer[] answers=_agentMgr.send(agentId,commands);
+          for (          Answer answer : answers) {
+            if (!answer.getResult()) {
+              s_logger.warn("Unable to stop a VM due to " + answer.getDetails());
+              error=true;
+            }
+          }
+          if (error) {
+            throw new ConnectionException(true,"Unable to stop VMs");
           }
         }
-        if (error) {
-          throw new ConnectionException(true,"Unable to stop VMs");
+ catch (        final AgentUnavailableException e) {
+          s_logger.warn("Agent is unavailable now",e);
+          throw new ConnectionException(true,"Unable to sync",e);
         }
-      }
- catch (      final AgentUnavailableException e) {
-        s_logger.warn("Agent is unavailable now",e);
-        throw new ConnectionException(true,"Unable to sync",e);
-      }
-catch (      final OperationTimedoutException e) {
-        s_logger.warn("Agent is unavailable now",e);
-        throw new ConnectionException(true,"Unable to sync",e);
+catch (        final OperationTimedoutException e) {
+          s_logger.warn("Agent is unavailable now",e);
+          throw new ConnectionException(true,"Unable to sync",e);
+        }
       }
     }
   }

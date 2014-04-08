@@ -11,6 +11,9 @@
  else {
     volume=_volsDao.findByInstanceAndDeviceId(cmmd.getVirtualMachineId(),cmmd.getDeviceId()).get(0);
   }
+  if (volume == null) {
+    throw new InvalidParameterValueException("Unable to find volume with ID: " + volumeId);
+  }
   Long vmId=null;
   if (cmmd.getVirtualMachineId() == null) {
     vmId=volume.getInstanceId();
@@ -18,19 +21,19 @@
  else {
     vmId=cmmd.getVirtualMachineId();
   }
-  if (volume == null) {
-    throw new InvalidParameterValueException("Unable to find volume with ID: " + volumeId);
-  }
-  _accountMgr.checkAccess(caller,null,true,volume);
-  if (volume.getVolumeType() != Volume.Type.DATADISK) {
-    throw new InvalidParameterValueException("Please specify a data volume.");
-  }
+  _accountMgr.checkAccess(caller,null,volume);
   if (vmId == null) {
     throw new InvalidParameterValueException("The specified volume is not attached to a VM.");
   }
   UserVmVO vm=_userVmDao.findById(vmId);
   if (vm.getState() != State.Running && vm.getState() != State.Stopped && vm.getState() != State.Destroyed) {
     throw new InvalidParameterValueException("Please specify a VM that is either running or stopped.");
+  }
+  if (!(volume.getVolumeType() == Volume.Type.ROOT || volume.getVolumeType() == Volume.Type.DATADISK)) {
+    throw new InvalidParameterValueException("Please specify volume of type " + Volume.Type.DATADISK.toString() + " or "+ Volume.Type.ROOT.toString());
+  }
+  if (volume.getVolumeType() == Volume.Type.ROOT) {
+    validateRootVolumeDetachAttach(volume,vm);
   }
   List<VMSnapshotVO> vmSnapshots=_vmSnapshotDao.findByVm(vmId);
   if (vmSnapshots.size() > 0) {
@@ -42,7 +45,7 @@
     if (s_logger.isInfoEnabled()) {
       s_logger.info("Trying to attaching volume " + volumeId + "to vm instance:"+ vm.getId()+ ", update async job-"+ job.getId()+ " progress status");
     }
-    _asyncMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
+    _jobMgr.updateAsyncJobAttachment(job.getId(),"volume",volumeId);
   }
   AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
   if (!VmJobEnabled.value() || jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
@@ -61,7 +64,7 @@
     Outcome<Volume> outcome=detachVolumeFromVmThroughJobQueue(vmId,volumeId);
     Volume vol=null;
     try {
-      vol=outcome.get();
+      outcome.get();
     }
  catch (    InterruptedException e) {
       throw new RuntimeException("Operation is interrupted",e);
@@ -73,6 +76,9 @@ catch (    java.util.concurrent.ExecutionException e) {
     if (jobResult != null) {
       if (jobResult instanceof ConcurrentOperationException)       throw (ConcurrentOperationException)jobResult;
  else       if (jobResult instanceof Throwable)       throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+ else       if (jobResult instanceof Long) {
+        vol=_volsDao.findById((Long)jobResult);
+      }
     }
     return vol;
   }

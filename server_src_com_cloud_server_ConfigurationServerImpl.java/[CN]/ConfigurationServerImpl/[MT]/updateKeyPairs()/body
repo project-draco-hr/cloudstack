@@ -31,7 +31,10 @@
     if (s_logger.isInfoEnabled()) {
       s_logger.info("Systemvm keypairs not found in database. Need to store them in the database");
     }
-    Script.runSimpleBashScript("if [ -f " + privkeyfile + " ]; then rm -f "+ privkeyfile+ "; fi; ssh-keygen -t rsa -N '' -f "+ privkeyfile+ " -q");
+    boolean onWindows=isOnWindows();
+    if (!onWindows) {
+      Script.runSimpleBashScript("if [ -f " + privkeyfile + " ]; then rm -f "+ privkeyfile+ "; fi; ssh-keygen -t rsa -N '' -f "+ privkeyfile+ " -q");
+    }
     byte[] arr1=new byte[4094];
     try {
       new DataInputStream(new FileInputStream(privkeyfile)).readFully(arr1);
@@ -54,31 +57,36 @@ catch (    Exception e) {
       throw new CloudRuntimeException("Cannot read the public key file");
     }
     String publicKey=new String(arr2).trim();
-    String insertSql1="INSERT INTO `cloud`.`configuration` (category, instance, component, name, value, description) " + "VALUES ('Hidden','DEFAULT', 'management-server','ssh.privatekey', '" + DBEncryptionUtil.encrypt(privateKey) + "','Private key for the entire CloudStack')";
-    String insertSql2="INSERT INTO `cloud`.`configuration` (category, instance, component, name, value, description) " + "VALUES ('Hidden','DEFAULT', 'management-server','ssh.publickey', '" + DBEncryptionUtil.encrypt(publicKey) + "','Public key for the entire CloudStack')";
-    TransactionLegacy txn=TransactionLegacy.currentTxn();
-    try {
-      PreparedStatement stmt1=txn.prepareAutoCloseStatement(insertSql1);
-      stmt1.executeUpdate();
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Private key inserted into database");
+    final String insertSql1="INSERT INTO `cloud`.`configuration` (category, instance, component, name, value, description) " + "VALUES ('Hidden','DEFAULT', 'management-server','ssh.privatekey', '" + DBEncryptionUtil.encrypt(privateKey) + "','Private key for the entire CloudStack')";
+    final String insertSql2="INSERT INTO `cloud`.`configuration` (category, instance, component, name, value, description) " + "VALUES ('Hidden','DEFAULT', 'management-server','ssh.publickey', '" + DBEncryptionUtil.encrypt(publicKey) + "','Public key for the entire CloudStack')";
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        TransactionLegacy txn=TransactionLegacy.currentTxn();
+        try {
+          PreparedStatement stmt1=txn.prepareAutoCloseStatement(insertSql1);
+          stmt1.executeUpdate();
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Private key inserted into database");
+          }
+        }
+ catch (        SQLException ex) {
+          s_logger.error("SQL of the private key failed",ex);
+          throw new CloudRuntimeException("SQL of the private key failed");
+        }
+        try {
+          PreparedStatement stmt2=txn.prepareAutoCloseStatement(insertSql2);
+          stmt2.executeUpdate();
+          if (s_logger.isDebugEnabled()) {
+            s_logger.debug("Public key inserted into database");
+          }
+        }
+ catch (        SQLException ex) {
+          s_logger.error("SQL of the public key failed",ex);
+          throw new CloudRuntimeException("SQL of the public key failed");
+        }
       }
     }
- catch (    SQLException ex) {
-      s_logger.error("SQL of the private key failed",ex);
-      throw new CloudRuntimeException("SQL of the private key failed");
-    }
-    try {
-      PreparedStatement stmt2=txn.prepareAutoCloseStatement(insertSql2);
-      stmt2.executeUpdate();
-      if (s_logger.isDebugEnabled()) {
-        s_logger.debug("Public key inserted into database");
-      }
-    }
- catch (    SQLException ex) {
-      s_logger.error("SQL of the public key failed",ex);
-      throw new CloudRuntimeException("SQL of the public key failed");
-    }
+);
   }
  else {
     s_logger.info("Keypairs already in database, updating local copy");

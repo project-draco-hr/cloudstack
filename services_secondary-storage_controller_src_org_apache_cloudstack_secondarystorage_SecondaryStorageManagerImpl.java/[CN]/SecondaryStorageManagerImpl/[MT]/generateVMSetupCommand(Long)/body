@@ -1,0 +1,38 @@
+{
+  HostVO ssAHost=_hostDao.findById(ssAHostId);
+  if (ssAHost.getType() != Host.Type.SecondaryStorageVM) {
+    return false;
+  }
+  SecondaryStorageVmVO secStorageVm=_secStorageVmDao.findByInstanceName(ssAHost.getName());
+  if (secStorageVm == null) {
+    s_logger.warn("secondary storage VM " + ssAHost.getName() + " doesn't exist");
+    return false;
+  }
+  SecStorageVMSetupCommand setupCmd=new SecStorageVMSetupCommand();
+  if (_allowedInternalSites != null) {
+    List<String> allowedCidrs=new ArrayList<String>();
+    String[] cidrs=_allowedInternalSites.split(",");
+    for (    String cidr : cidrs) {
+      if (NetUtils.isValidCIDR(cidr) || NetUtils.isValidIp(cidr) || !cidr.startsWith("0.0.0.0")) {
+        allowedCidrs.add(cidr);
+      }
+    }
+    setupCmd.setAllowedInternalSites(allowedCidrs.toArray(new String[allowedCidrs.size()]));
+  }
+  String copyPasswd=_configDao.getValue("secstorage.copy.password");
+  setupCmd.setCopyPassword(copyPasswd);
+  setupCmd.setCopyUserName(TemplateConstants.DEFAULT_HTTP_AUTH_USER);
+  Answer answer=_agentMgr.easySend(ssAHostId,setupCmd);
+  if (answer != null && answer.getResult()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Successfully programmed http auth into " + secStorageVm.getHostName());
+    }
+    return true;
+  }
+ else {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("failed to program http auth into secondary storage vm : " + secStorageVm.getHostName());
+    }
+    return false;
+  }
+}

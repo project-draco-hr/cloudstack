@@ -70,47 +70,21 @@
     String sourceFile;
     boolean useTmpFile=false;
     try {
-      if (sourceFormat != destFormat) {
-        srcFile=new QemuImgFile(sourcePath,sourceFormat);
-        destFile=new QemuImgFile("/tmp/" + name);
-        s_logger.debug("Converting " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " as a temporary file for RBD conversion");
-        qemu.convert(srcFile,destFile);
-        sourceFile=destFile.getFileName();
-        useTmpFile=true;
-      }
- else {
-        sourceFile=sourcePath;
-      }
+      srcFile=new QemuImgFile(sourcePath,sourceFormat);
+      String rbdDestFile=KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPool.getSourceDir() + "/" + name);
+      destFile=new QemuImgFile(rbdDestFile,destFormat);
+      s_logger.debug("Starting copy from source image " + srcFile.getFileName() + " to RBD image "+ destPool.getSourceDir()+ "/"+ name);
+      qemu.convert(srcFile,destFile);
+      s_logger.debug("Succesfully converted source image " + srcFile.getFileName() + " to RBD image "+ destPool.getSourceDir()+ "/"+ name);
       Rados r=new Rados(destPool.getAuthUserName());
       r.confSet("mon_host",destPool.getSourceHost() + ":" + destPool.getSourcePort());
       r.confSet("key",destPool.getAuthSecret());
+      r.confSet("client_mount_timeout","30");
       r.connect();
       s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
       IoCTX io=r.ioCtxCreate(destPool.getSourceDir());
       Rbd rbd=new Rbd(io);
-      s_logger.debug("Creating RBD image " + name + " in Ceph pool "+ destPool.getSourceDir()+ " with RBD format 2");
-      rbd.create(name,disk.getVirtualSize(),rbdFeatures,rbdOrder);
       RbdImage image=rbd.open(name);
-      File fh=new File(sourceFile);
-      BufferedInputStream bis=new BufferedInputStream(new FileInputStream(fh));
-      int chunkSize=4194304;
-      long offset=0;
-      s_logger.debug("Reading file " + sourceFile + " ("+ fh.length()+ " bytes) into RBD image "+ name+ " in chunks of "+ chunkSize+ " bytes");
-      while (true) {
-        byte[] buf=new byte[chunkSize];
-        int bytes=bis.read(buf);
-        if (bytes <= 0) {
-          break;
-        }
-        image.write(buf,offset,bytes);
-        offset+=bytes;
-      }
-      s_logger.debug("Completed writing " + sourceFile + " to RBD image "+ name+ ". Bytes written: "+ offset);
-      bis.close();
-      if (useTmpFile) {
-        s_logger.debug("Removing temporary file " + sourceFile);
-        fh.delete();
-      }
       s_logger.debug("Creating RBD snapshot " + rbdTemplateSnapName + " on image "+ name);
       image.snapCreate(rbdTemplateSnapName);
       s_logger.debug("Protecting RBD snapshot " + rbdTemplateSnapName + " on image "+ name);
@@ -119,7 +93,7 @@
       r.ioCtxDestroy(io);
     }
  catch (    QemuImgException e) {
-      s_logger.error("Failed to do a temp convert from " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
+      s_logger.error("Failed to convert from " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
       newDisk=null;
     }
 catch (    RadosException e) {
@@ -128,10 +102,6 @@ catch (    RadosException e) {
     }
 catch (    RbdException e) {
       s_logger.error("A Ceph RBD operation failed (" + e.getReturnValue() + "). The error was: "+ e.getMessage());
-      newDisk=null;
-    }
-catch (    IOException e) {
-      s_logger.error("Failed reading the temporary file during the conversion to RBD: " + e.getMessage());
       newDisk=null;
     }
   }

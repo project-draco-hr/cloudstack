@@ -97,7 +97,7 @@
     throw new CloudRuntimeException("We cannot proceed with stop VM " + vm + " since it is not in 'Stopping' state, current state: "+ vm.getState());
   }
   vmGuru.prepareStop(profile);
-  StopCommand stop=new StopCommand(vm,ExecuteInSequence.value());
+  StopCommand stop=new StopCommand(vm,getExecuteInSequence(vm.getHypervisorType()));
   boolean stopped=false;
   StopAnswer answer=null;
   try {
@@ -112,12 +112,19 @@
           _userVmDao.saveDetails(userVm);
         }
       }
+      stopped=answer.getResult();
+      if (!stopped) {
+        throw new CloudRuntimeException("Unable to stop the virtual machine due to " + answer.getDetails());
+      }
+      vmGuru.finalizeStop(profile,answer);
+      GPUDeviceTO gpuDevice=stop.getGpuDevice();
+      if (gpuDevice != null) {
+        _resourceMgr.updateGPUDetails(vm.getHostId(),gpuDevice.getGroupDetails());
+      }
     }
-    stopped=answer.getResult();
-    if (!stopped) {
-      throw new CloudRuntimeException("Unable to stop the virtual machine due to " + answer.getDetails());
+ else {
+      throw new CloudRuntimeException("Invalid answer received in response to a StopCommand on " + vm.instanceName);
     }
-    vmGuru.finalizeStop(profile,answer);
   }
  catch (  AgentUnavailableException e) {
     s_logger.warn("Unable to stop vm, agent unavailable: " + e.toString());

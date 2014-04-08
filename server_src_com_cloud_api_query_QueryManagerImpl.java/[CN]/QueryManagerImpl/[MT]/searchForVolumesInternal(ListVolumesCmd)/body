@@ -1,28 +1,26 @@
 {
   Account caller=CallContext.current().getCallingAccount();
+  List<Long> permittedDomains=new ArrayList<Long>();
   List<Long> permittedAccounts=new ArrayList<Long>();
+  List<Long> permittedResources=new ArrayList<Long>();
   Long id=cmd.getId();
   Long vmInstanceId=cmd.getVirtualMachineId();
   String name=cmd.getVolumeName();
   String keyword=cmd.getKeyword();
   String type=cmd.getType();
   Map<String,String> tags=cmd.getTags();
-  boolean isRootAdmin=_accountMgr.isRootAdmin(caller.getType());
   Long storageId=cmd.getStorageId();
+  Long diskOffId=cmd.getDiskOfferingId();
+  Boolean display=cmd.getDisplay();
   Long zoneId=cmd.getZoneId();
-  Long podId=null;
-  if (_accountMgr.isAdmin(caller.getType())) {
-    podId=cmd.getPodId();
-  }
+  Long podId=cmd.getPodId();
   Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
-  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedAccounts,domainIdRecursiveListProject,cmd.listAll(),false);
-  Long domainId=domainIdRecursiveListProject.first();
+  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedDomains,permittedAccounts,permittedResources,domainIdRecursiveListProject,cmd.listAll(),false,"listVolumes");
   Boolean isRecursive=domainIdRecursiveListProject.second();
   ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
   Filter searchFilter=new Filter(VolumeJoinVO.class,"created",false,cmd.getStartIndex(),cmd.getPageSizeVal());
   SearchBuilder<VolumeJoinVO> sb=_volumeJoinDao.createSearchBuilder();
   sb.select(null,Func.DISTINCT,sb.entity().getId());
-  _accountMgr.buildACLViewSearchBuilder(sb,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
   sb.and("name",sb.entity().getName(),SearchCriteria.Op.EQ);
   sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
   sb.and("volumeType",sb.entity().getVolumeType(),SearchCriteria.Op.LIKE);
@@ -30,16 +28,19 @@
   sb.and("dataCenterId",sb.entity().getDataCenterId(),SearchCriteria.Op.EQ);
   sb.and("podId",sb.entity().getPodId(),SearchCriteria.Op.EQ);
   sb.and("storageId",sb.entity().getPoolId(),SearchCriteria.Op.EQ);
+  sb.and("diskOfferingId",sb.entity().getDiskOfferingId(),SearchCriteria.Op.EQ);
+  sb.and("display",sb.entity().isDisplayVolume(),SearchCriteria.Op.EQ);
   sb.and("state",sb.entity().getState(),SearchCriteria.Op.NEQ);
   sb.and("systemUse",sb.entity().isSystemUse(),SearchCriteria.Op.NEQ);
   sb.and().op("type",sb.entity().getVmType(),SearchCriteria.Op.NIN);
   sb.or("nulltype",sb.entity().getVmType(),SearchCriteria.Op.NULL);
-  if (!isRootAdmin) {
+  if (!(cmd instanceof ListVolumesCmdByAdmin)) {
     sb.and("displayVolume",sb.entity().isDisplayVolume(),SearchCriteria.Op.EQ);
   }
   sb.cp();
   SearchCriteria<VolumeJoinVO> sc=sb.create();
-  _accountMgr.buildACLViewSearchCriteria(sc,domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria);
+  SearchCriteria<VolumeJoinVO> aclSc=_volumeJoinDao.createSearchCriteria();
+  _accountMgr.buildACLViewSearchCriteria(sc,aclSc,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
   if (keyword != null) {
     SearchCriteria<VolumeJoinVO> ssc=_volumeJoinDao.createSearchCriteria();
     ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
@@ -48,6 +49,9 @@
   }
   if (name != null) {
     sc.setParameters("name",name);
+  }
+  if (display != null) {
+    sc.setParameters("display",display);
   }
   sc.setParameters("systemUse",1);
   if (tags != null && !tags.isEmpty()) {
@@ -59,6 +63,9 @@
       tagSc.addOr("tagKey",SearchCriteria.Op.SC,tsc);
     }
     sc.addAnd("tagKey",SearchCriteria.Op.SC,tagSc);
+  }
+  if (diskOffId != null) {
+    sc.setParameters("diskOfferingId",diskOffId);
   }
   if (id != null) {
     sc.setParameters("id",id);
@@ -78,7 +85,7 @@
   if (storageId != null) {
     sc.setParameters("storageId",storageId);
   }
-  if (!isRootAdmin) {
+  if (!(cmd instanceof ListVolumesCmdByAdmin)) {
     sc.setParameters("displayVolume",1);
   }
   sc.setParameters("type",VirtualMachine.Type.ConsoleProxy,VirtualMachine.Type.SecondaryStorageVm,VirtualMachine.Type.DomainRouter);

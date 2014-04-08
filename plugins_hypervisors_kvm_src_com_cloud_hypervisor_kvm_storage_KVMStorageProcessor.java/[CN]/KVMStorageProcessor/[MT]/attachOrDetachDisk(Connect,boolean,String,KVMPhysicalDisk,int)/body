@@ -24,7 +24,27 @@
  else {
       diskdef=new DiskDef();
       if (attachingPool.getType() == StoragePoolType.RBD) {
-        diskdef.defNetworkBasedDisk(attachingDisk.getPath(),attachingPool.getSourceHost(),attachingPool.getSourcePort(),attachingPool.getAuthUserName(),attachingPool.getUuid(),devId,DiskDef.diskBus.VIRTIO,diskProtocol.RBD);
+        if (resource.getHypervisorType() == Hypervisor.HypervisorType.LXC) {
+          String mapRbd=Script.runSimpleBashScript("rbd map " + attachingDisk.getPath() + " --id "+ attachingPool.getAuthUserName());
+          String[] splitPoolImage=attachingDisk.getPath().split("/");
+          String device=Script.runSimpleBashScript("rbd showmapped | grep \"" + splitPoolImage[0] + "  "+ splitPoolImage[1]+ "\" | cut -d \" \" -f10");
+          if (device != null) {
+            s_logger.debug("RBD device on host is: " + device);
+            diskdef.defBlockBasedDisk(device,devId,DiskDef.diskBus.VIRTIO);
+          }
+ else {
+            throw new InternalErrorException("Error while mapping disk " + attachingDisk.getPath() + " on host");
+          }
+        }
+ else {
+          diskdef.defNetworkBasedDisk(attachingDisk.getPath(),attachingPool.getSourceHost(),attachingPool.getSourcePort(),attachingPool.getAuthUserName(),attachingPool.getUuid(),devId,DiskDef.diskBus.VIRTIO,diskProtocol.RBD,DiskDef.diskFmtType.RAW);
+        }
+      }
+ else       if (attachingPool.getType() == StoragePoolType.Gluster) {
+        String mountpoint=attachingPool.getLocalPath();
+        String path=attachingDisk.getPath();
+        String glusterVolume=attachingPool.getSourceDir().replace("/","");
+        diskdef.defNetworkBasedDisk(glusterVolume + path.replace(mountpoint,""),attachingPool.getSourceHost(),attachingPool.getSourcePort(),null,null,devId,DiskDef.diskBus.VIRTIO,diskProtocol.GLUSTER,DiskDef.diskFmtType.QCOW2);
       }
  else       if (attachingDisk.getFormat() == PhysicalDiskFormat.QCOW2) {
         diskdef.defFileBasedDisk(attachingDisk.getPath(),devId,DiskDef.diskBus.VIRTIO,DiskDef.diskFmtType.QCOW2);

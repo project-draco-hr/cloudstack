@@ -1,0 +1,47 @@
+{
+  try {
+    IpAddressTO[] ips=cmd.getIpAddresses();
+    String routerName=cmd.getAccessDetail(NetworkElementCommand.ROUTER_NAME);
+    String controlIp=getRouterSshControlIp(cmd);
+    for (    IpAddressTO ip : ips) {
+      URI broadcastUri=BroadcastDomainType.fromString(ip.getBroadcastUri());
+      if (BroadcastDomainType.getSchemeValue(broadcastUri) != BroadcastDomainType.Vlan) {
+        throw new InternalErrorException("Unable to assign a public IP to a VIF on network " + ip.getBroadcastUri());
+      }
+      int vlanId=Integer.parseInt(BroadcastDomainType.getValue(broadcastUri));
+      int publicNicInfo=-1;
+      publicNicInfo=getVmNics(routerName,vlanId);
+      boolean addVif=false;
+      if (ip.isAdd() && publicNicInfo == -1) {
+        if (s_logger.isDebugEnabled()) {
+          s_logger.debug("Plug new NIC to associate" + controlIp + " to "+ ip.getPublicIp());
+        }
+        addVif=true;
+      }
+      if (addVif) {
+        Pair<Integer,String> nicdevice=findRouterFreeEthDeviceIndex(controlIp);
+        publicNicInfo=nicdevice.first();
+        if (publicNicInfo > 0) {
+          modifyNicVlan(routerName,vlanId,nicdevice.second());
+          publicNicInfo=getVmNics(routerName,vlanId);
+          networkUsage(controlIp,"addVif","eth" + publicNicInfo);
+        }
+ else {
+          String msg="No Nic is available on DomR VIF to associate/disassociate IP with.";
+          s_logger.error(msg);
+          throw new InternalErrorException(msg);
+        }
+        ip.setNicDevId(publicNicInfo);
+        ip.setNewNic(addVif);
+      }
+ else {
+        ip.setNicDevId(publicNicInfo);
+      }
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.error("Unexpected exception: " + e.toString() + " will shortcut rest of IPAssoc commands",e);
+    return new ExecutionResult(false,e.toString());
+  }
+  return new ExecutionResult(true,null);
+}

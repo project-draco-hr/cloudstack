@@ -1,0 +1,41 @@
+def configure_bridge_for_network_topology(bridge, this_host_id, json_config):
+    vpconfig = jsonLoader(json.loads(json_config)).vpc
+    if (vpconfig is None):
+        logging.debug("WARNING:Can't find VPC info in json config file")
+        return 'FAILURE:IMPROPER_JSON_CONFG_FILE'
+    try:
+        this_host_vms = get_vms_on_host(vpconfig, this_host_id)
+        for vm in this_host_vms:
+            for nic in vm.nics:
+                mac_addr = nic.macaddress
+                ip = nic.ipaddress
+                vif_name = get_vif_name_from_macaddress(mac_addr)
+                of_port = get_ofport_for_vif(vif_name)
+                network = get_network_details(vpconfig, nic.networkuuid)
+                add_mac_lookup_table_entry(bridge, mac_addr, of_port)
+                add_ip_lookup_table_entry(bridge, ip, network.gatewaymac, mac_addr)
+                action_str = ((('table=0, in_port=%s,' % of_port) + (' ip, nw_dst=%s,' % network.cidr)) + ' actions=resubmit(,1)')
+                addflow = [OFCTL_PATH, 'add-flow', bridge, action_str]
+                do_cmd(addflow)
+                action_str = (((('table=0, in_port=%s,' % of_port) + (' ip, dl_dst=%s,' % network.gatewaymac)) + ('nw_dst=%s,' % vpconfig.cidr)) + 'actions=resubmit(,3)')
+                addflow = [OFCTL_PATH, 'add-flow', bridge, action_str]
+                do_cmd(addflow)
+        vpc_spanning_hosts = vpconfig.hosts
+        for host in vpc_spanning_hosts:
+            if (str(this_host_id) == str(host.hostid)):
+                continue
+            other_host_vms = get_vms_on_host(vpconfig, str(host.hostid))
+            for vm in other_host_vms:
+                for nic in vm.nics:
+                    mac_addr = nic.macaddress
+                    ip = nic.ipaddress
+                    network = get_network_details(vpconfig, nic.networkuuid)
+                    gre_key = network.grekey
+                    tunnel_name = ('t%s-%s-%s' % (gre_key, this_host_id, host.hostid))
+                    of_port = get_ofport_for_vif(tunnel_name)
+                    add_mac_lookup_table_entry(bridge, mac_addr, of_port)
+                    add_ip_lookup_table_entry(bridge, ip, network.gatewaymac, mac_addr)
+        return 'SUCCESS: successfully configured bridge as per the VPC topology'
+    except:
+        logging.debug('An unexpected error occurred while configuring bridge as per VPC topology.')
+        raise

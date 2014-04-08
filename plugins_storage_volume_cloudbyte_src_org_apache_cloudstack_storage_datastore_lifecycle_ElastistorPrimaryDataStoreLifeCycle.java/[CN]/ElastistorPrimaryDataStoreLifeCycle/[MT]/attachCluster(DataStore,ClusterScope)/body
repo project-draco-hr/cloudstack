@@ -1,0 +1,33 @@
+{
+  dataStoreHelper.attachCluster(store);
+  PrimaryDataStoreInfo primarystore=(PrimaryDataStoreInfo)store;
+  List<HostVO> allHosts=_resourceMgr.listAllUpAndEnabledHosts(Host.Type.Routing,primarystore.getClusterId(),primarystore.getPodId(),primarystore.getDataCenterId());
+  if (allHosts.isEmpty()) {
+    primaryDataStoreDao.expunge(primarystore.getId());
+    throw new CloudRuntimeException("No host up to associate a storage pool with in cluster " + primarystore.getClusterId());
+  }
+  boolean success=false;
+  for (  HostVO h : allHosts) {
+    success=createStoragePool(h.getId(),primarystore);
+    if (success) {
+      break;
+    }
+  }
+  s_logger.debug("In createPool Adding the pool to each of the hosts");
+  List<HostVO> poolHosts=new ArrayList<HostVO>();
+  for (  HostVO h : allHosts) {
+    try {
+      storageMgr.connectHostToSharedPool(h.getId(),primarystore.getId());
+      poolHosts.add(h);
+    }
+ catch (    Exception e) {
+      s_logger.warn("Unable to establish a connection between " + h + " and "+ primarystore,e);
+    }
+    if (poolHosts.isEmpty()) {
+      s_logger.warn("No host can access storage pool " + primarystore + " on cluster "+ primarystore.getClusterId());
+      primaryDataStoreDao.expunge(primarystore.getId());
+      throw new CloudRuntimeException("Failed to access storage pool");
+    }
+  }
+  return true;
+}

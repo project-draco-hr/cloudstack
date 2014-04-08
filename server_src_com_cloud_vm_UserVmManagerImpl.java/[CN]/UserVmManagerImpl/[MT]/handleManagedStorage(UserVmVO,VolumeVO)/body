@@ -1,0 +1,36 @@
+{
+  StoragePoolVO storagePool=_storagePoolDao.findById(root.getPoolId());
+  if (storagePool.isManaged()) {
+    Long hostId=vm.getHostId() != null ? vm.getHostId() : vm.getLastHostId();
+    if (hostId != null) {
+      DataTO volTO=volFactory.getVolume(root.getId()).getTO();
+      DiskTO disk=new DiskTO(volTO,root.getDeviceId(),root.getPath(),root.getVolumeType());
+      DettachCommand cmd=new DettachCommand(disk,vm.getInstanceName());
+      cmd.setManaged(true);
+      cmd.setStorageHost(storagePool.getHostAddress());
+      cmd.setStoragePort(storagePool.getPort());
+      cmd.set_iScsiName(root.get_iScsiName());
+      Commands cmds=new Commands(Command.OnError.Stop);
+      cmds.addCommand(cmd);
+      try {
+        _agentMgr.send(hostId,cmds);
+      }
+ catch (      Exception ex) {
+        throw new CloudRuntimeException(ex.getMessage());
+      }
+      if (!cmds.isSuccessful()) {
+        for (        Answer answer : cmds.getAnswers()) {
+          if (!answer.getResult()) {
+            s_logger.warn("Failed to reset vm due to: " + answer.getDetails());
+            throw new CloudRuntimeException("Unable to reset " + vm + " due to "+ answer.getDetails());
+          }
+        }
+      }
+      if (hostId != null) {
+        DataStore dataStore=root.getPoolId() != null ? _dataStoreMgr.getDataStore(root.getPoolId(),DataStoreRole.Primary) : null;
+        Host host=_hostDao.findById(hostId);
+        volumeMgr.disconnectVolumeFromHost(volFactory.getVolume(root.getId()),host,dataStore);
+      }
+    }
+  }
+}

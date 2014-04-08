@@ -1,13 +1,23 @@
 {
   if (s_logger.isInfoEnabled()) {
-    s_logger.info("Executing resource DestroyCommand: " + _gson.toJson(cmd));
+    s_logger.info("Executing resource DeleteCommand: " + _gson.toJson(cmd));
   }
   try {
     VmwareContext context=hostService.getServiceContext(null);
     VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,null);
     VolumeObjectTO vol=(VolumeObjectTO)cmd.getData();
     DataStoreTO store=vol.getDataStore();
-    ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,store.getUuid());
+    PrimaryDataStoreTO primaryDataStoreTO=(PrimaryDataStoreTO)store;
+    Map<String,String> details=primaryDataStoreTO.getDetails();
+    boolean isManaged=false;
+    String managedDatastoreName=null;
+    if (details != null) {
+      isManaged=Boolean.parseBoolean(details.get(PrimaryDataStoreTO.MANAGED));
+      if (isManaged) {
+        managedDatastoreName=getManagedDatastoreNameFromPath(vol.getPath());
+      }
+    }
+    ManagedObjectReference morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,isManaged ? managedDatastoreName : store.getUuid());
     if (morDs == null) {
       String msg="Unable to find datastore based on volume mount point " + store.getUuid();
       s_logger.error(msg);
@@ -37,9 +47,14 @@
           List<String> managedIqns=getManagedIqnsFromVirtualDisks(virtualDisks);
           List<String> detachedDisks=vmMo.detachAllDisksExcept(vol.getPath(),diskInfo != null ? diskInfo.getDiskDeviceBusName() : null);
           VmwareStorageLayoutHelper.moveVolumeToRootFolder(new DatacenterMO(context,morDc),detachedDisks);
-          vmMo.destroy();
+          if (isManaged) {
+            vmMo.unregisterVm();
+          }
+ else {
+            vmMo.destroy();
+          }
           if (managedIqns != null && !managedIqns.isEmpty()) {
-            this.hostService.removeManagedTargetsFromCluster(managedIqns);
+            hostService.removeManagedTargetsFromCluster(managedIqns);
           }
           for (          NetworkDetails netDetails : networks) {
             if (netDetails.getGCTag() != null && netDetails.getGCTag().equalsIgnoreCase("true")) {

@@ -39,7 +39,7 @@
       accountNames.add(_accountMgr.getAccount(project.getProjectAccountId()).getAccountName());
     }
   }
-  _accountMgr.checkAccess(caller,AccessType.ModifyEntry,true,template);
+  _accountMgr.checkAccess(caller,AccessType.OperateEntry,template);
   if (template.getRemoved() != null) {
     s_logger.error("unable to update permissions for " + mediaType + " with id "+ id+ " as it is removed  ");
     throw new InvalidParameterValueException("unable to update permissions for " + mediaType + " with id "+ id+ " as it is removed ");
@@ -69,7 +69,7 @@
     updatedTemplate.setFeatured(isFeatured.booleanValue());
   }
   if (isExtractable != null) {
-    if (!template.getFormat().equals(ImageFormat.ISO) && caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    if (!template.getFormat().equals(ImageFormat.ISO) && _accountMgr.isRootAdmin(caller.getId())) {
       throw new InvalidParameterValueException("Only ROOT admins are allowed to modify this attribute.");
     }
  else {
@@ -84,6 +84,7 @@
   final Domain domain=_domainDao.findById(owner.getDomainId());
   if ("add".equalsIgnoreCase(operation)) {
     final List<String> accountNamesFinal=accountNames;
+    final List<Long> accountIds=new ArrayList<Long>();
     Transaction.execute(new TransactionCallbackNoReturn(){
       @Override public void doInTransactionWithoutResult(      TransactionStatus status){
         for (        String accountName : accountNamesFinal) {
@@ -92,6 +93,7 @@
             if (permittedAccount.getId() == caller.getId()) {
               continue;
             }
+            accountIds.add(permittedAccount.getId());
             LaunchPermissionVO existingPermission=_launchPermissionDao.findByTemplateAndAccount(id,permittedAccount.getId());
             if (existingPermission == null) {
               LaunchPermissionVO launchPermission=new LaunchPermissionVO(id,permittedAccount.getId());
@@ -105,6 +107,13 @@
       }
     }
 );
+    Map<String,Object> permit=new HashMap<String,Object>();
+    permit.put(ApiConstants.ENTITY_TYPE,VirtualMachineTemplate.class);
+    permit.put(ApiConstants.ENTITY_ID,id);
+    permit.put(ApiConstants.ACCESS_TYPE,AccessType.UseEntry);
+    permit.put(ApiConstants.IAM_ACTION,"listTemplates");
+    permit.put(ApiConstants.ACCOUNTS,accountIds);
+    _messageBus.publish(_name,EntityManager.MESSAGE_GRANT_ENTITY_EVENT,PublishScope.LOCAL,permit);
   }
  else   if ("remove".equalsIgnoreCase(operation)) {
     List<Long> accountIds=new ArrayList<Long>();
@@ -115,6 +124,13 @@
       }
     }
     _launchPermissionDao.removePermissions(id,accountIds);
+    Map<String,Object> permit=new HashMap<String,Object>();
+    permit.put(ApiConstants.ENTITY_TYPE,VirtualMachineTemplate.class);
+    permit.put(ApiConstants.ENTITY_ID,id);
+    permit.put(ApiConstants.ACCESS_TYPE,AccessType.UseEntry);
+    permit.put(ApiConstants.IAM_ACTION,"listTemplates");
+    permit.put(ApiConstants.ACCOUNTS,accountIds);
+    _messageBus.publish(_name,EntityManager.MESSAGE_REVOKE_ENTITY_EVENT,PublishScope.LOCAL,permit);
   }
  else   if ("reset".equalsIgnoreCase(operation)) {
     updatedTemplate=_tmpltDao.createForUpdate();
@@ -122,6 +138,7 @@
     updatedTemplate.setFeatured(false);
     _tmpltDao.update(template.getId(),updatedTemplate);
     _launchPermissionDao.removeAllPermissions(id);
+    _messageBus.publish(_name,TemplateManager.MESSAGE_RESET_TEMPLATE_PERMISSION_EVENT,PublishScope.LOCAL,template.getId());
   }
   return true;
 }

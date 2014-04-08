@@ -1,0 +1,89 @@
+{
+  Long domainId=domainIdRecursiveListProject.first();
+  if (domainId != null) {
+    Domain domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Unable to find domain by id " + domainId);
+    }
+    checkAccess(caller,domain);
+  }
+  if (accountName != null) {
+    if (projectId != null) {
+      throw new InvalidParameterValueException("Account and projectId can't be specified together");
+    }
+    Account userAccount=null;
+    Domain domain=null;
+    if (domainId != null) {
+      userAccount=_accountDao.findActiveAccount(accountName,domainId);
+      domain=_domainDao.findById(domainId);
+    }
+ else {
+      userAccount=_accountDao.findActiveAccount(accountName,caller.getDomainId());
+      domain=_domainDao.findById(caller.getDomainId());
+    }
+    if (userAccount != null) {
+      checkAccess(caller,null,userAccount);
+      permittedAccounts.add(userAccount.getId());
+    }
+ else {
+      throw new InvalidParameterValueException("could not find account " + accountName + " in domain "+ domain.getUuid());
+    }
+  }
+  if (projectId != null) {
+    if (!forProjectInvitation) {
+      if (projectId.longValue() == -1) {
+        if (isNormalUser(caller.getId())) {
+          permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
+        }
+ else {
+          domainIdRecursiveListProject.third(Project.ListProjectResourcesCriteria.ListProjectResourcesOnly);
+        }
+      }
+ else {
+        Project project=_projectMgr.getProject(projectId);
+        if (project == null) {
+          throw new InvalidParameterValueException("Unable to find project by id " + projectId);
+        }
+        if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+          throw new PermissionDeniedException("Account " + caller + " can't access project id="+ projectId);
+        }
+        permittedAccounts.add(project.getProjectAccountId());
+      }
+    }
+  }
+ else {
+    domainIdRecursiveListProject.third(Project.ListProjectResourcesCriteria.SkipProjectResources);
+    if (_querySelectors == null || _querySelectors.size() == 0)     return;
+    QuerySelector qs=_querySelectors.get(0);
+    boolean grantedAll=qs.isGrantedAll(caller,action);
+    if (grantedAll) {
+      if (domainId != null) {
+        permittedDomains.add(domainId);
+      }
+    }
+ else {
+      List<Long> grantedDomains=qs.getAuthorizedDomains(caller,action);
+      List<Long> grantedAccounts=qs.getAuthorizedAccounts(caller,action);
+      List<Long> grantedResources=qs.getAuthorizedResources(caller,action);
+      if (permittedAccounts.isEmpty() && domainId != null) {
+        if (grantedDomains.contains(domainId)) {
+          permittedDomains.add(domainId);
+        }
+ else {
+          for (          Long acctId : grantedAccounts) {
+            Account acct=_accountDao.findById(acctId);
+            if (acct != null && acct.getDomainId() == domainId) {
+              permittedAccounts.add(acctId);
+            }
+          }
+          permittedResources.addAll(grantedResources);
+        }
+      }
+ else       if (permittedAccounts.isEmpty()) {
+        permittedDomains.addAll(grantedDomains);
+        permittedAccounts.addAll(grantedAccounts);
+        permittedResources.addAll(grantedResources);
+      }
+    }
+  }
+}

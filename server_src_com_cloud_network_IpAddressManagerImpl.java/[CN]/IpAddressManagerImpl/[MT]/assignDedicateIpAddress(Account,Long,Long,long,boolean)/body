@@ -1,8 +1,4 @@
 {
-  if (owner == null) {
-    s_logger.error("No account to assign an ip to.");
-    return null;
-  }
   final long ownerId=owner.getId();
   PublicIp ip=null;
   try {
@@ -16,7 +12,16 @@
         if (s_logger.isDebugEnabled()) {
           s_logger.debug("lock account " + ownerId + " is acquired");
         }
-        PublicIp ip=fetchNewPublicIp(dcId,null,null,owner,VlanType.VirtualNetwork,guestNtwkId,isSourceNat,false,null,false,vpcId);
+        boolean displayIp=true;
+        if (guestNtwkId != null) {
+          Network ntwk=_networksDao.findById(guestNtwkId);
+          displayIp=ntwk.getDisplayNetwork();
+        }
+ else         if (vpcId != null) {
+          VpcVO vpc=_vpcDao.findById(vpcId);
+          displayIp=vpc.isDisplay();
+        }
+        PublicIp ip=fetchNewPublicIp(dcId,null,null,owner,VlanType.VirtualNetwork,guestNtwkId,isSourceNat,false,null,false,vpcId,displayIp);
         IPAddressVO publicIp=ip.ip();
         markPublicIpAsAllocated(publicIp);
         _ipAddressDao.update(publicIp.getId(),publicIp);
@@ -27,10 +32,12 @@
     return ip;
   }
   finally {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Releasing lock account " + ownerId);
+    if (owner != null) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Releasing lock account " + ownerId);
+      }
+      _accountDao.releaseFromLockTable(ownerId);
     }
-    _accountDao.releaseFromLockTable(ownerId);
     if (ip == null) {
       s_logger.error("Unable to get source nat ip address for account " + ownerId);
     }

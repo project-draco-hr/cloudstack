@@ -11,7 +11,7 @@
     if (zone.getNetworkType() == NetworkType.Advanced) {
       if (network.getGuestType() == Network.GuestType.Shared) {
         if (isSharedNetworkOfferingWithServices(network.getNetworkOfferingId())) {
-          _accountMgr.checkAccess(CallContext.current().getCallingAccount(),AccessType.UseNetwork,false,network);
+          _accountMgr.checkAccess(CallContext.current().getCallingAccount(),AccessType.UseEntry,network);
         }
  else {
           throw new InvalidParameterValueException("IP can be associated with guest network of 'shared' type only if " + "network services Source Nat, Static Nat, Port Forwarding, Load balancing, firewall are enabled in the network");
@@ -19,7 +19,7 @@
       }
     }
  else {
-      _accountMgr.checkAccess(caller,null,true,ipToAssoc);
+      _accountMgr.checkAccess(caller,null,ipToAssoc);
     }
     owner=_accountMgr.getAccount(ipToAssoc.getAllocatedToAccountId());
   }
@@ -33,7 +33,7 @@
   }
   Network network=_networksDao.findById(networkId);
   if (network != null) {
-    _accountMgr.checkAccess(owner,AccessType.UseNetwork,false,network);
+    _accountMgr.checkAccess(owner,AccessType.UseEntry,network);
   }
  else {
     s_logger.debug("Unable to find ip address by id: " + ipId);
@@ -67,7 +67,7 @@
     }
   }
   s_logger.debug("Associating ip " + ipToAssoc + " to network "+ network);
-  IPAddressVO ip=ipToAssoc;
+  IPAddressVO ip=_ipAddressDao.findById(ipId);
   ip.setAssociatedWithNetworkId(networkId);
   ip.setSourceNat(isSourceNat);
   _ipAddressDao.update(ipId,ip);
@@ -84,15 +84,17 @@
   }
   finally {
     if (!success && releaseOnFailure) {
-      try {
-        s_logger.warn("Failed to associate ip address, so releasing ip from the database " + ip);
-        _ipAddressDao.markAsUnavailable(ip.getId());
-        if (!applyIpAssociations(network,true)) {
-          _ipAddressDao.unassignIpAddress(ip.getId());
+      if (ip != null) {
+        try {
+          s_logger.warn("Failed to associate ip address, so releasing ip from the database " + ip);
+          _ipAddressDao.markAsUnavailable(ip.getId());
+          if (!applyIpAssociations(network,true)) {
+            _ipAddressDao.unassignIpAddress(ip.getId());
+          }
         }
-      }
- catch (      Exception e) {
-        s_logger.warn("Unable to disassociate ip address for recovery",e);
+ catch (        Exception e) {
+          s_logger.warn("Unable to disassociate ip address for recovery",e);
+        }
       }
     }
   }

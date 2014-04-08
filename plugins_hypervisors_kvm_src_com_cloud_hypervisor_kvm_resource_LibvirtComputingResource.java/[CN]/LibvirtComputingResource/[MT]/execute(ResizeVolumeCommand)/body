@@ -5,42 +5,42 @@
   String vmInstanceName=cmd.getInstanceName();
   boolean shrinkOk=cmd.getShrinkOk();
   StorageFilerTO spool=cmd.getPool();
+  if (currentSize == newSize) {
+    s_logger.info("No need to resize volume: current size " + currentSize + " is same as new size "+ newSize);
+    return new ResizeVolumeAnswer(cmd,true,"success",currentSize);
+  }
   try {
     KVMStoragePool pool=_storagePoolMgr.getStoragePool(spool.getType(),spool.getUuid());
     KVMPhysicalDisk vol=pool.getPhysicalDisk(volid);
     String path=vol.getPath();
     String type=getResizeScriptType(pool,vol);
-    if (pool.getType() == StoragePoolType.RBD) {
+    if (type == null) {
+      return new ResizeVolumeAnswer(cmd,false,"Unsupported volume format: pool type '" + pool.getType() + "' and volume format '"+ vol.getFormat()+ "'");
+    }
+ else     if (type.equals("QCOW2") && shrinkOk) {
+      return new ResizeVolumeAnswer(cmd,false,"Unable to shrink volumes of type " + type);
+    }
+    s_logger.debug("Resizing volume: " + path + ","+ currentSize+ ","+ newSize+ ","+ type+ ","+ vmInstanceName+ ","+ shrinkOk);
+    if (pool.getType() != StoragePoolType.CLVM) {
+      s_logger.debug("Volume " + path + " can be resized by libvirt. Asking libvirt to resize the volume.");
       try {
-        Rados r=new Rados(pool.getAuthUserName());
-        r.confSet("mon_host",pool.getSourceHost() + ":" + pool.getSourcePort());
-        r.confSet("key",pool.getAuthSecret());
-        r.connect();
-        s_logger.debug("Succesfully connected to Ceph cluster at " + r.confGet("mon_host"));
-        IoCTX io=r.ioCtxCreate(pool.getSourceDir());
-        Rbd rbd=new Rbd(io);
-        RbdImage image=rbd.open(vol.getName());
-        s_logger.debug("Resizing RBD volume " + vol.getName() + " to "+ newSize+ " bytes");
-        image.resize(newSize);
-        rbd.close(image);
-        r.ioCtxDestroy(io);
-        s_logger.debug("Succesfully resized RBD volume " + vol.getName() + " to "+ newSize+ " bytes");
+        Connect conn=LibvirtConnection.getConnection();
+        StorageVol v=conn.storageVolLookupByPath(path);
+        int flags=0;
+        if (conn.getLibVirVersion() > 1001000 && vol.getFormat() == PhysicalDiskFormat.RAW) {
+          flags=1;
+        }
+        if (shrinkOk) {
+          flags=4;
+        }
+        v.resize(newSize,flags);
       }
- catch (      RadosException e) {
-        return new ResizeVolumeAnswer(cmd,false,e.toString());
-      }
-catch (      RbdException e) {
+ catch (      LibvirtException e) {
         return new ResizeVolumeAnswer(cmd,false,e.toString());
       }
     }
  else {
-      if (type == null) {
-        return new ResizeVolumeAnswer(cmd,false,"Unsupported volume format: pool type '" + pool.getType() + "' and volume format '"+ vol.getFormat()+ "'");
-      }
- else       if (type.equals("QCOW2") && shrinkOk) {
-        return new ResizeVolumeAnswer(cmd,false,"Unable to shrink volumes of type " + type);
-      }
-      s_logger.debug("got to the stage where we execute the volume resize, params:" + path + ","+ currentSize+ ","+ newSize+ ","+ type+ ","+ vmInstanceName+ ","+ shrinkOk);
+      s_logger.debug("Volume " + path + " is of the type LVM and can not be resized using libvirt. Invoking resize script.");
       final Script resizecmd=new Script(_resizeVolumePath,_cmdsTimeout,s_logger);
       resizecmd.add("-s",String.valueOf(newSize));
       resizecmd.add("-c",String.valueOf(currentSize));

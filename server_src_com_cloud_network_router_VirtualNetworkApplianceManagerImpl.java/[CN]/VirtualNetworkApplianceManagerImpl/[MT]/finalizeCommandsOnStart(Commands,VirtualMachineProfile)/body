@@ -1,6 +1,6 @@
 {
-  DomainRouterVO router=_routerDao.findById(profile.getId());
-  NicProfile controlNic=getControlNic(profile);
+  final DomainRouterVO router=_routerDao.findById(profile.getId());
+  final NicProfile controlNic=getControlNic(profile);
   if (controlNic == null) {
     s_logger.error("Control network doesn't exist for the router " + router);
     return false;
@@ -10,22 +10,32 @@
   if (profile.getParameter(Param.ReProgramGuestNetworks) != null && (Boolean)profile.getParameter(Param.ReProgramGuestNetworks) == false) {
     reprogramGuestNtwks=false;
   }
-  VirtualRouterProvider vrProvider=_vrProviderDao.findById(router.getElementId());
+  final VirtualRouterProvider vrProvider=_vrProviderDao.findById(router.getElementId());
   if (vrProvider == null) {
     throw new CloudRuntimeException("Cannot find related virtual router provider of router: " + router.getHostName());
   }
-  Provider provider=Network.Provider.getProvider(vrProvider.getType().toString());
+  final Provider provider=Network.Provider.getProvider(vrProvider.getType().toString());
   if (provider == null) {
     throw new CloudRuntimeException("Cannot find related provider of virtual router provider: " + vrProvider.getType().toString());
   }
-  List<Long> routerGuestNtwkIds=_routerDao.getRouterNetworks(router.getId());
-  for (  Long guestNetworkId : routerGuestNtwkIds) {
+  final List<Long> routerGuestNtwkIds=_routerDao.getRouterNetworks(router.getId());
+  for (  final Long guestNetworkId : routerGuestNtwkIds) {
+    AggregationControlCommand startCmd=new AggregationControlCommand(Action.Start,router.getInstanceName(),controlNic.getIp4Address(),getRouterIpInNetwork(guestNetworkId,router.getId()));
+    cmds.addCommand(startCmd);
     if (reprogramGuestNtwks) {
       finalizeIpAssocForNetwork(cmds,router,provider,guestNetworkId,null);
       finalizeNetworkRulesForNetwork(cmds,router,provider,guestNetworkId);
     }
     finalizeUserDataAndDhcpOnStart(cmds,router,provider,guestNetworkId);
+    AggregationControlCommand finishCmd=new AggregationControlCommand(Action.Finish,router.getInstanceName(),controlNic.getIp4Address(),getRouterIpInNetwork(guestNetworkId,router.getId()));
+    cmds.addCommand(finishCmd);
   }
-  finalizeMonitorServiceOnStrat(cmds,profile,router,provider,routerGuestNtwkIds.get(0));
+  String serviceMonitringSet=SetServiceMonitor.valueIn(router.getDataCenterId());
+  if (serviceMonitringSet != null && serviceMonitringSet.equalsIgnoreCase("true")) {
+    finalizeMonitorServiceOnStrat(cmds,profile,router,provider,routerGuestNtwkIds.get(0),true);
+  }
+ else {
+    finalizeMonitorServiceOnStrat(cmds,profile,router,provider,routerGuestNtwkIds.get(0),false);
+  }
   return true;
 }
