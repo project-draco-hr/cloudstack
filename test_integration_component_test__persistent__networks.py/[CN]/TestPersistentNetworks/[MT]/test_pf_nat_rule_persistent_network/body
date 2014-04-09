@@ -1,0 +1,31 @@
+@data('LB-VR', 'LB-Netscaler')
+@attr(tags=['advanced', 'advancedns'])
+def test_pf_nat_rule_persistent_network(self, value):
+    networkOffering = self.isolated_persistent_network_offering
+    if (value == 'LB-Netscaler'):
+        if self.ns_configured:
+            networkOffering = self.isolated_persistent_network_offering_netscaler
+        else:
+            self.skipTest('Skipping - this test required netscaler configured in the network')
+    account = Account.create(self.api_client, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    isolated_persistent_network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=networkOffering.id, accountid=account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    self.assertEqual(str(isolated_persistent_network.state).lower(), 'implemented', ('network state should be implemented, it is %s' % isolated_persistent_network.state))
+    self.assertIsNotNone(isolated_persistent_network.vlan, 'vlan must not be null for persistent network')
+    routers = Router.list(self.api_client, account=account.name, domainid=account.domainid, networkid=isolated_persistent_network.id)
+    self.assertEqual(validateList(routers)[0], PASS, ('Routers list validation failed, list is %s' % routers))
+    router = routers[0]
+    self.checkRouterAccessibility(router)
+    try:
+        virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[isolated_persistent_network.id], serviceofferingid=self.service_offering.id, accountid=account.name, domainid=self.domain.id)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.debug(('Associating public IP for network: %s' % isolated_persistent_network.id))
+    ipaddress = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=isolated_persistent_network.id)
+    FireWallRule.create(self.apiclient, ipaddressid=ipaddress.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=ipaddress.ipaddress.id, networkid=isolated_persistent_network.id)
+    try:
+        virtual_machine.get_ssh_client(ipaddress=ipaddress.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM %s with IP %s' % (virtual_machine.id, ipaddress.ipaddress.ipaddress)))
+    return
