@@ -1,13 +1,10 @@
 {
   try {
-    List<DomainRouterVO> routersInIsolatedNetwork=_routerDao.listByStateAndNetworkType(State.Running,GuestType.Isolated,mgmtSrvrId);
-    List<DomainRouterVO> routersInSharedNetwork=_routerDao.listByStateAndNetworkType(State.Running,GuestType.Shared,mgmtSrvrId);
-    List<DomainRouterVO> routers=new ArrayList<DomainRouterVO>();
-    routers.addAll(routersInIsolatedNetwork);
-    routers.addAll(routersInSharedNetwork);
+    List<DomainRouterVO> routers=_routerDao.listByStateAndManagementServer(State.Running,mgmtSrvrId);
     s_logger.debug("Found " + routers.size() + " running routers. ");
     for (    final DomainRouterVO router : routers) {
-      if (router.getVpcId() != null) {
+      String serviceMonitoringFlag=SetServiceMonitor.valueIn(router.getDataCenterId());
+      if (!Boolean.parseBoolean(serviceMonitoringFlag) || router.getVpcId() != null) {
         continue;
       }
       String privateIP=router.getPrivateIpAddress();
@@ -15,22 +12,45 @@
         OpRouterMonitorServiceVO opRouterMonitorServiceVO=_opRouterMonitorServiceDao.findById(router.getId());
         GetRouterAlertsCommand command=null;
         if (opRouterMonitorServiceVO == null) {
-          command=new GetRouterAlertsCommand(null);
+          command=new GetRouterAlertsCommand(new String("1970-01-01 00:00:00"));
         }
  else {
           command=new GetRouterAlertsCommand(opRouterMonitorServiceVO.getLastAlertTimestamp());
         }
         command.setAccessDetail(NetworkElementCommand.ROUTER_IP,router.getPrivateIpAddress());
-        command.setAccessDetail(NetworkElementCommand.ROUTER_NAME,router.getInstanceName());
-        GetRouterAlertsAnswer answer=null;
         try {
-          answer=(GetRouterAlertsAnswer)_agentMgr.easySend(router.getHostId(),command);
+          final Answer origAnswer=_agentMgr.easySend(router.getHostId(),command);
+          GetRouterAlertsAnswer answer=null;
+          if (origAnswer == null) {
+            s_logger.warn("Unable to get alerts from router " + router.getHostName());
+            continue;
+          }
+          if (origAnswer instanceof GetRouterAlertsAnswer) {
+            answer=(GetRouterAlertsAnswer)origAnswer;
+          }
+ else {
+            s_logger.warn("Unable to get alerts from router " + router.getHostName());
+            continue;
+          }
+          if (!answer.getResult()) {
+            s_logger.warn("Unable to get alerts from router " + router.getHostName() + " "+ answer.getDetails());
+            continue;
+          }
           String alerts[]=answer.getAlerts();
           if (alerts != null) {
+            String lastAlertTimeStamp=answer.getTimeStamp();
+            SimpleDateFormat sdfrmt=new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+            sdfrmt.setLenient(false);
+            try {
+              sdfrmt.parse(lastAlertTimeStamp);
+            }
+ catch (            ParseException e) {
+              s_logger.warn("Invalid last alert timestamp received while collecting alerts from router: " + router.getInstanceName());
+              continue;
+            }
             for (            String alert : alerts) {
               _alertMgr.sendAlert(AlertType.ALERT_TYPE_DOMAIN_ROUTER,router.getDataCenterId(),router.getPodIdToDeployIn(),"Monitoring Service on VR " + router.getInstanceName(),alert);
             }
-            String lastAlertTimeStamp=answer.getTimeStamp();
             if (opRouterMonitorServiceVO == null) {
               opRouterMonitorServiceVO=new OpRouterMonitorServiceVO(router.getId(),router.getHostName(),lastAlertTimeStamp);
               _opRouterMonitorServiceDao.persist(opRouterMonitorServiceVO);
@@ -42,7 +62,7 @@
           }
         }
  catch (        Exception e) {
-          s_logger.warn("Error while collecting alerts from router: " + router.getInstanceName() + " from host: "+ router.getHostId(),e);
+          s_logger.warn("Error while collecting alerts from router: " + router.getInstanceName(),e);
           continue;
         }
       }
