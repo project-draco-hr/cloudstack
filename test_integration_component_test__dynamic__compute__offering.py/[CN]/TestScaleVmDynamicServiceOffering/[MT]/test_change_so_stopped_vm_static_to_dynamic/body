@@ -1,0 +1,40 @@
+@data(ADMIN_ACCOUNT, USER_ACCOUNT)
+@attr(tags=['basic', 'advanced'])
+def test_change_so_stopped_vm_static_to_dynamic(self, value):
+    'Test scale stopped VM from static offering to dynamic offering'
+    isadmin = True
+    if (value == USER_ACCOUNT):
+        isadmin = False
+    self.account = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id, admin=isadmin)
+    apiclient = self.testClient.createUserApiClient(UserName=self.account.name, DomainName=self.account.domain)
+    self.cleanup.append(self.account)
+    self.services['service_offering']['cpunumber'] = '2'
+    self.services['service_offering']['cpuspeed'] = '256'
+    self.services['service_offering']['memory'] = '128'
+    serviceOffering_static = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.services['service_offering']['cpunumber'] = ''
+    self.services['service_offering']['cpuspeed'] = ''
+    self.services['service_offering']['memory'] = ''
+    serviceOffering_dynamic = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.cleanup_co.append(serviceOffering_static)
+    self.cleanup_co.append(serviceOffering_dynamic)
+    try:
+        virtualMachine_1 = VirtualMachine.create(apiclient, self.services['virtual_machine'], serviceofferingid=serviceOffering_static.id, accountid=self.account.name, domainid=self.account.domainid)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.stopVM(virtualMachine_1)
+    try:
+        virtualMachine_1.scale(apiclient, serviceOfferingId=serviceOffering_dynamic.id, customcpunumber=4, customcpuspeed=256, custommemory=128)
+    except Exception as e:
+        self.fail(('Failure while changing service offering: %s' % e))
+    try:
+        virtualMachine_2 = VirtualMachine.create(apiclient, self.services['virtual_machine'], serviceofferingid=serviceOffering_static.id, accountid=self.account.name, domainid=self.account.domainid)
+    except Exception as e:
+        self.fail(('vm creation failed: %s' % e))
+    self.stopVM(virtualMachine_2)
+    try:
+        virtualMachine_2.scale(apiclient, serviceOfferingId=serviceOffering_dynamic.id, customcpunumber=4)
+        self.fail('Changing service offering with incomplete data should have failed, it succeded')
+    except Exception as e:
+        self.debug(('Failure while changing service offering as expected: %s' % e))
+    return

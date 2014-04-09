@@ -1,0 +1,33 @@
+@data(ADMIN_ACCOUNT, USER_ACCOUNT)
+@attr(tags=['basic', 'advanced'])
+def test_deploy_VM_with_affinity_group(self, value):
+    'Test deploy VMs with affinity group and dynamic compute offering'
+    isadmin = True
+    if (value == USER_ACCOUNT):
+        isadmin = False
+    self.account = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id, admin=isadmin)
+    self.cleanup.append(self.account)
+    self.services['service_offering']['cpunumber'] = ''
+    self.services['service_offering']['cpuspeed'] = ''
+    self.services['service_offering']['memory'] = ''
+    serviceOffering_dynamic = ServiceOffering.create(self.apiclient, self.services['service_offering'])
+    self.cleanup_co.append(serviceOffering_dynamic)
+    self.services['host_anti_affinity']['name'] = ('aff_grp_' + random_gen(size=6))
+    affinityGroup = AffinityGroup.create(self.apiclient, self.services['host_anti_affinity'], self.account.name, self.domain.id)
+    try:
+        virtualMachine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], serviceofferingid=serviceOffering_dynamic.id, accountid=self.account.name, domainid=self.account.domainid, customcpunumber=2, customcpuspeed=256, custommemory=128, affinitygroupnames=[affinityGroup.name])
+    except Exception as e:
+        self.fail(('vm creation failed with error: %s' % e))
+    otherHostsInCluster = Host.list(self.apiclient, virtualmachineid=virtualMachine.id)
+    if (validateList(otherHostsInCluster)[0] == PASS):
+        try:
+            VirtualMachine.create(self.apiclient, self.services['virtual_machine'], serviceofferingid=serviceOffering_dynamic.id, accountid=self.account.name, domainid=self.account.domainid, customcpunumber=2, customcpuspeed=256, custommemory=128, affinitygroupnames=[affinityGroup.name])
+        except Exception as e:
+            self.fail(('vm creation failed with error: %s' % e))
+    else:
+        try:
+            VirtualMachine.create(self.apiclient, self.services['virtual_machine'], serviceofferingid=serviceOffering_dynamic.id, accountid=self.account.name, domainid=self.account.domainid, customcpunumber=2, customcpuspeed=256, custommemory=128, affinitygroupnames=[affinityGroup.name])
+            self.fail('vm creation should have failed, it succeded')
+        except Exception as e:
+            self.debug(('vm creation failed as expected with error: %s' % e))
+    return
