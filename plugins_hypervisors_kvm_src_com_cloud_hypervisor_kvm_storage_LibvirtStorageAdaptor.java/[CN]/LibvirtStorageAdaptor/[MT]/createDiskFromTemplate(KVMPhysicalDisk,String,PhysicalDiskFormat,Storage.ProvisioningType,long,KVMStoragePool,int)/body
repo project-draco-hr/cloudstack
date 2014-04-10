@@ -1,0 +1,63 @@
+{
+  KVMPhysicalDisk disk=null;
+  if (destPool.getType() == StoragePoolType.RBD) {
+    disk=createDiskFromTemplateOnRBD(template,name,format,provisioningType,size,destPool,timeout);
+  }
+ else {
+    try {
+      String newUuid=name;
+      disk=destPool.createPhysicalDisk(newUuid,format,provisioningType,template.getVirtualSize());
+      if (template.getFormat() == PhysicalDiskFormat.TAR) {
+        Script.runSimpleBashScript("tar -x -f " + template.getPath() + " -C "+ disk.getPath(),timeout);
+      }
+ else       if (template.getFormat() == PhysicalDiskFormat.DIR) {
+        Script.runSimpleBashScript("mkdir -p " + disk.getPath());
+        Script.runSimpleBashScript("chmod 755 " + disk.getPath());
+        Script.runSimpleBashScript("cp -p -r " + template.getPath() + "/* "+ disk.getPath(),timeout);
+      }
+ else       if (format == PhysicalDiskFormat.QCOW2) {
+        QemuImg qemu=new QemuImg(timeout);
+        QemuImgFile destFile=new QemuImgFile(disk.getPath(),format);
+        if (size > template.getVirtualSize()) {
+          destFile.setSize(size);
+        }
+ else {
+          destFile.setSize(template.getVirtualSize());
+        }
+        Map<String,String> options=new HashMap<String,String>();
+        options.put("preallocation",QemuImg.PreallocationType.getPreallocationType(provisioningType).toString());
+switch (provisioningType) {
+case THIN:
+          QemuImgFile backingFile=new QemuImgFile(template.getPath(),template.getFormat());
+        qemu.create(destFile,backingFile,options);
+      break;
+case SPARSE:
+case FAT:
+    QemuImgFile srcFile=new QemuImgFile(template.getPath(),template.getFormat());
+  qemu.convert(srcFile,destFile,options);
+break;
+}
+}
+ else if (format == PhysicalDiskFormat.RAW) {
+QemuImgFile sourceFile=new QemuImgFile(template.getPath(),template.getFormat());
+QemuImgFile destFile=new QemuImgFile(disk.getPath(),PhysicalDiskFormat.RAW);
+if (size > template.getVirtualSize()) {
+destFile.setSize(size);
+}
+ else {
+destFile.setSize(template.getVirtualSize());
+}
+QemuImg qemu=new QemuImg(timeout);
+Map<String,String> options=new HashMap<String,String>();
+qemu.convert(sourceFile,destFile,options);
+}
+}
+ catch (QemuImgException e) {
+s_logger.error("Failed to create " + disk.getPath() + " due to a failed executing of qemu-img: "+ e.getMessage());
+}
+}
+if (disk == null) {
+throw new CloudRuntimeException("Failed to create disk from template " + template.getName());
+}
+return disk;
+}
