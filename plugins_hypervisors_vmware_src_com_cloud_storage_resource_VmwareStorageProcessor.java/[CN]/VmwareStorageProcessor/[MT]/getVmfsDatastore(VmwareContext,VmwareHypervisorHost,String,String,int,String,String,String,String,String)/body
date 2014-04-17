@@ -1,0 +1,52 @@
+{
+  ManagedObjectReference morCluster=hyperHost.getHyperHostCluster();
+  ClusterMO cluster=new ClusterMO(context,morCluster);
+  List<Pair<ManagedObjectReference,String>> lstHosts=cluster.getClusterHosts();
+  HostInternetScsiHbaStaticTarget target=new HostInternetScsiHbaStaticTarget();
+  target.setAddress(storageIpAddress);
+  target.setPort(storagePortNumber);
+  target.setIScsiName(iqn);
+  if (StringUtils.isNotBlank(chapName) && StringUtils.isNotBlank(chapSecret)) {
+    HostInternetScsiHbaAuthenticationProperties auth=new HostInternetScsiHbaAuthenticationProperties();
+    String strAuthType="chapRequired";
+    auth.setChapAuthEnabled(true);
+    auth.setChapInherited(false);
+    auth.setChapAuthenticationType(strAuthType);
+    auth.setChapName(chapName);
+    auth.setChapSecret(chapSecret);
+    if (StringUtils.isNotBlank(mutualChapName) && StringUtils.isNotBlank(mutualChapSecret)) {
+      auth.setMutualChapInherited(false);
+      auth.setMutualChapAuthenticationType(strAuthType);
+      auth.setMutualChapName(mutualChapName);
+      auth.setMutualChapSecret(mutualChapSecret);
+    }
+    target.setAuthenticationProperties(auth);
+  }
+  final List<HostInternetScsiHbaStaticTarget> lstTargets=new ArrayList<HostInternetScsiHbaStaticTarget>();
+  lstTargets.add(target);
+  addRemoveInternetScsiTargetsToAllHosts(context,true,lstTargets,lstHosts);
+  rescanAllHosts(context,lstHosts);
+  HostMO host=new HostMO(context,lstHosts.get(0).first());
+  HostDatastoreSystemMO hostDatastoreSystem=host.getHostDatastoreSystemMO();
+  ManagedObjectReference morDs=hostDatastoreSystem.findDatastoreByName(datastoreName);
+  if (morDs != null) {
+    return morDs;
+  }
+  rescanAllHosts(context,lstHosts);
+  HostStorageSystemMO hostStorageSystem=host.getHostStorageSystemMO();
+  List<HostScsiDisk> lstHostScsiDisks=hostDatastoreSystem.queryAvailableDisksForVmfs();
+  HostScsiDisk hostScsiDisk=getHostScsiDisk(hostStorageSystem.getStorageDeviceInfo().getScsiTopology(),lstHostScsiDisks,iqn);
+  if (hostScsiDisk == null) {
+    morDs=hostDatastoreSystem.findDatastoreByName(datastoreName);
+    if (morDs != null) {
+      return morDs;
+    }
+    throw new Exception("A relevant SCSI disk could not be located to use to create a datastore.");
+  }
+  morDs=hostDatastoreSystem.createVmfsDatastore(datastoreName,hostScsiDisk);
+  if (morDs != null) {
+    rescanAllHosts(context,lstHosts);
+    return morDs;
+  }
+  throw new Exception("Unable to create a datastore");
+}
