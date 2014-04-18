@@ -1,0 +1,40 @@
+@attr(tags=['advanced', 'basic', 'provisioning'])
+def test_18_stopped_vm_change_service(self):
+    "  \n        @Desc: Test to verify change service for Stopped VM\n        @Steps:\n        Step1: Deploying a VM\n        Step2: Stopping the VM deployed in step1\n        Step3: Listing all the existing service offerings\n        Step4: If there is a matching Service Offering for change service of stopped VM\n                use that service offering. If not create one service offering for change service.\n        Step5: Perform change service for the Stopped VM\n        Step6: Verifying that VM's service offerings is changed\n        "
+    list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
+    vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+    self.assertIsNotNone(vm_created, 'VM creation failed')
+    self.cleanup.append(vm_created)
+    vm_so_list = ServiceOffering.list(self.userapiclient, id=vm_created.serviceofferingid)
+    status = validateList(vm_so_list)
+    self.assertEquals(PASS, status[0], 'Listing of VM Service offering failed')
+    current_so = vm_so_list[0]
+    list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'VM creation failed')
+    self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
+    vm_created.stop(self.userapiclient, forced=True)
+    list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'Listing of VM failed')
+    self.assertEquals('Stopped', list_vm[0].state, 'Stopped VM is not in stopped state')
+    service_offerings_list = ServiceOffering.list(self.userapiclient, virtualmachineid=vm_created.id)
+    so_exists = False
+    if (service_offerings_list is not None):
+        for i in range(0, len(service_offerings_list)):
+            if ((current_so.id != service_offerings_list[i].id) and (current_so.storagetype == service_offerings_list[i].storagetype)):
+                so_exists = True
+                new_so = service_offerings_list[i]
+                break
+    if (not so_exists):
+        self.services['service_offerings']['small']['storagetype'] = current_so.storagetype
+        new_so = ServiceOffering.create(self.apiClient, self.services['service_offerings']['small'])
+        self.cleanup.append(new_so)
+    vm_created.scale_virtualmachine(self.userapiclient, new_so.id)
+    list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vm)
+    self.assertEquals(PASS, status[0], 'Listing of VM failed')
+    self.assertEquals(1, len(list_vm), 'VMs list is not as expected')
+    self.assertEquals(new_so.id, list_vm[0].serviceofferingid, 'VM is not containing New Service Offering')
+    return

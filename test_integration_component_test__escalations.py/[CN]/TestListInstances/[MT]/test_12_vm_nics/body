@@ -1,0 +1,74 @@
+@attr(tags=['advanced', 'provisioning'])
+def test_12_vm_nics(self):
+    '  \n        @Desc: Test to verify Nics for a VM\n        @Steps:\n        Step1: Deploying a VM\n        Step2: Listing all the Networks\n        Step3: Verifying that the list size is 1\n        Step4: Creating 1 network\n        Step5: Listing all the networks again\n        Step6: Verifying that the list size is 2\n        Step7: Verifying that VM deployed in step1 has only 1 nic \n                and it is same as network listed in step3\n        Step8: Adding the networks created in step4 to VM deployed in step1\n        Step9: Verifying that VM deployed in step1 has 2 nics\n        Step10: Verifying that isdefault is set to true for only 1 nic\n        Step11: Verifying that isdefault is set to true for the Network created when deployed a VM\n        Step12: Making the nic created in step4 as default nic\n        Step13: Verifying that isdefault is set to true for only 1 nic\n        Step14: Verifying that the isdefault is set to true for the nic created in step4\n        Step15: Removing the non-default nic from VM\n        Step16: Verifying that VM deployed in step1 has only 1 nic\n        '
+    list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
+    vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+    self.assertIsNotNone(vm_created, 'VM creation failed')
+    self.cleanup.append(vm_created)
+    list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'VM creation failed')
+    self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
+    list_network_before = Network.list(self.userapiclient, isdefault='true', zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    status = validateList(list_network_before)
+    self.assertEquals(PASS, status[0], 'Default Network not created when deploying a VM')
+    self.assertEquals(1, len(list_network_before), 'More than 1 default network exists')
+    network1 = list_network_before[0]
+    network_offerings_list = NetworkOffering.list(self.apiClient, forvpc='false', guestiptype='Isolated', state='Enabled', supportedservices='SourceNat', zoneid=self.zone.id)
+    self.assertIsNotNone(network_offerings_list, 'Isolated Network Offerings with sourceNat enabled are not found')
+    network2 = Network.create(self.userapiclient, self.services['network'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=network_offerings_list[0].id, zoneid=self.zone.id)
+    self.assertIsNotNone(network2, 'Network creation failed')
+    self.cleanup.append(network2)
+    list_network_after = Network.list(self.userapiclient, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+    status = validateList(list_network_after)
+    self.assertEquals(PASS, status[0], 'List of Networks failed')
+    self.assertEquals(2, len(list_network_after), 'More than 1 default network exists')
+    vm_nics_before = vm_created.nic
+    self.assertIsNotNone(vm_nics_before, 'Nic not found for the VM deployed')
+    self.assertEquals(1, len(vm_nics_before), 'VM Nic count is not matching')
+    self.assertEquals(network1.id, vm_nics_before[0].networkid, 'Default NIC for VM is not as expected')
+    VirtualMachine.add_nic(vm_created, self.userapiclient, network2.id)
+    list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'Listing of VM failed')
+    vm = list_vms_after[0]
+    vm_nics_after = vm.nic
+    self.assertIsNotNone(vm_nics_after, 'Nic not found for the deployed VM')
+    self.assertEquals(2, len(vm_nics_after), "VM NIC's count is not matching")
+    default_count = 0
+    for i in range(0, len(vm_nics_after)):
+        if (vm_nics_after[i].isdefault is True):
+            default_count = (default_count + 1)
+            default_nic = vm_nics_after[i]
+        else:
+            non_default_nic = vm_nics_after[i]
+    self.assertEquals(1, default_count, 'Default NIC count is not matching')
+    self.assertEquals(network1.id, default_nic.networkid, 'Default NIC is not matching for VM')
+    vm_created.update_default_nic(self.userapiclient, non_default_nic.id)
+    list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'Listing of VM failed')
+    vm = list_vms_after[0]
+    vm_nics_after = vm.nic
+    self.assertIsNotNone(vm_nics_after, 'Nic not found for the deployed VM')
+    self.assertEquals(2, len(vm_nics_after), "VM NIC's count is not matching")
+    default_count = 0
+    for i in range(0, len(vm_nics_after)):
+        if (vm_nics_after[i].isdefault is True):
+            default_count = (default_count + 1)
+            default_nic = vm_nics_after[i]
+        else:
+            non_default_nic = vm_nics_after[i]
+    self.assertEquals(1, default_count, 'Default NIC count is not matching')
+    self.assertEquals(network2.id, default_nic.networkid, 'Default NIC is not matching for VM')
+    vm_created.remove_nic(self.userapiclient, non_default_nic.id)
+    list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'Listing of VM failed')
+    vm = list_vms_after[0]
+    vm_nics_after = vm.nic
+    self.assertIsNotNone(vm_nics_after, 'Nic not found for the deployed VM')
+    self.assertEquals(1, len(vm_nics_after), "VM NIC's count is not matching")
+    self.assertEquals(network2.id, vm_nics_after[0].networkid, 'VM NIC is not same as expected')
+    return

@@ -1,0 +1,34 @@
+@attr(tags=['advanced', 'basic', 'selfservice'])
+def test_08_list_vm_by_zone(self):
+    '  \n        @Desc: Test List VM by Zone. \n        This test case is applicable for a setup having multiple zones.\n        @Steps:\n        Step1: Listing all the zones\n        Step2: Checking if there are multiple zones in the setup.\n               Continuing below steps only if there are multiple zones\n        Step3: Listing template for zone\n        Step4: Listing all the VMs for a user\n        Step5: Verifying that the size of the list is 0\n        Step6: Deploying a VM\n        Step7: Listing all the VMs for a user again for matching zone\n        Step8: Verifying that the size of the list is 1\n        Step9: Verifying that the details of the Listed VM are same as the VM deployed in Step6\n        Step10: Listing all the VMs for a user again for non-matching zone\n        Step11: Verifying that the size of the list is 0\n        '
+    zones_list = Zone.list(self.apiClient)
+    status = validateList(zones_list)
+    self.assertEquals(PASS, status[0], 'zones not available in the given setup')
+    current_zone = self.services['virtual_machine']['zoneid']
+    current_template = self.services['virtual_machine']['template']
+    if (not (len(zones_list) > 1)):
+        self.debug('Setup is not having multiple zones')
+    else:
+        template = get_template(self.apiClient, zones_list[0].id, self.services['ostype'])
+        self.assertIsNotNone(template, 'Template not found for zone')
+        self.services['virtual_machine']['zoneid'] = zones_list[0].id
+        self.services['virtual_machine']['template'] = template.id
+        list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'], page=1, pagesize=self.services['pagesize'], domainid=self.account.domainid, zoneid=zones_list[0].id)
+        self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
+        vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+        self.assertIsNotNone(vm_created, 'VM creation failed')
+        self.cleanup.append(vm_created)
+        list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'], page=1, pagesize=self.services['pagesize'], domainid=self.account.domainid, zoneid=zones_list[0].id)
+        status = validateList(list_vms_after)
+        self.assertEquals(PASS, status[0], 'VM creation failed')
+        self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
+        listed_vm = list_vms_after[0]
+        expected_dict = {'id': vm_created.id, 'name': vm_created.name, 'displayname': vm_created.displayname, 'state': vm_created.state, 'zoneid': vm_created.zoneid, 'account': vm_created.account, 'template': vm_created.templateid, }
+        actual_dict = {'id': listed_vm.id, 'name': listed_vm.name, 'displayname': listed_vm.displayname, 'state': listed_vm.state, 'zoneid': listed_vm.zoneid, 'account': listed_vm.account, 'template': listed_vm.templateid, }
+        list_vm_status = self.__verify_values(expected_dict, actual_dict)
+        self.assertEqual(True, list_vm_status, 'Listed VM by Id details are not as expected')
+        list_vms = VirtualMachine.list(self.userapiclient, listall=self.services['listall'], page=1, pagesize=self.services['pagesize'], domainid=self.account.domainid, zoneid=zones_list[1].id)
+        self.assertIsNone(list_vms, "VM's listed for non matching zone")
+        self.services['virtual_machine']['zoneid'] = current_zone
+        self.services['virtual_machine']['template'] = current_template
+    return

@@ -1,0 +1,34 @@
+@attr(tags=['basic', 'provisioning'])
+def test_23_deploy_vm_multiple_securitygroups(self):
+    "  \n        @Desc: Test to verify deploy VM with multiple Security Groups\n        @Steps:\n        Step1: List all the security groups for user\n        Step2: If size of list security groups is greater than 2 then get all the security groups id's\n                Else creating 2 security groups and get security groups id's\n        Step3: List all the VM's for a user\n        Step4: Deploy a VM with multiple security groups id's\n        Step5: Listing all the VM's again for the user\n        Step6: Verifying that list size is increased by 1\n        Step7: Verify that VM is associated with multiple security groups\n        "
+    security_groups_list = SecurityGroup.list(self.userapiclient, listall=self.services['listall'], domainid=self.domain.id)
+    security_groups_list_size = 0
+    if (security_groups_list is not None):
+        security_groups_list_size = len(security_groups_list)
+    while (security_groups_list_size < 2):
+        security_group = SecurityGroup.create(self.userapiclient, self.services['security_group'], account=self.account.name, domainid=self.domain.id)
+        self.assertIsNotNone(security_group, 'Security Group creation failed')
+        self.cleanup.append(security_group)
+        security_groups_list_size = (security_groups_list_size + 1)
+    security_groups_list = SecurityGroup.list(self.userapiclient, listall=self.services['listall'], domainid=self.domain.id)
+    status = validateList(security_groups_list)
+    self.assertEquals(PASS, status[0], 'Listing Security Groups failed')
+    securitygroupids = {security_groups_list[0].id, security_groups_list[1].id}
+    list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
+    vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=securitygroupids)
+    self.assertIsNotNone(vm_created, 'VM creation failed')
+    self.cleanup.append(vm_created)
+    list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_vms_after)
+    self.assertEquals(PASS, status[0], 'VM creation failed')
+    self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
+    vm_securitygroups = vm_created.securitygroup
+    self.assertEquals(2, len(vm_securitygroups), 'Security Groups count in VM created is not matching')
+    vm_securitygroups_flag = True
+    for i in range(0, len(vm_securitygroups)):
+        if ((vm_securitygroups[i].id != security_groups_list[0].id) and (vm_securitygroups[i].id != security_groups_list[1].id)):
+            vm_securitygroups_flag = False
+            break
+    self.assertEquals(True, vm_securitygroups_flag, 'Security Groups in VM are not same as created')
+    return
