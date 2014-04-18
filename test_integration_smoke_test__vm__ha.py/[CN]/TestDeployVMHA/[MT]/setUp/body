@@ -1,0 +1,36 @@
+def setUp(self):
+    self.testdata = TestData().testdata
+    self.apiclient = self.testClient.getApiClient()
+    self.domain = get_domain(self.apiclient, self.testdata)
+    self.zone = get_zone(self.apiclient, self.testdata)
+    self.testdata['mode'] = self.zone.networktype
+    self.template = get_template(self.apiclient, self.zone.id, self.testdata['ostype'])
+    self.hosts = []
+    suitablecluster = None
+    clusters = Cluster.list(self.apiclient)
+    self.assertTrue((isinstance(clusters, list) and (len(clusters) > 0)), msg='No clusters found')
+    for cluster in clusters:
+        self.hosts = Host.list(self.apiclient, clusterid=cluster.id, type='Routing')
+        if (isinstance(self.hosts, list) and (len(self.hosts) >= 2)):
+            suitablecluster = cluster
+            break
+    self.assertTrue((isinstance(self.hosts, list) and (len(self.hosts) >= 2)), msg='Atleast 2 hosts required in cluster for VM HA test')
+    for host in self.hosts:
+        Host.update(self.apiclient, id=host.id, hosttags=self.testdata['service_offering']['hasmall']['hosttags'])
+    self.account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+    self.service_offering = ServiceOffering.create(self.apiclient, self.testdata['service_offering']['hasmall'])
+    self.virtual_machine = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id)
+    list_vms = VirtualMachine.list(self.apiclient, id=self.virtual_machine.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % self.virtual_machine.id))
+    self.assertTrue((isinstance(list_vms, list) and (len(list_vms) == 1)), msg='List VM response was empty')
+    self.virtual_machine = list_vms[0]
+    self.mock_checkhealth = SimulatorMock.create(apiclient=self.apiclient, command='CheckHealthCommand', zoneid=suitablecluster.zoneid, podid=suitablecluster.podid, clusterid=suitablecluster.id, hostid=self.virtual_machine.hostid, value='result:fail')
+    self.mock_ping = SimulatorMock.create(apiclient=self.apiclient, command='PingCommand', zoneid=suitablecluster.zoneid, podid=suitablecluster.podid, clusterid=suitablecluster.id, hostid=self.virtual_machine.hostid, value='result:fail')
+    self.mock_checkvirtualmachine = SimulatorMock.create(apiclient=self.apiclient, command='CheckVirtualMachineCommand', zoneid=suitablecluster.zoneid, podid=suitablecluster.podid, clusterid=suitablecluster.id, hostid=self.virtual_machine.hostid, value='result:fail')
+    self.mock_pingtest = SimulatorMock.create(apiclient=self.apiclient, command='PingTestCommand', zoneid=suitablecluster.zoneid, podid=suitablecluster.podid, value='result:fail')
+    self.mock_checkonhost_list = []
+    for host in self.hosts:
+        if (host.id != self.virtual_machine.hostid):
+            self.mock_checkonhost_list.append(SimulatorMock.create(apiclient=self.apiclient, command='CheckOnHostCommand', zoneid=suitablecluster.zoneid, podid=suitablecluster.podid, clusterid=suitablecluster.id, hostid=host.id, value='result:fail'))
+    self.cleanup = [self.service_offering, self.account, self.mock_checkhealth, self.mock_ping, self.mock_checkvirtualmachine, self.mock_pingtest]
+    self.cleanup = (self.cleanup + self.mock_checkonhost_list)
