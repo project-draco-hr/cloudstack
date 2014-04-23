@@ -1,0 +1,28 @@
+@attr(tags=['advanced', 'basic', 'provisioning'])
+def test_11_volume_extract(self):
+    '  \n        @summary: Test to verify extract/download a Volume\n         \n        Step1: Listing Volumes before creating a Volume\n        Step2: Creating a Volume.\n        Step3: Verifying that created volume is not none and adding to clean up\n        Step4: Listing the volumes after creation\n        Step5: Verifying that the list volume size is increased by 1\n        Step6: Attaching volume created in Step2 to virtual machine\n        Step7: Detaching the volume created in step2 from virtual machine\n        Step8: Extracting/Downloadign the volume\n        Step9: Verifyign that a download URL is created for volume download\n        '
+    list_volumes_before = Volume.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNotNone(list_volumes_before, 'volume not created for the vm launched at class level')
+    volume_created = Volume.create(self.userapiclient, self.services['volume'], zoneid=self.zone.id, diskofferingid=self.disk_offering.id)
+    self.assertIsNotNone(volume_created, 'Volume not created')
+    self.cleanup.append(volume_created)
+    list_volumes_after = Volume.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNotNone(list_volumes_after, 'volume creation failed')
+    self.assertEquals((len(list_volumes_before) + 1), len(list_volumes_after), 'Volume not created')
+    self.virtual_machine.attach_volume(self.userapiclient, volume_created)
+    list_volumes = Volume.list(self.userapiclient, listall=self.services['listall'], id=volume_created.id)
+    attached_volume = list_volumes[0]
+    self.assertIsNotNone(attached_volume.vmname, 'VM is not attached to Volume')
+    self.assertEquals(self.virtual_machine.name, attached_volume.vmname, 'VM Name is not matching with attached vm')
+    self.virtual_machine.detach_volume(self.userapiclient, volume_created)
+    list_volumes = Volume.list(self.userapiclient, listall=self.services['listall'], id=volume_created.id)
+    detached_volume = list_volumes[0]
+    self.assertIsNone(detached_volume.vmname, 'VM is not detached from volume')
+    self.services['mode'] = 'HTTP_DOWNLOAD'
+    extract_volume_response = Volume.extract(self.userapiclient, volume_created.id, self.zone.id, self.services['mode'])
+    self.assertIsNotNone(extract_volume_response, 'Extract/Download volume failed')
+    self.assertEquals('DOWNLOAD_URL_CREATED', extract_volume_response.state, 'Failed to create Download URL')
+    self.assertIsNotNone(extract_volume_response.url, 'Extract/Download volume URL is NULL')
+    self.assertTrue((extract_volume_response.url.find('https://') != (-1)), 'Extract/Download volume URL doesnot contain https://')
+    self.assertEquals(volume_created.id, extract_volume_response.id, 'Extracted/Downloaded volume is not matching with original volume')
+    return

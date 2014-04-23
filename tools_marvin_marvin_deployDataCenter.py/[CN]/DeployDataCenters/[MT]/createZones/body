@@ -1,0 +1,79 @@
+def createZones(self, zones):
+    try:
+        for zone in zones:
+            zonecmd = createZone.createZoneCmd()
+            zonecmd.dns1 = zone.dns1
+            zonecmd.dns2 = zone.dns2
+            zonecmd.internaldns1 = zone.internaldns1
+            zonecmd.internaldns2 = zone.internaldns2
+            zonecmd.name = zone.name
+            zonecmd.securitygroupenabled = zone.securitygroupenabled
+            zonecmd.localstorageenabled = zone.localstorageenabled
+            zonecmd.networktype = zone.networktype
+            if (zone.securitygroupenabled != 'true'):
+                zonecmd.guestcidraddress = zone.guestcidraddress
+            zoneId = self.createZone(zonecmd)
+            if (zoneId == FAILED):
+                self.__tcRunLogger.exception(('====Zone: %s Creation Failed. So Exiting=====' % str(zone.name)))
+                self.__cleanAndExit()
+            for pnet in zone.physical_networks:
+                phynetwrk = self.createPhysicalNetwork(pnet, zoneId)
+                self.configureProviders(phynetwrk, pnet.providers)
+                self.updatePhysicalNetwork(phynetwrk.id, 'Enabled', vlan=pnet.vlan)
+            if (zone.networktype == 'Basic'):
+                listnetworkoffering = listNetworkOfferings.listNetworkOfferingsCmd()
+                listnetworkoffering.name = ('DefaultSharedNetscalerEIPandELBNetworkOffering' if (len(filter((lambda x: (x.typ == 'Public')), zone.physical_networks[0].traffictypes)) > 0) else 'DefaultSharedNetworkOfferingWithSGService')
+                if (zone.networkofferingname is not None):
+                    listnetworkoffering.name = zone.networkofferingname
+                listnetworkofferingresponse = self.__apiClient.listNetworkOfferings(listnetworkoffering)
+                guestntwrk = configGenerator.network()
+                guestntwrk.displaytext = 'guestNetworkForBasicZone'
+                guestntwrk.name = 'guestNetworkForBasicZone'
+                guestntwrk.zoneid = zoneId
+                guestntwrk.networkofferingid = listnetworkofferingresponse[0].id
+                networkid = self.createNetworks([guestntwrk], zoneId)
+                self.createPods(zone.pods, zoneId, networkid)
+                if self.isEipElbZone(zone):
+                    self.createVlanIpRanges(zone.networktype, zone.ipranges, zoneId, forvirtualnetwork=True)
+            isPureAdvancedZone = ((zone.networktype == 'Advanced') and (zone.securitygroupenabled != 'true'))
+            if isPureAdvancedZone:
+                self.createPods(zone.pods, zoneId)
+                self.createVlanIpRanges(zone.networktype, zone.ipranges, zoneId)
+            elif ((zone.networktype == 'Advanced') and (zone.securitygroupenabled == 'true')):
+                listnetworkoffering = listNetworkOfferings.listNetworkOfferingsCmd()
+                listnetworkoffering.name = 'DefaultSharedNetworkOfferingWithSGService'
+                if (zone.networkofferingname is not None):
+                    listnetworkoffering.name = zone.networkofferingname
+                listnetworkofferingresponse = self.__apiClient.listNetworkOfferings(listnetworkoffering)
+                networkcmd = createNetwork.createNetworkCmd()
+                networkcmd.displaytext = 'Shared SG enabled network'
+                networkcmd.name = 'Shared SG enabled network'
+                networkcmd.networkofferingid = listnetworkofferingresponse[0].id
+                networkcmd.zoneid = zoneId
+                ipranges = zone.ipranges
+                if ipranges:
+                    iprange = ipranges.pop()
+                    networkcmd.startip = iprange.startip
+                    networkcmd.endip = iprange.endip
+                    networkcmd.gateway = iprange.gateway
+                    networkcmd.netmask = iprange.netmask
+                    networkcmd.vlan = iprange.vlan
+                networkcmdresponse = self.__apiClient.createNetwork(networkcmd)
+                if networkcmdresponse.id:
+                    self.__addToCleanUp('Network', networkcmdresponse.id)
+                    self.__tcRunLogger.debug(('create Network Successful. NetworkId : %s ' % str(networkcmdresponse.id)))
+                self.createPods(zone.pods, zoneId, networkcmdresponse.id)
+            'Note: Swift needs cache storage first'
+            self.createCacheStorages(zone.cacheStorages, zoneId)
+            self.createSecondaryStorages(zone.secondaryStorages, zoneId)
+            enabled = getattr(zone, 'enabled', 'True')
+            if ((enabled == 'True') or (enabled is None)):
+                self.enableZone(zoneId, 'Enabled')
+            details = getattr(zone, 'details')
+            if (details is not None):
+                det = [d.__dict__ for d in details]
+                self.updateZoneDetails(zoneId, det)
+        return
+    except Exception as e:
+        print ('\nException Occurred %s' % GetDetailExceptionInfo(e))
+        self.__tcRunLogger.exception('==== Create Zones Failed ===')

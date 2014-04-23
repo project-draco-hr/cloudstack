@@ -1,20 +1,59 @@
-'Deploy datacenters according to a json configuration file'
-import configGenerator
-import cloudstackException
-import cloudstackTestClient
-import logging
-from cloudstackAPI import *
-from os import path
-from time import sleep
+'\n@Desc :\nclass DeployDataCenters: Deploys DeleteDataCenters according to a json\n                         configuration file.\nclass DeleteDataCenters: Deletes a DataCenter based upon the dc cfg\n                         settings provided.\n                         This settings file is the exported\n                         configuration from DeployDataCenters post\n                         its success\n'
+from marvin import configGenerator
+from marvin.cloudstackException import InvalidParameterException, GetDetailExceptionInfo
+from marvin.cloudstackAPI import *
+from marvin.codes import FAILED, SUCCESS
+from marvin.lib.utils import random_gen
+from marvin.config.test_data import test_data
+from sys import exit
+import os
+import pickle
+from time import sleep, time
 from optparse import OptionParser
 if (__name__ == '__main__'):
+    '\n    @Desc : This module facilitates the following:\n            1. Deploying DataCenter by using the input provided\n            configuration.\n              EX: python deployDataCenter.py -i <inp-cfg-file>\n            2. Removes a created DataCenter by providing\n            the input configuration file and data center settings file\n              EX: python deployDataCenter.py -i <inp-cfg-file>\n              -r <dc_exported_entries>\n    '
     parser = OptionParser()
-    parser.add_option('-i', '--input', action='store', default='./datacenterCfg', dest='input', help='the path                       where the json config file generated, by default is                       ./datacenterCfg')
+    parser.add_option('-i', '--input', action='store', default=None, dest='input', help='the path                       where the json config file generated')
+    parser.add_option('-r', '--remove', action='store', default=None, dest='remove', help='path to file                      where the created dc entries are kept')
     (options, args) = parser.parse_args()
+    '\n    Verify the input validity\n    '
+    if ((options.input is None) and (options.remove is None)):
+        print '\n==== For DeployDataCenter: Please Specify a Valid Input Configuration File===='
+        print '\n==== For DeleteDataCenters: Please Specify a Valid Input Configuration File and DC Settings===='
+        exit(1)
+    '\n    Imports the Modules Required\n    '
     from marvin.marvinLog import MarvinLog
-    cfg = configGenerator.getSetupConfig(options.input)
+    from marvin.cloudstackTestClient import CSTestClient
+    '\n    Step1: Create the Logger\n    '
     log_obj = MarvinLog('CSLog')
-    tcRunLogger = log_obj.setLogHandler('/tmp/debug.log')
-    deploy = deployDataCenters(cfg, tcRunLogger)
-    deploy.deploy()
-    '\n    create = createStoragePool.createStoragePoolCmd()\n    create.clusterid = 1\n    create.podid = 2\n    create.name = "fdffdf"\n    create.url = "nfs://jfkdjf/fdkjfkd"\n    create.zoneid = 2\n\n    deploy = deployDataCenters("./datacenterCfg")\n    deploy.loadCfg()\n    deploy.apiClient.createStoragePool(create)\n    '
+    cfg = configGenerator.getSetupConfig(options.input)
+    log = cfg.logger
+    ret = log_obj.createLogs('DeployDataCenter', log)
+    if (ret != FAILED):
+        log_folder_path = log_obj.getLogFolderPath()
+        tc_run_logger = log_obj.getLogger()
+    else:
+        print '\n===Log Creation Failed. Please Check==='
+        exit(1)
+    '\n    Step2 : Create Test Client\n    '
+    obj_tc_client = CSTestClient(cfg.mgtSvr[0], cfg.dbSvr, logger=tc_run_logger)
+    if (obj_tc_client and (obj_tc_client.createTestClient() == FAILED)):
+        print '\n=== TestClient Creation Failed==='
+        exit(1)
+    '\n    Step3: Verify and continue whether to deploy a DC or remove a DC\n    '
+    if (options.input and os.path.isfile(options.input) and (options.remove is None)):
+        '\n        @Desc : Deploys a Data Center with provided Config\n        '
+        deploy = DeployDataCenters(obj_tc_client, cfg, tc_run_logger, log_folder_path=log_folder_path)
+        deploy.deploy()
+        exit(1)
+    if (options.remove and os.path.isfile(options.remove) and options.input):
+        '\n        @Desc : Removes a Data Center with provided Config\n        '
+        remove_dc_obj = DeleteDataCenters(obj_tc_client, dc_cfg_file=options.remove, tc_run_logger=tc_run_logger)
+        if remove_dc_obj:
+            if (remove_dc_obj.removeDataCenter() == FAILED):
+                print '\n===Removing DataCenter Failed==='
+                tc_run_logger.debug('\n===Removing DataCenter Failed===')
+            else:
+                print '\n===Removing DataCenter Successful==='
+                tc_run_logger.debug('\n===Removing DataCenter Successful===')
+        exit(1)
