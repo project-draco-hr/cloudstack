@@ -1,0 +1,54 @@
+@attr(tags=['advanced', 'basic', 'provisioning'])
+def test_04_copy_iso(self):
+    "  \n        @Desc: Test to copy ISO from one zone to another\n        @steps:\n        Step1: Listing Zones available for a user\n        Step2: Verifying if the zones listed are greater than 1.\n               If Yes continuing.\n               If not halting the test.\n        Step3: Listing all the ISO's for a user in zone1\n        Step4: Verifying that no ISO's are listed\n        Step5: Listing all the ISO's for a user in zone2\n        Step6: Verifying that no ISO's are listed\n        Step7: Creating an ISO in zone 1\n        Step8: Listing all the ISO's again for a user in zone1\n        Step9: Verifying that list size is 1\n        Step10: Listing all the ISO's for a user in zone2\n        Step11: Verifying that no ISO's are listed\n        Step12: Copying the ISO created in step7 from zone1 to zone2\n        Step13: Listing all the ISO's for a user in zone2\n        Step14: Verifying that list size is 1\n        Step15: Listing all the ISO's for a user in zone1\n        Step16: Verifying that list size is 1\n        "
+    zones_list = Zone.list(self.userapiclient, available=True)
+    status = validateList(zones_list)
+    self.assertEquals(PASS, status[0], 'Failed to list Zones')
+    if (not (len(zones_list) > 1)):
+        self.fail('Enough zones doesnot exists to copy iso')
+    else:
+        list_isos_zone1 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        self.assertIsNone(list_isos_zone1, "ISO's listed for newly created User in Zone1")
+        list_isos_zone2 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        self.assertIsNone(list_isos_zone2, "ISO's listed for newly created User in Zone2")
+        self.services['iso']['zoneid'] = zones_list[0].id
+        iso_created = Iso.create(self.userapiclient, self.services['iso'])
+        self.assertIsNotNone(iso_created, 'ISO creation failed')
+        self.cleanup.append(iso_created)
+        list_isos_zone1 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        status = validateList(list_isos_zone1)
+        self.assertEquals(PASS, status[0], 'ISO creation failed in Zone1')
+        self.assertEquals(1, len(list_isos_zone1), 'Failed to create a Template')
+        list_isos_zone2 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        self.assertIsNone(list_isos_zone2, "ISO's listed for newly created User in Zone2")
+        iso_ready = False
+        count = 0
+        while (iso_ready is False):
+            list_iso = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], id=iso_created.id)
+            status = validateList(list_iso)
+            self.assertEquals(PASS, status[0], 'Failed to list ISO by Id')
+            if (list_iso[0].isready is True):
+                iso_ready = True
+            elif (str(list_iso[0].status) == 'Error'):
+                self.fail('Created ISO is in Errored state')
+                break
+            elif (count > 10):
+                self.fail('Timed out before ISO came into ready state')
+                break
+            else:
+                time.sleep(self.services['sleep'])
+                count = (count + 1)
+        copied_iso = Iso.copy(self.userapiclient, iso_created.id, sourcezoneid=iso_created.zoneid, destzoneid=zones_list[1].id)
+        self.assertIsNotNone(copied_iso, 'Copying ISO from Zone1 to Zone2 failed')
+        list_isos_zone1 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        status = validateList(list_isos_zone1)
+        self.assertEquals(PASS, status[0], 'ISO creation failed in Zone1')
+        self.assertEquals(1, len(list_isos_zone1), 'Failed to create a Template')
+        list_isos_zone2 = Iso.list(self.userapiclient, listall=self.services['listall'], isofilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        status = validateList(list_isos_zone2)
+        self.assertEquals(PASS, status[0], 'ISO failed to copy into Zone2')
+        self.assertEquals(1, len(list_isos_zone2), 'ISO failed to copy into Zone2')
+        self.assertNotEquals('Connection refused', list_isos_zone2[0].status, 'Failed to copy ISO')
+        self.assertEquals(True, list_isos_zone2[0].isready, 'Failed to copy ISO')
+    del self.services['iso']['zoneid']
+    return

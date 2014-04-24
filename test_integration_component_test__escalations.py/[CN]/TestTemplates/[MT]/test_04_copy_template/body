@@ -1,0 +1,61 @@
+@attr(tags=['advanced', 'basic', 'provisioning'])
+def test_04_copy_template(self):
+    '  \n        @Desc: Test to copy Template from one zone to another\n        @steps:\n        Step1: Listing Zones available for a user\n        Step2: Verifying if the zones listed are greater than 1.\n               If Yes continuing.\n               If not halting the test.\n        Step3: Listing all the templates for a user in zone1\n        Step4: Verifying that no templates are listed\n        Step5: Listing all the templates for a user in zone2\n        Step6: Verifying that no templates are listed\n        Step7: Creating a Template in zone 1\n        Step8: Listing all the Templates again for a user in zone1\n        Step9: Verifying that list size is 1\n        Step10: Listing all the templates for a user in zone2\n        Step11: Verifying that no templates are listed\n        Step12: Copying the template created in step7 from zone1 to zone2\n        Step13: Listing all the templates for a user in zone2\n        Step14: Verifying that list size is 1\n        Step15: Listing all the Templates for a user in zone1\n        Step16: Verifying that list size is 1\n        '
+    zones_list = Zone.list(self.userapiclient, available=True)
+    status = validateList(zones_list)
+    self.assertEquals(PASS, status[0], 'Failed to list Zones')
+    if (not (len(zones_list) > 1)):
+        self.fail('Enough zones doesnot exists to copy template')
+    else:
+        list_templates_zone1 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        self.assertIsNone(list_templates_zone1, 'Templates listed for newly created User in Zone1')
+        list_templates_zone2 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        self.assertIsNone(list_templates_zone2, 'Templates listed for newly created User in Zone2')
+        self.services['template']['url'] = 'http://10.147.28.7/templates/ttylinux_pv.vhd'
+        self.services['template']['format'] = 'VHD'
+        self.services['template']['ostype'] = self.services['ostype']
+        hypervisor_list = Hypervisor.list(self.apiClient, zoneid=zones_list[0].id)
+        status = validateList(zones_list)
+        self.assertEquals(PASS, status[0], 'Failed to list Hypervisors in Zone 1')
+        template_created = Template.register(self.userapiclient, self.services['template'], zones_list[0].id, hypervisor=hypervisor_list[0].name)
+        self.assertIsNotNone(template_created, 'Template creation failed')
+        self.cleanup.append(template_created)
+        list_templates_zone1 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        status = validateList(list_templates_zone1)
+        self.assertEquals(PASS, status[0], 'Templates creation failed in Zone1')
+        self.assertEquals(1, len(list_templates_zone1), 'Failed to create a Template')
+        list_templates_zone2 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        self.assertIsNone(list_templates_zone2, 'Templates listed for newly created User in Zone2')
+        template_ready = False
+        count = 0
+        while (template_ready is False):
+            list_template = Template.list(self.userapiclient, id=template_created.id, listall=self.services['listall'], templatefilter=self.services['templatefilter'])
+            status = validateList(list_template)
+            self.assertEquals(PASS, status[0], 'Failed to list Templates by Id')
+            if (list_template[0].isready is True):
+                template_ready = True
+            elif (str(list_template[0].status) == 'Error'):
+                self.fail('Created Template is in Errored state')
+                break
+            elif (count > 10):
+                self.fail('Timed out before Template came into ready state')
+                break
+            else:
+                time.sleep(self.services['sleep'])
+                count = (count + 1)
+        copied_template = Template.copy(self.userapiclient, template_created.id, sourcezoneid=template_created.zoneid, destzoneid=zones_list[1].id)
+        self.assertIsNotNone(copied_template, 'Copying Template from Zone1 to Zone2 failed')
+        list_templates_zone1 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[0].id)
+        status = validateList(list_templates_zone1)
+        self.assertEquals(PASS, status[0], 'Templates creation failed in Zone1')
+        self.assertEquals(1, len(list_templates_zone1), 'Failed to create a Template')
+        list_templates_zone2 = Template.list(self.userapiclient, listall=self.services['listall'], templatefilter=self.services['templatefilter'], zoneid=zones_list[1].id)
+        status = validateList(list_templates_zone2)
+        self.assertEquals(PASS, status[0], 'Template failed to copy into Zone2')
+        self.assertEquals(1, len(list_templates_zone2), 'Template failed to copy into Zone2')
+        self.assertNotEquals('Connection refused', list_templates_zone2[0].status, 'Failed to copy Template')
+        self.assertEquals(True, list_templates_zone2[0].isready, 'Failed to copy Template')
+    del self.services['template']['url']
+    del self.services['template']['format']
+    del self.services['template']['ostype']
+    return
