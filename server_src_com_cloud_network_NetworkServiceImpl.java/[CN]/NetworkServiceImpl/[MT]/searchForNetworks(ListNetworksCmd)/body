@@ -9,10 +9,14 @@
   String trafficType=cmd.getTrafficType();
   Boolean isSystem=cmd.getIsSystem();
   String aclType=cmd.getAclType();
+  Long projectId=cmd.getProjectId();
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  String path=null;
   Long physicalNetworkId=cmd.getPhysicalNetworkId();
   List<String> supportedServicesStr=cmd.getSupportedServices();
   Boolean restartRequired=cmd.getRestartRequired();
   boolean listAll=cmd.listAll();
+  boolean isRecursive=cmd.isRecursive();
   Boolean specifyIpRanges=cmd.getSpecifyIpRanges();
   Long vpcId=cmd.getVpcId();
   Boolean canUseForDeploy=cmd.canUseForDeploy();
@@ -25,19 +29,61 @@
   if (isSystem != null && isSystem && (accountName != null || domainId != null)) {
     throw new InvalidParameterValueException("System network belongs to system, account and domainId parameters can't be specified");
   }
-  List<Long> permittedDomains=new ArrayList<Long>();
-  List<Long> permittedAccounts=new ArrayList<Long>();
-  List<Long> permittedResources=new ArrayList<Long>();
-  Ternary<Long,Boolean,ListProjectResourcesCriteria> domainIdRecursiveListProject=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(cmd.getDomainId(),cmd.isRecursive(),null);
-  _accountMgr.buildACLSearchParameters(caller,id,cmd.getAccountName(),cmd.getProjectId(),permittedDomains,permittedAccounts,permittedResources,domainIdRecursiveListProject,cmd.listAll(),false,"listNetworks");
-  Boolean isRecursive=domainIdRecursiveListProject.second();
-  ListProjectResourcesCriteria listProjectResourcesCriteria=domainIdRecursiveListProject.third();
+  if (domainId != null) {
+    DomainVO domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Specified domain id doesn't exist in the system");
+    }
+    _accountMgr.checkAccess(caller,domain);
+    if (accountName != null) {
+      Account owner=_accountMgr.getActiveAccountByName(accountName,domainId);
+      if (owner == null) {
+        throw new InvalidParameterValueException("Unable to find account " + accountName + " in specified domain");
+      }
+      _accountMgr.checkAccess(caller,null,true,owner);
+      permittedAccounts.add(owner.getId());
+    }
+  }
+  if (!_accountMgr.isAdmin(caller.getId()) || (projectId != null && projectId.longValue() != -1 && domainId == null)) {
+    permittedAccounts.add(caller.getId());
+    domainId=caller.getDomainId();
+  }
+  boolean skipProjectNetworks=true;
+  if (projectId != null) {
+    if (projectId.longValue() == -1) {
+      if (!_accountMgr.isAdmin(caller.getId())) {
+        permittedAccounts.addAll(_projectMgr.listPermittedProjectAccounts(caller.getId()));
+      }
+    }
+ else {
+      permittedAccounts.clear();
+      Project project=_projectMgr.getProject(projectId);
+      if (project == null) {
+        throw new InvalidParameterValueException("Unable to find project by specified id");
+      }
+      if (!_projectMgr.canAccessProjectAccount(caller,project.getProjectAccountId())) {
+        InvalidParameterValueException ex=new InvalidParameterValueException("Account " + caller + " cannot access specified project id");
+        ex.addProxyObject(project.getUuid(),"projectId");
+        throw ex;
+      }
+      permittedAccounts.add(project.getProjectAccountId());
+      if (_accountMgr.isAdmin(caller.getId())) {
+        permittedAccounts.add(caller.getId());
+      }
+    }
+    skipProjectNetworks=false;
+  }
+  if (domainId != null) {
+    path=_domainDao.findById(domainId).getPath();
+  }
+ else {
+    path=_domainDao.findById(caller.getDomainId()).getPath();
+  }
   if (listAll && domainId == null) {
     isRecursive=true;
   }
   Filter searchFilter=new Filter(NetworkVO.class,"id",false,null,null);
   SearchBuilder<NetworkVO> sb=_networksDao.createSearchBuilder();
-  _accountMgr.buildACLSearchBuilder(sb,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
   if (forVpc != null) {
     if (forVpc) {
       sb.and("vpc",sb.entity().getVpcId(),Op.NNULL);
@@ -67,56 +113,34 @@
     sb.groupBy(sb.entity().getId());
     sb.join("tagSearch",tagSearch,sb.entity().getId(),tagSearch.entity().getResourceId(),JoinBuilder.JoinType.INNER);
   }
-  SearchCriteria<NetworkVO> sc=sb.create();
-  _accountMgr.buildACLSearchCriteria(sc,isRecursive,permittedDomains,permittedAccounts,permittedResources,listProjectResourcesCriteria);
-  if (isSystem != null) {
-    sc.setJoinParameters("networkOfferingSearch","systemOnly",isSystem);
+  if (permittedAccounts.isEmpty()) {
+    SearchBuilder<DomainVO> domainSearch=_domainDao.createSearchBuilder();
+    domainSearch.and("path",domainSearch.entity().getPath(),SearchCriteria.Op.LIKE);
+    sb.join("domainSearch",domainSearch,sb.entity().getDomainId(),domainSearch.entity().getId(),JoinBuilder.JoinType.INNER);
   }
-  if (keyword != null) {
-    SearchCriteria<NetworkVO> ssc=_networksDao.createSearchCriteria();
-    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
-    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
-  }
-  if (display != null) {
-    sc.addAnd("displayNetwork",SearchCriteria.Op.EQ,display);
-  }
-  if (id != null) {
-    sc.addAnd("id",SearchCriteria.Op.EQ,id);
-  }
-  if (zoneId != null) {
-    sc.addAnd("dataCenterId",SearchCriteria.Op.EQ,zoneId);
-  }
-  if (guestIpType != null) {
-    sc.addAnd("guestType",SearchCriteria.Op.EQ,guestIpType);
-  }
-  if (trafficType != null) {
-    sc.addAnd("trafficType",SearchCriteria.Op.EQ,trafficType);
-  }
-  if (aclType != null) {
-    sc.addAnd("aclType",SearchCriteria.Op.EQ,aclType.toString());
-  }
-  if (physicalNetworkId != null) {
-    sc.addAnd("physicalNetworkId",SearchCriteria.Op.EQ,physicalNetworkId);
-  }
-  if (restartRequired != null) {
-    sc.addAnd("restartRequired",SearchCriteria.Op.EQ,restartRequired);
-  }
-  if (specifyIpRanges != null) {
-    sc.addAnd("specifyIpRanges",SearchCriteria.Op.EQ,specifyIpRanges);
-  }
-  if (vpcId != null) {
-    sc.addAnd("vpcId",SearchCriteria.Op.EQ,vpcId);
-  }
-  if (tags != null && !tags.isEmpty()) {
-    int count=0;
-    sc.setJoinParameters("tagSearch","resourceType",ResourceObjectType.Network.toString());
-    for (    String key : tags.keySet()) {
-      sc.setJoinParameters("tagSearch","key" + String.valueOf(count),key);
-      sc.setJoinParameters("tagSearch","value" + String.valueOf(count),tags.get(key));
-      count++;
+  SearchBuilder<AccountVO> accountSearch=_accountDao.createSearchBuilder();
+  accountSearch.and("typeNEQ",accountSearch.entity().getType(),SearchCriteria.Op.NEQ);
+  accountSearch.and("typeEQ",accountSearch.entity().getType(),SearchCriteria.Op.EQ);
+  sb.join("accountSearch",accountSearch,sb.entity().getAccountId(),accountSearch.entity().getId(),JoinBuilder.JoinType.INNER);
+  List<NetworkVO> networksToReturn=new ArrayList<NetworkVO>();
+  if (isSystem == null || !isSystem) {
+    if (!permittedAccounts.isEmpty()) {
+      networksToReturn.addAll(listAccountSpecificNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter,permittedAccounts));
+      if (domainId != null) {
+        networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,true,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter,domainId,false));
+      }
+    }
+ else {
+      networksToReturn.addAll(listAccountSpecificNetworksByDomainPath(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter,path,isRecursive));
+      networksToReturn.addAll(listDomainSpecificNetworksByDomainPath(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter,path,isRecursive));
+      if (domainId == null) {
+        networksToReturn.addAll(listDomainLevelNetworks(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,aclType,true,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter,caller.getDomainId(),true));
+      }
     }
   }
-  List<NetworkVO> networksToReturn=_networksDao.search(sc,searchFilter);
+ else {
+    networksToReturn=_networksDao.search(buildNetworkSearchCriteria(sb,keyword,id,isSystem,zoneId,guestIpType,trafficType,physicalNetworkId,null,skipProjectNetworks,restartRequired,specifyIpRanges,vpcId,tags,display),searchFilter);
+  }
   if (supportedServicesStr != null && !supportedServicesStr.isEmpty() && !networksToReturn.isEmpty()) {
     List<NetworkVO> supportedNetworks=new ArrayList<NetworkVO>();
     Service[] suppportedServices=new Service[supportedServicesStr.size()];
