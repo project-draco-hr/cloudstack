@@ -1,0 +1,52 @@
+def update_flooding_rules_on_port_plug_unplug(bridge, interface, command, if_network_id):
+    vnet_vif_ofports = []
+    vnet_tunnelif_ofports = []
+    vnet_all_ofports = []
+    logging.debug(((('Updating the flooding rules as interface  %s' % interface) + (' is %s' % command)) + ' now.'))
+    try:
+        vsctl_output = do_cmd([VSCTL_PATH, 'list-ports', bridge])
+        ports = vsctl_output.split('\n')
+        for port in ports:
+            if_ofport = do_cmd([VSCTL_PATH, 'get', 'Interface', port, 'ofport'])
+            if port.startswith('vif'):
+                if (if_network_id != get_network_id_for_vif(port)):
+                    continue
+                vnet_vif_ofports.append(if_ofport)
+                vnet_all_ofports.append(if_ofport)
+            if port.startswith('t'):
+                if (if_network_id != get_network_id_for_tunnel_port(port)[1:(-1)]):
+                    continue
+                vnet_tunnelif_ofports.append(if_ofport)
+                vnet_all_ofports.append(if_ofport)
+        if (command == 'online'):
+            if (len(vnet_all_ofports) == 1):
+                return
+            for port in vnet_all_ofports:
+                clear_flooding_rules_for_port(bridge, port)
+            for port in vnet_tunnelif_ofports:
+                add_flooding_rules_for_port(bridge, port, vnet_vif_ofports)
+            for port in vnet_vif_ofports:
+                vnet_all_ofports_copy = copy.copy(vnet_all_ofports)
+                vnet_all_ofports_copy.remove(port)
+                add_flooding_rules_for_port(bridge, port, vnet_all_ofports_copy)
+            this_if_ofport = do_cmd([VSCTL_PATH, 'get', 'Interface', interface, 'ofport'])
+            if interface.startswith('vif'):
+                mac = get_macaddress_of_vif(interface)
+                add_mac_lookup_table_entry(bridge, mac, this_if_ofport)
+        if (command == 'offline'):
+            for port in vnet_all_ofports:
+                clear_flooding_rules_for_port(bridge, port)
+            vnet_all_ofports.remove(this_if_ofport)
+            vnet_vif_ofports.remove(this_if_ofport)
+            for port in vnet_tunnelif_ofports:
+                add_flooding_rules_for_port(bridge, port, vnet_vif_ofports)
+            for port in vnet_vif_ofports:
+                vnet_all_ofports_copy = copy.copy(vnet_all_ofports)
+                vnet_all_ofports_copy.remove(port)
+                add_flooding_rules_for_port(bridge, port, vnet_all_ofports_copy)
+            if interface.startswith('vif'):
+                mac = get_macaddress_of_vif(interface)
+                delete_mac_lookup_table_entry(bridge, mac)
+    except:
+        logging.debug((('An unexpected error occurred while updating the flooding rules when interface ' + (' %s' % interface)) + (' is %s' % command)))
+        raise
