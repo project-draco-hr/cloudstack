@@ -2,7 +2,6 @@
   final CallContext ctx=CallContext.current();
   final Long callerUserId=ctx.getCallingUserId();
   final Account caller=ctx.getCallingAccount();
-  String vmUUID=params.get(ApiConstants.VIRTUAL_MACHINE_ID);
   if (cmdObj instanceof BaseAsyncCmd) {
     Long objectId=null;
     String objectUuid=null;
@@ -12,6 +11,8 @@
       objectId=createCmd.getEntityId();
       objectUuid=createCmd.getEntityUuid();
       params.put("id",objectId.toString());
+      Class entityClass=EventTypes.getEntityClassForEvent(createCmd.getEventType());
+      if (entityClass != null)       ctx.putContextParameter(entityClass.getName(),objectId);
     }
  else {
       objectUuid=params.get(ApiConstants.ID);
@@ -32,15 +33,13 @@
     if (EventTypes.getEntityForEvent(asyncCmd.getEventType()) != null) {
       ctx.putContextParameter(EventTypes.getEntityForEvent(asyncCmd.getEventType()),objectUuid);
     }
-    if (vmUUID != null) {
-      ctx.putContextParameter(ReflectUtil.getEntityName(VirtualMachine.class),vmUUID);
-    }
-    final Long eventId=ActionEventUtils.onScheduledActionEvent((callerUserId == null) ? User.UID_SYSTEM : callerUserId,asyncCmd.getEntityOwnerId(),asyncCmd.getEventType(),asyncCmd.getEventDescription(),asyncCmd.isDisplayResourceEnabled(),startEventId);
+    final Long eventId=ActionEventUtils.onScheduledActionEvent((callerUserId == null) ? User.UID_SYSTEM : callerUserId,asyncCmd.getEntityOwnerId(),asyncCmd.getEventType(),asyncCmd.getEventDescription(),asyncCmd.isDisplay(),startEventId);
     if (startEventId == 0) {
       startEventId=eventId;
     }
     params.put("ctxStartEventId",String.valueOf(startEventId));
     params.put("cmdEventType",asyncCmd.getEventType().toString());
+    params.put("ctxDetails",ApiGsonHelper.getBuilder().create().toJson(ctx.getContextParameters()));
     Long instanceId=(objectId == null) ? asyncCmd.getInstanceId() : objectId;
     AsyncJobVO job=new AsyncJobVO("",callerUserId,caller.getId(),cmdObj.getClass().getName(),ApiGsonHelper.getBuilder().create().toJson(params),instanceId,asyncCmd.getInstanceType() != null ? asyncCmd.getInstanceType().toString() : null);
     job.setDispatcher(_asyncDispatcher.getName());
