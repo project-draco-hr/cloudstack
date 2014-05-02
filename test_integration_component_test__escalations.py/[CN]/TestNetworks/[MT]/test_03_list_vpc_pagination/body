@@ -1,0 +1,42 @@
+@attr(tags=['advanced'])
+def test_03_list_vpc_pagination(self):
+    '\n        @Desc: Test create vpc with network domain as parameter\n        @Steps \n        Step1    : List VPC Offering\n        Step2    : List VPCs for newly created user\n        Step3    : Create VPCs without network domain based on page size\n        Step4    : Verify count of VPCs created\n        Step5    : Listing all the VPCs in page1\n        Step6    : Listing all the VPCs in page2\n        Step7    : Verifying that on page 2 only 1 vpc is present and the vpc on page 2 is not present in page1\n        Step8    : Deleting a single vpc and verifying that vpc does not exists on page 2\n        '
+    vpc_offs_list = VpcOffering.list(self.userapiclient, isdefault='true')
+    if (vpc_offs_list is None):
+        self.fail('Default VPC offerings not found')
+    else:
+        vpc_offs = vpc_offs_list[0]
+    vpc_list = VPC.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(vpc_list)
+    self.assertEquals(FAIL, status[0], 'VPCs found for newly created user')
+    vpc_count_before = 0
+    if (vpc_list is None):
+        for i in range(0, (self.services['pagesize'] + 1)):
+            vpc_1 = VPC.create(self.userapiclient, self.services['vpc'], vpcofferingid=vpc_offs.id, zoneid=self.zone.id)
+            self.assertIsNotNone(vpc_1, 'VPC is not created')
+            if (i < self.services['pagesize']):
+                self.cleanup.append(vpc_1)
+            self.assertNotEquals((-1), vpc_1.name.find(self.services['vpc']['name']), 'VPC name not matched')
+            self.assertEquals(self.zone.id, vpc_1.zoneid, 'Zone is not matching in the vpc created')
+    else:
+        self.fail('VPCs found for newly created user')
+    vpc_count_after = VPC.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(vpc_count_after)
+    self.assertEquals(PASS, status[0], 'VPC list count is null')
+    self.assertEqual(len(vpc_count_after), (self.services['pagesize'] + 1), 'Number of VPCs created is not matching expected')
+    list_vpcs_page1 = VPC.list(self.userapiclient, listall=self.services['listall'], page=1, pagesize=self.services['pagesize'])
+    status = validateList(list_vpcs_page1)
+    self.assertEquals(PASS, status[0], 'No vpcs found in Page 1')
+    self.assertEqual(len(list_vpcs_page1), self.services['pagesize'], 'List vpc response is not matching with the page size length for page 1')
+    list_vpcs_page2 = VPC.list(self.userapiclient, listall=self.services['listall'], page=2, pagesize=self.services['pagesize'])
+    status = validateList(list_vpcs_page2)
+    self.assertEquals(PASS, status[0], 'No vpc found in Page 2')
+    self.assertEqual(1, len(list_vpcs_page2), 'List VPCs response is not matching with the page size length for page 2')
+    vpc_page2 = list_vpcs_page2[0]
+    for i in range(0, len(list_vpcs_page1)):
+        vpc_page1 = list_vpcs_page1[i]
+        self.assertNotEquals(vpc_page2.id, vpc_page1.id, 'VPC listed in page 2 is also listed in page 1')
+    VPC.delete(vpc_1, self.userapiclient)
+    list_vpc_response = VPC.list(self.userapiclient, listall=self.services['listall'], page=2, pagesize=self.services['pagesize'])
+    self.assertEqual(list_vpc_response, None, 'vpc was not deleted')
+    return
