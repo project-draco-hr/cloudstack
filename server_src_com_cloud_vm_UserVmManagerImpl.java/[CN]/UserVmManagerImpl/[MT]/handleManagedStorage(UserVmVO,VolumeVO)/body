@@ -3,13 +3,31 @@
   if (storagePool.isManaged()) {
     Long hostId=vm.getHostId() != null ? vm.getHostId() : vm.getLastHostId();
     if (hostId != null) {
-      DataTO volTO=volFactory.getVolume(root.getId()).getTO();
-      DiskTO disk=new DiskTO(volTO,root.getDeviceId(),root.getPath(),root.getVolumeType());
-      DettachCommand cmd=new DettachCommand(disk,vm.getInstanceName());
-      cmd.setManaged(true);
-      cmd.setStorageHost(storagePool.getHostAddress());
-      cmd.setStoragePort(storagePool.getPort());
-      cmd.set_iScsiName(root.get_iScsiName());
+      VolumeInfo volumeInfo=volFactory.getVolume(root.getId());
+      Host host=_hostDao.findById(hostId);
+      final Command cmd;
+      if (host.getHypervisorType() == HypervisorType.XenServer) {
+        DiskTO disk=new DiskTO(volumeInfo.getTO(),root.getDeviceId(),root.getPath(),root.getVolumeType());
+        cmd=new DettachCommand(disk,vm.getInstanceName());
+        DettachCommand detachCommand=(DettachCommand)cmd;
+        detachCommand.setManaged(true);
+        detachCommand.setStorageHost(storagePool.getHostAddress());
+        detachCommand.setStoragePort(storagePool.getPort());
+        detachCommand.set_iScsiName(root.get_iScsiName());
+      }
+ else       if (host.getHypervisorType() == HypervisorType.VMware) {
+        PrimaryDataStore primaryDataStore=(PrimaryDataStore)volumeInfo.getDataStore();
+        Map<String,String> details=primaryDataStore.getDetails();
+        if (details == null) {
+          details=new HashMap<String,String>();
+          primaryDataStore.setDetails(details);
+        }
+        details.put(DiskTO.MANAGED,Boolean.TRUE.toString());
+        cmd=new DeleteCommand(volumeInfo.getTO());
+      }
+ else {
+        throw new CloudRuntimeException("This hypervisor type is not supported on managed storage for this command.");
+      }
       Commands cmds=new Commands(Command.OnError.Stop);
       cmds.addCommand(cmd);
       try {
@@ -26,11 +44,8 @@
           }
         }
       }
-      if (hostId != null) {
-        DataStore dataStore=root.getPoolId() != null ? _dataStoreMgr.getDataStore(root.getPoolId(),DataStoreRole.Primary) : null;
-        Host host=_hostDao.findById(hostId);
-        volumeMgr.disconnectVolumeFromHost(volFactory.getVolume(root.getId()),host,dataStore);
-      }
+      DataStore dataStore=root.getPoolId() != null ? _dataStoreMgr.getDataStore(root.getPoolId(),DataStoreRole.Primary) : null;
+      volumeMgr.disconnectVolumeFromHost(volFactory.getVolume(root.getId()),host,dataStore);
     }
   }
 }
