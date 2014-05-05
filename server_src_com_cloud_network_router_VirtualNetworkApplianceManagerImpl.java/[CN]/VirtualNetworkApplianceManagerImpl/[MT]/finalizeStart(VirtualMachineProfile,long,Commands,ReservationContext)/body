@@ -1,20 +1,16 @@
 {
   DomainRouterVO router=_routerDao.findById(profile.getId());
-  boolean result=true;
-  Answer answer=cmds.getAnswer("checkSsh");
-  if (answer != null && answer instanceof CheckSshAnswer) {
-    final CheckSshAnswer sshAnswer=(CheckSshAnswer)answer;
-    if (sshAnswer == null || !sshAnswer.getResult()) {
-      s_logger.warn("Unable to ssh to the VM: " + sshAnswer.getDetails());
-      result=false;
+  for (  Answer answer : cmds.getAnswers()) {
+    if (!answer.getResult()) {
+      String cmdClassName=answer.getClass().getCanonicalName().replace("Answer","Command");
+      String errorMessage="Command: " + cmdClassName + " failed while starting virtual router";
+      String errorDetails="Details: " + answer.getDetails() + " "+ answer.toString();
+      _alertMgr.sendAlert(AlertService.AlertType.ALERT_TYPE_DOMAIN_ROUTER,router.getDataCenterId(),router.getPodIdToDeployIn(),errorMessage,errorDetails);
+      s_logger.warn(errorMessage);
+      return false;
     }
   }
- else {
-    result=false;
-  }
-  if (result == false) {
-    return result;
-  }
+  boolean result=true;
   final List<Network> guestNetworks=new ArrayList<Network>();
   final List<? extends Nic> routerNics=_nicDao.listByVmId(profile.getId());
   for (  final Nic nic : routerNics) {
@@ -27,24 +23,11 @@
       }
     }
   }
-  if (!result) {
-    return result;
-  }
-  answer=cmds.getAnswer("getDomRVersion");
-  if (answer != null && answer instanceof GetDomRVersionAnswer) {
-    final GetDomRVersionAnswer versionAnswer=(GetDomRVersionAnswer)answer;
-    if (answer == null || !answer.getResult()) {
-      s_logger.warn("Unable to get the template/scripts version of router " + router.getInstanceName() + " due to: "+ versionAnswer.getDetails());
-      result=false;
-    }
- else {
-      router.setTemplateVersion(versionAnswer.getTemplateVersion());
-      router.setScriptsVersion(versionAnswer.getScriptsVersion());
-      router=_routerDao.persist(router,guestNetworks);
-    }
-  }
- else {
-    result=false;
+  if (result) {
+    GetDomRVersionAnswer versionAnswer=(GetDomRVersionAnswer)cmds.getAnswer("getDomRVersion");
+    router.setTemplateVersion(versionAnswer.getTemplateVersion());
+    router.setScriptsVersion(versionAnswer.getScriptsVersion());
+    router=_routerDao.persist(router,guestNetworks);
   }
   return result;
 }
