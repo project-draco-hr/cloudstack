@@ -2,9 +2,10 @@
   final RemoteAccessVpnVO vpn=_remoteAccessVpnDao.findByPublicIpAddress(ipId);
   if (vpn == null) {
     s_logger.debug("there are no Remote access vpns for public ip address id=" + ipId);
-    return;
+    return true;
   }
   _accountMgr.checkAccess(caller,AccessType.OperateEntry,vpn);
+  RemoteAccessVpn.State prevState=vpn.getState();
   vpn.setState(RemoteAccessVpn.State.Removed);
   _remoteAccessVpnDao.update(vpn.getId(),vpn);
   boolean success=false;
@@ -16,7 +17,13 @@
       }
     }
   }
-  finally {
+ catch (  ResourceUnavailableException ex) {
+    vpn.setState(prevState);
+    _remoteAccessVpnDao.update(vpn.getId(),vpn);
+    s_logger.debug("Failed to stop the vpn " + vpn.getId() + " , so reverted state to "+ RemoteAccessVpn.State.Running);
+    success=false;
+  }
+ finally {
     if (success) {
       final List<? extends FirewallRule> vpnFwRules=_rulesDao.listByIpAndPurpose(ipId,Purpose.Vpn);
       boolean applyFirewall=false;
@@ -65,4 +72,5 @@
       }
     }
   }
+  return success;
 }
