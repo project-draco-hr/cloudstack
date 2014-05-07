@@ -1,52 +1,59 @@
 def update_flooding_rules_on_port_plug_unplug(bridge, interface, command, if_network_id):
-    vnet_vif_ofports = []
-    vnet_tunnelif_ofports = []
-    vnet_all_ofports = []
-    logging.debug(((('Updating the flooding rules as interface  %s' % interface) + (' is %s' % command)) + ' now.'))
+
+
+    class tier_ports:
+        tier_vif_ofports = []
+        tier_tunnelif_ofports = []
+        tier_all_ofports = []
+    logging.debug((((('Updating the flooding rules on bridge ' + bridge) + (' as interface  %s' % interface)) + (' is %s' % command)) + ' now.'))
     try:
+        if (not os.path.exists('/var/run/cloud')):
+            os.makedirs('/var/run/cloud')
+        ofspec_filename = (((((('/var/run/cloud/' + bridge) + '-') + interface) + '-') + command) + '.ofspec')
+        ofspec = open(ofspec_filename, 'w+')
+        all_tiers = dict()
         vsctl_output = do_cmd([VSCTL_PATH, 'list-ports', bridge])
         ports = vsctl_output.split('\n')
         for port in ports:
             if_ofport = do_cmd([VSCTL_PATH, 'get', 'Interface', port, 'ofport'])
             if port.startswith('vif'):
-                if (if_network_id != get_network_id_for_vif(port)):
-                    continue
-                vnet_vif_ofports.append(if_ofport)
-                vnet_all_ofports.append(if_ofport)
+                network_id = get_network_id_for_vif(port)
+                if (network_id not in all_tiers.keys()):
+                    all_tiers[network_id] = tier_ports()
+                tier_ports_info = all_tiers[network_id]
+                tier_ports_info.tier_vif_ofports.append(if_ofport)
+                tier_ports_info.tier_all_ofports.append(if_ofport)
+                all_tiers[network_id] = tier_ports_info
             if port.startswith('t'):
-                if (if_network_id != get_network_id_for_tunnel_port(port)[1:(-1)]):
-                    continue
-                vnet_tunnelif_ofports.append(if_ofport)
-                vnet_all_ofports.append(if_ofport)
-        if (command == 'online'):
-            if (len(vnet_all_ofports) == 1):
-                return
-            for port in vnet_all_ofports:
-                clear_flooding_rules_for_port(bridge, port)
-            for port in vnet_tunnelif_ofports:
-                add_flooding_rules_for_port(bridge, port, vnet_vif_ofports)
-            for port in vnet_vif_ofports:
-                vnet_all_ofports_copy = copy.copy(vnet_all_ofports)
-                vnet_all_ofports_copy.remove(port)
-                add_flooding_rules_for_port(bridge, port, vnet_all_ofports_copy)
-            this_if_ofport = do_cmd([VSCTL_PATH, 'get', 'Interface', interface, 'ofport'])
-            if interface.startswith('vif'):
-                mac = get_macaddress_of_vif(interface)
-                add_mac_lookup_table_entry(bridge, mac, this_if_ofport)
-        if (command == 'offline'):
-            for port in vnet_all_ofports:
-                clear_flooding_rules_for_port(bridge, port)
-            vnet_all_ofports.remove(this_if_ofport)
-            vnet_vif_ofports.remove(this_if_ofport)
-            for port in vnet_tunnelif_ofports:
-                add_flooding_rules_for_port(bridge, port, vnet_vif_ofports)
-            for port in vnet_vif_ofports:
-                vnet_all_ofports_copy = copy.copy(vnet_all_ofports)
-                vnet_all_ofports_copy.remove(port)
-                add_flooding_rules_for_port(bridge, port, vnet_all_ofports_copy)
-            if interface.startswith('vif'):
-                mac = get_macaddress_of_vif(interface)
-                delete_mac_lookup_table_entry(bridge, mac)
-    except:
-        logging.debug((('An unexpected error occurred while updating the flooding rules when interface ' + (' %s' % interface)) + (' is %s' % command)))
-        raise
+                network_id = get_network_id_for_tunnel_port(port)[1:(-1)]
+                if (network_id not in all_tiers.keys()):
+                    all_tiers[network_id] = tier_ports()
+                tier_ports_info = all_tiers[network_id]
+                tier_ports_info.tier_tunnelif_ofports.append(if_ofport)
+                tier_ports_info.tier_all_ofports.append(if_ofport)
+                all_tiers[network_id] = tier_ports_info
+        for (network_id, tier_ports_info) in all_tiers.items():
+            if (len(tier_ports_info.tier_all_ofports) == 1):
+                continue
+            for port in tier_ports_info.tier_tunnelif_ofports:
+                action = ''.join((('output:%s,' % ofport) for ofport in tier_ports_info.tier_vif_ofports))[:(-1)]
+                ofspec.write((((('table=%s ' % L2_FLOOD_TABLE) + (' priority=1100 in_port=%s ' % port)) + ('actions=%s ' % action)) + '\n'))
+            for port in tier_ports_info.tier_vif_ofports:
+                tier_all_ofports_copy = copy.copy(tier_ports_info.tier_all_ofports)
+                tier_all_ofports_copy.remove(port)
+                action = ''.join((('output:%s,' % ofport) for ofport in tier_all_ofports_copy))[:(-1)]
+                ofspec.write((((('table=%s ' % L2_FLOOD_TABLE) + (' priority=1100 in_port=%s ' % port)) + ('actions=%s ' % action)) + '\n'))
+        ofspec.write((('table=%s ' % L2_FLOOD_TABLE) + ' priority=0 actions=drop'))
+        del_flows(bridge, table=L2_FLOOD_TABLE)
+        ofspec.seek(0)
+        logging.debug(('Adding below flows rules L2 flooding table: \n' + ofspec.read()))
+        ofspec.close()
+        do_cmd([OFCTL_PATH, 'add-flows', bridge, ofspec_filename])
+        os.remove(ofspec_filename)
+        logging.debug(('successfully configured bridge %s as per the latest flooding rules ' % bridge))
+    except Exception as e:
+        if os.path.isfile(ofspec_filename):
+            os.remove(ofspec_filename)
+        error_message = (((('An unexpected error occurred while updating the flooding rules for the bridge ' + bridge) + ' when interface ') + (' %s' % interface)) + (' is %s' % command))
+        logging.debug(((error_message + ' due to ') + str(e)))
+        raise error_message

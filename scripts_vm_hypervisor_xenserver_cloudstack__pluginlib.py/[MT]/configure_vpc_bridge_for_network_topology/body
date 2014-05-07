@@ -1,4 +1,4 @@
-def configure_bridge_for_network_topology(bridge, this_host_id, json_config, sequence_no):
+def configure_vpc_bridge_for_network_topology(bridge, this_host_id, json_config, sequence_no):
     vpconfig = jsonLoader(json.loads(json_config)).vpc
     if (vpconfig is None):
         logging.debug("WARNING:Can't find VPC topology information in the json configuration file")
@@ -7,7 +7,7 @@ def configure_bridge_for_network_topology(bridge, this_host_id, json_config, seq
         if (not os.path.exists('/var/run/cloud')):
             os.makedirs('/var/run/cloud')
         ofspec_filename = ((('/var/run/cloud/' + bridge) + sequence_no) + '.ofspec')
-        ofspec = open(ofspec_filename, 'w')
+        ofspec = open(ofspec_filename, 'w+')
         this_host_vms = get_vpc_vms_on_host(vpconfig, this_host_id)
         for vm in this_host_vms:
             for nic in vm.nics:
@@ -16,13 +16,13 @@ def configure_bridge_for_network_topology(bridge, this_host_id, json_config, seq
                 vif_name = get_vif_name_from_macaddress(mac_addr)
                 of_port = get_ofport_for_vif(vif_name)
                 network = get_network_details(vpconfig, nic.networkuuid)
-                ofspec.write(((((' table=%s' % L2_LOOKUP_TABLE) + (' priority=1100 dl_dst=%s ' % mac_addr)) + (' actions=output:%s' % of_port)) + '\n'))
+                ofspec.write((((('table=%s' % L2_LOOKUP_TABLE) + (' priority=1100 dl_dst=%s ' % mac_addr)) + (' actions=output:%s' % of_port)) + '\n'))
                 action_str = (((' mod_dl_src:%s' % network.gatewaymac) + (',mod_dl_dst:%s' % mac_addr)) + (',resubmit(,%s)' % INGRESS_ACL_TABLE))
-                action_str = (((' table=%s' % L3_LOOKUP_TABLE) + (' ip nw_dst=%s' % ip)) + (' actions=%s' % action_str))
+                action_str = ((('table=%s' % L3_LOOKUP_TABLE) + (' ip nw_dst=%s' % ip)) + (' actions=%s' % action_str))
                 ofspec.write((action_str + '\n'))
-                action_str = ((((' table=%s' % CLASSIFIER_TABLE) + (' priority=1200 in_port=%s ' % of_port)) + (' ip nw_dst=%s ' % network.cidr)) + (' actions=resubmit(,%s)' % L2_LOOKUP_TABLE))
+                action_str = (((('table=%s' % CLASSIFIER_TABLE) + (' priority=1200 in_port=%s ' % of_port)) + (' ip nw_dst=%s ' % network.cidr)) + (' actions=resubmit(,%s)' % L2_LOOKUP_TABLE))
                 ofspec.write((action_str + '\n'))
-                action_str = (((((' table=%s ' % CLASSIFIER_TABLE) + (' priority=1100 in_port=%s ' % of_port)) + (' ip dl_dst=%s ' % network.gatewaymac)) + (' nw_dst=%s ' % vpconfig.cidr)) + (' actions=resubmit(,%s)' % EGRESS_ACL_TABLE))
+                action_str = ((((('table=%s ' % CLASSIFIER_TABLE) + (' priority=1100 in_port=%s ' % of_port)) + (' ip dl_dst=%s ' % network.gatewaymac)) + (' nw_dst=%s ' % vpconfig.cidr)) + (' actions=resubmit(,%s)' % EGRESS_ACL_TABLE))
                 ofspec.write((action_str + '\n'))
         vpc_spanning_hosts = vpconfig.hosts
         for host in vpc_spanning_hosts:
@@ -41,18 +41,19 @@ def configure_bridge_for_network_topology(bridge, this_host_id, json_config, seq
                     action_str = ((('mod_dl_src:%s' % network.gatewaymac) + (',mod_dl_dst:%s' % mac_addr)) + (',resubmit(,%s)' % INGRESS_ACL_TABLE))
                     action_str = ((('table=%s' % L3_LOOKUP_TABLE) + (' ip nw_dst=%s' % ip)) + (' actions=%s' % action_str))
                     ofspec.write((action_str + '\n'))
-        action_str = ((('table=%s ' % L2_LOOKUP_TABLE) + ' priority=0 ') + (' actions=resubmit(,%s)' % L2_FLOOD_TABLE))
-        ofspec.write((action_str + '\n'))
-        action_str = ((('table=%s ' % L3_LOOKUP_TABLE) + ' priority=0 ') + (' actions=resubmit(,%s)' % L2_LOOKUP_TABLE))
-        ofspec.write((action_str + '\n'))
+        ofspec.write((((('table=%s ' % L2_LOOKUP_TABLE) + ' priority=0 ') + (' actions=resubmit(,%s)' % L2_FLOOD_TABLE)) + '\n'))
+        ofspec.write((((('table=%s ' % L3_LOOKUP_TABLE) + ' priority=0 ') + (' actions=resubmit(,%s)' % L2_LOOKUP_TABLE)) + '\n'))
         del_flows(bridge, table=L2_LOOKUP_TABLE)
         del_flows(bridge, table=L3_LOOKUP_TABLE)
-        do_cmd([OFCTL_PATH, 'add-flows', bridge, ofspec_filename])
+        ofspec.seek(0)
+        logging.debug(('Adding below flows rules L2 & L3 lookup tables:\n' + ofspec.read()))
         ofspec.close()
+        do_cmd([OFCTL_PATH, 'add-flows', bridge, ofspec_filename])
+        os.remove(ofspec_filename)
         return ('SUCCESS: successfully configured bridge as per the VPC topology update with sequence no: %s' % sequence_no)
-    except:
-        logging.debug(('An unexpected error occurred while configuring bridge as per VPC topology update with sequence no: %s' % sequence_no))
-        os.remove(ofspec_filename)
-        raise
-    else:
-        os.remove(ofspec_filename)
+    except Exception as e:
+        error_message = (('An unexpected error occurred while configuring bridge ' + bridge) + (' as per latest VPC topology update with sequence no: %s' % sequence_no))
+        logging.debug(((error_message + ' due to ') + str(e)))
+        if os.path.isfile(ofspec_filename):
+            os.remove(ofspec_filename)
+        raise error_message
