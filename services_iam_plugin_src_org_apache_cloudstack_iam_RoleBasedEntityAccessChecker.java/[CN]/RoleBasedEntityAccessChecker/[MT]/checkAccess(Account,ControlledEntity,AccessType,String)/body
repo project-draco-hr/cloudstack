@@ -2,19 +2,39 @@
   if (caller == null) {
     throw new InvalidParameterValueException("Caller cannot be passed as NULL to IAM!");
   }
+  if (entity == null && action == null) {
+    throw new InvalidParameterValueException("Entity and action cannot be both NULL in checkAccess!");
+  }
+  String accessKey=buildAccessCacheKey(caller,entity,accessType,action);
+  CheckAccessResult allowDeny=(CheckAccessResult)_iamSrv.getFromIAMCache(accessKey);
+  if (allowDeny != null) {
+    s_logger.debug("IAM access check for " + accessKey + " from cache");
+    if (allowDeny.isAllow()) {
+      return true;
+    }
+ else {
+      if (allowDeny.getDenyMsg() != null) {
+        throw new PermissionDeniedException(allowDeny.getDenyMsg());
+      }
+ else {
+        return false;
+      }
+    }
+  }
   if (entity == null && action != null) {
     List<IAMPolicy> policies=_iamSrv.listIAMPolicies(caller.getAccountId());
     boolean isAllowed=_iamSrv.isActionAllowedForPolicies(action,policies);
     if (!isAllowed) {
-      throw new PermissionDeniedException("The action '" + action + "' not allowed for account "+ caller);
+      String msg="The action '" + action + "' not allowed for account "+ caller;
+      _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(msg));
+      throw new PermissionDeniedException(msg);
     }
+    _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(true));
     return true;
-  }
-  if (entity == null) {
-    throw new InvalidParameterValueException("Entity and action cannot be both NULL in checkAccess!");
   }
   Account entityAccount=_accountService.getAccount(entity.getAccountId());
   if (entityAccount != null && entityAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(false));
     return false;
   }
   String entityType=null;
@@ -24,7 +44,7 @@
   if (accessType == null) {
     accessType=AccessType.UseEntry;
   }
-  List<IAMPolicy> policies=getEffectivePolicies(caller,entity);
+  List<IAMPolicy> policies=getEffectivePolicies(caller);
   HashMap<IAMPolicy,Boolean> policyPermissionMap=new HashMap<IAMPolicy,Boolean>();
   for (  IAMPolicy policy : policies) {
     List<IAMPolicyPermission> permissions=new ArrayList<IAMPolicyPermission>();
@@ -61,14 +81,18 @@
       }
     }
     if (policyPermissionMap.containsKey(policy) && policyPermissionMap.get(policy)) {
+      _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(true));
       return true;
     }
   }
   if (!policies.isEmpty()) {
+    String msg="Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType;
     if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Account " + caller + " does not have permission to access resource "+ entity+ " for access type: "+ accessType);
+      s_logger.debug(msg);
     }
-    throw new PermissionDeniedException(caller + " does not have permission to access resource " + entity);
+    _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(msg));
+    throw new PermissionDeniedException(msg);
   }
+  _iamSrv.addToIAMCache(accessKey,new CheckAccessResult(false));
   return false;
 }
