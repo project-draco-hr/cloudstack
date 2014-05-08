@@ -1,0 +1,73 @@
+def create_tunnel(bridge, remote_ip, gre_key, src_host, dst_host, network_uuid):
+    logging.debug(((('Creating tunnel from host %s' % src_host) + (' to host %s' % dst_host)) + (' with GRE key %s' % gre_key)))
+    res = check_switch()
+    if (res != 'SUCCESS'):
+        logging.debug('Openvswitch running: NO')
+        return ('FAILURE:%s' % res)
+    name = ('t%s-%s-%s' % (gre_key, src_host, dst_host))
+    wait = [VSCTL_PATH, '--timeout=30', 'wait-until', 'bridge', bridge, '--', 'get', 'bridge', bridge, 'name']
+    res = do_cmd(wait)
+    if (bridge not in res):
+        logging.debug(("WARNING:Can't find bridge %s for creating " + ('tunnel!' % bridge)))
+        return 'FAILURE:NO_BRIDGE'
+    logging.debug(('bridge %s for creating tunnel - VERIFIED' % bridge))
+    tunnel_setup = False
+    drop_flow_setup = False
+    try:
+        add_tunnel = [VSCTL_PATH, 'add-port', bridge, name, '--', 'set', 'interface', name, 'type=gre', ('options:key=%s' % gre_key), ('options:remote_ip=%s' % remote_ip)]
+        do_cmd(add_tunnel)
+        tunnel_setup = True
+        verify_port = [VSCTL_PATH, 'get', 'port', name, 'interfaces']
+        res = do_cmd(verify_port)
+        iface_list = []
+        if (len(res) > 2):
+            iface_list = res.strip()[1:(-1)].split(',')
+        if (len(iface_list) != 1):
+            logging.debug(('WARNING: Unexpected output while verifying ' + ('port %s on bridge %s' % (name, bridge))))
+            return 'FAILURE:VERIFY_PORT_FAILED'
+        iface_uuid = iface_list[0]
+        verify_interface_key = [VSCTL_PATH, 'get', 'interface', iface_uuid, 'options:key']
+        verify_interface_ip = [VSCTL_PATH, 'get', 'interface', iface_uuid, 'options:remote_ip']
+        key_validation = do_cmd(verify_interface_key)
+        ip_validation = do_cmd(verify_interface_ip)
+        if ((not (gre_key in key_validation)) or (not (remote_ip in ip_validation))):
+            logging.debug(('WARNING: Unexpected output while verifying ' + ('interface %s on bridge %s' % (name, bridge))))
+            return 'FAILURE:VERIFY_INTERFACE_FAILED'
+        logging.debug(('Tunnel interface validated:%s' % verify_interface_ip))
+        cmd_tun_ofport = [VSCTL_PATH, 'get', 'interface', iface_uuid, 'ofport']
+        tun_ofport = do_cmd(cmd_tun_ofport)
+        if tun_ofport.endswith('\n'):
+            tun_ofport = tun_ofport[:(-1)]
+        xs_nw_uuid = do_cmd([XE_PATH, 'network-list', ('bridge=%s' % bridge), '--minimal'])
+        ovs_tunnel_network = False
+        try:
+            ovs_tunnel_network = do_cmd([XE_PATH, 'network-param-get', ('uuid=%s' % xs_nw_uuid), 'param-name=other-config', 'param-key=is-ovs-tun-network', '--minimal'])
+        except:
+            pass
+        ovs_vpc_distributed_vr_network = False
+        try:
+            ovs_vpc_distributed_vr_network = do_cmd([XE_PATH, 'network-param-get', ('uuid=%s' % xs_nw_uuid), 'param-name=other-config', 'param-key=is-ovs-vpc-distributed-vr-network', '--minimal'])
+        except:
+            pass
+        if (ovs_tunnel_network == 'True'):
+            add_flow(bridge, priority=1000, in_port=tun_ofport, dl_dst='ff:ff:ff:ff:ff:ff', actions='drop')
+            add_flow(bridge, priority=1000, in_port=tun_ofport, nw_dst='224.0.0.0/24', actions='drop')
+            drop_flow_setup = True
+            logging.debug('Broadcast drop rules added')
+        if (ovs_vpc_distributed_vr_network == 'True'):
+            add_flow(bridge, priority=1000, in_port=tun_ofport, table=0, dl_dst='ff:ff:ff:ff:ff:ff', actions='drop')
+            add_flow(bridge, priority=1000, in_port=tun_ofport, table=0, nw_dst='224.0.0.0/24', actions='drop')
+            add_flow(bridge, priority=1100, in_port=tun_ofport, table=0, actions='resubmit(,1)')
+            do_cmd([VSCTL_PATH, 'set', 'interface', name, ('options:cloudstack-network-id=%s' % network_uuid)])
+            update_flooding_rules_on_port_plug_unplug(bridge, name, 'online', network_uuid)
+        logging.debug(((('Successfully created tunnel from host %s' % src_host) + (' to host %s' % dst_host)) + (' with GRE key %s' % gre_key)))
+        return ('SUCCESS:%s creation succeeded' % name)
+    except:
+        logging.debug('An unexpected error occured. Rolling back')
+        if tunnel_setup:
+            logging.debug('Deleting GRE interface')
+            del_port(bridge, name)
+        if drop_flow_setup:
+            logging.debug('Deleting flow entries from GRE interface')
+            del_flows(bridge, in_port=tun_ofport)
+        raise
