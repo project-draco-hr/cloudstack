@@ -1,19 +1,29 @@
 @attr(tags=['advanced', 'selfservice'])
 def test_vm_create_after_reservation(self):
-    guest_vm_cidr = u'10.1.1.0/29'
+    networkOffering = self.isolated_persistent_network_offering
+    subnet = ('10.1.' + str(random.randrange(1, 254)))
+    gateway = (subnet + '.1')
+    isolated_persistent_network = None
+    resultSet = createIsolatedNetwork(self, networkOffering.id, gateway=gateway)
+    if (resultSet[0] == FAIL):
+        self.fail('Failed to create isolated network')
+    else:
+        isolated_persistent_network = resultSet[1]
+    guest_vm_cidr = (subnet + '.0/29')
     virtual_machine_1 = None
     try:
-        virtual_machine_1 = self.create_virtual_machine(network_id=self.isolated_persistent_network.id, ip_address=u'10.1.1.3')
+        virtual_machine_1 = VirtualMachine.create(self.apiclient, self.testData['virtual_machine'], networkids=isolated_persistent_network.id, serviceofferingid=self.service_offering.id, accountid=self.account.name, domainid=self.domain.id, ipaddress=(subnet + '.3'))
     except Exception as e:
-        self.skipTest('VM creation fails in network ')
-    update_response = Network.update(self.isolated_persistent_network, self.apiclient, id=self.isolated_persistent_network.id, guestvmcidr=guest_vm_cidr)
+        self.fail(('VM creation fails in network: %s' % e))
+    update_response = Network.update(isolated_persistent_network, self.apiclient, id=isolated_persistent_network.id, guestvmcidr=guest_vm_cidr)
     self.assertEqual(guest_vm_cidr, update_response.cidr, 'cidr in response is not as expected')
     vm_list = VirtualMachine.list(self.apiclient, id=virtual_machine_1.id)
     self.assertEqual(isinstance(vm_list, list), True, 'VM list response in not a valid list')
     self.assertEqual(vm_list[0].nic[0].ipaddress, virtual_machine_1.ipaddress, 'VM IP should not change after reservation')
     try:
-        virtual_machine_2 = self.create_virtual_machine(network_id=self.isolated_persistent_network.id)
+        virtual_machine_2 = VirtualMachine.create(self.apiclient, self.testData['virtual_machine'], networkids=isolated_persistent_network.id, serviceofferingid=self.service_offering.id, accountid=self.account.name, domainid=self.domain.id)
         if (netaddr.IPAddress(virtual_machine_2.ipaddress) not in netaddr.IPNetwork(guest_vm_cidr)):
             self.fail("Newly created VM doesn't get IP from reserverd CIDR")
     except Exception as e:
-        self.skipTest('VM creation fails, cannot validate the condition')
+        self.skipTest(('VM creation fails, cannot validate the condition: %s' % e))
+    return
