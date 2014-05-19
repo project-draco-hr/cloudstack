@@ -1,0 +1,42 @@
+@attr(tags=['advanced', 'basic', 'provisioning'])
+def test_17_running_vm_scaleup(self):
+    "\n        @Desc: Test to verify change service for Running VM\n        @Steps:\n        Step1: Checking if dynamic scaling of virtual machines is enabled in zone and template.\n                If yes then continuing.\n                If not then printing message that scale up is not possible for Running VM\n        Step2: Deploying a VM\n        Step3: Listing all the existing service offerings\n        Step4: If there is a matching Service Offering for scale-up of running VM\n                use that service offering. If not create one service offering for scale up.\n        Step5: Perform change service (scale up) the Running VM deployed in step1\n        Step6: Verifying that VM's service offerings is changed\n        "
+    list_config = Configurations.list(self.apiClient, zoneid=self.zone.id, name='enable.dynamic.scale.vm')
+    status = validateList(list_config)
+    self.assertEquals(PASS, status[0], 'Listing of configuration failed')
+    if (not ((list_config[0].value is True) and self.template.isdynamicallyscalable)):
+        self.debug('Scale up of Running VM is not possible as Zone/Template does not support')
+    else:
+        list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+        self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
+        vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+        self.assertIsNotNone(vm_created, 'VM creation failed')
+        self.cleanup.append(vm_created)
+        vm_so_list = ServiceOffering.list(self.userapiclient, id=vm_created.serviceofferingid)
+        status = validateList(vm_so_list)
+        self.assertEquals(PASS, status[0], 'Listing of VM Service offering failed')
+        current_so = vm_so_list[0]
+        list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
+        status = validateList(list_vms_after)
+        self.assertEquals(PASS, status[0], 'VM creation failed')
+        self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
+        service_offerings_list = ServiceOffering.list(self.userapiclient, virtualmachineid=vm_created.id)
+        so_exists = False
+        if (service_offerings_list is not None):
+            for i in range(0, len(service_offerings_list)):
+                if (not (((current_so.cpunumber > service_offerings_list[i].cpunumber) or (current_so.cpuspeed > service_offerings_list[i].cpuspeed) or (current_so.memory > service_offerings_list[i].memory)) or ((current_so.cpunumber == service_offerings_list[i].cpunumber) and (current_so.cpuspeed == service_offerings_list[i].cpuspeed) and (current_so.memory == service_offerings_list[i].memory)))):
+                    if (current_so.storagetype == service_offerings_list[i].storagetype):
+                        so_exists = True
+                        new_so = service_offerings_list[i]
+                        break
+        if (not so_exists):
+            self.services['service_offerings']['small']['storagetype'] = current_so.storagetype
+            new_so = ServiceOffering.create(self.apiClient, self.services['service_offerings']['small'])
+            self.cleanup.append(new_so)
+        vm_created.scale_virtualmachine(self.userapiclient, new_so.id)
+        list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+        status = validateList(list_vms_after)
+        self.assertEquals(PASS, status[0], 'Listing of VM failed')
+        self.assertEquals(1, len(list_vms_after), 'VMs list is not as expected')
+        self.assertEquals(new_so.id, list_vms_after[0].serviceofferingid, 'VM is not containing New Service Offering')
+    return

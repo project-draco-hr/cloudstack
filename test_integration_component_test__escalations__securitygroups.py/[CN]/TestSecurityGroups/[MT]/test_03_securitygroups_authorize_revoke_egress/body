@@ -1,0 +1,36 @@
+@attr(tags=['basic', 'provisioning'])
+def test_03_securitygroups_authorize_revoke_egress(self):
+    '\n        @Desc: Test to Authorize and Revoke Egress for Security Group\n        @steps:\n        Step1: Listing all the Security Groups for a user\n        Step2: Verifying that list size is 1\n        Step3: Creating a Security Groups\n        Step4: Listing all the Security Groups again for a user\n        Step5: Verifying that list size is 2\n        Step6: Authorizing Egress for the security group created in step3\n        Step7: Listing the security groups by passing id of security group created in step3\n        Step8: Verifying that list size is 1\n        Step9: Verifying that Egress is authorized to the security group\n        Step10: Verifying the details of the Egress rule are as expected\n        Step11: Revoking Egress for the security group created in step3\n        Step12: Listing the security groups by passing id of security group created in step3\n        Step13: Verifying that list size is 1\n        Step14: Verifying that Egress is revoked from the security group\n        '
+    list_securitygroups_before = SecurityGroup.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_securitygroups_before)
+    self.assertEquals(PASS, status[0], 'Default Security Groups creation failed')
+    self.assertEquals(1, len(list_securitygroups_before), 'Count of Security Groups list is not matching')
+    securitygroup_created = SecurityGroup.create(self.userapiclient, self.services['security_group'], account=self.account.name, domainid=self.domain.id, description=self.services['security_group']['name'])
+    self.assertIsNotNone(securitygroup_created, 'Security Group creation failed')
+    self.cleanup.append(securitygroup_created)
+    list_securitygroups_after = SecurityGroup.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_securitygroups_after)
+    self.assertEquals(PASS, status[0], 'Security Groups creation failed')
+    self.assertEquals(2, len(list_securitygroups_after), 'Failed to create Security Group')
+    securitygroup_created.authorizeEgress(self.userapiclient, self.services['ingress_rule'], self.account.name, self.domain.id)
+    list_securitygroups_byid = SecurityGroup.list(self.userapiclient, listall=self.services['listall'], id=securitygroup_created.id, domainid=self.domain.id)
+    status = validateList(list_securitygroups_byid)
+    self.assertEquals(PASS, status[0], 'Listing of Security Groups by id failed')
+    self.assertEquals(1, len(list_securitygroups_byid), 'Count of the listing security group by id is not matching')
+    securitygroup_egress = list_securitygroups_byid[0].egressrule
+    status = validateList(securitygroup_egress)
+    self.assertEquals(PASS, status[0], 'Security Groups Egress rule authorization failed')
+    self.assertEquals(1, len(securitygroup_egress), 'Security Group Egress rules count is not matching')
+    expected_dict = {'cidr': self.services['ingress_rule']['cidrlist'], 'protocol': self.services['ingress_rule']['protocol'], 'startport': self.services['ingress_rule']['startport'], 'endport': self.services['ingress_rule']['endport'], }
+    actual_dict = {'cidr': str(securitygroup_egress[0].cidr), 'protocol': str(securitygroup_egress[0].protocol.upper()), 'startport': str(securitygroup_egress[0].startport), 'endport': str(securitygroup_egress[0].endport), }
+    ingress_status = self.__verify_values(expected_dict, actual_dict)
+    self.assertEqual(True, ingress_status, 'Listed Security group Egress rule details are not as expected')
+    securitygroup_created.revokeEgress(self.userapiclient, securitygroup_egress[0].ruleid)
+    list_securitygroups_byid = SecurityGroup.list(self.userapiclient, listall=self.services['listall'], id=securitygroup_created.id, domainid=self.domain.id)
+    status = validateList(list_securitygroups_byid)
+    self.assertEquals(PASS, status[0], 'Listing of Security Groups by id failed')
+    self.assertEquals(1, len(list_securitygroups_byid), 'Count of the listing security group by id is not matching')
+    securitygroup_egress = list_securitygroups_byid[0].egressrule
+    status = validateList(securitygroup_egress)
+    self.assertEquals(EMPTY_LIST, status[2], 'Security Groups Egress rule is not revoked')
+    return

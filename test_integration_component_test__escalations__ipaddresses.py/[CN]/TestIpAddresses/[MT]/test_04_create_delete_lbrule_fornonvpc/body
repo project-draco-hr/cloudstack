@@ -1,0 +1,36 @@
+@attr(tags=['advanced', 'provisioning'])
+def test_04_create_delete_lbrule_fornonvpc(self):
+    '  \n        @summary: Test to list, create and delete Load Balancer Rule for IP Address associated to Non VPC network\n        @Steps:\n        Step1: Creating a Network for the user\n        Step2: Associating an IP Addresses for Network\n        Step3: Listing Load Balancer Rules for the IP Address associated in Step2\n        Step4: Verifying that no Load Balancer Rules are listed\n        Step5: Creating a Load Balancer Rule for IP Address associated in Step2\n        Step6: Listing Load Balancer Rules for the IP Address associated in Step2\n        Step7: Verifying 1 Load Balancer Rule is listed\n        Step8: Deleting the Load Balancer Rule created in Step5\n        Step9: Listing Load Balancer Rules for the IP Address associated in Step2\n        Step10: Verifying that no Load Balancer Rules are listed\n        '
+    list_networks_before = Network.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNone(list_networks_before, 'Networks listed for newly created User')
+    network_offerings_list = NetworkOffering.list(self.apiClient, forvpc='false', guestiptype='Isolated', state='Enabled', supportedservices='SourceNat,Lb', zoneid=self.zone.id)
+    status = validateList(network_offerings_list)
+    self.assertEquals(PASS, status[0], 'Isolated Network Offerings with sourceNat, Lb enabled are not found')
+    network = Network.create(self.userapiclient, self.services['network'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=network_offerings_list[0].id, zoneid=self.zone.id)
+    self.assertIsNotNone(network, 'Network creation failed')
+    self.cleanup.append(network)
+    list_ipaddresses_before = PublicIPAddress.list(self.userapiclient, listall=self.services['listall'])
+    self.assertIsNone(list_ipaddresses_before, 'IP Addresses listed for newly created User')
+    associated_ipaddress = PublicIPAddress.create(self.userapiclient, services=self.services['network'], networkid=network.id)
+    self.assertIsNotNone(associated_ipaddress, 'Failed to Associate IP Address')
+    list_ipaddresses_after = PublicIPAddress.list(self.userapiclient, listall=self.services['listall'])
+    status = validateList(list_ipaddresses_after)
+    self.assertEquals(PASS, status[0], 'IP Addresses Association Failed')
+    self.assertEqual(1, len(list_ipaddresses_after), 'Number of IP Addresses associated are not matching expected')
+    list_lbrules_before = LoadBalancerRule.list(self.userapiclient, listall=self.services['listall'], publicipid=associated_ipaddress.ipaddress.id)
+    self.assertIsNone(list_lbrules_before, 'Load Balancer Rules listed for newly Acquired Ip Address')
+    self.services['lbrule']['openfirewall'] = 'false'
+    lb_rule = LoadBalancerRule.create(self.userapiclient, self.services['lbrule'], ipaddressid=associated_ipaddress.ipaddress.id)
+    self.assertIsNotNone(lb_rule, 'Failed to create Load Balancer Rule')
+    expected_dict = {'algorithm': self.services['lbrule']['alg'], 'privateport': str(self.services['lbrule']['privateport']), 'publicport': str(self.services['lbrule']['publicport']), 'name': self.services['lbrule']['name'], }
+    actual_dict = {'algorithm': str(lb_rule.algorithm), 'privateport': str(lb_rule.privateport), 'publicport': str(lb_rule.publicport), 'name': str(lb_rule.name), }
+    lbrule_status = self.__verify_values(expected_dict, actual_dict)
+    self.assertEqual(True, lbrule_status, 'Created Load Balancer Rule details are not as expected')
+    list_lbrules_after = LoadBalancerRule.list(self.userapiclient, listall=self.services['listall'], publicipid=associated_ipaddress.ipaddress.id)
+    status = validateList(list_lbrules_after)
+    self.assertEquals(PASS, status[0], 'Load Balancer Rule creation Failed')
+    self.assertEqual(1, len(list_lbrules_after), 'Load Balancer Rule creation Failed')
+    lb_rule.delete(self.userapiclient)
+    list_lbrules_after = LoadBalancerRule.list(self.userapiclient, listall=self.services['listall'], publicipid=associated_ipaddress.ipaddress.id)
+    self.assertIsNone(list_lbrules_after, 'Failed to delete Load Balancer Rule')
+    return
