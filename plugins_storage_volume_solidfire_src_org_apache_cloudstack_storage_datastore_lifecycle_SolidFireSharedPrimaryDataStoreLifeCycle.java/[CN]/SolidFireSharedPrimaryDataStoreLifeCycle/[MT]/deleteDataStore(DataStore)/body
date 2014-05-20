@@ -1,0 +1,42 @@
+{
+  List<StoragePoolHostVO> hostPoolRecords=_storagePoolHostDao.listByPoolId(dataStore.getId());
+  HypervisorType hypervisorType=null;
+  if (hostPoolRecords.size() > 0) {
+    hypervisorType=getHypervisorType(hostPoolRecords.get(0).getHostId());
+  }
+  if (!isSupportedHypervisorType(hypervisorType)) {
+    throw new CloudRuntimeException(hypervisorType + " is not a supported hypervisor type.");
+  }
+  StoragePool storagePool=(StoragePool)dataStore;
+  StoragePoolVO storagePoolVO=_primaryDataStoreDao.findById(storagePool.getId());
+  List<VMTemplateStoragePoolVO> unusedTemplatesInPool=_tmpltMgr.getUnusedTemplatesInPool(storagePoolVO);
+  for (  VMTemplateStoragePoolVO templatePoolVO : unusedTemplatesInPool) {
+    _tmpltMgr.evictTemplateFromStoragePool(templatePoolVO);
+  }
+  for (  StoragePoolHostVO host : hostPoolRecords) {
+    DeleteStoragePoolCommand deleteCmd=new DeleteStoragePoolCommand(storagePool);
+    if (HypervisorType.VMware.equals(hypervisorType)) {
+      deleteCmd.setRemoveDatastore(true);
+      Map<String,String> details=new HashMap<String,String>();
+      StoragePoolDetailVO storagePoolDetail=_storagePoolDetailsDao.findDetail(storagePool.getId(),SolidFireUtil.DATASTORE_NAME);
+      details.put(DeleteStoragePoolCommand.DATASTORE_NAME,storagePoolDetail.getValue());
+      storagePoolDetail=_storagePoolDetailsDao.findDetail(storagePool.getId(),SolidFireUtil.IQN);
+      details.put(DeleteStoragePoolCommand.IQN,storagePoolDetail.getValue());
+      storagePoolDetail=_storagePoolDetailsDao.findDetail(storagePool.getId(),SolidFireUtil.STORAGE_VIP);
+      details.put(DeleteStoragePoolCommand.STORAGE_HOST,storagePoolDetail.getValue());
+      storagePoolDetail=_storagePoolDetailsDao.findDetail(storagePool.getId(),SolidFireUtil.STORAGE_PORT);
+      details.put(DeleteStoragePoolCommand.STORAGE_PORT,storagePoolDetail.getValue());
+      deleteCmd.setDetails(details);
+    }
+    final Answer answer=_agentMgr.easySend(host.getHostId(),deleteCmd);
+    if (answer != null && answer.getResult()) {
+      s_logger.info("Successfully deleted storage pool using Host ID " + host.getHostId());
+      break;
+    }
+ else {
+      s_logger.error("Failed to delete storage pool using Host ID " + host.getHostId() + ": "+ answer.getResult());
+    }
+  }
+  deleteSolidFireVolume(storagePool.getId());
+  return _primaryDataStoreHelper.deletePrimaryDataStore(dataStore);
+}

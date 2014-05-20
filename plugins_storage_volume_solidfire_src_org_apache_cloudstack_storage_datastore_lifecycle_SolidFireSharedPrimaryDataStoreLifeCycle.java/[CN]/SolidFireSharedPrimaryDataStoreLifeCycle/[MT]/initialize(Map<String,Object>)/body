@@ -1,0 +1,127 @@
+{
+  final String CAPACITY_IOPS="capacityIops";
+  String url=(String)dsInfos.get("url");
+  Long zoneId=(Long)dsInfos.get("zoneId");
+  Long podId=(Long)dsInfos.get("podId");
+  Long clusterId=(Long)dsInfos.get("clusterId");
+  String storagePoolName=(String)dsInfos.get("name");
+  String providerName=(String)dsInfos.get("providerName");
+  Long capacityBytes=(Long)dsInfos.get("capacityBytes");
+  Long capacityIops=(Long)dsInfos.get(CAPACITY_IOPS);
+  String tags=(String)dsInfos.get("tags");
+  @SuppressWarnings("unchecked") Map<String,String> details=(Map<String,String>)dsInfos.get("details");
+  if (podId == null) {
+    throw new CloudRuntimeException("The Pod ID must be specified.");
+  }
+  if (clusterId == null) {
+    throw new CloudRuntimeException("The Cluster ID must be specified.");
+  }
+  String storageVip=SolidFireUtil.getStorageVip(url);
+  int storagePort=SolidFireUtil.getStoragePort(url);
+  if (capacityBytes == null || capacityBytes <= 0) {
+    throw new IllegalArgumentException("'capacityBytes' must be present and greater than 0.");
+  }
+  if (capacityIops == null || capacityIops <= 0) {
+    throw new IllegalArgumentException("'capacityIops' must be present and greater than 0.");
+  }
+  HypervisorType hypervisorType=getHypervisorTypeForCluster(clusterId);
+  if (!isSupportedHypervisorType(hypervisorType)) {
+    throw new CloudRuntimeException(hypervisorType + " is not a supported hypervisor type.");
+  }
+  String datacenter=SolidFireUtil.getValue(SolidFireUtil.DATACENTER,url,false);
+  if (HypervisorType.VMware.equals(hypervisorType) && datacenter == null) {
+    throw new CloudRuntimeException("'Datacenter' must be set for hypervisor type of " + HypervisorType.VMware);
+  }
+  PrimaryDataStoreParameters parameters=new PrimaryDataStoreParameters();
+  parameters.setType(getStorageType(hypervisorType));
+  parameters.setZoneId(zoneId);
+  parameters.setPodId(podId);
+  parameters.setClusterId(clusterId);
+  parameters.setName(storagePoolName);
+  parameters.setProviderName(providerName);
+  parameters.setManaged(false);
+  parameters.setCapacityBytes(capacityBytes);
+  parameters.setUsedBytes(0);
+  parameters.setCapacityIops(capacityIops);
+  parameters.setHypervisorType(hypervisorType);
+  parameters.setTags(tags);
+  parameters.setDetails(details);
+  String managementVip=SolidFireUtil.getManagementVip(url);
+  int managementPort=SolidFireUtil.getManagementPort(url);
+  details.put(SolidFireUtil.MANAGEMENT_VIP,managementVip);
+  details.put(SolidFireUtil.MANAGEMENT_PORT,String.valueOf(managementPort));
+  String clusterAdminUsername=SolidFireUtil.getValue(SolidFireUtil.CLUSTER_ADMIN_USERNAME,url);
+  String clusterAdminPassword=SolidFireUtil.getValue(SolidFireUtil.CLUSTER_ADMIN_PASSWORD,url);
+  details.put(SolidFireUtil.CLUSTER_ADMIN_USERNAME,clusterAdminUsername);
+  details.put(SolidFireUtil.CLUSTER_ADMIN_PASSWORD,clusterAdminPassword);
+  long lMinIops=100;
+  long lMaxIops=15000;
+  long lBurstIops=15000;
+  try {
+    String minIops=SolidFireUtil.getValue(SolidFireUtil.MIN_IOPS,url);
+    if (minIops != null && minIops.trim().length() > 0) {
+      lMinIops=Long.parseLong(minIops);
+    }
+  }
+ catch (  Exception ex) {
+  }
+  try {
+    String maxIops=SolidFireUtil.getValue(SolidFireUtil.MAX_IOPS,url);
+    if (maxIops != null && maxIops.trim().length() > 0) {
+      lMaxIops=Long.parseLong(maxIops);
+    }
+  }
+ catch (  Exception ex) {
+  }
+  try {
+    String burstIops=SolidFireUtil.getValue(SolidFireUtil.BURST_IOPS,url);
+    if (burstIops != null && burstIops.trim().length() > 0) {
+      lBurstIops=Long.parseLong(burstIops);
+    }
+  }
+ catch (  Exception ex) {
+  }
+  if (lMinIops > lMaxIops) {
+    throw new CloudRuntimeException("The parameter '" + SolidFireUtil.MIN_IOPS + "' must be less than or equal to the parameter '"+ SolidFireUtil.MAX_IOPS+ "'.");
+  }
+  if (lMaxIops > lBurstIops) {
+    throw new CloudRuntimeException("The parameter '" + SolidFireUtil.MAX_IOPS + "' must be less than or equal to the parameter '"+ SolidFireUtil.BURST_IOPS+ "'.");
+  }
+  if (lMinIops != capacityIops) {
+    throw new CloudRuntimeException("The parameter '" + CAPACITY_IOPS + "' must be equal to the parameter '"+ SolidFireUtil.MIN_IOPS+ "'.");
+  }
+  details.put(SolidFireUtil.MIN_IOPS,String.valueOf(lMinIops));
+  details.put(SolidFireUtil.MAX_IOPS,String.valueOf(lMaxIops));
+  details.put(SolidFireUtil.BURST_IOPS,String.valueOf(lBurstIops));
+  SolidFireUtil.SolidFireConnection sfConnection=new SolidFireUtil.SolidFireConnection(managementVip,managementPort,clusterAdminUsername,clusterAdminPassword);
+  SolidFireUtil.SolidFireVolume sfVolume=createSolidFireVolume(sfConnection,storagePoolName,capacityBytes,lMinIops,lMaxIops,lBurstIops);
+  String iqn=sfVolume.getIqn();
+  details.put(SolidFireUtil.VOLUME_ID,String.valueOf(sfVolume.getId()));
+  parameters.setUuid(iqn);
+  if (HypervisorType.VMware.equals(hypervisorType)) {
+    String datastore=iqn.replace("/","_");
+    String path="/" + datacenter + "/"+ datastore;
+    parameters.setHost("VMFS datastore: " + path);
+    parameters.setPort(0);
+    parameters.setPath(path);
+    details.put(SolidFireUtil.DATASTORE_NAME,datastore);
+    details.put(SolidFireUtil.IQN,iqn);
+    details.put(SolidFireUtil.STORAGE_VIP,storageVip);
+    details.put(SolidFireUtil.STORAGE_PORT,String.valueOf(storagePort));
+  }
+ else {
+    parameters.setHost(storageVip);
+    parameters.setPort(storagePort);
+    parameters.setPath(iqn);
+  }
+  DataStore dataStore=_primaryDataStoreHelper.createPrimaryDataStore(parameters);
+  try {
+    List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
+    SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolume.getId(),dataStore.getId(),hosts,_clusterDetailsDao);
+  }
+ catch (  Exception ex) {
+    _primaryDataStoreDao.expunge(dataStore.getId());
+    throw new CloudRuntimeException(ex.getMessage());
+  }
+  return dataStore;
+}
