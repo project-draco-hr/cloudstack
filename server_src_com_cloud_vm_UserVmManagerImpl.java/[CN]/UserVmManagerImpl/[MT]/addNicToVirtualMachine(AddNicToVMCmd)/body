@@ -2,6 +2,7 @@
   Long vmId=cmd.getVmId();
   Long networkId=cmd.getNetworkId();
   String ipAddress=cmd.getIpAddress();
+  Account caller=CallContext.current().getCallingAccount();
   UserVmVO vmInstance=_vmDao.findById(vmId);
   if (vmInstance == null) {
     throw new InvalidParameterValueException("unable to find a virtual machine with id " + vmId);
@@ -9,6 +10,11 @@
   NetworkVO network=_networkDao.findById(networkId);
   if (network == null) {
     throw new InvalidParameterValueException("unable to find a network with id " + networkId);
+  }
+  if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    if (!(network.getGuestType() == Network.GuestType.Shared && network.getAclType() == ACLType.Domain) && !(network.getAclType() == ACLType.Account && network.getAccountId() == vmInstance.getAccountId())) {
+      throw new InvalidParameterValueException("only shared network or isolated network with the same account_id can be added to vmId: " + vmId);
+    }
   }
   List<NicVO> allNics=_nicDao.listByVmId(vmInstance.getId());
   for (  NicVO nic : allNics) {
@@ -18,10 +24,12 @@
   if (ipAddress != null) {
     profile=new NicProfile(ipAddress,null);
   }
+  _accountMgr.checkAccess(caller,null,true,vmInstance);
   DataCenterVO dc=_dcDao.findById(vmInstance.getDataCenterId());
   if (dc.getNetworkType() == DataCenter.NetworkType.Basic) {
     throw new CloudRuntimeException("Zone " + vmInstance.getDataCenterId() + ", has a NetworkType of Basic. Can't add a new NIC to a VM on a Basic Network");
   }
+  _accountMgr.checkAccess(caller,AccessType.UseEntry,false,network);
   if (network.getDataCenterId() != vmInstance.getDataCenterId()) {
     throw new CloudRuntimeException(vmInstance + " is in zone:" + vmInstance.getDataCenterId()+ " but "+ network+ " is in zone:"+ network.getDataCenterId());
   }
