@@ -1,0 +1,43 @@
+@attr(tags=['advanced', 'provisioning'])
+def test_10_list_networks_in_vpc(self):
+    '\n        @Desc: Test list networks in vpc and verify VPC name\n        @Steps\n        Step1    : List VPC Offering\n        Step2    : List VPCs for newly created user\n        Step3    : Create VPC\n        Step4    : List VPC and verify that count is increased by 1\n        Step5    : Create network\n        Step6    : List Networks in created vpc\n        Step7    : Verify network name matches for newly created network name and name from network list\n        '
+    vpc_offs_list = VpcOffering.list(self.userapiclient, isdefault='true')
+    if (vpc_offs_list is None):
+        self.fail('Default VPC offerings not found')
+    else:
+        vpc_offs = vpc_offs_list[0]
+    vpc_list = VPC.list(self.userapiclient, listall=self.test_data['listall'])
+    status = validateList(vpc_list)
+    self.assertEquals(FAIL, status[0], 'VPCs found for newly created user')
+    vpc_count_before = 0
+    vpc_1 = VPC.create(self.userapiclient, self.test_data['vpc'], vpcofferingid=vpc_offs.id, zoneid=self.zone.id)
+    self.assertIsNotNone(vpc_1, 'VPC is not created')
+    vpc_list = VPC.list(self.userapiclient, listall=self.test_data['listall'])
+    status = validateList(vpc_list)
+    self.assertEquals(PASS, status[0], 'VPC is not created')
+    self.assertEquals((vpc_count_before + 1), len(vpc_list), 'VPC is not created')
+    list_networks_before = Network.list(self.userapiclient, listall=self.test_data['listall'])
+    self.assertIsNotNone(list_networks_before, 'Network create failed at class level')
+    network_offering_vpc_true_list = NetworkOffering.list(self.userapiclient, forvpc='true', zoneid=self.zone.id, guestiptype=self.test_data['network_offering_vlan']['guestiptype'], supportedServices='SourceNat', specifyvlan=self.test_data['network_offering_vlan']['specifyvlan'], state='Enabled')
+    status = validateList(network_offering_vpc_true_list)
+    self.assertEquals(PASS, status[0], 'Default network offering not present for vpc = true')
+    if (len(list_networks_before) == 1):
+        network_created = Network.create(self.userapiclient, self.test_data['network_without_acl'], networkofferingid=network_offering_vpc_true_list[0].id, vpcid=vpc_1.id, gateway=self.test_data['ntwk']['gateway'], netmask=self.test_data['ntwk']['netmask'])
+        self.assertIsNotNone(network_created, 'Network is not created')
+        self.cleanup.append(network_created)
+        self.cleanup.append(vpc_1)
+        expected_dict = {'id': self.test_data['network_without_acl']['zoneid'], 'name': self.test_data['network_without_acl']['name'], }
+        actual_dict = {'id': network_created.zoneid, 'name': network_created.name, }
+        network_status = self.__verify_values(expected_dict, actual_dict)
+        self.assertEqual(True, network_status, 'Listed network details are not as expected')
+    else:
+        self.assertEqual(len(list_networks_before), 1, 'more than 1 network created at class level')
+    list_networks_after = Network.list(self.userapiclient, listall=self.test_data['listall'])
+    status = validateList(list_networks_after)
+    self.assertEquals(PASS, status[0], 'No networks found using list call')
+    self.assertEqual(2, len(list_networks_after), 'Number of networks created is not matching expected')
+    list_networks_in_vpc = Network.list(self.userapiclient, listall=self.test_data['listall'], vpcid=vpc_1.id)
+    status = validateList(list_networks_in_vpc)
+    self.assertEquals(PASS, status[0], 'No networks found using list call')
+    self.assertEqual(network_created.name, list_networks_in_vpc[0].name, 'Network names not matching')
+    return
