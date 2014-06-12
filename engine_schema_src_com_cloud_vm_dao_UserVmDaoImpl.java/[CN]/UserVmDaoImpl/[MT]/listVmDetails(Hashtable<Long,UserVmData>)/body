@@ -1,55 +1,80 @@
 {
   TransactionLegacy txn=TransactionLegacy.currentTxn();
-  PreparedStatement pstmt=null;
   try {
     int curr_index=0;
     List<UserVmData> userVmDataList=new ArrayList(userVmDataHash.values());
     if (userVmDataList.size() > VM_DETAILS_BATCH_SIZE) {
-      pstmt=txn.prepareStatement(VM_DETAILS + getQueryBatchAppender(VM_DETAILS_BATCH_SIZE));
-      while ((curr_index + VM_DETAILS_BATCH_SIZE) <= userVmDataList.size()) {
-        for (int k=1, j=curr_index; j < curr_index + VM_DETAILS_BATCH_SIZE; j++, k++) {
-          pstmt.setLong(k,userVmDataList.get(j).getId());
-        }
-        ResultSet rs=pstmt.executeQuery();
-        while (rs.next()) {
-          long vm_id=rs.getLong("vm_instance.id");
-          UserVmData uvm=userVmDataHash.get(vm_id);
-          if (uvm == null) {
-            uvm=new UserVmData();
-            uvm.setId(vm_id);
+      try (PreparedStatement pstmt=txn.prepareStatement(VM_DETAILS + getQueryBatchAppender(VM_DETAILS_BATCH_SIZE))){
+        while ((curr_index + VM_DETAILS_BATCH_SIZE) <= userVmDataList.size()) {
+          for (int k=1, j=curr_index; j < curr_index + VM_DETAILS_BATCH_SIZE; j++, k++) {
+            pstmt.setLong(k,userVmDataList.get(j).getId());
           }
-          setUserVmData(uvm,rs);
+          try (ResultSet rs=pstmt.executeQuery()){
+            while (rs.next()) {
+              long vm_id=rs.getLong("vm_instance.id");
+              UserVmData uvm=userVmDataHash.get(vm_id);
+              if (uvm == null) {
+                uvm=new UserVmData();
+                uvm.setId(vm_id);
+              }
+              setUserVmData(uvm,rs);
+            }
+          }
+ catch (          Exception e) {
+            s_logger.error("listVmDetails:Exception:" + e.getMessage());
+            throw new CloudRuntimeException("listVmDetails: Exception:" + e.getMessage(),e);
+          }
+          curr_index+=VM_DETAILS_BATCH_SIZE;
         }
-        rs.close();
-        curr_index+=VM_DETAILS_BATCH_SIZE;
+      }
+ catch (      Exception e) {
+        s_logger.error("listVmDetails:Exception:" + e.getMessage());
+        throw new CloudRuntimeException("listVmDetails: Exception:" + e.getMessage(),e);
       }
       if (pstmt != null)       pstmt.close();
     }
     if (curr_index < userVmDataList.size()) {
       int batch_size=(userVmDataList.size() - curr_index);
-      pstmt=txn.prepareStatement(VM_DETAILS + getQueryBatchAppender(batch_size));
-      for (int k=1, j=curr_index; j < curr_index + batch_size; j++, k++) {
-        pstmt.setLong(k,userVmDataList.get(j).getId());
-      }
-      ResultSet rs=pstmt.executeQuery();
-      while (rs.next()) {
-        long vm_id=rs.getLong("vm_instance.id");
-        UserVmData uvm=userVmDataHash.get(vm_id);
-        if (uvm == null) {
-          uvm=new UserVmData();
-          uvm.setId(vm_id);
+      try (PreparedStatement vm_details_pstmt=txn.prepareStatement(VM_DETAILS + getQueryBatchAppender(batch_size))){
+        for (int k=1, j=curr_index; j < curr_index + batch_size; j++, k++) {
+          vm_details_pstmt.setLong(k,userVmDataList.get(j).getId());
         }
-        setUserVmData(uvm,rs);
+        try (ResultSet rs=vm_details_pstmt.executeQuery()){
+          while (rs.next()) {
+            long vm_id=rs.getLong("vm_instance.id");
+            UserVmData uvm=userVmDataHash.get(vm_id);
+            if (uvm == null) {
+              uvm=new UserVmData();
+              uvm.setId(vm_id);
+            }
+            setUserVmData(uvm,rs);
+          }
+        }
+ catch (        Exception e) {
+          s_logger.error("listVmDetails: Exception:" + e.getMessage());
+          throw new CloudRuntimeException("listVmDetails: Exception:" + e.getMessage(),e);
+        }
       }
-      rs.close();
+ catch (      Exception e) {
+        s_logger.error("listVmDetails:Exception:" + e.getMessage());
+        throw new CloudRuntimeException("listVmDetails: Exception:" + e.getMessage(),e);
+      }
     }
-    if (pstmt != null)     pstmt.close();
+    txn.commit();
     return userVmDataHash;
   }
- catch (  SQLException e) {
-    throw new CloudRuntimeException("DB Exception on: " + VM_DETAILS,e);
+ catch (  Exception e) {
+    s_logger.error("listVmDetails:Exception:" + e.getMessage());
+    throw new CloudRuntimeException("listVmDetails:Exception : ",e);
   }
-catch (  Throwable e) {
-    throw new CloudRuntimeException("Caught: " + VM_DETAILS,e);
+ finally {
+    try {
+      if (txn != null) {
+        txn.close();
+      }
+    }
+ catch (    Exception e) {
+      s_logger.error("listVmDetails:Exception:" + e.getMessage());
+    }
   }
 }
