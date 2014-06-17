@@ -1,0 +1,47 @@
+@attr(tags=['advanced'], required_hardware='false')
+def test_01_multiple_domains_secondary_storage_limits(self):
+    'Test secondary storage limit of domain and its sub-domains\n\n        # Steps\n        1. Create a parent domain and two sub-domains in it (also admin accounts\n           of each domain)\n        2. Register template in child domain 1 so that total secondary storage\n           is less than the limit of child domain\n        3. Set the child domain limit equal to template size and parent domain\n           domain limit as double of the template size\n        4. Repeat step 2 for child domain 2\n        5. Try to register template in parent domain now so that the total secondary storage in\n           parent domain (including that in sub-domains is more than the secondary\n           storage limit of the parent domain)\n        6. Delete the admin account of child domain 1 and check resource count\n           of the parent domain\n        7. Delete template in account 2 and check secondary storage count\n           of parent domain\n\n        # Validations:\n        1. Step 2 and 4 should succeed\n        2. Step 5 should fail as the resource limit exceeds in parent domain\n        3. After step 6, resource count in parent domain should decrease by equivalent\n           quantity\n        4. After step 7, resource count in parent domain should be 0'
+    result = self.setupAccounts()
+    self.assertEqual(result[0], PASS, result[1])
+    try:
+        builtin_info = get_builtin_template_info(self.apiclient, self.zone.id)
+        self.services['template_2']['url'] = builtin_info[0]
+        self.services['template_2']['hypervisor'] = builtin_info[1]
+        self.services['template_2']['format'] = builtin_info[2]
+        templateChildAccount1 = Template.register(self.apiclient, self.services['template_2'], zoneid=self.zone.id, account=self.cadmin_1.name, domainid=self.cadmin_1.domainid)
+        templateChildAccount1.download(self.apiclient)
+        templates = Template.list(self.apiclient, templatefilter=self.services['template_2']['templatefilter'], id=templateChildAccount1.id)
+        if (validateList(templates)[0] == FAIL):
+            raise Exception('templates list validation failed')
+        self.templateSize = int((int(templates[0].size) / (1024 ** 3)))
+    except Exception as e:
+        self.fail(('Failed with exception as ee: %s' % e))
+    subdomainlimit = self.templateSize
+    result = self.updateDomainResourceLimits((subdomainlimit * 2), subdomainlimit)
+    self.assertEqual(result[0], PASS, result[1])
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.cadmin_1.domainid, self.templateSize, RESOURCE_SECONDARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    try:
+        templateChildAccount2 = Template.register(self.apiclient, self.services['template_2'], zoneid=self.zone.id, account=self.cadmin_2.name, domainid=self.cadmin_2.domainid)
+        templateChildAccount2.download(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed while registering/downloading template: %s' % e))
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.cadmin_2.domainid, self.templateSize, RESOURCE_SECONDARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    with self.assertRaises(Exception):
+        Template.register(self.apiclient, self.services['template_2'], zoneid=self.zone.id, account=self.parentd_admin.name, domainid=self.parentd_admin.domainid)
+    self.cadmin_1.delete(self.apiclient)
+    self.cleanup.remove(self.cadmin_1)
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.parent_domain.id, self.templateSize, RESOURCE_SECONDARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    try:
+        templateChildAccount2.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to delete template: %s' % e))
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.parent_domain.id, 0, RESOURCE_SECONDARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    return

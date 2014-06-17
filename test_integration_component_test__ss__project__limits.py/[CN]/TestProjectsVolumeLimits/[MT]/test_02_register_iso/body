@@ -1,0 +1,36 @@
+@attr(tags=['advanced'], required_hardware='false')
+def test_02_register_iso(self):
+    'Test register iso\n        Steps and validations:\n        1. Create a root domain/child domain admin account\n        2. Register a test iso in the account\n        3. Wait till the iso is downloaded and is in ready state\n        3. Verify that secondary storage resource count of the account equals the\n           iso size\n        4. Delete the iso\n        5. Verify that the secondary storage count of the account equals 0\n        '
+    try:
+        self.projectMember = Account.create(self.apiclient, self.services['account'], domainid=self.parentDomain.id)
+        self.cleanup.insert(0, self.projectMember)
+        self.project.addAccount(self.apiclient, account=self.projectMember.name)
+    except Exception as e:
+        self.fail(('Exception occured: %s' % e))
+    self.services['iso']['zoneid'] = self.zone.id
+    try:
+        iso = Iso.create(self.apiclient, self.services['iso'], account=self.projectMember.name, domainid=self.projectMember.domainid)
+    except Exception as e:
+        self.fail(('Failed to create Iso: %s' % e))
+    timeout = 600
+    isoList = None
+    while (timeout >= 0):
+        isoList = Iso.list(self.apiclient, isofilter='self', id=iso.id)
+        self.assertEqual(validateList(isoList)[0], PASS, 'iso list validation failed')
+        if isoList[0].isready:
+            break
+        time.sleep(60)
+        timeout -= 60
+    self.assertNotEqual(timeout, 0, 'template not downloaded completely')
+    isoSize = (isoList[0].size / (1024 ** 3))
+    expectedCount = isoSize
+    response = matchResourceCount(self.apiclient, expectedCount, resourceType=RESOURCE_SECONDARY_STORAGE, projectid=self.project.id)
+    self.assertEqual(response[0], PASS, response[1])
+    try:
+        iso.delete(self.apiclient)
+    except Exception as e:
+        self.fail('Failed to delete Iso')
+    expectedCount = 0
+    response = matchResourceCount(self.apiclient, expectedCount, resourceType=RESOURCE_SECONDARY_STORAGE, projectid=self.project.id)
+    self.assertEqual(response[0], PASS, response[1])
+    return

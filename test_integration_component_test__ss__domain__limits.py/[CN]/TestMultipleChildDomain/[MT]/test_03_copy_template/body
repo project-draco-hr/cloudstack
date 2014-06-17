@@ -1,0 +1,42 @@
+@attr(tags=['advanced'], required_hardware='false')
+def test_03_copy_template(self):
+    'Test secondary storage counts in multiple child domains\n        # Steps\n        1. Create a parent domain and two sub-domains in it (also admin accounts\n           of each domain)\n        Repeat following steps for both the child domains\n        2. Register template in child domain\n        3. Check if the resource count for domain is updated correctly\n        4. Copy template to other zone\n        5. Verify that secondary storage count for the domain is doubled\n           as there are two templates now\n        '
+    zones = list_zones(self.apiclient)
+    self.assertEqual(validateList(zones)[0], PASS, 'zones list validation faield')
+    if (len(zones) < 2):
+        self.skipTest('At least 2 zones should be present for this test case')
+    users = None
+    result = self.setupAccounts()
+    self.assertEqual(result[0], PASS, result[1])
+    users = result[2]
+    for (domain, admin) in users.items():
+        self.account = admin
+        self.domain = domain
+        try:
+            builtin_info = get_builtin_template_info(self.apiclient, self.zone.id)
+            self.services['template_2']['url'] = builtin_info[0]
+            self.services['template_2']['hypervisor'] = builtin_info[1]
+            self.services['template_2']['format'] = builtin_info[2]
+            template = Template.register(self.apiclient, self.services['template_2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+            template.download(self.apiclient)
+            templates = Template.list(self.apiclient, templatefilter=self.services['template_2']['templatefilter'], id=template.id)
+            if (validateList(templates)[0] == FAIL):
+                raise Exception('templates list validation failed')
+            templateSize = int((int(templates[0].size) / (1024 ** 3)))
+            expectedCount = templateSize
+            result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.domain.id, expectedCount, RESOURCE_SECONDARY_STORAGE)
+            self.assertFalse(result[0], result[1])
+            self.assertTrue(result[2], 'Resource count does not match')
+            templateDestinationZoneId = None
+            for zone in zones:
+                if (template.zoneid != zone.id):
+                    templateDestinationZoneId = zone.id
+                    break
+            template.copy(self.apiclient, destzoneid=templateDestinationZoneId, sourcezoneid=template.zoneid)
+            expectedCount *= 2
+            result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.domain.id, expectedCount, RESOURCE_SECONDARY_STORAGE)
+            self.assertFalse(result[0], result[1])
+            self.assertTrue(result[2], 'Resource count does not match')
+        except Exception as e:
+            self.fail(('Failed to get zone list: %s' % e))
+        return

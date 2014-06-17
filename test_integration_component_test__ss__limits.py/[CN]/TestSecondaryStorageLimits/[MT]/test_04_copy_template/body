@@ -1,0 +1,35 @@
+@data(ROOT_DOMAIN_ADMIN, CHILD_DOMAIN_ADMIN)
+@attr(tags=['advanced'], required_hardware='false')
+def test_04_copy_template(self, value):
+    'Test copy template between zones\n\n        Steps and validations:\n        This test requires at least two zones present in the setup\n        1. Create a root domain/child domain admin account\n        2. Register and download a template in the account\n        3. Verify the secondary storage resource count of the account\n           equals the size of the template\n        4. Copy this template to other zone\n        5. Verify that the secondary storage resource count is now doubled\n           as there are two templates now in two zones under the admin account\n        '
+    zones = list_zones(self.apiclient)
+    self.assertEqual(validateList(zones)[0], PASS, 'zones list validation faield')
+    if (len(zones) < 2):
+        self.skipTest('At least 2 zones should be present for this test case')
+    response = self.setupAccount(value)
+    self.assertEqual(response[0], PASS, response[1])
+    builtin_info = get_builtin_template_info(self.apiclient, self.zone.id)
+    self.services['template_2']['url'] = builtin_info[0]
+    self.services['template_2']['hypervisor'] = builtin_info[1]
+    self.services['template_2']['format'] = builtin_info[2]
+    try:
+        template = Template.register(self.apiclient, self.services['template_2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, hypervisor=self.hypervisor)
+        template.download(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to register template: %s' % e))
+    templates = Template.list(self.apiclient, templatefilter=self.services['template_2']['templatefilter'], id=template.id)
+    self.assertEqual(validateList(templates)[0], PASS, 'templates list validation failed')
+    templateSize = (templates[0].size / (1024 ** 3))
+    expectedCount = templateSize
+    response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_SECONDARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    templateDestinationZoneId = None
+    for zone in zones:
+        if (template.zoneid != zone.id):
+            templateDestinationZoneId = zone.id
+            break
+    template.copy(self.apiclient, destzoneid=templateDestinationZoneId, sourcezoneid=template.zoneid)
+    expectedCount = (templateSize * 2)
+    response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_SECONDARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    return
