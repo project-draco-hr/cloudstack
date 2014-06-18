@@ -1,0 +1,32 @@
+{
+  String strCapacityBytes=details.get(PrimaryDataStoreLifeCycle.CAPACITY_BYTES);
+  String strCapacityIops=details.get(PrimaryDataStoreLifeCycle.CAPACITY_IOPS);
+  Long capacityBytes=strCapacityBytes != null ? Long.parseLong(strCapacityBytes) : null;
+  Long capacityIops=strCapacityIops != null ? Long.parseLong(strCapacityIops) : null;
+  SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePool.getId(),_storagePoolDetailsDao);
+  long size=capacityBytes != null ? capacityBytes : storagePool.getCapacityBytes();
+  long currentMinIops=getIopsValue(storagePool.getId(),SolidFireUtil.MIN_IOPS);
+  long currentMaxIops=getIopsValue(storagePool.getId(),SolidFireUtil.MAX_IOPS);
+  long currentBurstIops=getIopsValue(storagePool.getId(),SolidFireUtil.BURST_IOPS);
+  long minIops=currentMinIops;
+  long maxIops=currentMaxIops;
+  long burstIops=currentBurstIops;
+  if (capacityIops != null) {
+    if (capacityIops > SolidFireUtil.MAX_IOPS_PER_VOLUME) {
+      throw new CloudRuntimeException("This volume cannot exceed " + NumberFormat.getInstance().format(SolidFireUtil.MAX_IOPS_PER_VOLUME) + " IOPS.");
+    }
+    float maxPercentOfMin=currentMaxIops / (float)currentMinIops;
+    float burstPercentOfMax=currentBurstIops / (float)currentMaxIops;
+    minIops=capacityIops;
+    maxIops=(long)(minIops * maxPercentOfMin);
+    burstIops=(long)(maxIops * burstPercentOfMax);
+    if (maxIops > SolidFireUtil.MAX_IOPS_PER_VOLUME) {
+      maxIops=SolidFireUtil.MAX_IOPS_PER_VOLUME;
+    }
+    if (burstIops > SolidFireUtil.MAX_IOPS_PER_VOLUME) {
+      burstIops=SolidFireUtil.MAX_IOPS_PER_VOLUME;
+    }
+  }
+  SolidFireUtil.modifySolidFireVolume(sfConnection,getVolumeId(storagePool.getId()),size,minIops,maxIops,burstIops);
+  SolidFireUtil.updateCsDbWithSolidFireIopsInfo(storagePool.getId(),_primaryDataStoreDao,_storagePoolDetailsDao,minIops,maxIops,burstIops);
+}
