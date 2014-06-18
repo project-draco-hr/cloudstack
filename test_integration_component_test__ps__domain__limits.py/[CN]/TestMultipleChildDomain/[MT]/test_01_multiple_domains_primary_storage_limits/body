@@ -1,0 +1,46 @@
+@attr(tags=['advanced', 'selfservice'])
+def test_01_multiple_domains_primary_storage_limits(self):
+    'Test primary storage limit of domain and its sub-domains\n\n        # Steps\n        1. Create a parent domain and two sub-domains in it (also admin accounts\n           of each domain)\n        2. Update primary storage limits of the parent domain and child domains\n        3. Deploy VM in child domain 1 so that total primary storage\n           is less than the limit of child domain\n        4. Repeat step 3 for child domain 2\n        5. Try to deploy VM in parent domain now so that the total primary storage in\n           parent domain (including that in sub-domains is more than the primary\n           storage limit of the parent domain\n        6. Delete the admin account of child domain 1 and check resource count\n           of the parent domain\n        7.  Delete VM deployed in account 2 and check primary storage count\n           of parent domain\n\n        # Validations:\n        1. Step 3 and 4 should succeed\n        2. Step 5 should fail as the resource limit exceeds in parent domain\n        3. After step 6, resource count in parent domain should decrease by equivalent\n           quantity\n        4. After step 7, resource count in parent domain should be 0'
+    result = self.setupAccounts()
+    self.assertEqual(result[0], PASS, ('Failure while setting up accounts and domains: %s' % result[1]))
+    templatesize = (self.template.size / (1024 ** 3))
+    disksize = 10
+    subdomainlimit = (templatesize + disksize)
+    result = self.updateDomainResourceLimits(((subdomainlimit * 3) - 1), subdomainlimit)
+    self.assertEqual(result[0], PASS, ('Failure while updating resource limits: %s' % result[1]))
+    try:
+        self.services['disk_offering']['disksize'] = disksize
+        disk_offering_custom = DiskOffering.create(self.apiclient, services=self.services['disk_offering'])
+        self.cleanup.append(disk_offering_custom)
+    except Exception as e:
+        self.fail('Failed to create disk offering')
+    api_client_admin = self.testClient.getUserApiClient(UserName=self.parentd_admin.name, DomainName=self.parentd_admin.domain)
+    self.assertNotEqual(api_client_admin, FAILED, ('Failed to create api client for account: %s' % self.parentd_admin.name))
+    api_client_cadmin_1 = self.testClient.getUserApiClient(UserName=self.cadmin_1.name, DomainName=self.cadmin_1.domain)
+    self.assertNotEqual(api_client_cadmin_1, FAILED, ('Failed to create api client for account: %s' % self.cadmin_1.name))
+    api_client_cadmin_2 = self.testClient.getUserApiClient(UserName=self.cadmin_2.name, DomainName=self.cadmin_2.domain)
+    self.assertNotEqual(api_client_cadmin_2, FAILED, ('Failed to create api client for account: %s' % self.cadmin_2.name))
+    VirtualMachine.create(api_client_cadmin_1, self.services['virtual_machine'], accountid=self.cadmin_1.name, domainid=self.cadmin_1.domainid, diskofferingid=disk_offering_custom.id, serviceofferingid=self.service_offering.id)
+    self.initialResourceCount = (templatesize + disksize)
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.parent_domain.id, self.initialResourceCount, RESOURCE_PRIMARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    vm_2 = VirtualMachine.create(api_client_cadmin_2, self.services['virtual_machine'], accountid=self.cadmin_2.name, domainid=self.cadmin_2.domainid, diskofferingid=disk_offering_custom.id, serviceofferingid=self.service_offering.id)
+    with self.assertRaises(Exception):
+        VirtualMachine.create(api_client_admin, self.services['virtual_machine'], accountid=self.parentd_admin.name, domainid=self.parentd_admin.domainid, diskofferingid=disk_offering_custom.id, serviceofferingid=self.service_offering.id)
+    self.cadmin_1.delete(self.apiclient)
+    self.cleanup.remove(self.cadmin_1)
+    expectedCount = self.initialResourceCount
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.parent_domain.id, expectedCount, RESOURCE_PRIMARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    try:
+        vm_2.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to delete instance: %s' % e))
+    self.assertTrue(isVmExpunged(self.apiclient, vm_2.id), 'VM not expunged                 in allotted time')
+    expectedCount = 0
+    result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.parent_domain.id, expectedCount, RESOURCE_PRIMARY_STORAGE)
+    self.assertFalse(result[0], result[1])
+    self.assertTrue(result[2], 'Resource count does not match')
+    return

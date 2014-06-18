@@ -1,0 +1,36 @@
+@attr(tags=['advanced', 'selfservice'])
+def test_02_multiple_domains_primary_storage_limits(self):
+    'Test primary storage counts in multiple child domains\n        # Steps\n        1. Create a parent domain and two sub-domains in it (also admin accounts\n           of each domain)\n        Repeat following steps for both the child domains\n        2. Deploy VM in child domain\n        3. Check if the resource count for domain is updated correctly\n        4. Create a volume and attach it to the VM\n        5. Check if the primary storage resource count is updated correctly\n\n        '
+    result = self.setupAccounts()
+    self.assertEqual(result[0], PASS, ('Failure while setting up accounts and domains: %s' % result[1]))
+    users = result[2]
+    templatesize = (self.template.size / (1024 ** 3))
+    for (domain, admin) in users.items():
+        self.account = admin
+        self.domain = domain
+        apiclient = self.testClient.getUserApiClient(UserName=self.account.name, DomainName=self.account.domain)
+        self.assertNotEqual(apiclient, FAILED, ('Failed to create api client for account: %s' % self.account.name))
+        try:
+            vm = VirtualMachine.create(apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id, serviceofferingid=self.service_offering.id)
+            expectedCount = (templatesize + self.disk_offering.disksize)
+            result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.domain.id, expectedCount, RESOURCE_PRIMARY_STORAGE)
+            self.assertFalse(result[0], result[1])
+            self.assertTrue(result[2], 'Resource count does not match')
+            self.services['disk_offering']['disksize'] = 10
+            disk_offering_10_GB = DiskOffering.create(self.apiclient, services=self.services['disk_offering'])
+            self.cleanup.append(disk_offering_10_GB)
+            volume = Volume.create(apiclient, self.services['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering_10_GB.id)
+            volumeSize = (volume.size / (1024 ** 3))
+            expectedCount += volumeSize
+            vm.attach_volume(apiclient, volume=volume)
+            result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.domain.id, expectedCount, RESOURCE_PRIMARY_STORAGE)
+            self.assertFalse(result[0], result[1])
+            self.assertTrue(result[2], 'Resource count does not match')
+            expectedCount -= volumeSize
+            vm.detach_volume(apiclient, volume=volume)
+            result = isDomainResourceCountEqualToExpectedCount(self.apiclient, self.domain.id, expectedCount, RESOURCE_PRIMARY_STORAGE)
+            self.assertFalse(result[0], result[1])
+            self.assertTrue(result[2], 'Resource count does not match')
+        except Exception as e:
+            self.fail(('Failure: %s' % e))
+        return

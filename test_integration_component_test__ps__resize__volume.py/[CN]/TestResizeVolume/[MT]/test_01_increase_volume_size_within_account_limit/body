@@ -1,0 +1,29 @@
+@attr(tags=['advanced', 'selfservice'])
+def test_01_increase_volume_size_within_account_limit(self):
+    'Test increasing volume size within the account limit and verify primary storage usage\n\n        # Validate the following\n        # 1. Create a domain and its admin account\n        # 2. Set account primary storage limit well beyond (20 GB volume + template size of VM)\n        # 3. Deploy a VM without any disk offering (only root disk)\n        # 4. Create a volume of 5 GB in the account and attach it to the VM\n        # 5. Increase (resize) the volume to 20 GB\n        # 6. Resize opearation should be successful and primary storage counnt for\n        #    account should be updated successfully'
+    result = self.setupAccounts()
+    self.assertEqual(result[0], PASS, result[1])
+    apiclient = self.testClient.getUserApiClient(UserName=self.parentd_admin.name, DomainName=self.parentd_admin.domain)
+    self.assertNotEqual(apiclient, FAILED, ('Failed to get api client                            of account: %s' % self.parentd_admin.name))
+    templateSize = (self.template.size / (1024 ** 3))
+    accountLimit = (templateSize + self.disk_offering_20_GB.disksize)
+    response = self.updateResourceLimits(accountLimit=accountLimit)
+    self.assertEqual(response[0], PASS, response[1])
+    try:
+        virtualMachine = VirtualMachine.create(apiclient, self.services['virtual_machine'], accountid=self.parentd_admin.name, domainid=self.parent_domain.id, serviceofferingid=self.service_offering.id)
+        volume = Volume.create(apiclient, self.services['volume'], zoneid=self.zone.id, account=self.parentd_admin.name, domainid=self.parent_domain.id, diskofferingid=self.disk_offering_5_GB.id)
+        virtualMachine.attach_volume(apiclient, volume=volume)
+        expectedCount = (templateSize + self.disk_offering_5_GB.disksize)
+        response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_PRIMARY_STORAGE, accountid=self.parentd_admin.id)
+        if (response[0] == FAIL):
+            raise Exception(response[1])
+        if (self.hypervisor == str(XEN_SERVER).lower()):
+            virtualMachine.stop(self.apiclient)
+        volume.resize(apiclient, diskofferingid=self.disk_offering_20_GB.id)
+        expectedCount = (templateSize + self.disk_offering_20_GB.disksize)
+        response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_PRIMARY_STORAGE, accountid=self.parentd_admin.id)
+        if (response[0] == FAIL):
+            raise Exception(response[1])
+    except Exception as e:
+        self.fail(('Failed with exception: %s' % e))
+    return

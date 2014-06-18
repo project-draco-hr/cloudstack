@@ -1,0 +1,33 @@
+@data(ROOT_DOMAIN_ADMIN, CHILD_DOMAIN_ADMIN)
+@attr(tags=['advanced', 'selfservice'])
+def test_attach_detach_volume(self, value):
+    'Stop attach and detach volume from VM\n\n        # Validate the following\n        # 1. Create a VM with custom disk offering and check the primary storage count\n        #    of account\n        # 2. Create custom volume in account\n        # 3. Verify that primary storage count increases by same amount\n        # 4. Attach volume to VM and verify resource count remains the same\n        # 5. Detach volume and verify resource count remains the same'
+    response = self.setupAccount(value)
+    self.assertEqual(response[0], PASS, response[1])
+    apiclient = self.apiclient
+    if (value == CHILD_DOMAIN_ADMIN):
+        apiclient = self.testClient.getUserApiClient(UserName=self.account.name, DomainName=self.account.domain)
+        self.assertNotEqual(apiclient, FAIL, ('Failure while getting                    api client of account: %s' % self.account.name))
+    try:
+        self.services['disk_offering']['disksize'] = 4
+        expectedCount = (self.initialResourceCount + int(self.services['disk_offering']['disksize']))
+        disk_offering = DiskOffering.create(self.apiclient, services=self.services['disk_offering'])
+        self.cleanup.append(disk_offering)
+        volume = Volume.create(apiclient, self.services['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering.id)
+    except Exception as e:
+        self.fail(('Failure: %s' % e))
+    response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_PRIMARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    try:
+        self.virtualMachine.attach_volume(apiclient, volume=volume)
+    except Exception as e:
+        self.fail(('Failed while attaching volume to VM: %s' % e))
+    response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_PRIMARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    try:
+        self.virtualMachine.detach_volume(apiclient, volume=volume)
+    except Exception as e:
+        self.fail(('Failure while detaching volume: %s' % e))
+    response = matchResourceCount(self.apiclient, expectedCount, RESOURCE_PRIMARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    return
