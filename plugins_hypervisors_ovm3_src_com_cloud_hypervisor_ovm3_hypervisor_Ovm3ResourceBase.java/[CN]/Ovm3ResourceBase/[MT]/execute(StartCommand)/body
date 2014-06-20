@@ -1,0 +1,84 @@
+{
+  VirtualMachineTO vmSpec=cmd.getVirtualMachine();
+  String vmName=vmSpec.getName();
+  State state=State.Stopped;
+  Xen xen=new Xen(c);
+  try {
+synchronized (this._vmstates) {
+      this._vmstates.put(vmName,State.Starting);
+    }
+    Xen.Vm vm=xen.getVmConfig();
+    vm.setVmCpus(vmSpec.getCpus());
+    vm.setVmMemory(vmSpec.getMinRam() / 1024 / 1024);
+    vm.setVmUuid(UUID.nameUUIDFromBytes(vmSpec.getName().getBytes()).toString());
+    vm.setVmName(vmName);
+    String domType=Ovm3Helper.getOvm3GuestType(vmSpec.getOs());
+    if (domType == null || domType.equals("")) {
+      domType="default";
+      s_logger.debug("VM Virt type missing setting to: " + domType);
+    }
+ else {
+      s_logger.debug("VM Virt type set to " + domType + " for "+ vmSpec.getOs());
+    }
+    vm.setVmDomainType(domType);
+    vm.setVmExtra(vmSpec.getBootArgs().replace(" ","%"));
+    if (vmSpec.getBootloader() == BootloaderType.CD) {
+    }
+    createVbds(vm,vmSpec);
+    if (vmSpec.getType() != VirtualMachine.Type.User) {
+      String svmPath=_ovmRepo + "/" + _ovmObject.deDash(vm.getPrimaryPoolUuid())+ "/ISOs";
+      String svmIso=svmPath + "/" + getSystemVMIsoFileNameOnDatastore();
+      vm.addIso(svmIso);
+    }
+    createVifs(vm,vmSpec);
+    vm.setVncPassword(vmSpec.getVncPassword());
+    vm.setVncAddress("0.0.0.0");
+    vm.setVnc();
+    xen.createVm(_ovmObject.deDash(vm.getPrimaryPoolUuid()),vm.getVmUuid());
+    xen.startVm(_ovmObject.deDash(vm.getPrimaryPoolUuid()),vm.getVmUuid());
+    state=State.Running;
+    if (vmSpec.getType() != VirtualMachine.Type.User) {
+      String controlIp=null;
+      for (      NicTO nic : vmSpec.getNics()) {
+        if (nic.getType() == TrafficType.Control) {
+          controlIp=nic.getIp();
+        }
+      }
+      try {
+        CloudStackPlugin cSp=new CloudStackPlugin(c);
+        for (int count=0; count < 60; count++) {
+          Boolean res=cSp.domrCheckSsh(controlIp);
+          s_logger.debug("connected to " + controlIp + " on attempt "+ count+ " result: "+ res);
+          Thread.sleep(5000);
+          if (res) {
+            break;
+          }
+          if (_vmstates.get(vmName) == null) {
+            String msg="VM " + vmName + " went missing on "+ _host+ ", returning stopped";
+            s_logger.debug(msg);
+            state=State.Stopped;
+            return new StartAnswer(cmd,msg);
+          }
+        }
+      }
+ catch (      Exception x) {
+        s_logger.debug("unable to connect to " + controlIp + " "+ x.getMessage());
+      }
+    }
+    if (_ovm3pool && _ovm3cluster) {
+      xen.configureVmHa(_ovmObject.deDash(vm.getPrimaryPoolUuid()),vm.getVmUuid(),true);
+    }
+    state=State.Running;
+    return new StartAnswer(cmd);
+  }
+ catch (  Exception e) {
+    s_logger.debug("Start vm " + vmName + " failed",e);
+    state=State.Stopped;
+    return new StartAnswer(cmd,e.getMessage());
+  }
+ finally {
+synchronized (this._vmstates) {
+      this._vmstates.put(vmName,state);
+    }
+  }
+}

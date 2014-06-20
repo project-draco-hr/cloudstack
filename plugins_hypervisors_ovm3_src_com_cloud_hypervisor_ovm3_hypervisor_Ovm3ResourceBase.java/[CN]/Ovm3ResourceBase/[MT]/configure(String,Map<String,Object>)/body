@@ -1,0 +1,162 @@
+{
+  _name=name;
+  s_logger.debug("configure " + name + " with params: "+ params);
+  try {
+    _zoneId=Long.parseLong((String)params.get("zone"));
+    _podId=Long.parseLong((String)params.get("pod"));
+    _clusterId=Long.parseLong((String)params.get("cluster"));
+    _ovm3vip=String.valueOf(params.get("ovm3vip"));
+    _ovm3pool=BooleanUtils.toBoolean((String)params.get("ovm3pool"));
+    _ovm3cluster=BooleanUtils.toBoolean((String)params.get("ovm3cluster"));
+    _host=(String)params.get("host");
+    _ip=(String)params.get("ip");
+    _username=(String)params.get("username");
+    _password=(String)params.get("password");
+    _guid=(String)params.get("guid");
+    _agentUserName=(String)params.get("agentusername");
+    _agentPassword=(String)params.get("agentpassword");
+    _privateNetworkName=(String)params.get("private.network.device");
+    _publicNetworkName=(String)params.get("public.network.device");
+    _guestNetworkName=(String)params.get("guest.network.device");
+    _storageNetworkName=(String)params.get("storage.network.device");
+    if (params.get("agentport") != null)     _agentPort=Integer.parseInt((String)params.get("agentport"));
+  }
+ catch (  Exception e) {
+    s_logger.debug("Configure " + _host + " failed",e);
+    throw new ConfigurationException("Configure " + _host + " failed, "+ e.toString());
+  }
+  if (_podId == null) {
+    String msg="Unable to get the pod";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_host == null) {
+    String msg="Unable to get the host";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_username == null) {
+    String msg="Unable to get the username";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_password == null) {
+    String msg="Unable to get the password";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_guid == null) {
+    String msg="Unable to get the guid";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_agentUserName == null) {
+    String msg="Unable to get the agent username";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_agentPassword == null) {
+    String msg="Unable to get the agent password";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_agentPort == null) {
+    String msg="Unable to get the agent port";
+    s_logger.debug(msg);
+    throw new ConfigurationException(msg);
+  }
+  if (_ovm3vip.equals("")) {
+    s_logger.debug("No VIP, Setting ovm3pool and ovm3cluster to false");
+    this._ovm3pool=false;
+    this._ovm3cluster=false;
+    this._ovm3vip="";
+  }
+  if (_ovm3cluster) {
+    this._ovm3pool=true;
+  }
+  try {
+    try {
+      c=new Connection(_host,_agentPort,_agentUserName,_agentPassword);
+    }
+ catch (    XmlRpcException ex) {
+      String msg="Unable to connect to " + _host;
+      s_logger.warn(msg + ": " + ex.getMessage());
+      throw new Exception(msg,ex);
+    }
+    this._isMaster=masterCheck();
+  }
+ catch (  Exception e) {
+    String msg="Base checks failed for " + _host;
+    s_logger.debug(msg,e);
+    throw new ConfigurationException(msg);
+  }
+  try {
+    installOvsPlugin();
+    CloudStackPlugin cSp=new CloudStackPlugin(c);
+    cSp.ovsUploadSshKey(this._ovmSshKey,FileUtils.readFileToString(getSystemVMKeyFile()));
+  }
+ catch (  Exception e) {
+    String msg="Failed to setup server: " + _host;
+    s_logger.error(msg + ": " + e.getMessage());
+    throw new ConfigurationException(msg + ", " + e);
+  }
+  try {
+    try {
+      Network net=new Network(c);
+      _interfaces=net.getInterfaceList();
+      s_logger.debug("all interfaces: " + _interfaces);
+      if (_controlNetworkName != null && !_interfaces.containsKey(_controlNetworkName)) {
+        try {
+          net.startOvsLocalConfig(_controlNetworkName);
+        }
+ catch (        Exception e) {
+          s_logger.debug("Unable to configure" + _controlNetworkName + ":"+ e.getMessage());
+        }
+        while (!_interfaces.containsKey(_controlNetworkName)) {
+          s_logger.debug("waiting for " + _controlNetworkName);
+          _interfaces=net.getInterfaceList();
+          Thread.sleep(1 * 1000);
+        }
+      }
+      net.ovsIpConfig(_controlNetworkName,"static",_controlNetworkIp,"255.255.0.0");
+      CloudStackPlugin cSp=new CloudStackPlugin(c);
+      cSp.ovsControlInterface(_controlNetworkName,_controlNetworkIp + "/16");
+      if (_privateNetworkName != null && net.getBridgeByName(_privateNetworkName).getName() == null) {
+        throw new ConfigurationException("Cannot find private bridge " + _privateNetworkName + " on host "+ _host+ " - "+ net.getBridgeByName(_privateNetworkName).getName());
+      }
+      if (_publicNetworkName != null && net.getBridgeByName(_publicNetworkName).getName() == null) {
+        throw new ConfigurationException("Cannot find private bridge " + _publicNetworkName + " on host "+ _host+ " - "+ net.getBridgeByName(_publicNetworkName).getName());
+      }
+      if (_guestNetworkName != null && net.getBridgeByName(_guestNetworkName).getName() == null) {
+        throw new ConfigurationException("Cannot find private bridge " + _guestNetworkName + " on host "+ _host+ " - "+ net.getBridgeByName(_guestNetworkName).getName());
+      }
+      if (_storageNetworkName != null && net.getBridgeByName(_storageNetworkName).getName() == null) {
+        throw new ConfigurationException("Cannot find private bridge " + _storageNetworkName + " on host "+ _host+ " - "+ net.getBridgeByName(_storageNetworkName).getName());
+      }
+    }
+ catch (    Exception e) {
+      s_logger.debug("Get bridges failed on host " + _host + ", ",e);
+      throw new ConfigurationException("Cannot get bridges on host " + _host + ", "+ e);
+    }
+    try {
+      prepareForPool();
+    }
+ catch (    Exception e) {
+      throw new ConfigurationException("Failed to prepare for pool " + _host + ", "+ e);
+    }
+    try {
+      _canBridgeFirewall=canBridgeFirewall();
+    }
+ catch (    XmlRpcException e) {
+      s_logger.error("Failed to detect whether the host supports security groups.",e);
+      _canBridgeFirewall=false;
+    }
+    s_logger.debug(_canBridgeFirewall ? "OVM3 host supports security groups." : "OVM3 host doesn't support security groups.");
+  }
+ catch (  Exception e) {
+    String msg="Generic Exception, failed to setup host: " + _host;
+    s_logger.debug(msg + ": " + e.getMessage());
+    throw new ConfigurationException(msg + ":" + e.getMessage());
+  }
+  return true;
+}

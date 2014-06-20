@@ -1,0 +1,80 @@
+{
+  String primUuid=cmd.getUuid();
+  String ssUuid=_ovmObject.deDash(primUuid);
+  String ovsRepo=this._ovmRepo + "/" + _ovmObject.deDash(primUuid);
+  String fsType="nfs";
+  String clusterUuid=_masterUuid.substring(0,15);
+  String managerId=_masterUuid;
+  String poolAlias=cmd.getHost() + ":" + cmd.getPath();
+  String mountPoint=String.format("%1$s:%2$s",cmd.getHost(),cmd.getPath()) + "/VirtualMachines";
+  List<String> members=new ArrayList<String>();
+  _isMaster=masterCheck();
+  Integer poolSize=0;
+  String msg="";
+  try {
+    Pool poolHost=new Pool(c);
+    if (_isMaster && !poolHost.getPoolId().contentEquals(primUuid) && !_hasMaster) {
+      PoolOCFS2 poolFs=new PoolOCFS2(c);
+      try {
+        try {
+          msg="Create poolfs on " + _host + " for repo "+ primUuid;
+          s_logger.debug(msg);
+          poolFs.createPoolFs(fsType,mountPoint,clusterUuid,primUuid,ssUuid,managerId,primUuid);
+        }
+ catch (        Exception e) {
+          msg="Poolfs already exists on " + _host + " for repo "+ primUuid;
+          s_logger.debug(msg);
+        }
+        try {
+          poolHost.createServerPool(poolAlias,primUuid,_ovm3vip,poolSize + 1,_host,_ip);
+        }
+ catch (        Exception e) {
+          msg="Server pool with id " + clusterUuid + " on "+ _host;
+          s_logger.debug(msg);
+        }
+      }
+ catch (      Exception e) {
+        msg="Failed to create pool on " + _host + " for repo "+ primUuid;
+        s_logger.debug(msg,e);
+        throw new Exception(msg);
+      }
+    }
+ else     if (!_isMaster || _hasMaster) {
+      Pool poolMaster=new Pool(m);
+      poolSize=poolMaster.getPoolMemberIpList().size() + 1;
+      members.addAll(poolMaster.getPoolMemberIpList());
+      poolHost=new Pool(c);
+      if (!poolHost.getPoolId().contentEquals(primUuid)) {
+        try {
+          poolHost.joinServerPool(poolAlias,primUuid,_ovm3vip,poolSize,_host,_ip);
+        }
+ catch (        Exception e) {
+          msg="Failed to join server pool " + poolMaster.getPoolAlias() + " on "+ _host+ " for pool "+ primUuid;
+          s_logger.debug(msg,e);
+          throw new Exception(msg);
+        }
+      }
+    }
+ else {
+      s_logger.debug("Pool " + primUuid + " already configured on "+ _host);
+    }
+    if (!members.contains(_ip)) {
+      members.add(_ip);
+    }
+    for (    String member : members) {
+      String url="http://" + this._agentUserName + ":"+ this._agentPassword+ "@"+ member+ ":"+ _agentPort+ "/api/3";
+      Connection x=new Connection(member,_agentPort,_agentUserName,_agentPassword);
+      Pool xpool=new Pool(x);
+      xpool.setPoolIps(members);
+      xpool.setPoolMemberIpList();
+      msg="Added " + member + " to pool "+ primUuid;
+      s_logger.debug(msg);
+    }
+  }
+ catch (  Exception e) {
+    msg="Failed to setup server pool on " + _host;
+    s_logger.debug(msg,e);
+    throw new Exception(msg);
+  }
+  return true;
+}

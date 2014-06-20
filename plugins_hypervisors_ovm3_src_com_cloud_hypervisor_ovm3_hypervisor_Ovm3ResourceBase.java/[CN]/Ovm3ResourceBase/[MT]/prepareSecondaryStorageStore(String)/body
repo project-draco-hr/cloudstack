@@ -1,0 +1,43 @@
+{
+  String mountPoint=storageUrl;
+  GlobalLock lock=GlobalLock.getInternLock("prepare.systemvm");
+  try {
+    if (this._hasMaster && this._ovm3pool) {
+      s_logger.debug("Skip systemvm iso copy, leave it to the master");
+      return;
+    }
+    if (lock.lock(3600)) {
+      try {
+        File srcIso=getSystemVMPatchIsoFile();
+        String destPath=mountPoint + "/ISOs/";
+        String repoPath[]=mountPoint.split(File.separator);
+        String destIso=destPath + "/" + getSystemVMIsoFileNameOnDatastore();
+        String result="";
+        try {
+          StoragePlugin sp=new StoragePlugin(c);
+          if (sp.getFileSize() > 0) {
+            s_logger.info(" System VM patch ISO file already exists: " + srcIso.getAbsolutePath().toString() + ", destination: "+ destIso);
+          }
+        }
+ catch (        Exception e) {
+          s_logger.info("Copy System VM patch ISO file to secondary storage. source ISO: " + srcIso.getAbsolutePath() + ", destination: "+ destIso);
+          try {
+            SshHelper.scpTo(this._host,22,this._username,null,this._password,destPath,srcIso.getAbsolutePath().toString(),"0644");
+          }
+ catch (          Exception es) {
+            s_logger.error("Unexpected exception ",es);
+            String msg="Unable to copy systemvm ISO on secondary storage. src location: " + srcIso.toString() + ", dest location: "+ destIso;
+            s_logger.error(msg);
+            throw new CloudRuntimeException(msg);
+          }
+        }
+      }
+  finally {
+        lock.unlock();
+      }
+    }
+  }
+  finally {
+    lock.releaseRef();
+  }
+}
