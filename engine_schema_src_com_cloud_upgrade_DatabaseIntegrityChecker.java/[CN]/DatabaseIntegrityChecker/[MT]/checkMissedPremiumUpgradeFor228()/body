@@ -1,17 +1,18 @@
 {
   TransactionLegacy txn=TransactionLegacy.open("Integrity");
-  txn.start();
   try {
-    String dbVersion=_dao.getCurrentVersion();
-    if (dbVersion == null)     return false;
-    if (Version.compare(Version.trimToPatch(dbVersion),Version.trimToPatch("2.2.8")) != 0) {
-      return true;
-    }
-    Connection conn;
-    try {
-      conn=txn.getConnection();
-      PreparedStatement pstmt=conn.prepareStatement("show databases");
-      ResultSet rs=pstmt.executeQuery();
+    txn.start();
+    Connection conn=txn.getConnection();
+    try (PreparedStatement pstmt=conn.prepareStatement("show databases");ResultSet rs=pstmt.executeQuery()){
+      String dbVersion=_dao.getCurrentVersion();
+      if (dbVersion == null) {
+        txn.commit();
+        return false;
+      }
+      if (Version.compare(Version.trimToPatch(dbVersion),Version.trimToPatch("2.2.8")) != 0) {
+        txn.commit();
+        return true;
+      }
       boolean hasUsage=false;
       while (rs.next()) {
         String dbName=rs.getString(1);
@@ -22,29 +23,44 @@
       }
       if (!hasUsage) {
         s_logger.debug("No cloud_usage found in database, no need to check missed premium upgrade");
+        txn.commit();
         return true;
       }
       if (!check21to22PremiumUprage(conn)) {
         s_logger.error("21to22 premium upgrade missed");
+        txn.commit();
         return false;
       }
       if (!check221to222PremiumUprage(conn)) {
         s_logger.error("221to222 premium upgrade missed");
+        txn.commit();
         return false;
       }
       if (!check222to224PremiumUpgrade(conn)) {
         s_logger.error("222to224 premium upgrade missed");
+        txn.commit();
         return false;
       }
+      txn.commit();
       return true;
     }
- catch (    SQLException e) {
-      s_logger.error("Unable to check missed premiumg upgrade");
-      throw new CloudRuntimeException("Unable to check missed premiumg upgrade");
+ catch (    Exception e) {
+      s_logger.error("checkMissedPremiumUpgradeFor228: Exception:" + e.getMessage());
+      throw new CloudRuntimeException("checkMissedPremiumUpgradeFor228: Exception:" + e.getMessage(),e);
     }
   }
-  finally {
-    txn.commit();
-    txn.close();
+ catch (  Exception e) {
+    s_logger.error("checkMissedPremiumUpgradeFor228: Exception:" + e.getMessage());
+    throw new CloudRuntimeException("checkMissedPremiumUpgradeFor228: Exception:" + e.getMessage(),e);
+  }
+ finally {
+    try {
+      if (txn != null) {
+        txn.close();
+      }
+    }
+ catch (    Exception e) {
+      s_logger.error("checkMissedPremiumUpgradeFor228: Exception:" + e.getMessage());
+    }
   }
 }
