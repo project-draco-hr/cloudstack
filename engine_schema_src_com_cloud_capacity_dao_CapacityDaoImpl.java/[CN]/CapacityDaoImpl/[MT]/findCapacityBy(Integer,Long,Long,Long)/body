@@ -1,7 +1,7 @@
 {
   TransactionLegacy txn=TransactionLegacy.currentTxn();
   PreparedStatement pstmt=null;
-  List<SummedCapacity> result=new ArrayList<SummedCapacity>();
+  List<SummedCapacity> results=new ArrayList<SummedCapacity>();
   StringBuilder sql=new StringBuilder(LIST_CAPACITY_GROUP_BY_CAPACITY_PART1);
   List<Long> resourceIdList=new ArrayList<Long>();
   if (zoneId != null) {
@@ -20,7 +20,7 @@
     sql.append(" AND capacity.capacity_type = ?");
     resourceIdList.add(capacityType.longValue());
   }
-  sql.append(LIST_CAPACITY_GROUP_BY_CAPACITY_PART2);
+  sql.append(LIST_CAPACITY_GROUP_BY_CAPACITY_DATA_CENTER_POD_CLUSTER);
   try {
     pstmt=txn.prepareAutoCloseStatement(sql.toString());
     for (int i=0; i < resourceIdList.size(); i++) {
@@ -28,10 +28,41 @@
     }
     ResultSet rs=pstmt.executeQuery();
     while (rs.next()) {
-      SummedCapacity summedCapacity=new SummedCapacity(rs.getLong(1),rs.getLong(2),rs.getLong(3),(short)rs.getLong(5),null,null,rs.getLong(6));
-      result.add(summedCapacity);
+      Long capacityPodId=null;
+      Long capacityClusterId=null;
+      if (rs.getLong(7) != 0)       capacityPodId=rs.getLong(7);
+      if (rs.getLong(8) != 0)       capacityClusterId=rs.getLong(8);
+      SummedCapacity summedCapacity=new SummedCapacity(rs.getLong(1),rs.getLong(2),rs.getLong(3),rs.getFloat(4),(short)rs.getLong(5),rs.getLong(6),capacityPodId,capacityClusterId);
+      results.add(summedCapacity);
     }
-    return result;
+    HashMap<String,SummedCapacity> capacityMap=new HashMap<String,SummedCapacity>();
+    for (    SummedCapacity result : results) {
+      String key;
+      if (zoneId != null || podId != null) {
+        key=String.valueOf(result.getCapacityType());
+      }
+ else {
+        key=String.valueOf(result.getDataCenterId()) + String.valueOf(result.getCapacityType());
+      }
+      SummedCapacity tempCapacity=null;
+      if (capacityMap.containsKey(key)) {
+        tempCapacity=capacityMap.get(key);
+        tempCapacity.setUsedCapacity(tempCapacity.getUsedCapacity() + result.getUsedCapacity());
+        tempCapacity.setReservedCapacity(tempCapacity.getReservedCapacity() + result.getReservedCapacity());
+        tempCapacity.setSumTotal(tempCapacity.getTotalCapacity() + result.getTotalCapacity());
+      }
+ else {
+        capacityMap.put(key,result);
+      }
+      tempCapacity=capacityMap.get(key);
+      tempCapacity.setPodId(podId);
+      tempCapacity.setClusterId(clusterId);
+    }
+    List<SummedCapacity> summedCapacityList=new ArrayList<SummedCapacity>();
+    for (    String key : capacityMap.keySet()) {
+      summedCapacityList.add(capacityMap.get(key));
+    }
+    return summedCapacityList;
   }
  catch (  SQLException e) {
     throw new CloudRuntimeException("DB Exception on: " + sql,e);
