@@ -21,10 +21,8 @@
     sql+=" LIMIT " + startIndex + ",500";
   }
   TransactionLegacy txn=TransactionLegacy.open(TransactionLegacy.USAGE_DB);
-  PreparedStatement pstmt=null;
-  try {
-    int i=1;
-    pstmt=txn.prepareAutoCloseStatement(sql);
+  int i=1;
+  try (PreparedStatement pstmt=txn.prepareStatement(sql)){
     if (param1 != null) {
       pstmt.setLong(i++,param1);
     }
@@ -34,32 +32,36 @@
     pstmt.setString(i++,DateUtil.getDateDisplayString(TimeZone.getTimeZone("GMT"),endDate));
     pstmt.setString(i++,DateUtil.getDateDisplayString(TimeZone.getTimeZone("GMT"),startDate));
     pstmt.setString(i++,DateUtil.getDateDisplayString(TimeZone.getTimeZone("GMT"),endDate));
-    ResultSet rs=pstmt.executeQuery();
-    while (rs.next()) {
-      Long id=Long.valueOf(rs.getLong(1));
-      Long zoneId=Long.valueOf(rs.getLong(2));
-      Long acctId=Long.valueOf(rs.getLong(3));
-      Long dId=Long.valueOf(rs.getLong(4));
-      Integer type=Integer.valueOf(rs.getInt(5));
-      Long sourceId=Long.valueOf(rs.getLong(6));
-      Long size=Long.valueOf(rs.getLong(7));
-      Long virtualSize=Long.valueOf(rs.getLong(10));
-      Date createdDate=null;
-      Date deletedDate=null;
-      String createdTS=rs.getString(8);
-      String deletedTS=rs.getString(9);
-      if (createdTS != null) {
-        createdDate=DateUtil.parseDateString(s_gmtTimeZone,createdTS);
+    try (ResultSet rs=pstmt.executeQuery()){
+      while (rs.next()) {
+        Long id=Long.valueOf(rs.getLong(1));
+        Long zoneId=Long.valueOf(rs.getLong(2));
+        Long acctId=Long.valueOf(rs.getLong(3));
+        Long dId=Long.valueOf(rs.getLong(4));
+        Integer type=Integer.valueOf(rs.getInt(5));
+        Long sourceId=Long.valueOf(rs.getLong(6));
+        Long size=Long.valueOf(rs.getLong(7));
+        Long virtualSize=Long.valueOf(rs.getLong(10));
+        Date createdDate=null;
+        Date deletedDate=null;
+        String createdTS=rs.getString(8);
+        String deletedTS=rs.getString(9);
+        if (createdTS != null) {
+          createdDate=DateUtil.parseDateString(s_gmtTimeZone,createdTS);
+        }
+        if (deletedTS != null) {
+          deletedDate=DateUtil.parseDateString(s_gmtTimeZone,deletedTS);
+        }
+        usageRecords.add(new UsageStorageVO(id,zoneId,acctId,dId,type,sourceId,size,virtualSize,createdDate,deletedDate));
       }
-      if (deletedTS != null) {
-        deletedDate=DateUtil.parseDateString(s_gmtTimeZone,deletedTS);
-      }
-      usageRecords.add(new UsageStorageVO(id,zoneId,acctId,dId,type,sourceId,size,virtualSize,createdDate,deletedDate));
+    }
+ catch (    SQLException e) {
+      throw new CloudException("getUsageRecords:" + e.getMessage(),e);
     }
   }
  catch (  Exception e) {
     txn.rollback();
-    s_logger.warn("Error getting usage records",e);
+    s_logger.error("getUsageRecords:Exception:" + e.getMessage(),e);
   }
  finally {
     txn.close();
