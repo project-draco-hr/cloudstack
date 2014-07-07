@@ -1,0 +1,24 @@
+def setUp(self):
+    self.testdata = self.testClient.getParsedTestDataConfig()
+    self.apiclient = self.testClient.getApiClient()
+    self.domain = get_domain(self.apiclient)
+    self.zone = get_zone(self.apiclient, self.testClient.getZoneForTests())
+    self.testdata['mode'] = self.zone.networktype
+    self.template = get_template(self.apiclient, self.zone.id, self.testdata['ostype'])
+    hosts = Host.list(self.apiclient, type='Routing')
+    self.assertTrue((isinstance(hosts, list) and (len(hosts) > 0)), msg='No hosts found')
+    self.host = hosts[0]
+    Host.update(self.apiclient, id=self.host.id, hosttags=self.testdata['service_offerings']['taggedsmall']['hosttags'])
+    self.account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+    self.service_offering = ServiceOffering.create(self.apiclient, self.testdata['service_offerings']['taggedsmall'])
+    self.vm1 = VirtualMachine.create(self.apiclient, self.testdata['small'], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id)
+    self.vm2 = VirtualMachine.create(self.apiclient, self.testdata['small'], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id)
+    self.vm3 = VirtualMachine.create(self.apiclient, self.testdata['small'], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id)
+    list_vms = VirtualMachine.list(self.apiclient, ids=[self.vm1.id, self.vm2.id, self.vm3.id], listAll=True)
+    self.assertTrue((isinstance(list_vms, list) and (len(list_vms) == 3)), msg='List VM response is empty')
+    clusters = Cluster.list(self.apiclient, id=self.host.clusterid)
+    self.assertTrue((isinstance(clusters, list) and (len(clusters) > 0)), msg='Cluster not found')
+    json_response = '{"com.cloud.agent.api.PingRoutingWithNwGroupsCommand":{"newGroupStates":{},"newStates":{},"_hostVmStateReport":{"%s":{"state":"PowerOn","host":"%s"},"%s":{"state":"PowerOff","host":"%s"}},"_gatewayAccessible":true,"_vnetAccessible":true,"hostType":"Routing","hostId":0,"contextMap":{},"wait":0}}'
+    json_response = (json_response % (self.vm1.instancename, self.host.name, self.vm2.instancename, self.host.name))
+    self.mock_ping = SimulatorMock.create(apiclient=self.apiclient, command='PingRoutingWithNwGroupsCommand', zoneid=self.zone.id, podid=clusters[0].podid, clusterid=clusters[0].id, hostid=self.host.id, value='', jsonresponse=json_response, method='POST')
+    self.cleanup = [self.service_offering, self.account, self.mock_ping]
