@@ -9,10 +9,10 @@
     final List<? extends Nic> routerNics=_nicDao.listByVmId(router.getId());
     for (    final Nic routerNic : routerNics) {
       final Network network=_networkModel.getNetwork(routerNic.getNetworkId());
-      if ((forVpc && network.getTrafficType() == TrafficType.Public) || (!forVpc && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Isolated)) {
+      if (forVpc && network.getTrafficType() == TrafficType.Public || !forVpc && network.getTrafficType() == TrafficType.Guest && network.getGuestType() == Network.GuestType.Isolated) {
         final NetworkUsageCommand usageCmd=new NetworkUsageCommand(privateIP,router.getHostName(),forVpc,routerNic.getIp4Address());
         final String routerType=router.getType().toString();
-        final UserStatisticsVO previousStats=_userStatsDao.findBy(router.getAccountId(),router.getDataCenterId(),network.getId(),(forVpc ? routerNic.getIp4Address() : null),router.getId(),routerType);
+        final UserStatisticsVO previousStats=_userStatsDao.findBy(router.getAccountId(),router.getDataCenterId(),network.getId(),forVpc ? routerNic.getIp4Address() : null,router.getId(),routerType);
         NetworkUsageAnswer answer=null;
         try {
           answer=(NetworkUsageAnswer)_agentMgr.easySend(router.getHostId(),usageCmd);
@@ -27,19 +27,19 @@
             continue;
           }
           try {
-            if ((answer.getBytesReceived() == 0) && (answer.getBytesSent() == 0)) {
+            if (answer.getBytesReceived() == 0 && answer.getBytesSent() == 0) {
               s_logger.debug("Recieved and Sent bytes are both 0. Not updating user_statistics");
               continue;
             }
             final NetworkUsageAnswer answerFinal=answer;
             Transaction.execute(new TransactionCallbackNoReturn(){
               @Override public void doInTransactionWithoutResult(              final TransactionStatus status){
-                final UserStatisticsVO stats=_userStatsDao.lock(router.getAccountId(),router.getDataCenterId(),network.getId(),(forVpc ? routerNic.getIp4Address() : null),router.getId(),routerType);
+                final UserStatisticsVO stats=_userStatsDao.lock(router.getAccountId(),router.getDataCenterId(),network.getId(),forVpc ? routerNic.getIp4Address() : null,router.getId(),routerType);
                 if (stats == null) {
                   s_logger.warn("unable to find stats for account: " + router.getAccountId());
                   return;
                 }
-                if (previousStats != null && ((previousStats.getCurrentBytesReceived() != stats.getCurrentBytesReceived()) || (previousStats.getCurrentBytesSent() != stats.getCurrentBytesSent()))) {
+                if (previousStats != null && (previousStats.getCurrentBytesReceived() != stats.getCurrentBytesReceived() || previousStats.getCurrentBytesSent() != stats.getCurrentBytesSent())) {
                   s_logger.debug("Router stats changed from the time NetworkUsageCommand was sent. " + "Ignoring current answer. Router: " + answerFinal.getRouterName() + " Rcvd: "+ answerFinal.getBytesReceived()+ "Sent: "+ answerFinal.getBytesSent());
                   return;
                 }
