@@ -1,0 +1,74 @@
+{
+  String datasetid;
+  String qosgroupid;
+  String VolumeName=volumeName;
+  String totaliops=String.valueOf(capacityIops);
+  String totalthroughput=String.valueOf(capacityIops * 4);
+  String quotasize=convertCapacityBytes(capacityBytes);
+  AddQosGroupCmd addQosGroupCmd=new AddQosGroupCmd();
+  ListTsmsResponse listTsmsResponse=listTsm(tsmid);
+  tsmid=listTsmsResponse.getTsms().getTsm(0).getUuid();
+  datasetid=listTsmsResponse.getTsms().getTsm(0).getDatasetid();
+  if (null != VolumeName)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_NAME,"QOS_" + VolumeName);
+  if (null != totaliops)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_IOPS,totaliops);
+  if (null != ElastistorUtil.ES_LATENCY_VAL)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_LATENCY,ElastistorUtil.ES_LATENCY_VAL);
+  if (null != totalthroughput)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_THROUGHPUT,totalthroughput);
+  if (null != ElastistorUtil.ES_MEMLIMIT_VAL)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_MEMLIMIT,ElastistorUtil.ES_MEMLIMIT_VAL);
+  if (null != ElastistorUtil.ES_NETWORKSPEED_VAL)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_NETWORKSPEED,ElastistorUtil.ES_NETWORKSPEED_VAL);
+  if (null != tsmid)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_TSMID,tsmid);
+  if (null != datasetid)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_DATASETID,datasetid);
+  if (null != ElastistorUtil.ES_GRACEALLOWED_VAL)   addQosGroupCmd.putCommandParameter(ElastistorUtil.REST_PARAM_GRACEALLOWED,ElastistorUtil.ES_GRACEALLOWED_VAL);
+  AddQosGroupCmdResponse addQosGroupCmdResponse=(AddQosGroupCmdResponse)getElastistorRestClient().executeCommand(addQosGroupCmd);
+  if (addQosGroupCmdResponse.getQoSGroup().getUuid() == null) {
+    throw new CloudRuntimeException("adding qos group failed , contact elatistor admin");
+  }
+ else {
+    CreateVolumeCmd createVolumeCmd=new CreateVolumeCmd();
+    qosgroupid=addQosGroupCmdResponse.getQoSGroup().getUuid();
+    if (null != qosgroupid)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_QOSGROUPID,qosgroupid);
+    if (null != tsmid)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_TSMID,tsmid);
+    if (null != VolumeName)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_NAME,VolumeName);
+    if (null != quotasize)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_QUOTA_SIZE,quotasize);
+    if (protocoltype.equalsIgnoreCase("nfs")) {
+      if (null != ElastistorUtil.ES_BLOCKSIZE_VAL)       createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_BLOCKSIZE,ElastistorUtil.ES_BLOCKSIZE_VAL);
+      if (null != ElastistorUtil.ES_BLOCKSIZE_VAL)       createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_RECORDSIZE,ElastistorUtil.ES_BLOCKSIZE_VAL);
+    }
+ else {
+      if (null != ElastistorUtil.ES_BLOCKSIZE_VAL)       createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_BLOCKSIZE,"512B");
+      if (null != ElastistorUtil.ES_BLOCKSIZE_VAL)       createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_RECORDSIZE,"512B");
+    }
+    if (null != ElastistorUtil.ES_DEDUPLICATION_VAL)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_DEDUPLICATION,ElastistorUtil.ES_DEDUPLICATION_VAL);
+    if (null != ElastistorUtil.ES_SYNC_VAL)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_SYNC,ElastistorUtil.ES_SYNC_VAL);
+    if (null != ElastistorUtil.ES_COMPRESSION_VAL)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_COMPRESSION,ElastistorUtil.ES_COMPRESSION_VAL);
+    createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_MOUNTPOINT,mountpoint);
+    if (null != datasetid)     createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_DATASETID,datasetid);
+    createVolumeCmd.putCommandParameter(ElastistorUtil.REST_PARAM_PROTOCOLTYPE,protocoltype);
+    CreateVolumeCmdResponse createVolumeCmdResponse;
+    FileSystem volume=null;
+    FileSystem fileSystem=null;
+    try {
+      createVolumeCmdResponse=(CreateVolumeCmdResponse)getElastistorRestClient().executeCommand(createVolumeCmd);
+      if (createVolumeCmdResponse.getJobid() == null) {
+        throw new CloudRuntimeException("creating volume failed , contact elatistor admin");
+      }
+ else {
+        volume=queryAsyncVolumeJobResult(createVolumeCmdResponse.getJobid());
+        if (volume == null) {
+          throw new CloudRuntimeException("tsm queryAsync failed , contact elatistor admin");
+        }
+ else {
+          if (protocoltype.equalsIgnoreCase("nfs")) {
+            fileSystem=updateNfsService(volume.getUuid());
+          }
+ else {
+            fileSystem=updateIscsiService(volume.getUuid());
+          }
+        }
+      }
+      return fileSystem;
+    }
+ catch (    Exception e) {
+      throw new CloudRuntimeException("creating volume failed , contact elatistor admin",e);
+    }
+  }
+}

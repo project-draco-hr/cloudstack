@@ -1,0 +1,57 @@
+{
+  if (!managed) {
+    s_logger.info("elastistor pool is NOT a managed storage , hence deleting the volume then tsm");
+    String esvolumeid=null;
+    String estsmid=null;
+    ListTsmsResponse listTsmsResponse=listTsm(tsmid);
+    if (listTsmsResponse.getTsmsCount() != 0) {
+      if (listTsmsResponse.getTsms().getTsm(0).checkvolume()) {
+        esvolumeid=listTsmsResponse.getTsms().getTsm(0).getVolumeProperties(0).getid();
+        DeleteVolumeResponse deleteVolumeResponse=deleteVolume(esvolumeid,null);
+        if (deleteVolumeResponse != null) {
+          String jobid=deleteVolumeResponse.getJobId();
+          int jobstatus=queryAsyncJobResult(jobid);
+          if (jobstatus == 1) {
+            s_logger.info("elastistor volume successfully deleted");
+          }
+ else {
+            s_logger.info("now farce deleting the volume");
+            while (jobstatus != 1) {
+              DeleteVolumeResponse deleteVolumeResponse1=deleteVolume(esvolumeid,"true");
+              if (deleteVolumeResponse1 != null) {
+                String jobid1=deleteVolumeResponse1.getJobId();
+                jobstatus=queryAsyncJobResult(jobid1);
+              }
+            }
+            s_logger.info("elastistor volume successfully deleted");
+          }
+        }
+      }
+ else {
+        s_logger.info("no volume present in on the given tsm");
+      }
+    }
+  }
+  s_logger.info("now trying to delete elastistor tsm");
+  if (tsmid != null) {
+    DeleteTsmCmd deleteTsmCmd=new DeleteTsmCmd();
+    deleteTsmCmd.putCommandParameter(ElastistorUtil.REST_PARAM_ID,tsmid);
+    DeleteTsmResponse deleteTsmResponse=(DeleteTsmResponse)getElastistorRestClient().executeCommand(deleteTsmCmd);
+    if (deleteTsmResponse != null) {
+      String jobstatus=deleteTsmResponse.getJobStatus();
+      if (jobstatus.equalsIgnoreCase("true")) {
+        s_logger.info("deletion of elastistor tsm successful");
+        return true;
+      }
+ else {
+        s_logger.info("failed to delete elastistor tsm");
+        return false;
+      }
+    }
+ else {
+      s_logger.info("elastistor tsm id not present");
+    }
+  }
+  s_logger.info("tsm id is null");
+  return false;
+}

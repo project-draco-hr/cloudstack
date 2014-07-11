@@ -1,3 +1,41 @@
 {
-  throw new UnsupportedOperationException();
+  s_logger.debug("Resize elastistor volume started");
+  Boolean status=false;
+  VolumeObject vol=(VolumeObject)data;
+  StoragePool pool=(StoragePool)data.getDataStore();
+  ResizeVolumePayload resizeParameter=(ResizeVolumePayload)vol.getpayload();
+  CreateCmdResult result=new CreateCmdResult(null,null);
+  StoragePoolVO poolVO=_storagePoolDao.findById(pool.getId());
+  if (!(poolVO.isManaged())) {
+    super.resize(data,callback);
+    return;
+  }
+  try {
+    status=ElastistorUtil.updateElastistorVolumeSize(vol.getUuid(),resizeParameter.newSize);
+  }
+ catch (  Throwable e) {
+    s_logger.error("Resize elastistor volume failed, please contact elastistor admin.",e);
+    result.setResult(e.toString());
+    callback.complete(result);
+  }
+  if (status) {
+    Long usedBytes=poolVO.getUsedBytes();
+    Long currentVolumeSize=vol.getSize();
+    Long newUsedBytes;
+    if (currentVolumeSize < resizeParameter.newSize) {
+      newUsedBytes=usedBytes + (resizeParameter.newSize - currentVolumeSize);
+      poolVO.setUsedBytes(newUsedBytes);
+    }
+ else {
+      newUsedBytes=usedBytes - (currentVolumeSize - resizeParameter.newSize);
+      poolVO.setUsedBytes(newUsedBytes);
+    }
+    _storagePoolDao.update(pool.getId(),poolVO);
+    vol.getVolume().setSize(resizeParameter.newSize);
+    vol.update();
+    callback.complete(result);
+  }
+ else {
+    callback.complete(result);
+  }
 }

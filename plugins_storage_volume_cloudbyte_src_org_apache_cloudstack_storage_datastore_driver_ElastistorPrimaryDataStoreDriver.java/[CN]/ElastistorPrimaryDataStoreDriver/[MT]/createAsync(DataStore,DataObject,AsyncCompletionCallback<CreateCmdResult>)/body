@@ -1,3 +1,78 @@
 {
-  super.createAsync(dataStore,dataObject,callback);
+  String iqn=null;
+  String errMsg=null;
+  CreateCmdResult result=new CreateCmdResult(iqn,new Answer(null,errMsg == null,errMsg));
+  if (dataObject.getType() == DataObjectType.VOLUME) {
+    VolumeInfo volumeInfo=(VolumeInfo)dataObject;
+    long storagePoolId=dataStore.getId();
+    String volumeName=volumeInfo.getName();
+    Long Iops=volumeInfo.getMaxIops();
+    Long quotaSize=getVolumeSizeIncludingHypervisorSnapshotReserve(volumeInfo,_storagePoolDao.findById(storagePoolId));
+    StoragePoolVO storagePool=_storagePoolDao.findById(dataStore.getId());
+    VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
+    if (!(storagePool.isManaged())) {
+      super.createAsync(dataStore,dataObject,callback);
+      volume.setPoolType(storagePool.getPoolType());
+      _volumeDao.update(volume.getId(),volume);
+      return;
+    }
+    DiskOfferingVO diskOffering=_diskOfferingDao.findById(volumeInfo.getDiskOfferingId());
+    long capacityIops=storagePool.getCapacityIops();
+    capacityIops=capacityIops - Iops;
+    if (capacityIops < 0) {
+      throw new CloudRuntimeException("IOPS not available. [pool:" + storagePool.getName() + "] [availiops:"+ capacityIops+ "] [requirediops:"+ Iops+ "]");
+    }
+    String protocoltype=null;
+    StoragePoolVO dataStoreVO=(StoragePoolVO)_storagePoolDao.findById(storagePoolId);
+    String desc=diskOffering.getDisplayText();
+    if (desc.toLowerCase().contains("iscsi")) {
+      protocoltype="iscsi";
+    }
+ else     if (dataStoreVO.getPoolType().equals(StoragePoolType.NetworkFilesystem) || dataStoreVO.getPoolType().equals(StoragePoolType.Filesystem)) {
+      protocoltype="nfs";
+    }
+ else {
+      protocoltype="iscsi";
+    }
+    FileSystem esvolume=null;
+    try {
+      esvolume=ElastistorUtil.createElastistorVolume(volumeName,dataStoreVO.getUuid(),quotaSize,Iops,protocoltype,volumeName);
+    }
+ catch (    Throwable e) {
+      s_logger.error(e.toString(),e);
+      result.setResult(e.toString());
+      callback.complete(result);
+      throw new CloudRuntimeException(e.getMessage());
+    }
+    if (esvolume.getNfsenabled().equalsIgnoreCase("true")) {
+      volume.set_iScsiName(esvolume.getPath());
+      volume.setPoolType(StoragePoolType.NetworkFilesystem);
+    }
+ else {
+      iqn=esvolume.getIqn();
+      String modifiediqn="/" + iqn + "/0";
+      volume.set_iScsiName(modifiediqn);
+      volume.setPoolType(StoragePoolType.IscsiLUN);
+    }
+    volume.setFolder(String.valueOf(esvolume.getUuid()));
+    volume.setPoolId(storagePoolId);
+    volume.setUuid(esvolume.getUuid());
+    volume.setPath(null);
+    _volumeDao.update(volume.getId(),volume);
+    updateVolumeDetails(volume,esvolume);
+    long capacityBytes=storagePool.getCapacityBytes();
+    long usedBytes=storagePool.getUsedBytes();
+    Long inbytes=volume.getSize();
+    usedBytes+=inbytes;
+    storagePool.setCapacityIops(capacityIops);
+    storagePool.setUsedBytes(usedBytes > capacityBytes ? capacityBytes : usedBytes);
+    _storagePoolDao.update(storagePoolId,storagePool);
+    s_logger.info("Elastistor volume creation complete.");
+  }
+ else {
+    errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to createAsync";
+    s_logger.error(errMsg);
+  }
+  result.setResult(errMsg);
+  callback.complete(result);
 }

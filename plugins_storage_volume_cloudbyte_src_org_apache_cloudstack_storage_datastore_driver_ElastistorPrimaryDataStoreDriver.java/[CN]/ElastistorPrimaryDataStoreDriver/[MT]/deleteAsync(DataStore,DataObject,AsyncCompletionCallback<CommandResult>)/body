@@ -1,3 +1,41 @@
 {
-  super.deleteAsync(dataStore,dataObject,callback);
+  String errMsg=null;
+  StoragePoolVO storagePool=_storagePoolDao.findById(dataStore.getId());
+  if (!(storagePool.isManaged())) {
+    super.deleteAsync(dataStore,dataObject,callback);
+    return;
+  }
+  if (dataObject.getType() == DataObjectType.VOLUME) {
+    VolumeInfo volumeInfo=(VolumeInfo)dataObject;
+    long storagePoolId=dataStore.getId();
+    boolean result=false;
+    try {
+      result=ElastistorUtil.deleteElastistorVolume(volumeInfo.getUuid());
+    }
+ catch (    Throwable e) {
+      e.printStackTrace();
+      CommandResult result2=new CommandResult();
+      result2.setResult(e.toString());
+      callback.complete(result2);
+    }
+    if (result) {
+      _volumeDao.deleteVolumesByInstance(volumeInfo.getId());
+      long usedBytes=storagePool.getUsedBytes();
+      long capacityIops=storagePool.getCapacityIops();
+      usedBytes-=volumeInfo != null ? volumeInfo.getSize() : 0;
+      capacityIops+=volumeInfo != null ? volumeInfo.getMaxIops() : 0;
+      storagePool.setUsedBytes(usedBytes < 0 ? 0 : usedBytes);
+      storagePool.setCapacityIops(capacityIops < 0 ? 0 : capacityIops);
+      _storagePoolDao.update(storagePoolId,storagePool);
+    }
+ else {
+      errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to deleteAsync";
+    }
+  }
+ else {
+    errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to deleteAsync";
+  }
+  CommandResult result=new CommandResult();
+  result.setResult(errMsg);
+  callback.complete(result);
 }
