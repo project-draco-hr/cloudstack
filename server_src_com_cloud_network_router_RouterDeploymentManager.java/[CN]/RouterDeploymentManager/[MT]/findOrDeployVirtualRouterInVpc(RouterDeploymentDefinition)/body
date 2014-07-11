@@ -1,0 +1,41 @@
+{
+  final Vpc vpc=routerDeploymentDefinition.getVpc();
+  logger.debug("Deploying Virtual Router in VPC " + vpc);
+  Vpc vpcLock=vpcDao.acquireInLockTable(vpc.getId());
+  if (vpcLock == null) {
+    throw new ConcurrentOperationException("Unable to lock vpc " + vpc.getId());
+  }
+  Pair<DeploymentPlan,List<DomainRouterVO>> planAndRouters=getDeploymentPlanAndRouters(routerDeploymentDefinition);
+  DeploymentPlan plan=planAndRouters.first();
+  List<DomainRouterVO> routers=planAndRouters.second();
+  try {
+    if (routers.size() >= 1) {
+      return routers;
+    }
+    Long offeringId=vpcOffDao.findById(vpc.getVpcOfferingId()).getServiceOfferingId();
+    if (offeringId == null) {
+      offeringId=_offering.getId();
+    }
+    List<? extends PhysicalNetwork> pNtwks=pNtwkDao.listByZone(vpc.getZoneId());
+    VirtualRouterProvider vpcVrProvider=null;
+    for (    PhysicalNetwork pNtwk : pNtwks) {
+      PhysicalNetworkServiceProvider provider=physicalProviderDao.findByServiceProvider(pNtwk.getId(),Type.VPCVirtualRouter.toString());
+      if (provider == null) {
+        throw new CloudRuntimeException("Cannot find service provider " + Type.VPCVirtualRouter.toString() + " in physical network "+ pNtwk.getId());
+      }
+      vpcVrProvider=vrProviderDao.findByNspIdAndType(provider.getId(),Type.VPCVirtualRouter);
+      if (vpcVrProvider != null) {
+        break;
+      }
+    }
+    PublicIp sourceNatIp=vpcMgr.assignSourceNatIpAddressToVpc(routerDeploymentDefinition.getOwner(),vpc);
+    DomainRouterVO router=deployVpcRouter(routerDeploymentDefinition,vpcVrProvider,offeringId,sourceNatIp);
+    routers.add(router);
+  }
+  finally {
+    if (vpcLock != null) {
+      vpcDao.releaseFromLockTable(vpc.getId());
+    }
+  }
+  return routers;
+}
