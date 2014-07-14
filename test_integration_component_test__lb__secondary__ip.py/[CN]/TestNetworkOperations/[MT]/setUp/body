@@ -1,0 +1,20 @@
+def setUp(self):
+    self.apiclient = self.testClient.getApiClient()
+    self.cleanup = []
+    try:
+        self.account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+        self.cleanup.append(self.account)
+        self.virtual_machine = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.zone.networktype)
+        self.secondaryip = NIC.addIp(self.apiclient, id=self.virtual_machine.nic[0].id)
+        self.public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.virtual_machine.nic[0].networkid)
+        FireWallRule.create(self.apiclient, ipaddressid=self.public_ip.ipaddress.id, protocol='TCP', cidrlist=[self.testdata['fwrule']['cidr']], startport=self.testdata['fwrule']['startport'], endport=self.testdata['fwrule']['endport'])
+        nat_rule = NATRule.create(self.apiclient, self.virtual_machine, self.testdata['natrule'], ipaddressid=self.public_ip.ipaddress.id, networkid=self.virtual_machine.nic[0].networkid)
+        sshClient = SshClient(self.public_ip.ipaddress.ipaddress, self.testdata['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+        cmd = 'ip addr add {0}/24 broadcast {0} dev eth0'.format(self.secondaryip.ipaddress)
+        sshClient.execute(cmd)
+        sshClient.execute('ip addr show')
+        nat_rule.delete(self.apiclient)
+        self.lb_rule = LoadBalancerRule.create(self.apiclient, self.testdata['lbrule'], ipaddressid=self.public_ip.ipaddress.id, accountid=self.account.name, networkid=self.virtual_machine.nic[0].networkid, domainid=self.account.domainid)
+    except Exception as e:
+        self.tearDown()
+        raise e

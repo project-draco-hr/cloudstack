@@ -1,0 +1,38 @@
+@attr(tags=['advanced', 'selfservice'], required_hardware='false')
+def test_22_network_gc(self):
+    'Verify LB rule functioning to secondary IP after network GC\n\n        steps:\n        # 1. Add secondary ip for vm\n        # 2. Associate public ip for the network\n        # 3. Create load balancer rule for ip using roundrobin algorithm\n        # 4. Assign load balancer rule to secondary ip of vm\n        # 5. Try to ssh to vm using the public ip, it should succeed\n        # 6. Stop the VM\n        # 7. Wait for the network.gc time interval\n        # 7. Check the state of the network, it should be allocated\n        # 8. Check the state of the related router VM, it should be stopped\n        # 9. Start the virtual machine\n        # 8. Check the state of the network, it should be implemented now\n        # 11.Check the state of the router, it should be running\n        # 12.Try to SSH to the VM using public IP, it should be successful'
+    vmidipmap = [{'vmid': str(self.virtual_machine.id), 'vmip': str(self.secondaryip.ipaddress), }, {'vmid': str(self.virtual_machine.id), 'vmip': str(self.virtual_machine.nic[0].ipaddress), }]
+    self.lb_rule.assign(self.apiclient, vmidipmap=vmidipmap)
+    iplist = [self.secondaryip.ipaddress, self.virtual_machine.nic[0].ipaddress]
+    response = IsIpAssignedToLoadBalancerRule(self, self.lb_rule, iplist)
+    self.assertTrue(response[0], response[1])
+    try:
+        SshClient(self.public_ip.ipaddress.ipaddress, self.testdata['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+    except Exception as e:
+        self.fail(('Exception during SSH : %s' % e))
+    self.virtual_machine.stop(self.apiclient)
+    wait_for_cleanup(self.apiclient, ['network.gc.wait', 'network.gc.interval'])
+    response = verifyNetworkState(self.api_client, self.virtual_machine.nic[0].networkid, 'allocated')
+    exceptionOccured = response[0]
+    isNetworkInDesiredState = response[1]
+    exceptionMessage = response[2]
+    if (exceptionOccured or (not isNetworkInDesiredState)):
+        self.fail(exceptionMessage)
+    routers = Router.list(self.apiclient, networkid=self.virtual_machine.nic[0].networkid, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'routers list validation failed')
+    self.assertEqual(str(routers[0].state).lower(), 'stopped', 'Router should be in stopped state')
+    self.virtual_machine.start(self.apiclient)
+    response = verifyNetworkState(self.api_client, self.virtual_machine.nic[0].networkid, 'implemented')
+    exceptionOccured = response[0]
+    isNetworkInDesiredState = response[1]
+    exceptionMessage = response[2]
+    if (exceptionOccured or (not isNetworkInDesiredState)):
+        self.fail(exceptionMessage)
+    routers = Router.list(self.apiclient, networkid=self.virtual_machine.nic[0].networkid, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'routers list validation failed')
+    self.assertEqual(str(routers[0].state).lower(), 'running', 'Router should be in running state')
+    try:
+        SshClient(self.public_ip.ipaddress.ipaddress, self.testdata['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+    except Exception as e:
+        self.fail(('Exception during SSH : %s' % e))
+    return

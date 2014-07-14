@@ -1,0 +1,27 @@
+@attr(tags=['advancedns', 'provisioning'], required_hardware='true')
+def test_23_lb_rule_functioning_with_netscaler(self):
+    'Verify LB rule functioning for secondary IP with LB handled\n           through Netscaler device\n\n        steps:\n        # 1. Add secondary ip for vm\n        # 2. Associate public ip for the network\n        # 3. Create load balancer rule for ip using roundrobin algorithm\n        # 4. Assign load balancer rule to secondary ip of vm\n        # 5. Try to ssh to vm using the public ip, it should succeed\n        # 6. Update the algorithm of LB rule as leastconn\n        # 7. Try to SSH to VM, it should succeed'
+    nwoff_netscaler = NetworkOffering.create(self.apiclient, self.testdata['nw_off_isolated_netscaler'])
+    nwoff_netscaler.update(self.apiclient, state='Enabled')
+    network = Network.create(self.apiclient, self.testdata['network'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=nwoff_netscaler.id, zoneid=self.zone.id)
+    self.virtual_machine = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.zone.networktype, networkids=[network.id])
+    secondaryip = NIC.addIp(self.apiclient, id=self.virtual_machine.nic[0].id)
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.virtual_machine.nic[0].networkid)
+    FireWallRule.create(self.apiclient, ipaddressid=public_ip.ipaddress.id, protocol='TCP', cidrlist=[self.testdata['fwrule']['cidr']], startport=self.testdata['fwrule']['startport'], endport=self.testdata['fwrule']['endport'])
+    nat_rule = NATRule.create(self.apiclient, self.virtual_machine, self.testdata['natrule'], ipaddressid=public_ip.ipaddress.id, networkid=self.virtual_machine.nic[0].networkid)
+    sshClient = SshClient(public_ip.ipaddress.ipaddress, self.testdata['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+    cmd = 'ip addr add {0}/24 broadcast {0} dev eth0'.format(self.secondaryip.ipaddress)
+    sshClient.execute(cmd)
+    sshClient.execute('ip addr show')
+    nat_rule.delete(self.apiclient)
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.testdata['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.name, networkid=self.virtual_machine.nic[0].networkid, domainid=self.account.domainid)
+    vmidipmap = [{'vmid': str(self.virtual_machine.id), 'vmip': str(secondaryip.ipaddress), }]
+    lb_rule.assign(self.apiclient, vmidipmap=vmidipmap)
+    iplist = [secondaryip.ipaddress]
+    response = IsIpAssignedToLoadBalancerRule(self, lb_rule, iplist)
+    self.assertTrue(response[0], response[1])
+    try:
+        SshClient(public_ip.ipaddress.ipaddress, self.testdata['natrule']['publicport'], self.virtual_machine.username, self.virtual_machine.password)
+    except Exception as e:
+        self.fail(('Exception during SSH : %s' % e))
+    return

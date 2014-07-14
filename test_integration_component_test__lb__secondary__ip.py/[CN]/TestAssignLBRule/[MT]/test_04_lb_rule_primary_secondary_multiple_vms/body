@@ -1,0 +1,20 @@
+@attr(tags=['advanced', 'selfservice'], required_hardware='false')
+def test_04_lb_rule_primary_secondary_multiple_vms(self):
+    'Create LB rule for primary and secondary IPs of multiple VMs\n\n        steps:\n        # 1. Deploy two VMs in same network and add secondary IP for both\n        # 2. Associate a public IP for the network\n        # 3. Create load balancer rule for this IP\n        # 4. Assign load balancer rule to both primary and secondary ip address of both VMs\n        # 5. List and verify that load balancer rule is successfully added'
+    secondaryip_vm1 = NIC.addIp(self.apiclient, id=self.virtual_machine.nic[0].id)
+    self.virtual_machine2 = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.zone.networktype, networkids=[self.virtual_machine.nic[0].networkid])
+    secondaryip_vm2 = NIC.addIp(self.apiclient, id=self.virtual_machine2.nic[0].id)
+    public_ip = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=self.virtual_machine.nic[0].networkid)
+    lb_rule = LoadBalancerRule.create(self.apiclient, self.testdata['lbrule'], ipaddressid=public_ip.ipaddress.id, accountid=self.account.name, networkid=self.virtual_machine.nic[0].networkid, domainid=self.account.domainid)
+    vmidipmap = [{'vmid': str(self.virtual_machine.id), 'vmip': str(self.virtual_machine.nic[0].ipaddress), }, {'vmid': str(self.virtual_machine.id), 'vmip': str(secondaryip_vm1.ipaddress), }, {'vmid': str(self.virtual_machine2.id), 'vmip': str(self.virtual_machine2.nic[0].ipaddress), }, {'vmid': str(self.virtual_machine2.id), 'vmip': str(secondaryip_vm2.ipaddress), }]
+    lb_rule.assign(self.apiclient, vmidipmap=vmidipmap)
+    iplist = [self.virtual_machine.nic[0].ipaddress, secondaryip_vm1.ipaddress, self.virtual_machine2.nic[0].ipaddress, secondaryip_vm2.ipaddress]
+    response = IsIpAssignedToLoadBalancerRule(self, lb_rule, iplist)
+    self.assertTrue(response[0], response[1])
+    lbrules = LoadBalancerRule.list(self.apiclient, virtualmachineid=self.virtual_machine.id, listall=True)
+    self.assertEqual(validateList(lbrules)[0], PASS, 'lb rules list validation failed')
+    self.assertEqual(lb_rule.id, lbrules[0].id, 'LB rules does not match')
+    lbrules = LoadBalancerRule.list(self.apiclient, virtualmachineid=self.virtual_machine2.id, listall=True)
+    self.assertEqual(validateList(lbrules)[0], PASS, 'lb rules list validation failed')
+    self.assertEqual(lb_rule.id, lbrules[0].id, 'LB rules does not match')
+    return
