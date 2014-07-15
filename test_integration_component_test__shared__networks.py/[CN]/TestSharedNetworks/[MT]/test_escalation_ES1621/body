@@ -1,0 +1,58 @@
+@attr(tags=['advanced', 'selfservice'])
+def test_escalation_ES1621(self):
+    '\n        @summary: ES1621:Allow creating shared networks with overlapping\n                  ip ranges in different vlans\n        @steps:\n        Step1: Create an Admin account for the test\n        Step2: Create shared network offering\n        Step3: Update the network offering to Enabled state\n        Step4: list network offering\n        Step5: Create network with above offering\n        Step6: List netwokrs and verify the network created in step5 in the response\n        Step7: Create another network with offering,vlan and ip range same as in step6\n        Step8: Verify that network creationin Step7 should fail\n        Step9: Repeat step6 with diff vlan but same ip range and network offering\n        Step10: List netwokrs and verify the network created in step9 in the response\n        Step11: Dislable network offering for the cleanup to delete at the end of the test\n        '
+    self.admin_account = Account.create(self.api_client, self.services['account'], admin=True, domainid=self.domain.id)
+    self.cleanup_accounts.append(self.admin_account)
+    list_accounts_response = Account.list(self.api_client, id=self.admin_account.id, listall=True)
+    status = validateList(list_accounts_response)
+    self.assertEqual(PASS, status[0], 'listAccounts returned invalid object in response')
+    self.assertEqual(list_accounts_response[0].state, 'enabled', 'The admin account created is not enabled.')
+    self.debug(('Admin type account created: %s' % self.admin_account.name))
+    (physical_network, shared_vlan) = get_free_vlan(self.api_client, self.zone.id)
+    if (shared_vlan is None):
+        self.fail('Failed to get free vlan id for shared network')
+    self.debug(('Physical network found: %s' % physical_network.id))
+    self.services['network_offering']['specifyVlan'] = 'True'
+    self.services['network_offering']['specifyIpRanges'] = 'True'
+    self.shared_network_offering = NetworkOffering.create(self.api_client, self.services['network_offering'], conservemode=False)
+    list_network_offerings_response = NetworkOffering.list(self.api_client, id=self.shared_network_offering.id)
+    status = validateList(list_network_offerings_response)
+    self.assertEquals(PASS, status[0], 'listNetworkOfferings returned invalid object in response.')
+    self.assertEqual(list_network_offerings_response[0].state, 'Disabled', 'The network offering created should be bydefault disabled.')
+    self.debug(('Shared Network offering created: %s' % self.shared_network_offering.id))
+    NetworkOffering.update(self.shared_network_offering, self.api_client, id=self.shared_network_offering.id, state='enabled')
+    list_network_offerings_response = NetworkOffering.list(self.api_client, id=self.shared_network_offering.id)
+    status = validateList(list_network_offerings_response)
+    self.assertEquals(PASS, status[0], 'listNetworkOfferings returned invalid object in response after enabling it.')
+    self.assertEqual(list_network_offerings_response[0].state, 'Enabled', 'The network offering state should get updated to Enabled.')
+    self.services['network']['acltype'] = 'Domain'
+    self.services['network']['networkofferingid'] = self.shared_network_offering.id
+    self.services['network']['physicalnetworkid'] = physical_network.id
+    self.services['network']['vlan'] = shared_vlan
+    self.network = Network.create(self.api_client, self.services['network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(self.network)
+    list_networks_response = Network.list(self.api_client, id=self.network.id)
+    status = validateList(list_accounts_response)
+    self.assertEquals(PASS, status[0], 'listNetworks returned invalid object in response.')
+    self.assertEqual(list_networks_response[0].specifyipranges, True, 'The network is created with ip range but the flag is set to False.')
+    self.debug(('Shared Network created for scope domain: %s' % self.network.id))
+    try:
+        self.network1 = Network.create(self.api_client, self.services['network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+        self.cleanup_networks.append(self.network1)
+        self.fail('CS is allowing to create shared network with ip range and vlan same as used by another shared network')
+    except Exception as e:
+        self.debug(('Network Creation Exception Raised: %s' % e))
+    (physical_network, shared_vlan1) = get_free_vlan(self.api_client, self.zone.id)
+    if (shared_vlan1 is None):
+        self.fail('Failed to get free vlan id for shared network')
+    self.services['network']['vlan'] = shared_vlan1
+    self.network2 = Network.create(self.api_client, self.services['network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(self.network2)
+    list_networks_response = Network.list(self.api_client, id=self.network2.id)
+    status = validateList(list_networks_response)
+    self.assertEquals(PASS, status[0], 'listNetworks returned invalid object in response after creating with overlapped ip range in diff vlan.')
+    self.assertEqual(list_networks_response[0].specifyipranges, True, 'The network is created with ip range but the flag is set to False after creating with overlapped ip range in diff vlan.')
+    self.debug(('Shared Network created for scope domain: %s' % self.network2.id))
+    NetworkOffering.update(self.shared_network_offering, self.api_client, id=self.shared_network_offering.id, state='disabled')
+    self.cleanup_networks.append(self.shared_network_offering)
+    return
