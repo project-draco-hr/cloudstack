@@ -1,79 +1,111 @@
 {
   Long newSize=null;
+  Long newMinIops=null;
+  Long newMaxIops=null;
   boolean shrinkOk=cmd.getShrinkOk();
   VolumeVO volume=_volsDao.findById(cmd.getEntityId());
   if (volume == null) {
     throw new InvalidParameterValueException("No such volume");
   }
+  _accountMgr.checkAccess(CallContext.current().getCallingAccount(),null,true,volume);
   DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
-  DiskOfferingVO newDiskOffering=null;
-  newDiskOffering=_diskOfferingDao.findById(cmd.getNewDiskOfferingId());
-  if (_volsDao.getHypervisorType(volume.getId()) != HypervisorType.KVM && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.XenServer && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.VMware && _volsDao.getHypervisorType(volume.getId()) != HypervisorType.None) {
-    throw new InvalidParameterValueException("Cloudstack currently only supports volumes marked as KVM, VMware, XenServer hypervisor for resize");
+  DiskOfferingVO newDiskOffering=_diskOfferingDao.findById(cmd.getNewDiskOfferingId());
+  HypervisorType hypervisorType=_volsDao.getHypervisorType(volume.getId());
+  if (hypervisorType != HypervisorType.KVM && hypervisorType != HypervisorType.XenServer && hypervisorType != HypervisorType.VMware && hypervisorType != HypervisorType.None) {
+    throw new InvalidParameterValueException("CloudStack currently only supports volumes marked as the KVM, VMware, or XenServer hypervisor type for resize.");
   }
   if (volume.getState() != Volume.State.Ready && volume.getState() != Volume.State.Allocated) {
-    throw new InvalidParameterValueException("Volume should be in ready or allocated state before attempting a resize. " + "Volume " + volume.getUuid() + " state is:"+ volume.getState());
+    throw new InvalidParameterValueException("Volume should be in ready or allocated state before attempting a resize. Volume " + volume.getUuid() + " is in state "+ volume.getState()+ ".");
   }
   if (newDiskOffering == null) {
-    if (diskOffering.isCustomized() || volume.getVolumeType().equals(Volume.Type.ROOT)) {
-      newSize=cmd.getSize();
-      if (newSize == null) {
-        throw new InvalidParameterValueException("new offering is of custom size, need to specify a size");
+    newSize=cmd.getSize();
+    if (newSize != null) {
+      if (!diskOffering.isCustomized() && !volume.getVolumeType().equals(Volume.Type.ROOT)) {
+        throw new InvalidParameterValueException("To change a volume's size without providing a new disk offering, its current disk offering must be " + "customizable or it must be a root volume.");
       }
-      newSize=(newSize << 30);
+      newSize=newSize << 30;
     }
  else {
-      throw new InvalidParameterValueException("current offering" + volume.getDiskOfferingId() + " cannot be resized, need to specify a disk offering");
+      newSize=volume.getSize();
     }
+    newMinIops=cmd.getMinIops();
+    if (newMinIops != null) {
+      if (diskOffering.isCustomizedIops() == null || !diskOffering.isCustomizedIops()) {
+        throw new InvalidParameterValueException("The current disk offering does not support customization of the 'Min IOPS' parameter.");
+      }
+    }
+ else {
+      newMinIops=volume.getMinIops();
+    }
+    newMaxIops=cmd.getMaxIops();
+    if (newMaxIops != null) {
+      if (diskOffering.isCustomizedIops() == null || !diskOffering.isCustomizedIops()) {
+        throw new InvalidParameterValueException("The current disk offering does not support customization of the 'Max IOPS' parameter.");
+      }
+    }
+ else {
+      newMaxIops=volume.getMaxIops();
+    }
+    validateIops(newMinIops,newMaxIops);
   }
  else {
-    if (!volume.getVolumeType().equals(Volume.Type.DATADISK)) {
-      throw new InvalidParameterValueException("Can only resize Data volumes via new disk offering");
+    if (newDiskOffering.getRemoved() != null) {
+      throw new InvalidParameterValueException("Requested disk offering has been removed.");
     }
-    if (newDiskOffering.getRemoved() != null || !DiskOfferingVO.Type.Disk.equals(newDiskOffering.getType())) {
-      throw new InvalidParameterValueException("Disk offering ID is missing or invalid");
+    if (!DiskOfferingVO.Type.Disk.equals(newDiskOffering.getType())) {
+      throw new InvalidParameterValueException("Requested disk offering type is invalid.");
     }
     if (diskOffering.getTags() != null) {
-      if (newDiskOffering.getTags() == null || !newDiskOffering.getTags().equals(diskOffering.getTags())) {
-        throw new InvalidParameterValueException("Tags on new and old disk offerings must match");
+      if (!StringUtils.areTagsEqual(diskOffering.getTags(),newDiskOffering.getTags())) {
+        throw new InvalidParameterValueException("The tags on the new and old disk offerings must match.");
       }
     }
  else     if (newDiskOffering.getTags() != null) {
-      throw new InvalidParameterValueException("There are no tags on current disk offering, new disk offering needs to have no tags");
+      throw new InvalidParameterValueException("There are no tags on the current disk offering. The new disk offering needs to have no tags, as well.");
     }
-    if (newDiskOffering.getDomainId() == null) {
-    }
- else {
+    if (newDiskOffering.getDomainId() != null) {
       _configMgr.checkDiskOfferingAccess(CallContext.current().getCallingAccount(),newDiskOffering);
     }
     if (newDiskOffering.isCustomized()) {
       newSize=cmd.getSize();
       if (newSize == null) {
-        throw new InvalidParameterValueException("new offering is of custom size, need to specify a size");
+        throw new InvalidParameterValueException("The new disk offering requires that a size be specified.");
       }
-      newSize=(newSize << 30);
+      newSize=newSize << 30;
     }
  else {
       newSize=newDiskOffering.getDiskSize();
     }
+    if (volume.getSize() != newSize && !volume.getVolumeType().equals(Volume.Type.DATADISK)) {
+      throw new InvalidParameterValueException("Only data volumes can be resized via a new disk offering.");
+    }
+    if (newDiskOffering.isCustomizedIops() != null && newDiskOffering.isCustomizedIops()) {
+      newMinIops=cmd.getMinIops() != null ? cmd.getMinIops() : volume.getMinIops();
+      newMaxIops=cmd.getMaxIops() != null ? cmd.getMaxIops() : volume.getMaxIops();
+      validateIops(newMinIops,newMaxIops);
+    }
+ else {
+      newMinIops=newDiskOffering.getMinIops();
+      newMaxIops=newDiskOffering.getMaxIops();
+    }
   }
-  if (newSize == null) {
-    throw new InvalidParameterValueException("could not detect a size parameter or fetch one from the diskofferingid parameter");
-  }
-  if (!validateVolumeSizeRange(newSize)) {
-    throw new InvalidParameterValueException("Requested size out of range");
-  }
-  _accountMgr.checkAccess(CallContext.current().getCallingAccount(),null,true,volume);
   long currentSize=volume.getSize();
-  if (currentSize > newSize && !shrinkOk) {
-    throw new InvalidParameterValueException("Going from existing size of " + currentSize + " to size of "+ newSize+ " would shrink the volume, need to sign off by supplying the shrinkok parameter with value of true");
-  }
-  if (!shrinkOk) {
-    _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(volume.getAccountId()),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize).longValue());
+  if (currentSize != newSize) {
+    if (!validateVolumeSizeRange(newSize)) {
+      throw new InvalidParameterValueException("Requested size out of range");
+    }
+    if (currentSize > newSize && !shrinkOk) {
+      throw new InvalidParameterValueException("Going from existing size of " + currentSize + " to size of "+ newSize+ " would shrink the volume."+ "Need to sign off by supplying the shrinkok parameter with value of true.");
+    }
+    if (newSize > currentSize) {
+      _resourceLimitMgr.checkResourceLimit(_accountMgr.getAccount(volume.getAccountId()),ResourceType.primary_storage,volume.isDisplayVolume(),new Long(newSize - currentSize).longValue());
+    }
   }
   if (volume.getState() == Volume.State.Allocated) {
-    s_logger.debug("Volume is allocated, but never created, simply updating database with new size");
+    s_logger.debug("Volume is in the allocated state, but has never been created. Simply updating database with new size and IOPS.");
     volume.setSize(newSize);
+    volume.setMinIops(newMinIops);
+    volume.setMaxIops(newMaxIops);
     if (newDiskOffering != null) {
       volume.setDiskOfferingId(cmd.getNewDiskOfferingId());
     }
@@ -89,34 +121,39 @@
         placeHolder=createPlaceHolderWork(userVm.getId());
       }
       try {
-        return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
+        return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newMinIops,newMaxIops,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
       }
   finally {
-        if (VmJobEnabled.value())         _workJobDao.expunge(placeHolder.getId());
+        if (VmJobEnabled.value()) {
+          _workJobDao.expunge(placeHolder.getId());
+        }
       }
     }
  else {
-      Outcome<Volume> outcome=resizeVolumeThroughJobQueue(userVm.getId(),volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
-      Volume vol=null;
+      Outcome<Volume> outcome=resizeVolumeThroughJobQueue(userVm.getId(),volume.getId(),currentSize,newSize,newMinIops,newMaxIops,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
       try {
         outcome.get();
       }
  catch (      InterruptedException e) {
-        throw new RuntimeException("Operation is interrupted",e);
+        throw new RuntimeException("Operation was interrupted",e);
       }
 catch (      java.util.concurrent.ExecutionException e) {
-        throw new RuntimeException("Execution excetion",e);
+        throw new RuntimeException("Execution exception",e);
       }
       Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
       if (jobResult != null) {
-        if (jobResult instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobResult;
- else         if (jobResult instanceof Throwable)         throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+        if (jobResult instanceof ConcurrentOperationException) {
+          throw (ConcurrentOperationException)jobResult;
+        }
+ else         if (jobResult instanceof Throwable) {
+          throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+        }
  else         if (jobResult instanceof Long) {
-          vol=_volsDao.findById((Long)jobResult);
+          return _volsDao.findById((Long)jobResult);
         }
       }
       return volume;
     }
   }
-  return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
+  return orchestrateResizeVolume(volume.getId(),currentSize,newSize,newMinIops,newMaxIops,newDiskOffering != null ? cmd.getNewDiskOfferingId() : null,shrinkOk);
 }
