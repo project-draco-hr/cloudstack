@@ -1,0 +1,49 @@
+{
+  Long vpcId=config.getVpcId();
+  String vpcOrSubnetUuid=null;
+  if (vpcId != null) {
+    Vpc vpcObj=_vpcDao.findById(vpcId);
+    vpcOrSubnetUuid=vpcObj.getUuid();
+  }
+ else {
+    vpcOrSubnetUuid=config.getUuid();
+  }
+  Domain networkDomain=_domainDao.findById(config.getDomainId());
+  long networkOfferingId=_ntwkOfferingDao.findById(config.getNetworkOfferingId()).getId();
+  boolean isL3Network=isL3Network(networkOfferingId);
+  List<Map<String,Object>> sourceNatDetails=new ArrayList<Map<String,Object>>();
+  for (  StaticNat staticNat : rules) {
+    Map<String,Object> sourceNatDetail=new HashMap<String,Object>();
+    IPAddressVO sourceNatIp=_ipAddressDao.findById(staticNat.getSourceIpAddressId());
+    VlanVO sourceNatVan=_vlanDao.findById(sourceNatIp.getVlanId());
+    NicVO nicVO=_nicDao.findByIp4AddressAndNetworkId(staticNat.getDestIpAddress(),staticNat.getNetworkId());
+    sourceNatDetail.put("sourceNatIpUuid",sourceNatIp.getUuid());
+    sourceNatDetail.put("sourceNatIpAddress",sourceNatIp.getAddress().addr());
+    sourceNatDetail.put("nicMacAddress",nicVO == null ? null : nicVO.getMacAddress());
+    sourceNatDetail.put("isRevoke",staticNat.isForRevoke());
+    sourceNatDetail.put("sourceNatVlanUuid",sourceNatVan.getUuid());
+    sourceNatDetail.put("sourceNatVlanGateway",sourceNatVan.getVlanGateway());
+    sourceNatDetail.put("sourceNatVlanNetmask",sourceNatVan.getVlanNetmask());
+    sourceNatDetails.add(sourceNatDetail);
+  }
+  try {
+    try {
+      HostVO nuageVspHost=getNuageVspHost(config.getPhysicalNetworkId());
+      ApplyStaticNatVspCommand cmd=new ApplyStaticNatVspCommand(networkDomain.getUuid(),vpcOrSubnetUuid,isL3Network,sourceNatDetails);
+      ApplyStaticNatVspAnswer answer=(ApplyStaticNatVspAnswer)_agentMgr.easySend(nuageVspHost.getId(),cmd);
+      if (answer == null || !answer.getResult()) {
+        s_logger.error("ApplyStaticNatNuageVspCommand for network " + config.getUuid() + " failed");
+        if ((null != answer) && (null != answer.getDetails())) {
+          throw new ResourceUnavailableException(answer.getDetails(),Network.class,config.getId());
+        }
+      }
+    }
+ catch (    Exception e) {
+      s_logger.warn("Failed to apply static Nat in Vsp " + e.getMessage());
+    }
+  }
+ catch (  Exception e) {
+    throw new ResourceUnavailableException("Failed to apply Static NAT in VSP",Network.class,config.getId(),e);
+  }
+  return true;
+}

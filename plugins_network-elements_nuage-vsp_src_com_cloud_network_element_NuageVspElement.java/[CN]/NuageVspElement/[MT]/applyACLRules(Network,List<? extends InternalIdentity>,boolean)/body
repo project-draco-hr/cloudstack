@@ -1,0 +1,33 @@
+{
+  Domain networksDomain=_domainDao.findById(network.getDomainId());
+  NetworkOfferingVO networkOferringVO=_ntwkOfferingDao.findById(network.getNetworkOfferingId());
+  try {
+    Long vpcId=network.getVpcId();
+    String vpcOrSubnetUuid=null;
+    if (vpcId != null) {
+      Vpc vpcObj=_vpcDao.findById(vpcId);
+      vpcOrSubnetUuid=vpcObj.getUuid();
+    }
+ else {
+      vpcOrSubnetUuid=network.getUuid();
+    }
+    boolean egressDefaultPolicy=networkOferringVO.getEgressDefaultPolicy();
+    List<Map<String,Object>> aclRules=new ArrayList<Map<String,Object>>();
+    for (    InternalIdentity acl : rules) {
+      aclRules.add(getACLRuleDetails(acl,egressDefaultPolicy));
+    }
+    HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
+    ApplyAclRuleVspCommand cmd=new ApplyAclRuleVspCommand(network.getUuid(),networksDomain.getUuid(),vpcOrSubnetUuid,isL3Network(networkOferringVO.getId()),aclRules,isVpc,network.getId());
+    ApplyAclRuleVspAnswer answer=(ApplyAclRuleVspAnswer)_agentMgr.easySend(nuageVspHost.getId(),cmd);
+    if (answer == null || !answer.getResult()) {
+      s_logger.error("ApplyAclRuleNuageVspCommand for network " + network.getUuid() + " failed");
+      if ((null != answer) && (null != answer.getDetails())) {
+        throw new ResourceUnavailableException(answer.getDetails(),Network.class,network.getId());
+      }
+    }
+  }
+ catch (  Exception e1) {
+    throw new ResourceUnavailableException(e1.getMessage(),Network.class,network.getId());
+  }
+  return true;
+}

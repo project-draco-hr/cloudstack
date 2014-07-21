@@ -1,0 +1,34 @@
+{
+  nic.setBroadcastUri(network.getBroadcastUri());
+  nic.setIsolationUri(network.getBroadcastUri());
+  s_logger.debug("Handling reserve() call back to with Create a new VM or add an interface to existing VM in network " + network.getName());
+  DataCenter dc=_dcDao.findById(network.getDataCenterId());
+  Account networksAccount=_accountDao.findById(network.getAccountId());
+  DomainVO networksDomain=_domainDao.findById(network.getDomainId());
+  long networkOwnedBy=network.getAccountId();
+  AccountVO neworkAccountDetails=_accountDao.findById(networkOwnedBy);
+  if (neworkAccountDetails.getType() == Account.ACCOUNT_TYPE_PROJECT) {
+    throw new InsufficientVirtualNetworkCapacityException("CS project support is " + "not yet implemented in NuageVsp",DataCenter.class,dc.getId());
+  }
+  NicVO nicFrmDB=_nicDao.findById(nic.getId());
+  long networkOfferingId=_ntwkOfferingDao.findById(network.getNetworkOfferingId()).getId();
+  boolean isL3Network=isL3Network(networkOfferingId);
+  Long vpcId=network.getVpcId();
+  String vpcUuid=null;
+  if (vpcId != null) {
+    Vpc vpcObj=_vpcDao.findById(vpcId);
+    vpcUuid=vpcObj.getUuid();
+  }
+  HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
+  ReserveVmInterfaceVspCommand cmd=new ReserveVmInterfaceVspCommand(nicFrmDB.getUuid(),nic.getMacAddress(),network.getUuid(),isL3Network,vpcUuid,networksDomain.getUuid(),networksAccount.getUuid(),vm.getType().equals(VirtualMachine.Type.DomainRouter),network.getBroadcastUri().getPath().substring(1),vm.getInstanceName(),vm.getUuid(),networksDomain.getUuid(),networksAccount.getUuid());
+  ReserveVmInterfaceVspAnswer answer=(ReserveVmInterfaceVspAnswer)_agentMgr.easySend(nuageVspHost.getId(),cmd);
+  if (answer == null || !answer.getResult()) {
+    s_logger.error("ReserveVmInterfaceNuageVspCommand failed");
+    if ((null != answer) && (null != answer.getDetails())) {
+      s_logger.error(answer.getDetails());
+    }
+    throw new InsufficientVirtualNetworkCapacityException("Failed to reserve VM in Nuage VSP.",Network.class,network.getId());
+  }
+  List<Map<String,String>> vmInterfacesDetails=answer.getInterfaceDetails();
+  setIPGatewayMaskInfo(network,nic,vmInterfacesDetails);
+}
