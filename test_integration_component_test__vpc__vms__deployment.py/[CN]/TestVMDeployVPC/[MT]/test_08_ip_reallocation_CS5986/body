@@ -1,0 +1,39 @@
+@attr(tags=['advanced', 'intervlan', 'selfservice'])
+def test_08_ip_reallocation_CS5986(self):
+    '\n        @Desc: Test to verify dnsmasq dhcp conflict issue due to /ect/hosts not getting udpated\n\t    @Steps:\n\t    Step1: Create a VPC\n        Step2: Create one network in vpc\n        Step3: Deploy vm1 with hostname hostA and ip address IP A in the above network\n        Step4: List the vm and verify the ip address in the response and verify ssh access to vm\n        Step5: Deploy vm2 with hostname hostB and ip address IP B in the same network\n        Step6: Repeat step4\n        Step7: Destroy vm1 and vm2\n        Step8: Deploy vm3 with hostname hostA and ip address IP B\n        Step9: Repeat step4\n        Step10: Deploy vm4 with IP A and hostC\n        Step11: Repeat step4\n        '
+    self.debug(('creating a VPC network in the account: %s' % self.account.name))
+    self.services['vpc']['cidr'] = '10.1.1.1/16'
+    self.vpc = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+    self.validate_vpc_network(self.vpc)
+    self.nw_off = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+    self.nw_off.update(self.apiclient, state='Enabled')
+    self._cleanup.append(self.nw_off)
+    self.debug(('Creating network with network offering: %s' % self.nw_off.id))
+    network_1 = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.nw_off.id, zoneid=self.zone.id, gateway='10.1.1.1', vpcid=self.vpc.id)
+    self.debug(('Created network with ID: %s' % network_1.id))
+    vm1_ip = '10.1.1.10'
+    name1 = 'hostA'
+    self.services['virtual_machine']['name'] = name1
+    vm1 = self.deployVM_and_verify_ssh_access(network_1, vm1_ip)
+    vm2_ip = '10.1.1.20'
+    name2 = 'hostB'
+    self.services['virtual_machine']['name'] = name2
+    vm2 = self.deployVM_and_verify_ssh_access(network_1, vm2_ip)
+    try:
+        vm1.delete(self.apiclient, expunge=True)
+        vm2.delete(self.apiclient, expunge=True)
+    except Exception as e:
+        raise Exception(('Warning: Exception in expunging vms: %s' % e))
+    '\n        Deploy vm3 with ip address of vm1 and host name of vm2 so both the vm1 and vm2 entries\n        would be deleted from dhcphosts file on VR becase dhcprelease matches entries with\n        host name and ip address so it matches both the entries.\n        '
+    self.services['virtual_machine']['name'] = name2
+    vm3 = self.deployVM_and_verify_ssh_access(network_1, vm1_ip)
+    '\n        Deploy vm4 with ip address of vm2. dnsmasq and dhcprelase should be in sync.\n    \tWe should not see dhcp lease block due to IP reallocation.\n     \t'
+    name3 = 'hostC'
+    self.services['virtual_machine']['name'] = name3
+    vm4 = self.deployVM_and_verify_ssh_access(network_1, vm2_ip)
+    try:
+        vm3.delete(self.apiclient, expunge=True)
+        vm4.delete(self.apiclient, expunge=True)
+    except Exception as e:
+        raise Exception(('Warning: Excepting in expunging vms vm3 and vm4:  %s' % e))
+    return
