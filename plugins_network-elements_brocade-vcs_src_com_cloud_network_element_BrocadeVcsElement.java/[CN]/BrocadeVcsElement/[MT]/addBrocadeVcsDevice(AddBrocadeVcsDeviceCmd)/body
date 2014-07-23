@@ -1,0 +1,53 @@
+{
+  ServerResource resource=new BrocadeVcsResource();
+  final String deviceName=Network.Provider.BrocadeVcs.getName();
+  NetworkDevice networkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  if (networkDevice == null) {
+    throw new CloudRuntimeException("No network device found for " + deviceName);
+  }
+  final Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  PhysicalNetworkVO physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (physicalNetwork == null) {
+    throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+  }
+  long zoneId=physicalNetwork.getDataCenterId();
+  final PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(physicalNetwork.getId(),networkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProvider == null) {
+    throw new CloudRuntimeException("Network Service Provider: " + networkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+ else   if (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  Map<String,String> params=new HashMap<String,String>();
+  params.put("guid",UUID.randomUUID().toString());
+  params.put("zoneId",String.valueOf(physicalNetwork.getDataCenterId()));
+  params.put("physicalNetworkId",String.valueOf(physicalNetwork.getId()));
+  params.put("name","Brocade VCS - " + cmd.getHost());
+  params.put("ip",cmd.getHost());
+  params.put("adminuser",cmd.getUsername());
+  params.put("adminpass",cmd.getPassword());
+  Map<String,Object> hostdetails=new HashMap<String,Object>();
+  hostdetails.putAll(params);
+  try {
+    resource.configure(cmd.getHost(),hostdetails);
+    final Host host=_resourceMgr.addHost(zoneId,resource,Host.Type.L2Networking,params);
+    if (host != null) {
+      return Transaction.execute(new TransactionCallback<BrocadeVcsDeviceVO>(){
+        @Override public BrocadeVcsDeviceVO doInTransaction(        TransactionStatus status){
+          BrocadeVcsDeviceVO brocadeVcsDevice=new BrocadeVcsDeviceVO(host.getId(),physicalNetworkId,ntwkSvcProvider.getProviderName(),deviceName);
+          _brocadeVcsDao.persist(brocadeVcsDevice);
+          DetailVO detail=new DetailVO(host.getId(),"brocadevcsdeviceid",String.valueOf(brocadeVcsDevice.getId()));
+          _hostDetailsDao.persist(detail);
+          return brocadeVcsDevice;
+        }
+      }
+);
+    }
+ else {
+      throw new CloudRuntimeException("Failed to add Brocade VCS Switch due to internal error.");
+    }
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+}

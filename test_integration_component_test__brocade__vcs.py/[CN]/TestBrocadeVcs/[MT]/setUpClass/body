@@ -1,0 +1,50 @@
+@classmethod
+def setUpClass(cls):
+    cls._cleanup = []
+    cls.testClient = super(TestBrocadeVcs, cls).getClsTestClient()
+    cls.api_client = cls.testClient.getApiClient()
+    cls.services = Services().services
+    cls.domain = get_domain(cls.api_client)
+    cls.zone = get_zone(cls.api_client, cls.testClient.getZoneForTests())
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.brocade_services = cls.services['brocade']
+    try:
+        ' Adds Brocade device and enables NS provider'
+        cmd = listPhysicalNetworks.listPhysicalNetworksCmd()
+        cmd.zoneid = cls.zone.id
+        physical_networks = cls.api_client.listPhysicalNetworks(cmd)
+        if isinstance(physical_networks, list):
+            physical_network = physical_networks[0]
+        cmd = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
+        cmd.name = 'BrocadeVcs'
+        cmd.physicalnetworkid = physical_network.id
+        nw_service_providers = cls.api_client.listNetworkServiceProviders(cmd)
+        if isinstance(nw_service_providers, list):
+            brocade_provider = nw_service_providers[0]
+        else:
+            cmd1 = addNetworkServiceProvider.addNetworkServiceProviderCmd()
+            cmd1.name = 'BrocadeVcs'
+            cmd1.physicalnetworkid = physical_network.id
+            brocade_provider = cls.api_client.addNetworkServiceProvider(cmd1)
+        cmd2 = addBrocadeVcsDevice.addBrocadeVcsDeviceCmd()
+        cmd2.physicalnetworkid = physical_network.id
+        cmd2.username = cls.brocade_services['username']
+        cmd2.password = cls.brocade_services['password']
+        cmd2.hostname = cls.brocade_services['ipaddress']
+        cls.brocade = cls.api_client.addBrocadeVcsDevice(cmd2)
+        if (brocade_provider.state != 'Enabled'):
+            cmd = updateNetworkServiceProvider.updateNetworkServiceProviderCmd()
+            cmd.id = brocade_provider.id
+            cmd.state = 'Enabled'
+            cls.api_client.updateNetworkServiceProvider(cmd)
+        cls.network_offering = NetworkOffering.create(cls.api_client, cls.services['network_offering'], conservemode=True)
+        cls._cleanup.append(cls.network_offering)
+        cls.network_offering.update(cls.api_client, state='Enabled')
+        cls.services['virtual_machine']['zoneid'] = cls.zone.id
+        cls.services['virtual_machine']['template'] = cls.template.id
+        cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+        cls._cleanup.append(cls.service_offering)
+    except Exception as e:
+        cls.tearDownClass()
+        raise Exception(('Warning: Exception in setUpClass: %s' % e))
+    return
