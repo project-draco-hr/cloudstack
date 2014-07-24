@@ -1,0 +1,27 @@
+{
+  NetworkVO nwVO=_nwDao.findById(nic.getNetworkId());
+  QueryBuilder<BaremetalPxeVO> sc=QueryBuilder.create(BaremetalPxeVO.class);
+  sc.and(sc.entity().getDeviceType(),Op.EQ,BaremetalPxeType.KICK_START.toString());
+  sc.and(sc.entity().getPhysicalNetworkId(),Op.EQ,nwVO.getPhysicalNetworkId());
+  BaremetalPxeVO pxeVo=sc.find();
+  if (pxeVo == null) {
+    throw new CloudRuntimeException("No kickstart PXE server found in pod: " + dest.getPod().getId() + ", you need to add it before starting VM");
+  }
+  VMTemplateVO template=_tmpDao.findById(profile.getTemplateId());
+  List<String> tuple=parseKickstartUrl(profile);
+  String ks=tuple.get(0);
+  String kernel=tuple.get(1);
+  String initrd=tuple.get(2);
+  PrepareKickstartPxeServerCommand cmd=new PrepareKickstartPxeServerCommand();
+  cmd.setKsFile(ks);
+  cmd.setInitrd(initrd);
+  cmd.setKernel(kernel);
+  cmd.setMac(nic.getMacAddress());
+  cmd.setTemplateUuid(template.getUuid());
+  Answer aws=_agentMgr.send(pxeVo.getHostId(),cmd);
+  if (!aws.getResult()) {
+    s_logger.warn("Unable to set host: " + dest.getHost().getId() + " to PXE boot because "+ aws.getDetails());
+    return false;
+  }
+  return true;
+}
