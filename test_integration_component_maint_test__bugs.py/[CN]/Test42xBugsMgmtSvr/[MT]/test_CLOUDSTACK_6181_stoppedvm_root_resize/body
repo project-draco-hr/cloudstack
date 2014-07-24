@@ -1,0 +1,27 @@
+@attr(tags=['advanced', 'basic'])
+@attr(required_hardware='true')
+@attr(hypervisor='KVM')
+def test_CLOUDSTACK_6181_stoppedvm_root_resize(self):
+    "\n        @Desc: Test root volume resize of stopped VM\n        @Reference: https://issues.apache.org/jira/browse/CLOUDSTACK-6181\n        @Steps:\n        Step1: Deploy VM in stopped state (startvm=false), resize via 'resizeVolume', start VM. Root is new size.\n        "
+    if (self.hypervisor.lower() != 'kvm'):
+        self.skipTest('Test can be run only on KVM hypervisor')
+    self.services['virtual_machine']['zoneid'] = self.zone.id
+    self.services['virtual_machine']['template'] = self.template.id
+    virtual_machine = VirtualMachine.create(self.apiClient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, startvm=False)
+    self.cleanup.append(virtual_machine)
+    self.assertEqual(virtual_machine.state, 'Stopped', 'Check VM state is Stopped or not')
+    volumes = list_volumes(self.apiClient, virtualmachineid=self.virtual_machine.id, type='ROOT', listall=True)
+    self.assertIsNotNone(volumes, 'root volume is not returned properly')
+    newrootsize = ((self.template.size >> 30) + 2)
+    cmd = resizeVolume.resizeVolumeCmd()
+    cmd.id = volumes[0].id
+    cmd.size = newrootsize
+    self.apiClient.resizeVolume(cmd)
+    virtual_machine.start(self.apiClient)
+    volumes_after_resize = list_volumes(self.apiClient, virtualmachineid=self.virtual_machine.id, type='ROOT', listall=True)
+    rootvolume = volumes_after_resize[0]
+    success = False
+    if ((rootvolume is not None) and (rootvolume.size == (newrootsize << 30))):
+        success = True
+    self.assertEqual(success, True, 'Check if the root volume resized appropriately')
+    return

@@ -1,0 +1,35 @@
+@attr(tags=['advanced', 'basic', 'tested'])
+@attr(required_hardware='false')
+def test_local_storage_data_disk_tag(self):
+    "\n        @Desc: Test whether tags are honoured while creating data disks on local storage\n        @Steps:\n        This test needs multiple local storages\n        Step1: create a tag 'loc' on the local storage\n        Step2: create a disk offering with this storage tag 'loc'\n        Step3: create a VM and create disk by selecting the disk offering created in step2\n        step4: check whether the data disk created in step3 is created on local storage with tag 'loc'\n        "
+    if (self.zone.localstorageenabled != True):
+        self.skipTest('Local storage is not enable for this zone. skipping')
+    local_storages = StoragePool.list(self.apiClient, zoneid=self.zone.id, scope='HOST')
+    self.assertEqual(isinstance(local_storages, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(local_storages, None, 'Check if local storage pools exists in ListStoragePools')
+    cmd = updateStoragePool.updateStoragePoolCmd()
+    cmd.zoneid = self.zone.id
+    cmd.tags = 'loc'
+    cmd.id = local_storages[0].id
+    self.apiClient.updateStoragePool(cmd)
+    self.services['disk_offering']['storagetype'] = 'local'
+    self.services['disk_offering']['tags'] = 'loc'
+    disk_offering = DiskOffering.create(self.apiClient, self.services['disk_offering'])
+    self.services['virtual_machine']['zoneid'] = self.zone.id
+    self.services['virtual_machine']['template'] = self.template.id
+    virtual_machine = VirtualMachine.create(self.apiClient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.services['mode'])
+    self.cleanup.append(virtual_machine)
+    self.cleanup.append(disk_offering)
+    self.assertEqual(virtual_machine.state, 'Running', 'Check VM state is Running or not')
+    self.volume = Volume.create(self.apiClient, self.services['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering.id)
+    virtual_machine.attach_volume(self.apiClient, self.volume)
+    self.attached = True
+    list_volume_response = Volume.list(self.apiClient, id=self.volume.id)
+    self.assertEqual(isinstance(list_volume_response, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(list_volume_response, None, 'Check if volume exists in ListVolumes')
+    volume = list_volume_response[0]
+    self.assertNotEqual(volume.virtualmachineid, None, 'Check if volume state (attached) is reflected')
+    storage_pool = StoragePool.list(self.apiClient, id=volume.storageid)
+    self.assertEqual(volume.storagetype, 'local', 'Check list storage pool response has local as storage type')
+    self.assertEqual(storage_pool[0].tags, 'loc', 'Check list storage pool response has tag')
+    return
