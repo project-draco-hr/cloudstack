@@ -6,7 +6,31 @@
   }
   if (vm.getState() == State.Running && vm.getHostId() != null) {
     collectVmDiskStatistics(vm);
-    _itMgr.reboot(vm.getUuid(),null);
+    DataCenterVO dc=_dcDao.findById(vm.getDataCenterId());
+    try {
+      if (dc.getNetworkType() == DataCenter.NetworkType.Advanced) {
+        List<Long> vmNetworks=_vmNetworkMapDao.getNetworks(vmId);
+        List<DomainRouterVO> routers=new ArrayList<DomainRouterVO>();
+        for (        long vmNetworkId : vmNetworks) {
+          List<DomainRouterVO> router=_routerDao.listStopped(vmNetworkId);
+          routers.addAll(router);
+        }
+        for (        DomainRouterVO routerToStart : routers) {
+          s_logger.warn("Trying to start router " + routerToStart.getInstanceName() + " as part of vm: "+ vm.getInstanceName()+ " reboot");
+          _virtualNetAppliance.startRouter(routerToStart.getId(),true);
+        }
+      }
+    }
+ catch (    ConcurrentOperationException e) {
+      throw new CloudRuntimeException("Concurrent operations on starting router. " + e);
+    }
+catch (    Exception ex) {
+      throw new CloudRuntimeException("Router start failed due to" + ex);
+    }
+ finally {
+      s_logger.info("Rebooting vm " + vm.getInstanceName());
+      _itMgr.reboot(vm.getUuid(),null);
+    }
     return _vmDao.findById(vmId);
   }
  else {
