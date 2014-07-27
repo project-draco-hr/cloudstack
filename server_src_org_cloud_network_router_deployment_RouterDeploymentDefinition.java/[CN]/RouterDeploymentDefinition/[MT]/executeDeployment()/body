@@ -1,54 +1,19 @@
 {
-  int routerCount=1;
-  if (this.isRedundant) {
-    routerCount=2;
-    if (this.routers.size() != 0) {
-      checkAndResetPriorityOfRedundantRouter(this.routers);
+  setupPriorityOfRedundantRouter();
+  if (this.getNumberOfRoutersToDeploy() > 0) {
+    if (networkModel.isNetworkSystem(guestNetwork) || guestNetwork.getGuestType() == Network.GuestType.Shared) {
+      this.owner=accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
     }
-  }
-  if (this.routers.size() >= routerCount) {
-    return;
-  }
-  if (this.routers.size() >= 5) {
-    logger.error("Too much redundant routers!");
-  }
-  final Type type=Type.VirtualRouter;
-  final Long physicalNetworkId=networkModel.getPhysicalNetworkId(guestNetwork);
-  final PhysicalNetworkServiceProvider provider=physicalProviderDao.findByServiceProvider(physicalNetworkId,type.toString());
-  if (provider == null) {
-    throw new CloudRuntimeException("Cannot find service provider " + type.toString() + " in physical network "+ physicalNetworkId);
-  }
-  final VirtualRouterProvider vrProvider=vrProviderDao.findByNspIdAndType(provider.getId(),type);
-  if (vrProvider == null) {
-    throw new CloudRuntimeException("Cannot find virtual router provider " + type.toString() + " as service provider "+ provider.getId());
-  }
-  if (networkModel.isNetworkSystem(guestNetwork) || guestNetwork.getGuestType() == Network.GuestType.Shared) {
-    this.owner=accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
-  }
-  boolean publicNetwork=false;
-  if (networkModel.isProviderSupportServiceInNetwork(guestNetwork.getId(),Service.SourceNat,Provider.VirtualRouter)) {
-    publicNetwork=true;
-  }
-  if (this.isRedundant && !publicNetwork) {
-    logger.error("Didn't support redundant virtual router without public network!");
-    this.routers=null;
-    return;
-  }
-  Long offeringId=networkOfferingDao.findById(guestNetwork.getNetworkOfferingId()).getServiceOfferingId();
-  if (offeringId == null) {
-    offeringId=getOfferingId();
-  }
-  PublicIp sourceNatIp=null;
-  if (publicNetwork) {
-    sourceNatIp=ipAddrMgr.assignSourceNatIpAddressToGuestNetwork(this.owner,guestNetwork);
-  }
-  final int count=routerCount - this.routers.size();
-  for (int i=0; i < count; i++) {
-    LinkedHashMap<Network,List<? extends NicProfile>> networks=createRouterNetworks(new Pair<Boolean,PublicIp>(publicNetwork,sourceNatIp));
-    DomainRouterVO router=nwHelper.deployRouter(this,vrProvider,offeringId,networks,false,null);
-    if (router != null) {
-      routerDao.addRouterToGuestNetwork(router,guestNetwork);
-      this.routers.add(router);
+    this.publicNetwork=networkModel.isProviderSupportServiceInNetwork(guestNetwork.getId(),Service.SourceNat,Provider.VirtualRouter);
+    if (this.isRedundant && !this.publicNetwork) {
+      logger.error("Didn't support redundant virtual router without public network!");
+      this.routers=new ArrayList<>();
+    }
+ else {
+      this.findVirtualProvider();
+      this.findOfferingId();
+      this.findSourceNatIP();
+      this.deployAllVirtualRouters();
     }
   }
 }
