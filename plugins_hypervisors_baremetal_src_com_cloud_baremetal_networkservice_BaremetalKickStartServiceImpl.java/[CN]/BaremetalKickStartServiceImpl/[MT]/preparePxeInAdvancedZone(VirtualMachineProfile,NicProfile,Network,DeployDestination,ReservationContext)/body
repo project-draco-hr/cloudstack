@@ -9,18 +9,17 @@
     }
   }
   if (mgmtNic == null) {
-    throw new CloudRuntimeException(String.format("cannot find management nic on virutal router[id:%s]",vr.getId()));
+    throw new CloudRuntimeException(String.format("cannot find management nic on virtual router[id:%s]",vr.getId()));
   }
-  BaremetalVritualRouterCommands.PreparePxeCmd cmd=new BaremetalVritualRouterCommands.PreparePxeCmd();
   List<String> tuple=parseKickstartUrl(profile);
-  cmd.setKickStartUrl(tuple.get(0));
-  cmd.setKernelUrl(tuple.get(1));
-  cmd.setInitrdUrl(tuple.get(2));
-  cmd.setGuestMac(nic.getMacAddress());
-  RestTemplate rst=new RestTemplate();
-  BaremetalVritualRouterCommands.PreparePxeRsp rsp=rst.getForObject(buildUrl(mgmtNic.getIp4Address(),BaremetalVritualRouterCommands.PREPARE_PXE_URL),BaremetalVritualRouterCommands.PreparePxeRsp.class);
-  if (!rsp.isSuccess()) {
-    throw new CloudRuntimeException(String.format("failed preparing PXE in virtual router[id:%s], because %s",vr.getId(),rsp.getError()));
+  Pair<Boolean,String> ret=SshHelper.sshExecute(mgmtNic.getIp4Address(),3922,"root",getSystemVMKeyFile(),null,String.format("/usr/bin/prepare_pxe.sh %s %s %s %s %s",tuple.get(1),tuple.get(2),profile.getTemplate().getUuid(),String.format("01-%s",nic.getMacAddress().replaceAll(":","-")),tuple.get(0)));
+  if (!ret.first()) {
+    throw new CloudRuntimeException(String.format("failed preparing PXE in virtual router[id:%s], because %s",vr.getId(),ret.second()));
+  }
+  String internalServerIp=_configDao.getValue(Config.BaremetalInternalStorageServer.key());
+  ret=SshHelper.sshExecute(mgmtNic.getIp4Address(),3922,"root",getSystemVMKeyFile(),null,String.format("/usr/bin/baremetal_snat.sh %s %s",mgmtNic.getIp4Address(),internalServerIp));
+  if (!ret.first()) {
+    throw new CloudRuntimeException(String.format("failed preparing PXE in virtual router[id:%s], because %s",vr.getId(),ret.second()));
   }
   return true;
 }
