@@ -28,21 +28,24 @@
         Rbd rbd=new Rbd(io);
         RbdImage image=rbd.open(snapshotDisk.getName(),snapshotName);
         File fh=new File(snapshotDestPath);
-        BufferedOutputStream bos=new BufferedOutputStream(new FileOutputStream(fh));
-        int chunkSize=4194304;
-        long offset=0;
-        s_logger.debug("Backuping up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath);
-        while (true) {
-          byte[] buf=new byte[chunkSize];
-          int bytes=image.read(offset,buf,chunkSize);
-          if (bytes <= 0) {
-            break;
+        try (BufferedOutputStream bos=new BufferedOutputStream(new FileOutputStream(fh))){
+          int chunkSize=4194304;
+          long offset=0;
+          s_logger.debug("Backuping up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath);
+          while (true) {
+            byte[] buf=new byte[chunkSize];
+            int bytes=image.read(offset,buf,chunkSize);
+            if (bytes <= 0) {
+              break;
+            }
+            bos.write(buf,0,bytes);
+            offset+=bytes;
           }
-          bos.write(buf,0,bytes);
-          offset+=bytes;
+          s_logger.debug("Completed backing up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath+ ". Bytes written: "+ offset);
         }
-        s_logger.debug("Completed backing up RBD snapshot " + snapshotName + " to  "+ snapshotDestPath+ ". Bytes written: "+ offset);
-        bos.close();
+ catch (        IOException ex) {
+          s_logger.error("BackupSnapshotAnswer:Exception:" + ex.getMessage());
+        }
         r.ioCtxDestroy(io);
       }
  catch (      RadosException e) {
@@ -51,14 +54,6 @@
       }
 catch (      RbdException e) {
         s_logger.error("A RBD operation on " + snapshotDisk.getName() + " failed. The error was: "+ e.getMessage());
-        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
-      }
-catch (      FileNotFoundException e) {
-        s_logger.error("Failed to open " + snapshotDestPath + ". The error was: "+ e.getMessage());
-        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
-      }
-catch (      IOException e) {
-        s_logger.debug("An I/O error occured during a snapshot operation on " + snapshotDestPath);
         return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
       }
     }
