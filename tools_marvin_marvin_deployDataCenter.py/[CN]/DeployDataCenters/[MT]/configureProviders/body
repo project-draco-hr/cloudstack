@@ -1,0 +1,87 @@
+def configureProviders(self, phynetwrk, providers):
+    '\n        We will enable the virtualrouter elements for all zones. Other\n        providers like NetScalers, SRX, etc are explicitly added/configured\n        '
+    try:
+        for provider in providers:
+            pnetprov = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
+            pnetprov.physicalnetworkid = phynetwrk.id
+            pnetprov.state = 'Disabled'
+            pnetprov.name = provider.name
+            pnetprovres = self.__apiClient.listNetworkServiceProviders(pnetprov)
+            if (pnetprovres and (len(pnetprovres) > 0)):
+                if ((provider.name == 'VirtualRouter') or (provider.name == 'VpcVirtualRouter')):
+                    vrprov = listVirtualRouterElements.listVirtualRouterElementsCmd()
+                    vrprov.nspid = pnetprovres[0].id
+                    vrprovresponse = self.__apiClient.listVirtualRouterElements(vrprov)
+                    vrprovid = vrprovresponse[0].id
+                    vrconfig = configureVirtualRouterElement.configureVirtualRouterElementCmd()
+                    vrconfig.enabled = 'true'
+                    vrconfig.id = vrprovid
+                    self.__apiClient.configureVirtualRouterElement(vrconfig)
+                    self.enableProvider(pnetprovres[0].id)
+                elif (provider.name == 'InternalLbVm'):
+                    internallbprov = listInternalLoadBalancerElements.listInternalLoadBalancerElementsCmd()
+                    internallbprov.nspid = pnetprovres[0].id
+                    internallbresponse = self.__apiClient.listInternalLoadBalancerElements(internallbprov)
+                    internallbid = internallbresponse[0].id
+                    internallbconfig = configureInternalLoadBalancerElement.configureInternalLoadBalancerElementCmd()
+                    internallbconfig.enabled = 'true'
+                    internallbconfig.id = internallbid
+                    self.__apiClient.configureInternalLoadBalancerElement(internallbconfig)
+                    self.enableProvider(pnetprovres[0].id)
+                elif (provider.name == 'SecurityGroupProvider'):
+                    self.enableProvider(pnetprovres[0].id)
+            elif (provider.name in ['JuniperContrailRouter', 'JuniperContrailVpcRouter']):
+                netprov = addNetworkServiceProvider.addNetworkServiceProviderCmd()
+                netprov.name = provider.name
+                netprov.physicalnetworkid = phynetwrk.id
+                result = self.__apiClient.addNetworkServiceProvider(netprov)
+                self.enableProvider(result.id)
+            elif (provider.name in ['Netscaler', 'JuniperSRX', 'F5BigIp']):
+                netprov = addNetworkServiceProvider.addNetworkServiceProviderCmd()
+                netprov.name = provider.name
+                netprov.physicalnetworkid = phynetwrk.id
+                result = self.__apiClient.addNetworkServiceProvider(netprov)
+                if result.id:
+                    self.__tcRunLogger.debug('==== AddNetworkServiceProvider Successful=====')
+                    self.__addToCleanUp('NetworkServiceProvider', result.id)
+                for device in provider.devices:
+                    if (provider.name == 'Netscaler'):
+                        dev = addNetscalerLoadBalancer.addNetscalerLoadBalancerCmd()
+                        dev.username = device.username
+                        dev.password = device.password
+                        dev.networkdevicetype = device.networkdevicetype
+                        dev.url = configGenerator.getDeviceUrl(device)
+                        dev.physicalnetworkid = phynetwrk.id
+                        ret = self.__apiClient.addNetscalerLoadBalancer(dev)
+                        if ret.id:
+                            self.__tcRunLogger.debug('==== AddNetScalerLB Successful=====')
+                            self.__addToCleanUp('NetscalerLoadBalancer', ret.id)
+                    elif (provider.name == 'JuniperSRX'):
+                        dev = addSrxFirewall.addSrxFirewallCmd()
+                        dev.username = device.username
+                        dev.password = device.password
+                        dev.networkdevicetype = device.networkdevicetype
+                        dev.url = configGenerator.getDeviceUrl(device)
+                        dev.physicalnetworkid = phynetwrk.id
+                        ret = self.__apiClient.addSrxFirewall(dev)
+                        if ret.id:
+                            self.__tcRunLogger.debug('==== AddSrx Successful=====')
+                            self.__addToCleanUp('SrxFirewall', ret.id)
+                    elif (provider.name == 'F5BigIp'):
+                        dev = addF5LoadBalancer.addF5LoadBalancerCmd()
+                        dev.username = device.username
+                        dev.password = device.password
+                        dev.networkdevicetype = device.networkdevicetype
+                        dev.url = configGenerator.getDeviceUrl(device)
+                        dev.physicalnetworkid = phynetwrk.id
+                        ret = self.__apiClient.addF5LoadBalancer(dev)
+                        if ret.id:
+                            self.__tcRunLogger.debug('==== AddF5 Successful=====')
+                            self.__addToCleanUp('F5LoadBalancer', ret.id)
+                    else:
+                        raise InvalidParameterException(("Device %s doesn't match any know provider type" % device))
+                self.enableProvider(result.id)
+    except Exception as e:
+        print ('Exception Occurred: %s' % GetDetailExceptionInfo(e))
+        self.__tcRunLogger.exception('====List Network Service Providers Failed=====')
+        self.__cleanAndExit()
