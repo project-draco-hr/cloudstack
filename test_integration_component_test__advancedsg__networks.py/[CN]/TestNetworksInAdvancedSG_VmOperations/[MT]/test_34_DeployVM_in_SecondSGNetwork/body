@@ -1,0 +1,70 @@
+@attr(tags=['advancedsg'], required_hardware='false')
+def test_34_DeployVM_in_SecondSGNetwork(self):
+    '\n        @Desc: VM Cannot deploy to second network in advanced SG network\n        @step1:Create shared SG network1\n        @step2: Consume all ip addresses in network1\n        @step3: Create shared SG network2\n        @step4: Deploy vm without specifying the network id\n        @step5: Verify that vm deployment should pick network2 and should not fail by picking network1\n        '
+    status = self.dump_config_deploy_DC()
+    if (status == 1):
+        self.fail('Deploy DataCenter failed.')
+    zone_list = Zone.list(self.api_client, name=self.services['test_34_DeployVM_in_SecondSGNetwork']['zone'])
+    status = validateList(zone_list)
+    self.assertEquals(status[0], PASS, 'Failed to list the zones')
+    count = 0
+    '\n        In simulator environment default guest os template should be in ready state immediately after the ssvm is up.\n        In worst case test would wait for 100sec for the template to get ready else it would fail.\n        '
+    while (count < 10):
+        time.sleep(10)
+        template = get_template(self.api_client, zone_list[0].id)
+        if ((template != FAILED) and (str(template.isready).lower() == 'true')):
+            break
+        else:
+            count = (count + 1)
+            if (count == 10):
+                self.fail('Template is not in ready state even after 100sec. something wrong with the SSVM')
+    self.debug('Creating virtual machine in default shared network to consume all IPs')
+    vm_1 = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=template.id, zoneid=zone_list[0].id, serviceofferingid=self.service_offering.id)
+    self.assertIsNotNone(vm_1, 'Failed to deploy vm in default shared network')
+    self.cleanup_vms.append(vm_1)
+    cmd = listCapacity.listCapacityCmd()
+    cmd.type = 8
+    cmd.zoneid = zone_list[0].id
+    cmd.fetchlatest = 'true'
+    count = 0
+    '\n        Created zone with only 4 guest IP addresses so limiting the loop count to 4\n        '
+    while (count < 5):
+        listCapacityRes = self.api_client.listCapacity(cmd)
+        self.assertEqual(validateList(listCapacityRes)[0], PASS, 'listCapacity returned invalid list')
+        percentused = listCapacityRes[0].percentused
+        if (percentused == '100'):
+            break
+        self.debug('Creating virtual machine in default shared network to consume all IPs')
+        vm = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=template.id, zoneid=zone_list[0].id, serviceofferingid=self.service_offering.id)
+        self.assertIsNotNone(vm, 'Failed to deploy vm in default shared network')
+        self.cleanup_vms.append(vm)
+        count = (count + 1)
+        if (count == 5):
+            self.fail('IPs are not getting consumed. Please check the setup')
+    self.services['shared_network_sg']['acltype'] = 'domain'
+    self.services['shared_network_sg']['networkofferingid'] = self.shared_network_offering_sg.id
+    (physical_network, vlan) = get_free_vlan(self.api_client, zone_list[0].id)
+    self.services['shared_network_sg']['vlan'] = vlan
+    self.services['shared_network_sg']['physicalnetworkid'] = physical_network.id
+    nwIPs = 3
+    self.setSharedNetworkParams('shared_network_sg', range=nwIPs)
+    self.debug(('Creating shared sg network1 with vlan %s' % vlan))
+    shared_network = Network.create(self.api_client, self.services['shared_network_sg'], networkofferingid=self.shared_network_offering_sg.id, zoneid=zone_list[0].id)
+    self.assertIsNotNone(shared_network, 'shared SG network1 creation failed')
+    self.cleanup_networks.append(shared_network)
+    self.debug('Deploying vm2 without passing network id after consuming all IPs from default shared nw')
+    try:
+        vm_2 = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=template.id, zoneid=zone_list[0].id, serviceofferingid=self.service_offering.id)
+        vm2_res = VirtualMachine.list(self.api_client, id=vm_2.id)
+        self.assertEqual(validateList(vm2_res)[0], PASS, 'Failed to list vms in new network')
+        vm_ip = vm2_res[0].nic[0].ipaddress
+        ips_in_new_network = []
+        ip_gen = iter_iprange(self.services['shared_network_sg']['startip'], self.services['shared_network_sg']['endip'])
+        for i in range(0, nwIPs):
+            ips_in_new_network.append(str(ip_gen.next()))
+        if (vm_ip not in ips_in_new_network):
+            self.fail('vm did not get the ip from new SG enabled shared network')
+        self.cleanup_vms.append(vm_2)
+    except Exception as e:
+        self.fail(('Failed to deploy vm with two advanced sg networks %s' % e))
+    return
