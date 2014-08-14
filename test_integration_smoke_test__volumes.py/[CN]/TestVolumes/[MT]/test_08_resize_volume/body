@@ -33,27 +33,34 @@ def test_08_resize_volume(self):
             time.sleep(10)
             count += 1
     self.assertEqual(success, True, 'Check if the data volume resized appropriately')
-    self.services['disk_offering']['disksize'] = 10
-    disk_offering_10_GB = DiskOffering.create(self.apiclient, self.services['disk_offering'])
-    self.cleanup.append(disk_offering_10_GB)
-    cmd = resizeVolume.resizeVolumeCmd()
-    cmd.id = self.volume.id
-    cmd.diskofferingid = disk_offering_10_GB.id
-    cmd.shrinkok = 'true'
-    self.apiClient.resizeVolume(cmd)
-    count = 0
-    success = False
-    while (count < 3):
-        list_volume_response = Volume.list(self.apiClient, id=self.volume.id)
-        for vol in list_volume_response:
-            if ((vol.id == self.volume.id) and (int(vol.size) == (int(disk_offering_10_GB.disksize) * (1024 ** 3))) and (vol.state == 'Ready')):
-                success = True
-        if success:
-            break
-        else:
-            time.sleep(10)
-            count += 1
-    self.assertEqual(success, True, 'Check if the root volume resized appropriately')
+    can_shrink = False
+    list_volume_response = Volume.list(self.apiClient, id=self.volume.id, type='DATADISK')
+    storage_pool_id = [x.storageid for x in list_volume_response if (x.id == self.volume.id)][0]
+    storage = StoragePool.list(self.apiclient, id=storage_pool_id)[0]
+    if (storage.type.lower() == 'clvm'):
+        can_shrink = True
+    if can_shrink:
+        self.services['disk_offering']['disksize'] = 10
+        disk_offering_10_GB = DiskOffering.create(self.apiclient, self.services['disk_offering'])
+        self.cleanup.append(disk_offering_10_GB)
+        cmd = resizeVolume.resizeVolumeCmd()
+        cmd.id = self.volume.id
+        cmd.diskofferingid = disk_offering_10_GB.id
+        cmd.shrinkok = 'true'
+        self.apiClient.resizeVolume(cmd)
+        count = 0
+        success = False
+        while (count < 3):
+            list_volume_response = Volume.list(self.apiClient, id=self.volume.id)
+            for vol in list_volume_response:
+                if ((vol.id == self.volume.id) and (int(vol.size) == (int(disk_offering_10_GB.disksize) * (1024 ** 3))) and (vol.state == 'Ready')):
+                    success = True
+            if success:
+                break
+            else:
+                time.sleep(10)
+                count += 1
+        self.assertEqual(success, True, 'Check if the root volume resized appropriately')
     if (hosts[0].hypervisor == 'XenServer'):
         self.virtual_machine.start(self.apiClient)
         time.sleep(30)
