@@ -1,12 +1,84 @@
 {
-  String response=null;
   try {
-    String redirectUrl=buildAuthnRequestUrl("http://localhost:8080/client/api?command=login");
-    resp.sendRedirect(redirectUrl);
+    if (!params.containsKey("SAMLResponse")) {
+      final String[] idps=(String[])params.get("idpurl");
+      String redirectUrl=buildAuthnRequestUrl("http://localhost:8080/client/api?command=samlsso",idps[0]);
+      resp.sendRedirect(redirectUrl);
+      return "";
+    }
+ else {
+      final String samlResponse=((String[])params.get("SAMLResponse"))[0];
+      Response processedSAMLResponse=processSAMLResponse(samlResponse);
+      String statusCode=processedSAMLResponse.getStatus().getStatusCode().getValue();
+      if (!statusCode.equals(StatusCode.SUCCESS_URI)) {
+        throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Identity Provider send a non-successful authentication status code",params,responseType));
+      }
+      Signature sig=processedSAMLResponse.getSignature();
+      String uniqueUserId=null;
+      String accountName="admin";
+      Long domainId=1L;
+      String username=null;
+      String password="";
+      String firstName="";
+      String lastName="";
+      String timeZone="";
+      String email="";
+      Assertion assertion=processedSAMLResponse.getAssertions().get(0);
+      NameID nameId=assertion.getSubject().getNameID();
+      if (nameId.getFormat().equals(NameIDType.PERSISTENT) || nameId.getFormat().equals(NameIDType.EMAIL)) {
+        username=nameId.getValue();
+        uniqueUserId="saml-" + username;
+        if (nameId.getFormat().equals(NameIDType.EMAIL)) {
+          email=username;
+        }
+      }
+      String issuer=assertion.getIssuer().getValue();
+      String audience=assertion.getConditions().getAudienceRestrictions().get(0).getAudiences().get(0).getAudienceURI();
+      AttributeStatement attributeStatement=assertion.getAttributeStatements().get(0);
+      List<Attribute> attributes=attributeStatement.getAttributes();
+      for (      Attribute attribute : attributes) {
+        String attributeName=attribute.getName();
+        String attributeValue=attribute.getAttributeValues().get(0).getDOM().getTextContent();
+        if (attributeName.equalsIgnoreCase("uid") && uniqueUserId == null) {
+          username=attributeValue;
+          uniqueUserId="saml-" + username;
+        }
+ else         if (attributeName.equalsIgnoreCase("givenName")) {
+          firstName=attributeValue;
+        }
+ else         if (attributeName.equalsIgnoreCase(("sn"))) {
+          lastName=attributeValue;
+        }
+ else         if (attributeName.equalsIgnoreCase("mail")) {
+          email=attributeValue;
+        }
+      }
+      User user=_entityMgr.findByUuid(User.class,uniqueUserId);
+      if (user == null && uniqueUserId != null && username != null && accountName != null && domainId != null) {
+        CallContext.current().setEventDetails("UserName: " + username + ", FirstName :"+ password+ ", LastName: "+ lastName);
+        user=_accountService.createUser(username,password,firstName,lastName,email,timeZone,accountName,domainId,uniqueUserId);
+      }
+      if (user != null) {
+        try {
+          if (_apiServer.verifyUser(user.getId())) {
+            LoginCmdResponse loginResponse=(LoginCmdResponse)_apiServer.loginUser(session,username,user.getPassword(),domainId,null,remoteAddress,params);
+            resp.addCookie(new Cookie("userid",loginResponse.getUserId()));
+            resp.addCookie(new Cookie("domainid",loginResponse.getDomainId()));
+            resp.addCookie(new Cookie("role",loginResponse.getType()));
+            resp.addCookie(new Cookie("username",URLEncoder.encode(loginResponse.getUsername(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("sessionKey",URLEncoder.encode(loginResponse.getSessionKey(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("account",URLEncoder.encode(loginResponse.getAccount(),HttpUtils.UTF_8)));
+            return ApiResponseSerializer.toSerializedString(loginResponse,responseType);
+          }
+        }
+ catch (        final CloudAuthenticationException ignored) {
+        }
+      }
+    }
   }
  catch (  IOException e) {
     auditTrailSb.append("SP initiated SAML authentication using HTTP redirection failed:");
     auditTrailSb.append(e.getMessage());
   }
-  return response;
+  throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Unable to authenticate or retrieve user while performing SAML based SSO",params,responseType));
 }
