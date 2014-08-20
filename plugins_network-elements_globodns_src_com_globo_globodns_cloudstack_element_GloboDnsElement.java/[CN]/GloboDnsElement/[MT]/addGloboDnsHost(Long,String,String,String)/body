@@ -1,0 +1,54 @@
+{
+  if (username == null || username.trim().isEmpty()) {
+    throw new InvalidParameterValueException("Invalid username: " + username);
+  }
+  if (password == null || password.trim().isEmpty()) {
+    throw new InvalidParameterValueException("Invalid password: " + password);
+  }
+  if (url == null || url.trim().isEmpty()) {
+    throw new InvalidParameterValueException("Invalid url: " + url);
+  }
+  PhysicalNetwork pNtwk=null;
+  if (physicalNetworkId != null) {
+    pNtwk=_physicalNetworkDao.findById(physicalNetworkId);
+    if (pNtwk == null) {
+      throw new InvalidParameterValueException("Unable to find a physical network having the specified physical network id");
+    }
+  }
+ else {
+    throw new InvalidParameterValueException("Invalid physicalNetworkId: " + physicalNetworkId);
+  }
+  final Long zoneId=pNtwk.getDataCenterId();
+  final Map<String,String> params=new HashMap<String,String>();
+  params.put("guid","globodns-" + String.valueOf(zoneId));
+  params.put("zoneId",String.valueOf(zoneId));
+  params.put("name",Provider.GloboDns.getName());
+  params.put("url",url);
+  params.put("username",username);
+  params.put("password",password);
+  final Map<String,Object> hostDetails=new HashMap<String,Object>();
+  hostDetails.putAll(params);
+  Host host=Transaction.execute(new TransactionCallbackWithException<Host,CloudRuntimeException>(){
+    @Override public Host doInTransaction(    TransactionStatus status) throws CloudRuntimeException {
+      try {
+        GloboDnsResource resource=new GloboDnsResource();
+        resource.configure(Provider.GloboDns.getName(),hostDetails);
+        Host host=_resourceMgr.addHost(zoneId,resource,resource.getType(),params);
+        if (host == null) {
+          throw new CloudRuntimeException("Failed to add GloboDNS host");
+        }
+        SignInCommand cmd=new SignInCommand(username,password);
+        Answer answer=callCommand(cmd,zoneId);
+        if (answer == null || !answer.getResult()) {
+          throw new ConfigurationException("Could not sign in on GloboDNS. Please verify URL, username and password.");
+        }
+        return host;
+      }
+ catch (      ConfigurationException e) {
+        throw new CloudRuntimeException(e);
+      }
+    }
+  }
+);
+  return host;
+}

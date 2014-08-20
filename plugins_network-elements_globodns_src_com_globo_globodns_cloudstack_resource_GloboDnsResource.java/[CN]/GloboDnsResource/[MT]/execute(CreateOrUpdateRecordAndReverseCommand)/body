@@ -1,0 +1,41 @@
+{
+  boolean needsExport=false;
+  try {
+    Domain domain=searchDomain(cmd.getNetworkDomain(),false);
+    if (domain == null) {
+      domain=_globoDns.getDomainAPI().createDomain(cmd.getNetworkDomain(),cmd.getReverseTemplateId(),DEFAULT_AUTHORITY_TYPE);
+      s_logger.warn("Domain " + cmd.getNetworkDomain() + " doesn't exist, maybe someone removed it. It was automatically created with template "+ cmd.getReverseTemplateId());
+    }
+    boolean created=createOrUpdateRecord(domain.getId(),cmd.getRecordName(),cmd.getRecordIp(),IPV4_RECORD_TYPE,cmd.isOverride());
+    if (!created) {
+      String msg="Unable to create record " + cmd.getRecordName() + " at "+ cmd.getNetworkDomain();
+      if (!cmd.isOverride()) {
+        msg+=". Override record option is false, maybe record already exist.";
+      }
+      return new Answer(cmd,false,msg);
+    }
+ else {
+      needsExport=true;
+    }
+    String reverseRecordContent=cmd.getRecordName() + '.' + cmd.getNetworkDomain();
+    if (createOrUpdateReverse(cmd.getRecordIp(),reverseRecordContent,cmd.getReverseTemplateId(),cmd.isOverride())) {
+      needsExport=true;
+    }
+ else {
+      if (!cmd.isOverride()) {
+        String msg="Unable to create reverse record " + cmd.getRecordName() + " for ip "+ cmd.getRecordIp();
+        msg+=". Override record option is false, maybe record already exist.";
+        return new Answer(cmd,false,msg);
+      }
+    }
+    return new Answer(cmd);
+  }
+ catch (  GloboDnsException e) {
+    return new Answer(cmd,false,e.getMessage());
+  }
+ finally {
+    if (needsExport) {
+      scheduleExportChangesToBind();
+    }
+  }
+}
