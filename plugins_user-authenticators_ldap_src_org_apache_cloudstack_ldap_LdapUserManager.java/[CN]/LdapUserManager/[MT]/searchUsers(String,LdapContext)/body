@@ -1,0 +1,36 @@
+{
+  final SearchControls searchControls=new SearchControls();
+  searchControls.setSearchScope(_ldapConfiguration.getScope());
+  searchControls.setReturningAttributes(_ldapConfiguration.getReturnAttributes());
+  String basedn=_ldapConfiguration.getBaseDn();
+  if (StringUtils.isBlank(basedn)) {
+    throw new IllegalArgumentException("ldap basedn is not configured");
+  }
+  byte[] cookie=null;
+  int pageSize=_ldapConfiguration.getLdapPageSize();
+  context.setRequestControls(new Control[]{new PagedResultsControl(pageSize,Control.NONCRITICAL)});
+  final List<LdapUser> users=new ArrayList<LdapUser>();
+  NamingEnumeration<SearchResult> results;
+  do {
+    results=context.search(basedn,generateSearchFilter(username),searchControls);
+    while (results.hasMoreElements()) {
+      final SearchResult result=results.nextElement();
+      users.add(createUser(result));
+    }
+    Control[] contextControls=context.getResponseControls();
+    if (contextControls != null) {
+      for (      Control control : contextControls) {
+        if (control instanceof PagedResultsResponseControl) {
+          PagedResultsResponseControl prrc=(PagedResultsResponseControl)control;
+          cookie=prrc.getCookie();
+        }
+      }
+    }
+ else {
+      s_logger.info("No controls were sent from the ldap server");
+    }
+    context.setRequestControls(new Control[]{new PagedResultsControl(pageSize,cookie,Control.CRITICAL)});
+  }
+ while (cookie != null);
+  return users;
+}
