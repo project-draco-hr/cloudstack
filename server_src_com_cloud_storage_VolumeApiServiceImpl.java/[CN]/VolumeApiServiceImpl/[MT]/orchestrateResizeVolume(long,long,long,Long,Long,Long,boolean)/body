@@ -11,14 +11,30 @@
  else     if (userVm.getLastHostId() != null) {
       hosts=new long[]{userVm.getLastHostId()};
     }
+    final String errorMsg="The VM must be stopped or the disk detached in order to resize with the XenServer Hypervisor.";
+    StoragePoolVO storagePool=_storagePoolDao.findById(volume.getPoolId());
+    if (storagePool.isManaged() && storagePool.getHypervisor() == HypervisorType.Any && hosts != null && hosts.length > 0) {
+      HostVO host=this._hostDao.findById(hosts[0]);
+      if (currentSize != newSize && host.getHypervisorType() == HypervisorType.XenServer && !userVm.getState().equals(State.Stopped)) {
+        throw new InvalidParameterValueException(errorMsg);
+      }
+    }
     if (currentSize != newSize && _volsDao.getHypervisorType(volume.getId()) == HypervisorType.XenServer && !userVm.getState().equals(State.Stopped)) {
-      throw new InvalidParameterValueException("VM must be stopped or disk detached in order to resize with the Xen HV");
+      throw new InvalidParameterValueException(errorMsg);
     }
   }
   ResizeVolumePayload payload=new ResizeVolumePayload(newSize,newMinIops,newMaxIops,shrinkOk,instanceName,hosts);
   try {
     VolumeInfo vol=volFactory.getVolume(volume.getId());
     vol.addPayload(payload);
+    StoragePoolVO storagePool=_storagePoolDao.findById(vol.getPoolId());
+    if (storagePool.isManaged() && currentSize != newSize) {
+      if (hosts != null && hosts.length > 0) {
+        volService.resizeVolumeOnHypervisor(volumeId,newSize,hosts[0],instanceName);
+      }
+      volume.setSize(newSize);
+      _volsDao.update(volume.getId(),volume);
+    }
     AsyncCallFuture<VolumeApiResult> future=volService.resize(vol);
     VolumeApiResult result=future.get();
     if (result.isFailed()) {
@@ -30,13 +46,6 @@
       throw new CloudRuntimeException(details);
     }
     volume=_volsDao.findById(volume.getId());
-    StoragePoolVO storagePool=_storagePoolDao.findById(vol.getPoolId());
-    if (currentSize != newSize && storagePool.isManaged()) {
-      if (hosts != null && hosts.length > 0) {
-        volService.resizeVolumeOnHypervisor(volumeId,newSize,hosts[0],instanceName);
-      }
-      volume.setSize(newSize);
-    }
     if (newDiskOfferingId != null) {
       volume.setDiskOfferingId(newDiskOfferingId);
     }
