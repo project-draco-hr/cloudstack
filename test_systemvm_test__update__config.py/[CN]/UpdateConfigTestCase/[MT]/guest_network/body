@@ -3,10 +3,30 @@ def guest_network(self, config):
     assert ip.has_ip(('%s/%s' % (config['router_guest_ip'], config['cidr'])), config['device'])
     assert process.is_up('apache2'), 'Apache2 should be running after adding a guest network'
     assert process.is_up('dnsmasq'), 'Dnsmasq should be running after adding a guest network'
+    octets = config['router_guest_ip'].split('.')
+    configs = []
+    for n in range(10):
+        ipb = '.'.join(octets[0:3])
+        ipa = ('%s.%s' % (ipb, n))
+        gw = ('%s.1' % ipb)
+        self.basic_dhcp_entry['ipv4_adress'] = ipa
+        self.basic_dhcp_entry['default_gateway'] = gw
+        self.basic_dhcp_entry['host_name'] = ('host_%s' % ipa)
+        self.update_config(self.basic_dhcp_entry)
+        configs.append(copy.deepcopy(self.basic_dhcp_entry))
     assert port.is_listening(80)
     assert port.is_listening(53)
     assert port.is_listening(53)
     assert port.is_listening(67)
+    for o in configs:
+        line = ('%s,%s,%s,infinite' % (o['mac_address'], o['ipv4_adress'], o['host_name']))
+        assert file.has_line('/etc/dhcphosts.txt', line)
     config['add'] = False
     self.update_config(config)
     assert (not ip.has_ip(('%s/%s' % (config['router_guest_ip'], config['cidr'])), config['device']))
+    for o in configs:
+        o['add'] = False
+        self.update_config(o)
+    for o in configs:
+        line = ('%s,%s,%s,infinite' % (o['mac_address'], o['ipv4_adress'], o['host_name']))
+        assert (file.has_line('/etc/dhcphosts.txt', line) is False)
