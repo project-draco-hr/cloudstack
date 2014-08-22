@@ -1,0 +1,18 @@
+@attr(tags=['advanced', 'selfservice'], required_hardware='false')
+def test_03_delete_account(self):
+    'Try to delete a dedicated vlan rang which is in use\n\n        # Validate the following:\n        # 1. Creat an account in the root domain\n        # 2. Update the physical network with a new vlan range\n        # 3. Dedicated this vlan range to the account\n        # 4. Verify that the vlan range is dedicated to the account by listing it\n             and verifying the account name\n        # 5. Create a guest network in the account which consumes vlan from dedicated range\n        # 6. Delete the account\n        # 7. Verify that the vlan of the physical network remains the same\n        '
+    self.account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+    self.cleanup.append(self.account)
+    new_vlan = ((self.physical_network.vlan + ',') + self.free_vlan['partial_range'][0])
+    self.physical_network.update(self.apiclient, id=self.physical_network.id, vlan=new_vlan)
+    dedicate_guest_vlan_range_response = PhysicalNetwork.dedicate(self.apiclient, self.free_vlan['partial_range'][0], physicalnetworkid=self.physical_network.id, account=self.account.name, domainid=self.account.domainid)
+    list_dedicated_guest_vlan_range_response = PhysicalNetwork.listDedicated(self.apiclient, id=dedicate_guest_vlan_range_response.id)
+    dedicated_guest_vlan_response = list_dedicated_guest_vlan_range_response[0]
+    self.assertEqual(dedicated_guest_vlan_response.account, self.account.name, 'Check account name is in listDedicatedGuestVlanRanges as the account the range is dedicated to')
+    Network.create(self.apiclient, self.testdata['isolated_network'], self.account.name, self.account.domainid, networkofferingid=self.isolated_persistent_network_offering.id)
+    self.account.delete(self.apiclient)
+    self.cleanup.remove(self.account)
+    physical_networks = PhysicalNetwork.list(self.apiclient, id=self.physical_network.id, listall=True)
+    self.assertEqual(validateList(physical_networks)[0], PASS, 'Physical networks list validation failed')
+    self.assertEqual(physical_networks[0].vlan, new_vlan, 'The vlan of physical network                          should be same after deleting account')
+    return
