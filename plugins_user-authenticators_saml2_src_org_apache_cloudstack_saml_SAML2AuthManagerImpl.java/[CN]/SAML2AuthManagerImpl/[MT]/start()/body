@@ -1,0 +1,36 @@
+{
+  this.serviceProviderId=_configDao.getValue(Config.SAMLServiceProviderID.key());
+  this.spSingleSignOnUrl=_configDao.getValue(Config.SAMLServiceProviderSingleSignOnURL.key());
+  this.spSingleLogOutUrl=_configDao.getValue(Config.SAMLServiceProviderSingleLogOutURL.key());
+  String idpMetaDataUrl=_configDao.getValue(Config.SAMLIdentityProviderMetadataURL.key());
+  int tolerance=30000;
+  String timeout=_configDao.getValue(Config.SAMLTimeout.key());
+  if (timeout != null) {
+    tolerance=Integer.parseInt(timeout);
+  }
+  try {
+    HTTPMetadataProvider idpMetaDataProvider=new HTTPMetadataProvider(idpMetaDataUrl,tolerance);
+    idpMetaDataProvider.setRequireValidMetadata(true);
+    idpMetaDataProvider.setParserPool(new BasicParserPool());
+    idpMetaDataProvider.initialize();
+    EntityDescriptor idpEntityDescriptor=idpMetaDataProvider.getEntityDescriptor("Some entity id");
+    for (    SingleSignOnService ssos : idpEntityDescriptor.getIDPSSODescriptor(SAMLConstants.SAML20P_NS).getSingleSignOnServices()) {
+      if (ssos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
+        this.idpSingleSignOnUrl=ssos.getLocation();
+      }
+    }
+    for (    SingleLogoutService slos : idpEntityDescriptor.getIDPSSODescriptor(SAMLConstants.SAML20P_NS).getSingleLogoutServices()) {
+      if (slos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
+        this.idpSingleLogOutUrl=slos.getLocation();
+      }
+    }
+  }
+ catch (  MetadataProviderException e) {
+    s_logger.error("Unable to read SAML2 IDP MetaData URL, error:" + e.getMessage());
+    s_logger.error("SAML2 Authentication may be unavailable");
+  }
+  if (this.idpSingleLogOutUrl == null || this.idpSingleSignOnUrl == null) {
+    s_logger.error("The current IDP does not support HTTP redirected authentication, SAML based authentication cannot work with this IDP");
+  }
+  return true;
+}
