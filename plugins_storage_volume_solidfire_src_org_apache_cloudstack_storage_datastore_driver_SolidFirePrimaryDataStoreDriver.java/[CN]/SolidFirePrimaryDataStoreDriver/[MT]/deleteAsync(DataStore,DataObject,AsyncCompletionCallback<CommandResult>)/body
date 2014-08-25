@@ -1,16 +1,26 @@
 {
   String errMsg=null;
   if (dataObject.getType() == DataObjectType.VOLUME) {
-    VolumeInfo volumeInfo=(VolumeInfo)dataObject;
-    long storagePoolId=dataStore.getId();
-    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
-    SolidFireUtil.SolidFireVolume sfVolume=deleteSolidFireVolume(sfConnection,volumeInfo);
-    _volumeDao.deleteVolumesByInstance(volumeInfo.getId());
-    StoragePoolVO storagePool=_storagePoolDao.findById(storagePoolId);
-    long usedBytes=storagePool.getUsedBytes();
-    usedBytes-=sfVolume != null ? sfVolume.getTotalSize() : 0;
-    storagePool.setUsedBytes(usedBytes < 0 ? 0 : usedBytes);
-    _storagePoolDao.update(storagePoolId,storagePool);
+    try {
+      VolumeInfo volumeInfo=(VolumeInfo)dataObject;
+      long volumeId=volumeInfo.getId();
+      long storagePoolId=dataStore.getId();
+      SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+      deleteSolidFireVolume(sfConnection,volumeInfo);
+      _volumeDetailsDao.removeDetails(volumeId);
+      _volumeDao.deleteVolumesByInstance(volumeId);
+      StoragePoolVO storagePool=_storagePoolDao.findById(storagePoolId);
+      long usedBytes=getUsedBytes(storagePool);
+      storagePool.setUsedBytes(usedBytes < 0 ? 0 : usedBytes);
+      _storagePoolDao.update(storagePoolId,storagePool);
+    }
+ catch (    Exception ex) {
+      s_logger.debug(SolidFireUtil.LOG_PREFIX + "Failed to delete SolidFire volume",ex);
+      errMsg=ex.getMessage();
+    }
+  }
+ else   if (dataObject.getType() == DataObjectType.SNAPSHOT) {
+    errMsg=deleteSnapshot((SnapshotInfo)dataObject,dataStore.getId());
   }
  else {
     errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to deleteAsync";
