@@ -1,0 +1,119 @@
+{
+  try {
+    if (!params.containsKey("SAMLResponse")) {
+      String idpUrl=null;
+      final String[] idps=(String[])params.get(ApiConstants.IDP_URL);
+      if (idps != null && idps.length > 0) {
+        idpUrl=idps[0];
+      }
+      String redirectUrl=this.buildAuthnRequestUrl(idpUrl);
+      resp.sendRedirect(redirectUrl);
+      return "";
+    }
+ else {
+      final String samlResponse=((String[])params.get(SAMLUtils.SAML_RESPONSE))[0];
+      Response processedSAMLResponse=this.processSAMLResponse(samlResponse);
+      String statusCode=processedSAMLResponse.getStatus().getStatusCode().getValue();
+      if (!statusCode.equals(StatusCode.SUCCESS_URI)) {
+        throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Identity Provider send a non-successful authentication status code",params,responseType));
+      }
+      if (_samlAuthManager.getIdpSigningKey() != null) {
+        Signature sig=processedSAMLResponse.getSignature();
+        BasicX509Credential credential=new BasicX509Credential();
+        credential.setEntityCertificate(_samlAuthManager.getIdpSigningKey());
+        SignatureValidator validator=new SignatureValidator(credential);
+        try {
+          validator.validate(sig);
+        }
+ catch (        ValidationException e) {
+          s_logger.error("SAML Response's signature failed to be validated by IDP signing key:" + e.getMessage());
+          throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"SAML Response's signature failed to be validated by IDP signing key",params,responseType));
+        }
+      }
+      String uniqueUserId=null;
+      String accountName=_configDao.getValue(Config.SAMLUserAccountName.key());
+      String domainString=_configDao.getValue(Config.SAMLUserDomain.key());
+      Long domainId=-1L;
+      Domain domain=_domainMgr.getDomain(domainString);
+      if (domain != null) {
+        domainId=domain.getId();
+      }
+ else {
+        try {
+          domainId=Long.parseLong(domainString);
+        }
+ catch (        NumberFormatException ignore) {
+        }
+      }
+      if (domainId == -1L) {
+        s_logger.error("The default domain ID for SAML users is not set correct, it should be a UUID");
+      }
+      String username=null;
+      String password=SAMLUtils.generateSecureRandomId();
+      String firstName="";
+      String lastName="";
+      String timeZone="";
+      String email="";
+      Assertion assertion=processedSAMLResponse.getAssertions().get(0);
+      NameID nameId=assertion.getSubject().getNameID();
+      String sessionIndex=assertion.getAuthnStatements().get(0).getSessionIndex();
+      session.setAttribute(SAMLUtils.SAML_NAMEID,nameId);
+      session.setAttribute(SAMLUtils.SAML_SESSION,sessionIndex);
+      if (nameId.getFormat().equals(NameIDType.PERSISTENT) || nameId.getFormat().equals(NameIDType.EMAIL)) {
+        username=nameId.getValue();
+        uniqueUserId=SAMLUtils.createSAMLId(username);
+        if (nameId.getFormat().equals(NameIDType.EMAIL)) {
+          email=username;
+        }
+      }
+      AttributeStatement attributeStatement=assertion.getAttributeStatements().get(0);
+      List<Attribute> attributes=attributeStatement.getAttributes();
+      for (      Attribute attribute : attributes) {
+        String attributeName=attribute.getName();
+        String attributeValue=attribute.getAttributeValues().get(0).getDOM().getTextContent();
+        if (attributeName.equalsIgnoreCase("uid") && uniqueUserId == null) {
+          username=attributeValue;
+          uniqueUserId=SAMLUtils.createSAMLId(username);
+        }
+ else         if (attributeName.equalsIgnoreCase("givenName")) {
+          firstName=attributeValue;
+        }
+ else         if (attributeName.equalsIgnoreCase(("sn"))) {
+          lastName=attributeValue;
+        }
+ else         if (attributeName.equalsIgnoreCase("mail")) {
+          email=attributeValue;
+        }
+      }
+      User user=_entityMgr.findByUuid(User.class,uniqueUserId);
+      if (user == null && uniqueUserId != null && username != null && accountName != null && domainId != null) {
+        CallContext.current().setEventDetails("UserName: " + username + ", FirstName :"+ password+ ", LastName: "+ lastName);
+        user=_accountService.createUser(username,password,firstName,lastName,email,timeZone,accountName,domainId,uniqueUserId);
+      }
+      if (user != null) {
+        try {
+          if (_apiServer.verifyUser(user.getId())) {
+            LoginCmdResponse loginResponse=(LoginCmdResponse)_apiServer.loginUser(session,username,user.getPassword(),domainId,null,remoteAddress,params);
+            resp.addCookie(new Cookie("userid",loginResponse.getUserId()));
+            resp.addCookie(new Cookie("domainid",loginResponse.getDomainId()));
+            resp.addCookie(new Cookie("role",loginResponse.getType()));
+            resp.addCookie(new Cookie("username",URLEncoder.encode(loginResponse.getUsername(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("sessionKey",URLEncoder.encode(loginResponse.getSessionKey(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("account",URLEncoder.encode(loginResponse.getAccount(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("timezone",URLEncoder.encode(loginResponse.getTimeZone(),HttpUtils.UTF_8)));
+            resp.addCookie(new Cookie("userfullname",loginResponse.getFirstName() + "%20" + loginResponse.getLastName()));
+            resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+            return ApiResponseSerializer.toSerializedString(loginResponse,responseType);
+          }
+        }
+ catch (        final CloudAuthenticationException ignored) {
+        }
+      }
+    }
+  }
+ catch (  IOException e) {
+    auditTrailSb.append("SP initiated SAML authentication using HTTP redirection failed:");
+    auditTrailSb.append(e.getMessage());
+  }
+  throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Unable to authenticate or retrieve user while performing SAML based SSO",params,responseType));
+}

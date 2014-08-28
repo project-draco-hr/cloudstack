@@ -1,0 +1,61 @@
+{
+  auditTrailSb.append("=== SAML SLO Logging out ===");
+  LogoutCmdResponse response=new LogoutCmdResponse();
+  response.setDescription("success");
+  response.setResponseName(getCommandName());
+  String responseString=ApiResponseSerializer.toSerializedString(response,responseType);
+  if (session == null) {
+    try {
+      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+    }
+ catch (    IOException ignored) {
+    }
+    return responseString;
+  }
+  try {
+    DefaultBootstrap.bootstrap();
+  }
+ catch (  ConfigurationException|FactoryConfigurationError e) {
+    s_logger.error("OpenSAML Bootstrapping error: " + e.getMessage());
+    throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"OpenSAML Bootstrapping error while creating SP MetaData",params,responseType));
+  }
+  if (params != null && params.containsKey("SAMLResponse")) {
+    try {
+      final String samlResponse=((String[])params.get(SAMLUtils.SAML_RESPONSE))[0];
+      Response processedSAMLResponse=SAMLUtils.decodeSAMLResponse(samlResponse);
+      String statusCode=processedSAMLResponse.getStatus().getStatusCode().getValue();
+      if (!statusCode.equals(StatusCode.SUCCESS_URI)) {
+        throw new ServerApiException(ApiErrorCode.INTERNAL_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.INTERNAL_ERROR.getHttpCode(),"SAML SLO LogoutResponse status is not Success",params,responseType));
+      }
+    }
+ catch (    ConfigurationException|FactoryConfigurationError|ParserConfigurationException|SAXException|IOException|UnmarshallingException e) {
+      s_logger.error("SAMLResponse processing error: " + e.getMessage());
+    }
+    try {
+      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+    }
+ catch (    IOException ignored) {
+    }
+    return responseString;
+  }
+  NameID nameId=(NameID)session.getAttribute(SAMLUtils.SAML_NAMEID);
+  String sessionIndex=(String)session.getAttribute(SAMLUtils.SAML_SESSION);
+  if (nameId == null || sessionIndex == null) {
+    try {
+      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+    }
+ catch (    IOException ignored) {
+    }
+    return responseString;
+  }
+  LogoutRequest logoutRequest=SAMLUtils.buildLogoutRequest(_samlAuthManager.getIdpSingleLogOutUrl(),_samlAuthManager.getServiceProviderId(),nameId,sessionIndex);
+  try {
+    String redirectUrl=_samlAuthManager.getIdpSingleLogOutUrl() + "?SAMLRequest=" + SAMLUtils.encodeSAMLRequest(logoutRequest);
+    resp.sendRedirect(redirectUrl);
+  }
+ catch (  MarshallingException|IOException e) {
+    s_logger.error("SAML SLO error: " + e.getMessage());
+    throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"SAML Single Logout Error",params,responseType));
+  }
+  return responseString;
+}
