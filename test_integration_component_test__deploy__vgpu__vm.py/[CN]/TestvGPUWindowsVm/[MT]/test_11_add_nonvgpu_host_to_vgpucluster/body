@@ -1,0 +1,43 @@
+@attr(tags=['advanced', 'basic', 'vgpu'], required_hardware='true')
+def test_11_add_nonvgpu_host_to_vgpucluster(self):
+    '   Test to add non vGPU host to an existing cluster  '
+    countx = 0
+    huuids = []
+    lhosts = list_hosts(self.apiclient, hypervisor='XenServer')
+    sshClient1 = SshClient(host=lhosts[0].ipaddress, port=22, user='root', passwd='freebsd')
+    totalxenhosts = len(sshClient1.execute('xe host-list | grep uuid'))
+    for hostlist in lhosts:
+        countx = (countx + 1)
+    if (totalxenhosts <= countx):
+        raise unittest.SkipTest('No additional Host is available in the XS pool to add host')
+    huuids.append(sshClient1.execute('xe host-list --minimal'))
+    self.debug(('host uuids are:%s' % huuids))
+    hostuuids = huuids[0][0].split(',')
+    addhost = 'FAIL'
+    for hid in hostuuids:
+        self.debug(('host id: %s' % hid))
+        haddress = sshClient1.execute(('xe host-param-get param-name=address --minimal uuid=' + hid))
+        self.debug(('host address is %s' % haddress[0]))
+        if (haddress[0] == self.testdata['vgpu']['nongpu_host_ip']):
+            addhost = 'PASS'
+            break
+    if (addhost != 'PASS'):
+        raise unittest.SkipTest('XS Pool new host ip is not matching with test data host ip. Skipping the test.Please update test data file with hostip added to XS pool')
+    list_cluster_response = list_clusters(self.apiclient, hypervisor='XenServer', allocationstate='Enabled')
+    self.assertEqual(isinstance(list_cluster_response, list), True, 'Check list clusters response returns a valid list')
+    self.assertNotEqual(len(list_cluster_response), 0, 'Check list clusters response')
+    cluster_response = list_cluster_response[0]
+    self.assertEqual(cluster_response.allocationstate, 'Enabled', 'Check whether allocation state of cluster is enabled')
+    self.debug(('Cluster response is:%s' % cluster_response))
+    self.assertEqual(cluster_response.hypervisortype, 'XenServer', 'Check hypervisor type is XenServer or not')
+    nongpuhost = Host.create(self.apiclient, cluster_response, self.testdata['vgpu']['hosts']['nonvgpuxenserver'], zoneid=self.zone.id, podid=self.pod.id, hypervisor='XenServer')
+    if (nongpuhost == FAILED):
+        self.fail('Host Creation Failed')
+    self.debug(('Created host (ID: %s) in cluster ID %s' % (nongpuhost.id, cluster_response.id)))
+    listhosts = list_hosts(self.apiclient, hypervisor='XenServer', id=nongpuhost.id)
+    self.assertEqual(isinstance(listhosts, list), True, 'Check list hosts response returns a valid list')
+    self.assertNotEqual(len(listhosts), 0, 'Check Host details are available in List Hosts')
+    for ggroup in listhosts:
+        if (ggroup.gpugroup is not None):
+            self.fail('This is not a non vGPU host')
+    self.cleanup.append(nongpuhost)
