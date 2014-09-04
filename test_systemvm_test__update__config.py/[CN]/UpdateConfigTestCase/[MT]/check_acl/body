@@ -1,4 +1,13 @@
 def check_acl(self, list):
+    clear1 = self.clear_all_acls()
+    clear2 = self.clear_all_acls()
+    assert (clear1 == clear2), 'Clear all acls called twice and produced different results'
+    unique = {}
+    for ips in list:
+        unique[('eth%s' % ips['nic_dev_id'])] = 1
+    drops = len(unique)
+    for dev in unique:
+        drops -= ip.count_fw_rules(('ACL_INBOUND_%s -j DROP' % dev))
     for ips in list:
         config = copy.deepcopy(self.basic_network_acl)
         config['device'] = ('eth%s' % ips['nic_dev_id'])
@@ -7,3 +16,15 @@ def check_acl(self, list):
             config['ingress_rules'].append(rule)
             config['egress_rules'].append(rule)
         self.update_config(config)
+    for dev in unique:
+        drop = ip.count_fw_rules(('ACL_INBOUND_%s -j DROP' % dev))
+        assert (drop == 1), ('ACL_INBOUND_%s does not have a default drop rule' % dev)
+    after = ip.count_fw_rules()
+    expected = ((((len(unique) * 2) * len(self.basic_acl_rules)) + clear2) + drops)
+    assert (expected == after), 'Number of acl rules does not match what I expected to see'
+    for dev in range(6):
+        config = copy.deepcopy(self.basic_network_acl)
+        config['device'] = ('eth%s' % dev)
+        self.update_config(config)
+    clear2 = (self.clear_all_acls() - drops)
+    assert (clear1 == clear2), 'Clear all acls appears to have failed'
