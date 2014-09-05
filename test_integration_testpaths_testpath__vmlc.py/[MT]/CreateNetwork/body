@@ -1,0 +1,32 @@
+def CreateNetwork(self, networktype):
+    'Create a network of given type (isolated/shared/isolated in VPC)'
+    network = None
+    if (networktype == ISOLATED_NETWORK):
+        try:
+            network = Network.create(self.apiclient, self.testdata['isolated_network'], networkofferingid=self.isolated_network_offering.id, accountid=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id)
+            self.cleanup.append(network)
+        except Exception as e:
+            self.fail(('Isolated network creation failed because: %s' % e))
+    elif (networktype == SHARED_NETWORK):
+        (physical_network, vlan) = get_free_vlan(self.apiclient, self.zone.id)
+        self.testdata['shared_network']['acltype'] = 'domain'
+        self.testdata['shared_network']['vlan'] = vlan
+        self.testdata['shared_network']['networkofferingid'] = self.shared_network_offering.id
+        self.testdata['shared_network']['physicalnetworkid'] = physical_network.id
+        self.testdata['shared_network'] = setSharedNetworkParams(self.testdata['shared_network'])
+        try:
+            network = Network.create(self.apiclient, self.testdata['shared_network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+            self.cleanup.append(network)
+        except Exception as e:
+            self.fail(('Shared Network creation failed because: %s' % e))
+    elif (networktype == VPC_NETWORK):
+        self.testdata['vpc']['cidr'] = '10.1.1.1/16'
+        self.debug(('creating a VPC network in the account: %s' % self.account.name))
+        vpc = VPC.create(self.apiclient, self.testdata['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+        self.vpcid = vpc.id
+        vpcs = VPC.list(self.apiclient, id=vpc.id)
+        self.assertEqual(validateList(vpcs)[0], PASS, ('VPC list validation failed, vpc list is %s' % vpcs))
+        network = Network.create(self.apiclient, self.testdata['isolated_network'], networkofferingid=self.isolated_network_offering_vpc.id, accountid=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id, vpcid=vpc.id, gateway='10.1.1.1', netmask='255.255.255.0')
+        self.cleanup.append(network)
+        self.cleanup.append(vpc)
+    return network
