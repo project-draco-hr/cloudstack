@@ -1,0 +1,48 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestPathVMLC, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient)
+    cls._cleanup = []
+    try:
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
+        cls._cleanup.append(cls.account)
+        if cls.zone.localstorageenable:
+            cls.testdata['service_offering']['storagetype'] = 'local'
+        cls.testdata['service_offering']['cpunumber'] = '1'
+        cls.testdata['service_offering']['cpuspeed'] = '128'
+        cls.testdata['service_offering']['memory'] = '256'
+        cls.service_offering_1 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+        cls._cleanup.append(cls.service_offering_1)
+        cls.testdata['service_offering']['cpunumber'] = '2'
+        cls.testdata['service_offering']['cpuspeed'] = '256'
+        cls.testdata['service_offering']['memory'] = '512'
+        cls.service_offering_2 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+        cls._cleanup.append(cls.service_offering_2)
+        cls.isolated_network_offering = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['isolated_network_offering'])
+        cls._cleanup.append(cls.isolated_network_offering)
+        cls.testdata['shared_network_offering_all_services']['specifyVlan'] = 'True'
+        cls.testdata['shared_network_offering_all_services']['specifyIpRanges'] = 'True'
+        cls.shared_network_offering = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['shared_network_offering_all_services'])
+        cls._cleanup.append(cls.shared_network_offering)
+        cls.isolated_network_offering_vpc = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['nw_offering_isolated_vpc'])
+        cls._cleanup.append(cls.isolated_network_offering_vpc)
+        cls.vpc_off = VpcOffering.create(cls.apiclient, cls.testdata['vpc_offering'])
+        cls.vpc_off.update(cls.apiclient, state='Enabled')
+        cls._cleanup.append(cls.vpc_off)
+        cls.vpcid = None
+        cls.userapiclient = testClient.getUserApiClient(UserName=cls.account.name, DomainName=cls.account.domain)
+        builtin_info = get_builtin_template_info(cls.apiclient, cls.zone.id)
+        cls.testdata['privatetemplate']['url'] = builtin_info[0]
+        cls.testdata['privatetemplate']['hypervisor'] = builtin_info[1]
+        cls.testdata['privatetemplate']['format'] = builtin_info[2]
+        cls.template = Template.register(cls.userapiclient, cls.testdata['privatetemplate'], zoneid=cls.zone.id, account=cls.account.name, domainid=cls.account.domainid)
+        cls.template.download(cls.apiclient)
+        respose = User.login(cls.apiclient, username=cls.account.name, password=cls.testdata['account']['password'])
+        assert (respose.sessionkey is not None), 'Login to the CloudStack should be successful                            response shall have non Null key'
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return
