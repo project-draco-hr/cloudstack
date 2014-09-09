@@ -1,10 +1,13 @@
 {
   _router=router;
-  final UserVmVO vm=_userVmDao.findById(_profile.getId());
-  _userVmDao.loadDetails(vm);
-  final NicVO domr_guest_nic=_nicDao.findByInstanceIdAndIpAddressAndVmtype(_router.getId(),_nicDao.getIpAddress(_nic.getNetworkId(),_router.getId()),VirtualMachine.Type.DomainRouter);
-  if (!NetUtils.sameSubnet(domr_guest_nic.getIp4Address(),_nic.getIp4Address(),_nic.getNetmask())) {
-    final List<NicIpAliasVO> aliasIps=_nicIpAliasDao.listByNetworkIdAndState(domr_guest_nic.getNetworkId(),NicIpAlias.state.active);
+  UserVmDao userVmDao=visitor.getVirtualNetworkApplianceFactory().getUserVmDao();
+  final UserVmVO vm=userVmDao.findById(_profile.getId());
+  userVmDao.loadDetails(vm);
+  NicDao nicDao=visitor.getVirtualNetworkApplianceFactory().getNicDao();
+  final NicVO domrGuestNic=nicDao.findByInstanceIdAndIpAddressAndVmtype(_router.getId(),nicDao.getIpAddress(_nic.getNetworkId(),_router.getId()),VirtualMachine.Type.DomainRouter);
+  if (!NetUtils.sameSubnet(domrGuestNic.getIp4Address(),_nic.getIp4Address(),_nic.getNetmask())) {
+    final NicIpAliasDao nicIpAliasDao=visitor.getVirtualNetworkApplianceFactory().getNicIpAliasDao();
+    final List<NicIpAliasVO> aliasIps=nicIpAliasDao.listByNetworkIdAndState(domrGuestNic.getNetworkId(),NicIpAlias.state.active);
     boolean ipInVmsubnet=false;
     for (    final NicIpAliasVO alias : aliasIps) {
       if (NetUtils.sameSubnet(alias.getIp4Address(),_nic.getIp4Address(),_nic.getNetmask())) {
@@ -13,22 +16,26 @@
       }
     }
     PublicIp routerPublicIP=null;
-    final DataCenter dc=_dcDao.findById(_router.getDataCenterId());
+    DataCenterDao dcDao=visitor.getVirtualNetworkApplianceFactory().getDcDao();
+    final DataCenter dc=dcDao.findById(_router.getDataCenterId());
     if (ipInVmsubnet == false) {
       try {
-        if ((_network.getTrafficType() == TrafficType.Guest) && (_network.getGuestType() == GuestType.Shared)) {
-          _podDao.findById(vm.getPodIdToDeployIn());
+        if (_network.getTrafficType() == TrafficType.Guest && _network.getGuestType() == GuestType.Shared) {
+          HostPodDao podDao=visitor.getVirtualNetworkApplianceFactory().getPodDao();
+          podDao.findById(vm.getPodIdToDeployIn());
           final Account caller=CallContext.current().getCallingAccount();
-          final List<VlanVO> vlanList=_vlanDao.listVlansByNetworkIdAndGateway(_network.getId(),_nic.getGateway());
+          VlanDao vlanDao=visitor.getVirtualNetworkApplianceFactory().getVlanDao();
+          final List<VlanVO> vlanList=vlanDao.listVlansByNetworkIdAndGateway(_network.getId(),_nic.getGateway());
           final List<Long> vlanDbIdList=new ArrayList<Long>();
           for (          final VlanVO vlan : vlanList) {
             vlanDbIdList.add(vlan.getId());
           }
+          IpAddressManager ipAddrMgr=visitor.getVirtualNetworkApplianceFactory().getIpAddrMgr();
           if (dc.getNetworkType() == NetworkType.Basic) {
-            routerPublicIP=_ipAddrMgr.assignPublicIpAddressFromVlans(_router.getDataCenterId(),vm.getPodIdToDeployIn(),caller,Vlan.VlanType.DirectAttached,vlanDbIdList,_nic.getNetworkId(),null,false);
+            routerPublicIP=ipAddrMgr.assignPublicIpAddressFromVlans(_router.getDataCenterId(),vm.getPodIdToDeployIn(),caller,Vlan.VlanType.DirectAttached,vlanDbIdList,_nic.getNetworkId(),null,false);
           }
  else {
-            routerPublicIP=_ipAddrMgr.assignPublicIpAddressFromVlans(_router.getDataCenterId(),null,caller,Vlan.VlanType.DirectAttached,vlanDbIdList,_nic.getNetworkId(),null,false);
+            routerPublicIP=ipAddrMgr.assignPublicIpAddressFromVlans(_router.getDataCenterId(),null,caller,Vlan.VlanType.DirectAttached,vlanDbIdList,_nic.getNetworkId(),null,false);
           }
           _routerAliasIp=routerPublicIP.getAddress().addr();
         }
@@ -38,17 +45,18 @@
         s_logger.info("unable to configure dhcp for this VM.");
         return false;
       }
-      _nicAlias=new NicIpAliasVO(domr_guest_nic.getId(),_routerAliasIp,_router.getId(),CallContext.current().getCallingAccountId(),_network.getDomainId(),_nic.getNetworkId(),_nic.getGateway(),_nic.getNetmask());
-      _nicAlias.setAliasCount((routerPublicIP.getIpMacAddress()));
-      _nicIpAliasDao.persist(_nicAlias);
+      _nicAlias=new NicIpAliasVO(domrGuestNic.getId(),_routerAliasIp,_router.getId(),CallContext.current().getCallingAccountId(),_network.getDomainId(),_nic.getNetworkId(),_nic.getGateway(),_nic.getNetmask());
+      _nicAlias.setAliasCount(routerPublicIP.getIpMacAddress());
+      nicIpAliasDao.persist(_nicAlias);
       final boolean result=visitor.visit(this);
       if (result == false) {
-        final NicIpAliasVO ipAliasVO=_nicIpAliasDao.findByInstanceIdAndNetworkId(_network.getId(),_router.getId());
+        final NicIpAliasVO ipAliasVO=nicIpAliasDao.findByInstanceIdAndNetworkId(_network.getId(),_router.getId());
         final PublicIp routerPublicIPFinal=routerPublicIP;
         Transaction.execute(new TransactionCallbackNoReturn(){
           @Override public void doInTransactionWithoutResult(          final TransactionStatus status){
-            _nicIpAliasDao.expunge(ipAliasVO.getId());
-            _ipAddressDao.unassignIpAddress(routerPublicIPFinal.getId());
+            nicIpAliasDao.expunge(ipAliasVO.getId());
+            IPAddressDao ipAddressDao=visitor.getVirtualNetworkApplianceFactory().getIpAddressDao();
+            ipAddressDao.unassignIpAddress(routerPublicIPFinal.getId());
           }
         }
 );
