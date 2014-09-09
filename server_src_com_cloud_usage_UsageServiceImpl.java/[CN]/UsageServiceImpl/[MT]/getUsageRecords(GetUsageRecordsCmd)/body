@@ -6,6 +6,7 @@
   Account caller=CallContext.current().getCallingAccount();
   Long usageType=cmd.getUsageType();
   Long projectId=cmd.getProjectId();
+  String usageId=cmd.getUsageId();
   if (projectId != null) {
     if (accountId != null) {
       throw new InvalidParameterValueException("Projectid and accountId can't be specified together");
@@ -76,22 +77,107 @@
   if (usageType != null) {
     sc.addAnd("usageType",SearchCriteria.Op.EQ,usageType);
   }
-  if ((adjustedStartDate != null) && (adjustedEndDate != null) && adjustedStartDate.before(adjustedEndDate)) {
-    sc.addAnd("startDate",SearchCriteria.Op.BETWEEN,adjustedStartDate,adjustedEndDate);
-    sc.addAnd("endDate",SearchCriteria.Op.BETWEEN,adjustedStartDate,adjustedEndDate);
+  if (usageId != null) {
+    if (usageType == null) {
+      throw new InvalidParameterValueException("Usageid must be specified together with usageType");
+    }
+    Long usageDbId=null;
+switch (usageType.intValue()) {
+case UsageTypes.NETWORK_BYTES_RECEIVED:
+case UsageTypes.NETWORK_BYTES_SENT:
+case UsageTypes.RUNNING_VM:
+case UsageTypes.ALLOCATED_VM:
+case UsageTypes.VM_SNAPSHOT:
+      VMInstanceVO vm=_vmDao.findByUuidIncludingRemoved(usageId);
+    if (vm != null) {
+      usageDbId=vm.getId();
+    }
+  if (vm == null && (usageType == UsageTypes.NETWORK_BYTES_RECEIVED || usageType == UsageTypes.NETWORK_BYTES_SENT)) {
+    HostVO host=_hostDao.findByUuidIncludingRemoved(usageId);
+    if (host != null) {
+      usageDbId=host.getId();
+    }
   }
+break;
+case UsageTypes.SNAPSHOT:
+SnapshotVO snap=_snapshotDao.findByUuidIncludingRemoved(usageId);
+if (snap != null) {
+usageDbId=snap.getId();
+}
+break;
+case UsageTypes.TEMPLATE:
+case UsageTypes.ISO:
+VMTemplateVO tmpl=_vmTemplateDao.findByUuidIncludingRemoved(usageId);
+if (tmpl != null) {
+usageDbId=tmpl.getId();
+}
+break;
+case UsageTypes.LOAD_BALANCER_POLICY:
+LoadBalancerVO lb=_lbDao.findByUuidIncludingRemoved(usageId);
+if (lb != null) {
+usageDbId=lb.getId();
+}
+break;
+case UsageTypes.PORT_FORWARDING_RULE:
+PortForwardingRuleVO pf=_pfDao.findByUuidIncludingRemoved(usageId);
+if (pf != null) {
+usageDbId=pf.getId();
+}
+break;
+case UsageTypes.VOLUME:
+case UsageTypes.VM_DISK_IO_READ:
+case UsageTypes.VM_DISK_IO_WRITE:
+case UsageTypes.VM_DISK_BYTES_READ:
+case UsageTypes.VM_DISK_BYTES_WRITE:
+VolumeVO volume=_volumeDao.findByUuidIncludingRemoved(usageId);
+if (volume != null) {
+usageDbId=volume.getId();
+}
+break;
+case UsageTypes.VPN_USERS:
+VpnUserVO vpnUser=_vpnUserDao.findByUuidIncludingRemoved(usageId);
+if (vpnUser != null) {
+usageDbId=vpnUser.getId();
+}
+break;
+case UsageTypes.SECURITY_GROUP:
+SecurityGroupVO sg=_sgDao.findByUuidIncludingRemoved(usageId);
+if (sg != null) {
+usageDbId=sg.getId();
+}
+break;
+case UsageTypes.IP_ADDRESS:
+IPAddressVO ip=_ipDao.findByUuidIncludingRemoved(usageId);
+if (ip != null) {
+usageDbId=ip.getId();
+}
+break;
+default :
+break;
+}
+if (usageDbId != null) {
+sc.addAnd("usageId",SearchCriteria.Op.EQ,usageDbId);
+}
  else {
-    return new Pair<List<? extends Usage>,Integer>(new ArrayList<Usage>(),new Integer(0));
-  }
-  Pair<List<UsageVO>,Integer> usageRecords=null;
-  TransactionLegacy txn=TransactionLegacy.open(TransactionLegacy.USAGE_DB);
-  try {
-    usageRecords=_usageDao.searchAndCountAllRecords(sc,usageFilter);
-  }
+return new Pair<List<? extends Usage>,Integer>(new ArrayList<Usage>(),new Integer(0));
+}
+}
+if ((adjustedStartDate != null) && (adjustedEndDate != null) && adjustedStartDate.before(adjustedEndDate)) {
+sc.addAnd("startDate",SearchCriteria.Op.BETWEEN,adjustedStartDate,adjustedEndDate);
+sc.addAnd("endDate",SearchCriteria.Op.BETWEEN,adjustedStartDate,adjustedEndDate);
+}
+ else {
+return new Pair<List<? extends Usage>,Integer>(new ArrayList<Usage>(),new Integer(0));
+}
+Pair<List<UsageVO>,Integer> usageRecords=null;
+TransactionLegacy txn=TransactionLegacy.open(TransactionLegacy.USAGE_DB);
+try {
+usageRecords=_usageDao.searchAndCountAllRecords(sc,usageFilter);
+}
   finally {
-    txn.close();
-    TransactionLegacy swap=TransactionLegacy.open(TransactionLegacy.CLOUD_DB);
-    swap.close();
-  }
-  return new Pair<List<? extends Usage>,Integer>(usageRecords.first(),usageRecords.second());
+txn.close();
+TransactionLegacy swap=TransactionLegacy.open(TransactionLegacy.CLOUD_DB);
+swap.close();
+}
+return new Pair<List<? extends Usage>,Integer>(usageRecords.first(),usageRecords.second());
 }
