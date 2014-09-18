@@ -1,10 +1,18 @@
 def guest_network(self, config):
+    vpn_config = {'local_public_ip': config['router_guest_ip'], 'local_guest_cidr': ('%s/%s' % (config['router_guest_gateway'], config['cidr'])), 'local_public_gateway': '172.16.1.1', 'peer_gateway_ip': '10.200.200.1', 'peer_guest_cidr_list': '10.0.0.0/24', 'esp_policy': '3des-md5', 'ike_policy': '3des-md5', 'ipsec_psk': 'vpnblabla', 'ike_lifetime': 86400, 'esp_lifetime': 3600, 'create': True, 'dpd': False, 'passive': False, 'type': 'site2sitevpn', }
+    octets = config['router_guest_ip'].split('.')
+    configs = []
+    self.update_config(vpn_config)
+    assert (not file.exists(('/etc/ipsec.d/ipsec.vpn-%s.conf' % vpn_config['peer_gateway_ip'])))
     self.update_config(config)
+    self.update_config(vpn_config)
     assert ip.has_ip(('%s/%s' % (config['router_guest_ip'], config['cidr'])), config['device'])
     assert process.is_up('apache2'), 'Apache2 should be running after adding a guest network'
     assert process.is_up('dnsmasq'), 'Dnsmasq should be running after adding a guest network'
-    octets = config['router_guest_ip'].split('.')
-    configs = []
+    assert file.exists(('/etc/ipsec.d/ipsec.vpn-%s.conf' % vpn_config['peer_gateway_ip']))
+    assert file.mode_is(('/etc/ipsec.d/ipsec.vpn-%s.secrets' % vpn_config['peer_gateway_ip']), '400')
+    result = run('/usr/sbin/ipsec setup status', timeout=600, warn_only=True)
+    assert result.succeeded, ('ipsec returned non zero status %s' % config['router_guest_ip'])
     for n in range(3, 13):
         ipb = '.'.join(octets[0:3])
         ipa = ('%s.%s' % (ipb, n))
@@ -30,3 +38,4 @@ def guest_network(self, config):
     for o in configs:
         line = ('%s,%s,%s,infinite' % (o['mac_address'], o['ipv4_adress'], o['host_name']))
         assert (file.has_line('/etc/dhcphosts.txt', line) is False)
+    assert (not file.exists(('/etc/ipsec.d/ipsec.vpn-%s.conf' % vpn_config['peer_gateway_ip'])))
