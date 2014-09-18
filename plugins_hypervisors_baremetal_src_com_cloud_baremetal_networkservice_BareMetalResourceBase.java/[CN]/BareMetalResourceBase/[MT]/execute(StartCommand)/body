@@ -21,6 +21,33 @@
       return new StartAnswer(cmd,String.format("Call security group agent on vm[%s] timeout",vm.getNics()[0].getIp()));
     }
   }
+  if (provisionDoneNotificationOn) {
+    QueryBuilder<VMInstanceVO> q=QueryBuilder.create(VMInstanceVO.class);
+    q.and(q.entity().getInstanceName(),SearchCriteria.Op.EQ,vm.getName());
+    VMInstanceVO vmvo=q.find();
+    if (vmvo.getLastHostId() == null) {
+      long timeout=System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(isProvisionDoneNotificationTimeout);
+      while (timeout > System.currentTimeMillis()) {
+        try {
+          TimeUnit.SECONDS.sleep(5);
+        }
+ catch (        InterruptedException e) {
+          s_logger.warn(e.getMessage(),e);
+        }
+        q=QueryBuilder.create(VMInstanceVO.class);
+        q.and(q.entity().getInstanceName(),SearchCriteria.Op.EQ,vm.getName());
+        vmvo=q.find();
+        if (vmvo == null) {
+          return new StartAnswer(cmd,String.format("cannot find vm[name:%s] while waiting for baremtal provision done notification",vm.getName()));
+        }
+        if (VirtualMachine.State.Running == vmvo.getState()) {
+          return new StartAnswer(cmd);
+        }
+        s_logger.debug(String.format("still wait for baremetal provision done notification for vm[name:%s], current vm state is %s",vmvo.getInstanceName(),vmvo.getState()));
+      }
+      return new StartAnswer(cmd,String.format("timeout after %s seconds, no baremetal provision done notification received. vm[name:%s] failed to start",isProvisionDoneNotificationTimeout,vm.getName()));
+    }
+  }
   s_logger.debug("Start bare metal vm " + vm.getName() + "successfully");
   _vmName=vm.getName();
   return new StartAnswer(cmd);
