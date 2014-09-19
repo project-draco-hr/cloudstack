@@ -11,6 +11,7 @@
     sc.addAnd("type",SearchCriteria.Op.NEQ,Host.Type.TrafficMonitor.toString());
     sc.addAnd("type",SearchCriteria.Op.NEQ,Host.Type.SecondaryStorageVM.toString());
     List<HostVO> hosts=_hostDao.search(sc,null);
+    HashMap metrics=new HashMap<String,Integer>();
     for (    HostVO host : hosts) {
       List<UserVmVO> vms=_userVmDao.listRunningByHostId(host.getId());
       List<Long> vmIds=new ArrayList<Long>();
@@ -38,6 +39,34 @@
               statsInMemory.setDiskWriteIOs(statsInMemory.getDiskWriteIOs() + statsForCurrentIteration.getDiskWriteIOs());
               statsInMemory.setDiskReadKBs(statsInMemory.getDiskReadKBs() + statsForCurrentIteration.getDiskReadKBs());
               _VmStats.put(vmId,statsInMemory);
+            }
+            if (externalStatsEnabled) {
+              VMInstanceVO vmVO=_vmInstance.findById(vmId);
+              String vmName=vmVO.getUuid();
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".cpu.num",statsForCurrentIteration.getNumCPUs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".cpu.utilization",statsForCurrentIteration.getCPUUtilization());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".network.read_kbs",statsForCurrentIteration.getNetworkReadKBs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".network.write_kbs",statsForCurrentIteration.getNetworkWriteKBs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".disk.write_kbs",statsForCurrentIteration.getDiskWriteKBs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".disk.read_kbs",statsForCurrentIteration.getDiskReadKBs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".disk.write_iops",statsForCurrentIteration.getDiskWriteIOs());
+              metrics.put(externalStatsPrefix + "cloudstack.stats.instances." + vmName+ ".disk.read_iops",statsForCurrentIteration.getDiskReadIOs());
+            }
+          }
+          if (!metrics.isEmpty()) {
+            if (externalStatsType != null && externalStatsType == externalStatsProtocol.GRAPHITE) {
+              if (externalStatsPort == -1) {
+                externalStatsPort=2003;
+              }
+              s_logger.debug("Sending VmStats of host " + host.getId() + " to Graphite host "+ externalStatsHost+ ":"+ externalStatsPort);
+              try {
+                GraphiteClient g=new GraphiteClient(externalStatsHost,externalStatsPort);
+                g.sendMetrics(metrics);
+              }
+ catch (              GraphiteException e) {
+                s_logger.debug("Failed sending VmStats to Graphite host " + externalStatsHost + ":"+ externalStatsPort+ ": "+ e.getMessage());
+              }
+              metrics.clear();
             }
           }
         }
