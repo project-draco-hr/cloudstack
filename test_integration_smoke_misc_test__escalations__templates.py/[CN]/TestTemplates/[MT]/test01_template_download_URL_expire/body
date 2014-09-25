@@ -1,0 +1,35 @@
+@attr(tags=['advanced', 'advancedsg', 'sg'], required_hardware='true')
+def test01_template_download_URL_expire(self):
+    "\n        @Desc:Template files are deleted from secondary storage after download URL expires\n        Step1:Deploy vm with default cent os template\n        Step2:Stop the vm\n        Step3:Create template from the vm's root volume\n        Step4:Extract Template and wait for the download url to expire\n        Step5:Deploy another vm with the template created at Step3\n        Step6:Verify that vm deployment succeeds\n        "
+    params = ['extract.url.expiration.interval', 'extract.url.cleanup.interval']
+    wait_time = 0
+    for param in params:
+        config = Configurations.list(self.apiClient, name=param)
+        self.assertEqual(validateList(config)[0], PASS, 'Config list returned invalid response')
+        wait_time = (wait_time + int(config[0].value))
+    self.debug(('Total wait time for url expiry: %s' % wait_time))
+    self.virtual_machine = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+    self.assertIsNotNone(self.virtual_machine, 'Virtual Machine creation failed')
+    self.cleanup.append(self.virtual_machine)
+    self.virtual_machine.stop(self.userapiclient)
+    list_volume = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(list_volume)[0], PASS, 'list volumes with type ROOT returned invalid list')
+    self.volume = list_volume[0]
+    self.create_template = Template.create(self.userapiclient, self.services['template'], volumeid=self.volume.id, account=self.account.name, domainid=self.account.domainid)
+    self.assertIsNotNone(self.create_template, 'Failed to create template from root volume')
+    self.cleanup.append(self.create_template)
+    '\n        Extract template\n        '
+    try:
+        Template.extract(self.userapiclient, self.create_template.id, 'HTTP_DOWNLOAD', self.zone.id)
+    except Exception as e:
+        self.fail(('Extract template failed with error %s' % e))
+    self.debug(('Waiting for %s seconds for url to expire' % repr((wait_time + 20))))
+    time.sleep((wait_time + 20))
+    self.debug(('Waited for %s seconds for url to expire' % repr((wait_time + 20))))
+    '\n        Deploy vm with the template created from the volume. After url expiration interval only\n        url should be deleted not the template. To validate this deploy vm with the template\n        '
+    try:
+        self.vm = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.create_template.id)
+        self.cleanup.append(self.vm)
+    except Exception as e:
+        self.fail(('Template is automatically deleted after URL expired.                      So vm deployment failed with error: %s' % e))
+    return
