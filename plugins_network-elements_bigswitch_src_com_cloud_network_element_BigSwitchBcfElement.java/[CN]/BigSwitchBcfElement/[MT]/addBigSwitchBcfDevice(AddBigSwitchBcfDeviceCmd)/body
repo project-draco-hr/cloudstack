@@ -1,0 +1,86 @@
+{
+  BigSwitchBcfDeviceVO newBcfDevice;
+  bcfUtilsInit();
+  ServerResource resource=new BigSwitchBcfResource();
+  final String deviceName=BcfConstants.BigSwitchBcf.getName();
+  NetworkDevice networkDevice=NetworkDevice.getNetworkDevice(deviceName);
+  final Long physicalNetworkId=cmd.getPhysicalNetworkId();
+  final String hostname=cmd.getHost();
+  final String username=cmd.getUsername();
+  final String password=cmd.getPassword();
+  final Boolean nat=cmd.getNat();
+  PhysicalNetworkVO physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (physicalNetwork == null) {
+    throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+  }
+  long zoneId=physicalNetwork.getDataCenterId();
+  final PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(physicalNetwork.getId(),networkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProvider == null) {
+    throw new CloudRuntimeException("Network Service Provider: " + networkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+ else   if (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  ntwkSvcProvider.setFirewallServiceProvided(true);
+  ntwkSvcProvider.setGatewayServiceProvided(true);
+  ntwkSvcProvider.setNetworkAclServiceProvided(true);
+  ntwkSvcProvider.setSourcenatServiceProvided(true);
+  ntwkSvcProvider.setStaticnatServiceProvided(true);
+  if (_bigswitchBcfDao.listByPhysicalNetwork(physicalNetworkId).size() > 1) {
+    throw new CloudRuntimeException("At most two BCF controllers can be configured");
+  }
+  DataCenterVO zone=_zoneDao.findById(physicalNetwork.getDataCenterId());
+  String zoneName;
+  if (zone != null) {
+    zoneName=zone.getName();
+  }
+ else {
+    zoneName=String.valueOf(zoneId);
+  }
+  Boolean natNow=_bcfUtils.isNatEnabled();
+  if (natNow != null)   if (!nat && natNow) {
+    throw new CloudRuntimeException("NAT is enabled in existing controller. Enable NAT for new controller or remove existing controller first.");
+  }
+ else   if (nat && !natNow) {
+    throw new CloudRuntimeException("NAT is disabled in existing controller. Disable NAT for new controller or remove existing controller first.");
+  }
+  Map<String,String> params=new HashMap<String,String>();
+  params.put("guid",UUID.randomUUID().toString());
+  params.put("zoneId",zoneName);
+  params.put("physicalNetworkId",String.valueOf(physicalNetwork.getId()));
+  params.put("name","BigSwitch Controller - " + cmd.getHost());
+  params.put("hostname",cmd.getHost());
+  params.put("username",username);
+  params.put("password",password);
+  params.put("nat",nat.toString());
+  params.put("transportzoneisotype",physicalNetwork.getIsolationMethods().get(0).toLowerCase());
+  Map<String,Object> hostdetails=new HashMap<String,Object>();
+  hostdetails.putAll(params);
+  try {
+    resource.configure(cmd.getHost(),hostdetails);
+    TopologyData topo=_bcfUtils.getTopology(physicalNetwork.getId());
+    ((BigSwitchBcfResource)resource).setTopology(topo);
+    final Host host=_resourceMgr.addHost(zoneId,resource,Host.Type.L2Networking,params);
+    if (host != null) {
+      newBcfDevice=Transaction.execute(new TransactionCallback<BigSwitchBcfDeviceVO>(){
+        @Override public BigSwitchBcfDeviceVO doInTransaction(        TransactionStatus status){
+          BigSwitchBcfDeviceVO bigswitchBcfDevice=new BigSwitchBcfDeviceVO(host.getId(),physicalNetworkId,ntwkSvcProvider.getProviderName(),deviceName,hostname,username,password,nat,BigSwitchBcfApi.HASH_IGNORE);
+          _bigswitchBcfDao.persist(bigswitchBcfDevice);
+          DetailVO detail=new DetailVO(host.getId(),"bigswitchbcfdeviceid",String.valueOf(bigswitchBcfDevice.getId()));
+          _hostDetailsDao.persist(detail);
+          return bigswitchBcfDevice;
+        }
+      }
+);
+    }
+ else {
+      throw new CloudRuntimeException("Failed to add BigSwitch BCF Controller Device due to internal error.");
+    }
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException(e.getMessage());
+  }
+  HostVO bigswitchBcfHost=_hostDao.findById(newBcfDevice.getHostId());
+  _bcfUtils.syncTopologyToBcfHost(bigswitchBcfHost,nat);
+  return newBcfDevice;
+}

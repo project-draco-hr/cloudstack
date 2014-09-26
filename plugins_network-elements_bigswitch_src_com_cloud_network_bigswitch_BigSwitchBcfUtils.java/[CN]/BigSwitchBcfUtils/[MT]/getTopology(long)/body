@@ -1,0 +1,135 @@
+{
+  List<NetworkVO> networks;
+  List<NicVO> nics;
+  networks=_networkDao.listByPhysicalNetworkTrafficType(physicalNetworkId,TrafficType.Guest);
+  TopologyData topo=new TopologyData();
+  if (networks != null) {
+    if (!(networks.isEmpty()) && isNatEnabled() != null && isNatEnabled()) {
+      NetworkVO pubNet=getPublicNetwork(physicalNetworkId);
+      SearchCriteria<VlanVO> sc=_vlanDao.createSearchCriteria();
+      sc.setParameters("network_id",pubNet.getId());
+      VlanVO vlanVO=_vlanDao.findOneBy(sc);
+      TopologyData.Network network=topo.new Network();
+      network.setId("external");
+      network.setName("external");
+      network.setTenantId("external");
+      network.setTenantName("external");
+      String pubVlan=null;
+      try {
+        pubVlan=BroadcastDomainType.getValue(vlanVO.getVlanTag());
+        if (StringUtils.isNumeric(pubVlan)) {
+          network.setVlan(Integer.valueOf(pubVlan));
+        }
+ else {
+          pubVlan="0";
+        }
+      }
+ catch (      URISyntaxException e) {
+        e.printStackTrace();
+      }
+      topo.addNetwork(network);
+    }
+  }
+  HashMap<String,RouterData> routerMap=new HashMap<String,RouterData>();
+  for (  NetworkVO netVO : networks) {
+    TopologyData.Network network=topo.new Network();
+    network.setId(netVO.getUuid());
+    network.setName(netVO.getName());
+    Integer vlan=null;
+    if (netVO.getBroadcastUri() != null) {
+      String vlanStr=BroadcastDomainType.getValue(netVO.getBroadcastUri());
+      if (StringUtils.isNumeric(vlanStr)) {
+        vlan=Integer.valueOf(vlanStr);
+      }
+ else {
+        vlan=0;
+      }
+    }
+    network.setVlan(vlan);
+    network.setState(netVO.getState().name());
+    nics=_nicDao.listByNetworkId(netVO.getId());
+    List<Port> ports=new ArrayList<Port>();
+    String tenantId=null;
+    String tenantName=null;
+    Vpc vpc=null;
+    if (netVO.getVpcId() != null) {
+      vpc=_vpcDao.acquireInLockTable(netVO.getVpcId());
+    }
+    if (vpc != null) {
+      tenantId=vpc.getUuid();
+      tenantName=vpc.getName();
+    }
+ else {
+      tenantId=netVO.getUuid();
+      tenantName=netVO.getName();
+    }
+    for (    NicVO nic : nics) {
+      NetworkData netData=new NetworkData();
+      TopologyData.Port p=topo.new Port();
+      p.setAttachmentInfo(netData.new AttachmentInfo(nic.getUuid(),nic.getMacAddress()));
+      VMInstanceVO vm=_vmDao.findById(nic.getInstanceId());
+      HostVO host=_hostDao.findById(vm.getHostId());
+      if (host == null) {
+        continue;
+      }
+      String hostname=host.getName();
+      long zoneId=netVO.getDataCenterId();
+      String vmwareVswitchLabel=_networkModel.getDefaultGuestTrafficLabel(zoneId,HypervisorType.VMware);
+      String[] labelArray=null;
+      String vswitchName=null;
+      if (vmwareVswitchLabel != null) {
+        labelArray=vmwareVswitchLabel.split(",");
+        vswitchName=labelArray[0];
+      }
+      String pgName="";
+      if (host.getHypervisorType() == HypervisorType.KVM) {
+        pgName=hostname;
+      }
+ else       if (host.getHypervisorType() == HypervisorType.VMware) {
+        pgName=hostname + "-" + vswitchName;
+      }
+      p.setHostId(pgName);
+      p.setSegmentInfo(netData.new SegmentInfo(BroadcastDomainType.Vlan.name(),vlan));
+      p.setOwner(BigSwitchBcfApi.getCloudstackInstanceId());
+      List<AttachmentData.Attachment.IpAddress> ipList=new ArrayList<AttachmentData.Attachment.IpAddress>();
+      ipList.add(new AttachmentData().getAttachment().new IpAddress(nic.getIp4Address()));
+      p.setIpAddresses(ipList);
+      p.setId(nic.getUuid());
+      p.setMac(nic.getMacAddress());
+      netData.getNetwork().setId(network.getId());
+      netData.getNetwork().setName(network.getName());
+      netData.getNetwork().setTenantId(tenantId);
+      netData.getNetwork().setTenantName(tenantName);
+      netData.getNetwork().setState(netVO.getState().name());
+      p.setNetwork(netData.getNetwork());
+      ports.add(p);
+    }
+    network.setTenantId(tenantId);
+    network.setTenantName(tenantName);
+    network.setPorts(ports);
+    topo.addNetwork(network);
+    RouterData routerData;
+    if (tenantId != null) {
+      if (!routerMap.containsKey(tenantId)) {
+        routerData=new RouterData(tenantId);
+        routerMap.put(tenantId,routerData);
+      }
+ else {
+        routerData=routerMap.get(tenantId);
+      }
+      routerData.getRouter().getAcls().addAll(listACLbyNetwork(netVO));
+      if (vpc != null) {
+        routerData.getRouter().addExternalGateway(getPublicIpByVpc(vpc));
+      }
+ else {
+        routerData.getRouter().addExternalGateway(getPublicIpByNetwork(netVO));
+      }
+      RouterInterfaceData intf=new RouterInterfaceData(tenantId,netVO.getGateway(),netVO.getCidr(),netVO.getUuid(),netVO.getName());
+      routerData.getRouter().addInterface(intf);
+    }
+  }
+  for (  RouterData rd : routerMap.values()) {
+    topo.addRouter(rd.getRouter());
+  }
+  return topo;
+}

@@ -1,0 +1,63 @@
+@attr(tags=['advancedns'])
+def test_vpc_network_bcf(self):
+    'Test VPC workflow with BigSwitch BCF plugin\n           1. Create a VPC with three networks\n           2. Create one VM on each of the three networks\n           3. Add firewall rule to make virtual router pingable\n           4. Test ping to virtual router public IP\n           5. Add static NAT to vm_1, with firewall rule to allow ssh\n           6. Add NAT rule to allow ping between net1 and net2\n           7. Ssh to vm_1, ping vm_2 private address, should succeed\n           8. continue ... ping vm_3 private address, should fail\n           9. continue ... ping Internet, should succeed\n        '
+    self.debug(('STEP 1: Creating VPC with VPC offering: %s' % self.vpc_offering.id))
+    vpc = VPC.create(self.apiclient, self.services['vpc'], accountid=self.account.name, domainid=self.account.domainid, vpcofferingid=self.vpc_offering.id, zoneid=self.zone.id)
+    self.debug(('Created VPC with ID: %s' % self.vpc.id))
+    self.debug(('Creating networks with vpc network offering: %s' % self.vpc_network_offering.id))
+    net1 = Network.create(self.apiclient, self.services['vpc_network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.vpc_network_offering.id, zoneid=self.zone.id, gateway='10.0.100.1', vpcid=vpc.id)
+    self.debug(('Created network with ID: %s' % net1.id))
+    net2 = Network.create(self.apiclient, self.services['vpc_network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.vpc_network_offering.id, zoneid=self.zone.id, gateway='10.0.101.1', vpcid=vpc.id)
+    self.debug(('Created network with ID: %s' % net2.id))
+    net3 = Network.create(self.apiclient, self.services['vpc_network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.vpc_network_offering.id, zoneid=self.zone.id, gateway='10.0.102.0', vpcid=vpc.id)
+    self.debug(('Created network with ID: %s' % net3.id))
+    self.debug('STEP 2: Deploying VMs in networks')
+    vm_1 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(net1.id)])
+    self.debug(('Deployed VM in network: %s' % net1.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=vm_1.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % vm_1.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    vm_2 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(net2.id)])
+    self.debug(('Deployed VM in network: %s' % net2.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=vm_2.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % vm_2.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    vm_3 = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(net3.id)])
+    self.debug(('Deployed VM in network: %s' % net3.id))
+    list_vm_response = VirtualMachine.list(self.apiclient, id=vm_3.id)
+    self.debug(('Verify listVirtualMachines response for virtual machine: %s' % vm_3.id))
+    self.assertEqual(isinstance(list_vm_response, list), True, 'Check list response returns a valid list')
+    vm_response = list_vm_response[0]
+    self.assertEqual(vm_response.state, 'Running', 'VM state should be running after deployment')
+    self.debug('STEP 3: Add FW rule to allow source nat ping')
+    src_nat_list = PublicIPAddress.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True, issourcenat=True, vpcid=vpc.id)
+    self.assertEqual(isinstance(src_nat_list, list), True, 'List Public IP should return a valid source NAT')
+    self.assertNotEqual(len(src_nat_list), 0, 'Length of response from listPublicIp should not be 0')
+    src_nat = src_nat_list[0]
+    fw_rule_icmp = FireWallRule.create(self.apiclient, ipaddressid=src_nat.id, protocol='ICMP', cidrlist=['0.0.0.0/0'])
+    self.debug(('Created firewall rule: %s' % fw_rule_icmp.id))
+    self.debug(('STEP 4: Trying to ping source NAT %s' % src_nat.ipaddress))
+    try:
+        self.debug(('Trying to ping source NAT %s' % src_nat.ipaddress))
+        result = subprocess.call(['ping', '-c 1', src_nat.ipaddress])
+        self.debug(('Ping result: %s' % result))
+        self.assertEqual(result, 0, 'Check if ping is successful or not')
+    except Exception as e:
+        self.fail(('Ping failed for source NAT %s (%s)' % (src_nat.ipaddress, e)))
+    self.debug('STEP 5: Add static NAT to vm_1 with FW rule to allow SSH')
+    floating_ip_1 = PublicIPAddress.create(self.apiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=net1.id, vpcid=vpc.id)
+    self.debug(('Associated %s with network %s' % (floating_ip_1.ipaddress, net1.id)))
+    NATRule.create(self.apiclient, vm_1, self.services['natrule'], ipaddressid=floating_ip_1.ipaddress.id, openfirewall=False, networkid=net1.id, vpcid=vpc.id)
+    try:
+        self.debug(('STEP 6: SSH into vm_1: %s' % floating_ip_1))
+        ssh = vm_1.get_ssh_client(ipaddress=floating_ip_1.ipaddress.ipaddress)
+    except Exception as e:
+        self.fail(('SSH Access failed: %s' % e))
+    VirtualMachine.delete(vm_1, self.apiclient, expunge=True)
+    VirtualMachine.delete(vm_2, self.apiclient, expunge=True)
+    Network.delete(self.network, self.apiclient)
+    return

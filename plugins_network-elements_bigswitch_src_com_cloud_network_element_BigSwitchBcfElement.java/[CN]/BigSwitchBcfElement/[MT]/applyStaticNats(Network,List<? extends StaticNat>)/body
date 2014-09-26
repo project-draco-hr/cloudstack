@@ -1,0 +1,32 @@
+{
+  bcfUtilsInit();
+  _bcfUtils.listACLbyNetwork(network);
+  Vpc vpc=null;
+  if (network.getVpcId() != null) {
+    vpc=_vpcDao.acquireInLockTable(network.getVpcId());
+  }
+  String tenantId;
+  if (vpc != null) {
+    tenantId=vpc.getUuid();
+    _vpcDao.releaseFromLockTable(vpc.getId());
+  }
+ else {
+    tenantId=network.getUuid();
+  }
+  for (  StaticNat rule : rules) {
+    String srcIp=_ipAddressDao.findById(rule.getSourceIpAddressId()).getAddress().addr();
+    String dstIp=rule.getDestIpAddress();
+    String mac=rule.getSourceMacAddress();
+    if (!rule.isForRevoke()) {
+      s_logger.debug("BCF enables static NAT for public IP: " + srcIp + " private IP "+ dstIp+ " mac "+ mac);
+      CreateBcfStaticNatCommand cmd=new CreateBcfStaticNatCommand(tenantId,network.getUuid(),dstIp,srcIp,mac);
+      _bcfUtils.sendBcfCommandWithNetworkSyncCheck(cmd,network);
+    }
+ else {
+      s_logger.debug("BCF removes static NAT for public IP: " + srcIp + " private IP "+ dstIp+ " mac "+ mac);
+      DeleteBcfStaticNatCommand cmd=new DeleteBcfStaticNatCommand(tenantId,srcIp);
+      _bcfUtils.sendBcfCommandWithNetworkSyncCheck(cmd,network);
+    }
+  }
+  return true;
+}

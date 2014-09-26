@@ -1,0 +1,27 @@
+{
+  ControlClusterData cluster=getControlClusterData(network.getPhysicalNetworkId());
+  if (cluster.getMaster() == null) {
+    return new BcfAnswer(cmd,new CloudRuntimeException("Big Switch Network controller temporarily unavailable"));
+  }
+  TopologyData topo=getTopology(network.getPhysicalNetworkId());
+  cmd.setTopology(topo);
+  BcfAnswer answer=(BcfAnswer)_agentMgr.easySend(cluster.getMaster().getId(),cmd);
+  if (answer == null || !answer.getResult()) {
+    s_logger.error("BCF API Command failed");
+    throw new IllegalArgumentException("Failed API call to Big Switch Network plugin");
+  }
+  String newHash=answer.getHash();
+  if (cmd.is_topologySyncRequested()) {
+    newHash=syncTopologyToBcfHost(cluster.getMaster());
+  }
+  if (newHash != null) {
+    commitTopologyHash(network.getPhysicalNetworkId(),newHash);
+  }
+  HostVO slave=cluster.getSlave();
+  if (slave != null) {
+    TopologyData newTopo=getTopology(network.getPhysicalNetworkId());
+    CacheBcfTopologyCommand cacheCmd=new CacheBcfTopologyCommand(newTopo);
+    _agentMgr.easySend(cluster.getSlave().getId(),cacheCmd);
+  }
+  return answer;
+}

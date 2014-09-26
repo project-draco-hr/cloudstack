@@ -1,0 +1,43 @@
+{
+  bcfUtilsInit();
+  Vpc vpc=null;
+  if (network.getVpcId() != null) {
+    vpc=_vpcDao.acquireInLockTable(network.getVpcId());
+  }
+  String networkId=network.getUuid();
+  String tenantId;
+  String tenantName;
+  if (vpc != null) {
+    tenantId=vpc.getUuid();
+    tenantName=vpc.getName();
+    boolean released=_vpcDao.releaseFromLockTable(vpc.getId());
+    s_logger.debug("BCF guru release lock vpc id: " + vpc.getId() + " released? "+ released);
+  }
+ else {
+    tenantId=networkId;
+    tenantName=network.getName();
+  }
+  String hostname=dest.getHost().getName();
+  long zoneId=network.getDataCenterId();
+  String vmwareVswitchLabel=_networkModel.getDefaultGuestTrafficLabel(zoneId,HypervisorType.VMware);
+  String[] labelArray=null;
+  String vswitchName=null;
+  if (vmwareVswitchLabel != null) {
+    labelArray=vmwareVswitchLabel.split(",");
+    vswitchName=labelArray[0];
+  }
+  String pgName="";
+  if (dest.getHost().getHypervisorType() == HypervisorType.KVM) {
+    pgName=hostname;
+  }
+ else   if (dest.getHost().getHypervisorType() == HypervisorType.VMware) {
+    pgName=hostname + "-" + vswitchName;
+  }
+  String nicId=nic.getUuid();
+  Integer vlan=Integer.valueOf(BroadcastDomainType.getValue(nic.getIsolationUri()));
+  String ipv4=nic.getIp4Address();
+  String mac=nic.getMacAddress();
+  CreateBcfAttachmentCommand cmd=new CreateBcfAttachmentCommand(tenantId,tenantName,networkId,pgName,nicId,vlan,ipv4,mac);
+  _bcfUtils.sendBcfCommandWithNetworkSyncCheck(cmd,network);
+  return true;
+}
