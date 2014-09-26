@@ -19,8 +19,14 @@ def setUpClass(cls):
         cls.k1passthroughgpuhosts = 0
         cls.k2passthroughgpuhosts = 0
         cls.nongpuhosts = []
-        k2hosts = 0
-        k1hosts = 0
+        cls.k2hosts = 0
+        cls.k1hosts = 0
+        cls.k100_vgpu_service_offering = []
+        cls.k200_vgpu_service_offering = []
+        cls.vm_k1_card = []
+        cls.vm_k2_card = []
+        cls.vm2_k2_card = []
+        cls.vmlifecycletest = 0
         for ghost in hosts:
             if (ghost.hypervisorversion >= '6.2.0'):
                 sshClient = SshClient(host=ghost.ipaddress, port=22, user='root', passwd=cls.testdata['host_password'])
@@ -34,7 +40,7 @@ def setUpClass(cls):
                 if ((k2card == 0) and (k1card == 0)):
                     cls.nongpuhosts.append(ghost.ipaddress)
                 if (k2card != 0):
-                    k2hosts = (k2hosts + 1)
+                    cls.k2hosts = (cls.k2hosts + 1)
                     k260q = len(sshClient.execute('xe vgpu-type-list model-name="GRID K260Q"'))
                     k240q = len(sshClient.execute('xe vgpu-type-list model-name="GRID K240Q"'))
                     k220q = len(sshClient.execute('xe vgpu-type-list model-name="GRID K220Q"'))
@@ -54,7 +60,7 @@ def setUpClass(cls):
                         if (k2passthrough != 0):
                             cls.k2passthroughgpuhosts = (cls.k2passthroughgpuhosts + 1)
                 if (k1card != 0):
-                    k1hosts = (k1hosts + 1)
+                    cls.k1hosts = (cls.k1hosts + 1)
                     k100 = len(sshClient.execute('xe vgpu-type-list model-name="GRID K100"'))
                     k120q = len(sshClient.execute('xe vgpu-type-list model-name="GRID K120Q"'))
                     k140q = len(sshClient.execute('xe vgpu-type-list model-name="GRID K140Q"'))
@@ -70,7 +76,7 @@ def setUpClass(cls):
                             cls.k100gpuhosts = (cls.k100gpuhosts + 1)
                         if (k1passthrough != 0):
                             cls.k1passthroughgpuhosts = (cls.k1passthroughgpuhosts + 1)
-    if ((k1hosts == 0) and (k2hosts == 0)):
+    if ((cls.k2hosts == 0) and (cls.k1hosts == 0)):
         raise unittest.SkipTest('No XenServer available with GPU Drivers installed')
     cls.zone = get_zone(cls.apiclient, cls.testClient.getZoneForTests())
     cls.domain = get_domain(cls.apiclient)
@@ -78,6 +84,8 @@ def setUpClass(cls):
     cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
     cls.template = get_windows_template(cls.apiclient, cls.zone.id, ostype_desc='Windows 8 (64-bit)')
     if (cls.template == FAILED):
+        if ('http://pleaseupdateURL/dummy.vhd' in cls.testdata['vgpu']['templateregister1']['url']):
+            raise unittest.SkipTest('Check Test Data file if it has the valid template URL')
         cls.template = Template.register(cls.apiclient, cls.testdata['vgpu']['templateregister1'], hypervisor='XenServer', zoneid=cls.zone.id, domainid=cls.account.domainid, account=cls.account.name)
         timeout = cls.testdata['vgpu']['timeout']
         while True:
@@ -91,40 +99,6 @@ def setUpClass(cls):
             if (template_response.isready == True):
                 break
             if (timeout == 0):
-                raise unittest.SkipTest(('Failed to download template(ID: %s)' % template_response.id))
+                raise unittest.SkipTest(('Failed to download template(ID: %s). ' % template_response.id))
             timeout = (timeout - 1)
-    '\n        Create Service Offerings for Both K1 and K2 cards to be used for VM life cycle tests\n        '
-    if (k1hosts != 0):
-        if (cls.k140qgpuhosts != 0):
-            gtype = 'GRID K140Q'
-        elif (cls.k120qgpuhosts != 0):
-            gtype = 'GRID K120Q'
-        elif (cls.k100gpuhosts != 0):
-            gtype = 'GRID K100'
-        else:
-            gtype = 'passthrough'
-        cls.testdata['vgpu']['service_offerings'][gtype]['serviceofferingdetails'] = [{'pciDevice': 'Group of NVIDIA Corporation GK107GL [GRID K1] GPUs', }, {'vgpuType': gtype, }]
-        try:
-            cls.k100_vgpu_service_offering = ServiceOffering.create(cls.apiclient, cls.testdata['vgpu']['service_offerings'][gtype])
-        except Exception as e:
-            cls.fail(('Failed to create the service offering, %s' % e))
-    if (k2hosts != 0):
-        if (cls.k240qgpuhosts != 0):
-            gtype = 'GRID K240Q'
-        elif (cls.k220qgpuhosts != 0):
-            gtype = 'GRID K220Q'
-        elif (cls.k200gpuhosts != 0):
-            gtype = 'GRID K200'
-        else:
-            gtype = 'passthrough'
-        cls.testdata['vgpu']['service_offerings'][gtype]['serviceofferingdetails'] = [{'pciDevice': 'Group of NVIDIA Corporation GK104GL [GRID K2] GPUs', }, {'vgpuType': gtype, }]
-        try:
-            cls.k200_vgpu_service_offering = ServiceOffering.create(cls.apiclient, cls.testdata['vgpu']['service_offerings'][gtype])
-        except Exception as e:
-            cls.fail(('Failed to create the service offering, %s' % e))
-    '\n        Create Virtual Machines for Both K1 and K2 cards to be used for VM life cycle tests\n        '
-    if (k1hosts != 0):
-        cls.vm_k1_card = VirtualMachine.create(cls.apiclient, cls.testdata['virtual_machine'], accountid=cls.account.name, zoneid=cls.zone.id, domainid=cls.account.domainid, serviceofferingid=cls.k100_vgpu_service_offering.id, templateid=cls.template.id)
-    if (k2hosts != 0):
-        cls.vm_k2_card = VirtualMachine.create(cls.apiclient, cls.testdata['virtual_machine'], accountid=cls.account.name, zoneid=cls.zone.id, domainid=cls.account.domainid, serviceofferingid=cls.k200_vgpu_service_offering.id, templateid=cls.template.id)
-    cls._cleanup = [cls.account, cls.k100_vgpu_service_offering, cls.k200_vgpu_service_offering]
+    cls._cleanup = [cls.account]
