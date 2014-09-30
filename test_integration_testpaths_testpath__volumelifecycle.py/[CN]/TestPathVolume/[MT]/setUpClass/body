@@ -1,0 +1,54 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestPathVolume, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient)
+    cls.testdata['mode'] = cls.zone.networktype
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+    cls.testdata['template']['ostypeid'] = cls.template.ostypeid
+    if (cls.template == FAILED):
+        cls.fail(('get_template() failed to return template with description %s' % cls.testdata['ostype']))
+    cls._cleanup = []
+    try:
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
+        cls._cleanup.append(cls.account)
+        cls.service_offering_1 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offerings']['small'])
+        cls._cleanup.append(cls.service_offering_1)
+        cls.disk_offering_1 = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'])
+        cls._cleanup.append(cls.disk_offering_1)
+        cls.list_storage = StoragePool.list(cls.apiclient, scope='ZONE')
+        if cls.list_storage:
+            cls.zone_wide_storage = cls.list_storage[0]
+            cls.debug(('zone wide storage id is %s' % cls.zone_wide_storage.id))
+            cls.testdata['tags'] = 'zp'
+            update1 = StoragePool.update(cls.apiclient, id=cls.zone_wide_storage.id, tags=cls.testdata['tags'])
+            cls.debug(('Storage %s pool tag%s' % (cls.zone_wide_storage.id, update1.tags)))
+            cls.testdata['service_offerings']['tags'] = 'zp'
+            cls.tagged_so = ServiceOffering.create(cls.apiclient, cls.testdata['service_offerings'])
+            cls.testdata['service_offerings']['tags'] = ' '
+            cls._cleanup.append(cls.tagged_so)
+            cls.testdata['disk_offering']['tags'] = 'zp'
+            cls.disk_offering_tagged = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'])
+            cls._cleanup.append(cls.disk_offering_tagged)
+        else:
+            cls.debug('No zone wide storage found')
+        if cls.zone.localstorageenabled:
+            cls.testdata['disk_offering']['tags'] = ' '
+            cls.testdata['service_offerings']['storagetype'] = 'local'
+            cls.service_offering_2 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offerings'])
+            cls._cleanup.append(cls.service_offering_2)
+            cls.testdata['disk_offering']['storagetype'] = 'local'
+            cls.disk_offering_local = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'])
+            cls._cleanup.append(cls.disk_offering_local)
+            cls.testdata['disk_offering']['storagetype'] = ' '
+        else:
+            cls.debug('No local storage found')
+        cls.userapiclient = testClient.getUserApiClient(UserName=cls.account.name, DomainName=cls.account.domain)
+        response = User.login(cls.userapiclient, username=cls.account.name, password=cls.testdata['account']['password'])
+        assert (response.sessionkey is not None)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return
