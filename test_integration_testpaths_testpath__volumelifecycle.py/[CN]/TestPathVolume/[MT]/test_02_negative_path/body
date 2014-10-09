@@ -1,0 +1,86 @@
+@attr(tags=['advanced', 'advancedsg', 'basic'], required_hardware='false')
+def test_02_negative_path(self):
+    '\n        negative test for volume life cycle\n        # 1. Deploy a vm [vm1] with shared storage and  data disk\n        #v1. Create VM2 with local storage offering disk offerings\n        # 2.TBD\n        # 3. Detach the data disk from VM1 and Download the volume\n        # 4.TBD\n        # 5. Attach volume with deviceid = 0\n        # 6. Attach volume, specify a VM which is destroyed\n        # 7.TBD\n        # 8.TBD\n        # 9.TBD\n        # 10.TBD\n        # 11.Upload the volume from T3 by providing the URL of the downloaded\n             volume, but specify a wrong format (not supported by the\n             hypervisor)\n        # 12.Upload the same volume from T4 by providing a wrong URL\n        # 13.Upload volume, provide wrong checksum\n        # 14.Upload a volume when maximum limit for the account is reached\n        # 15.TBD\n        # 16.Upload volume with all correct parameters\n             (covered in positive test path)\n        # 17.TBD\n        # 18.TBD\n        # 19.Now attach the volume with all correct parameters\n            (covered in positive test path)\n        # 20.Destroy and expunge all VMs\n\n        '
+    self.virtual_machine_1 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_1.id, zoneid=self.zone.id, diskofferingid=self.disk_offering_1.id, mode=self.testdata['mode'])
+    verify_vm(self, self.virtual_machine_1.id)
+    list_volume = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='DATADISK')
+    self.assertEqual(validateList(list_volume)[0], PASS, ('Check List volume response for vm id  %s' % self.virtual_machine_1.id))
+    list_data_volume_for_vm1 = list_volume[0]
+    self.assertEqual(len(list_volume), 1, ('There is no data disk attached to vm id:%s' % self.virtual_machine_1.id))
+    self.assertEqual(list_data_volume_for_vm1.virtualmachineid, str(self.virtual_machine_1.id), 'Check if volume state (attached) is reflected')
+    if self.zone.localstorageenabled:
+        self.virtual_machine_local_2 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_2.id, zoneid=self.zone.id, mode=self.testdata['mode'])
+        verify_vm(self, self.virtual_machine_local_2.id)
+    self.virtual_machine_1.detach_volume(self.userapiclient, volume=list_data_volume_for_vm1)
+    verify_detach_volume(self, self.virtual_machine_1.id, list_data_volume_for_vm1.id)
+    self.extract_volume = Volume.extract(self.userapiclient, volume_id=list_data_volume_for_vm1.id, zoneid=self.zone.id, mode='HTTP_DOWNLOAD')
+    self.debug(('extracted url is%s  :' % self.extract_volume.url))
+    try:
+        formatted_url = urllib.unquote_plus(self.extract_volume.url)
+        self.debug(('Attempting to download volume at url %s' % formatted_url))
+        response = urllib.urlopen(formatted_url)
+        self.debug(('response from volume url %s' % response.getcode()))
+        (fd, path) = tempfile.mkstemp()
+        self.debug(('Saving volume %s to path %s' % (list_data_volume_for_vm1.id, path)))
+        os.close(fd)
+        with open(path, 'wb') as fd:
+            fd.write(response.read())
+        self.debug('Saved volume successfully')
+    except Exception:
+        self.fail(('Extract Volume Failed with invalid URL %s (vol id: %s)' % (self.extract_volume, list_data_volume_for_vm1.id)))
+    self.virtual_machine_2 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_1.id, zoneid=self.zone.id, mode=self.testdata['mode'])
+    verify_vm(self, self.virtual_machine_2.id)
+    try:
+        self.virtual_machine_2.delete(self.apiclient)
+    except Exception as e:
+        raise Exception(('Vm deletion failed with error %s' % e))
+    self.volume = Volume.create(self.userapiclient, services=self.testdata['volume'], diskofferingid=self.disk_offering_1.id, zoneid=self.zone.id)
+    list_data_volume = Volume.list(self.userapiclient, id=self.volume.id)
+    self.assertEqual(validateList(list_data_volume)[0], PASS, ('Check List volume response for volume %s' % self.volume.id))
+    self.assertEqual(list_data_volume[0].id, self.volume.id, ('check list volume response for volume id:  %s' % self.volume.id))
+    self.debug(('volume id %s got created successfully' % list_data_volume[0].id))
+    try:
+        self.virtual_machine_2.attach_volume(self.userapiclient, self.volume)
+        self.fail('Volume got attached to a destroyed vm ')
+    except Exception:
+        self.debug('Volume cant not be attached to a destroyed vm ')
+    if ('OVA' in self.extract_volume.url.upper()):
+        self.testdata['upload_volume']['format'] = 'VHD'
+    else:
+        self.testdata['upload_volume']['format'] = 'OVA'
+    try:
+        self.upload_response = Volume.upload(self.userapiclient, zoneid=self.zone.id, url=self.extract_volume.url, services=self.testdata['upload_volume'])
+        self.fail('Volume got uploaded with invalid format')
+    except Exception as e:
+        self.debug(('upload volume failed due %s' % e))
+    self.testdata['upload_volume']['format'] = 'VHD'
+    if ('OVA' in self.extract_volume.url.upper()):
+        self.testdata['upload_volume']['format'] = 'OVA'
+    if ('QCOW2' in self.extract_volume.url.upper()):
+        self.testdata['upload_volume']['format'] = 'QCOW2'
+    u1 = self.extract_volume.url.split('.')
+    u1[(-2)] = 'wrong'
+    wrong_url = '.'.join(u1)
+    try:
+        self.upload_response = Volume.upload(self.userapiclient, zoneid=self.zone.id, url=wrong_url, services=self.testdata['upload_volume'])
+        self.upload_response.wait_for_upload(self.userapiclient)
+        self.fail('volume got uploaded with wrong url')
+    except Exception as e:
+        self.debug(('upload volume failed due to %s' % e))
+    try:
+        self.upload_response = Volume.upload(self.userapiclient, zoneid=self.zone.id, url=self.extract_volume.url, services=self.testdata['upload_volume'], checksome='123456')
+        self.upload_response.wait_for_upload(self.userapiclient)
+        self.fail('volume got uploaded with wrong checksome')
+    except Exception as e:
+        self.debug(('upload volume failed due to %s' % e))
+    account_update = Resources.updateLimit(self.apiclient, resourcetype=2, account=self.account.name, domainid=self.account.domainid, max=1)
+    list_resource = Resources.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, resourcetype=2)
+    self.assertEqual(validateList(list_resource)[0], PASS, ('Check List resource response for volume %s' % self.account.name))
+    self.assertEqual(str(list_resource[0].max), '1', ('check list List resource response for account id:  %s' % self.account.name))
+    self.debug(('Max resources got updated successfully for account %s' % self.account.name))
+    try:
+        self.upload_response = Volume.upload(self.userapiclient, zoneid=self.zone.id, url=self.extract_volume.url, services=self.testdata['upload_volume'])
+        self.upload_response.wait_for_upload(self.userapiclient)
+        self.fail('volume got uploaded after account reached max limit for                      volumes ')
+    except Exception as e:
+        self.debug(('upload volume failed due to %s' % e))
