@@ -9,6 +9,10 @@
  else   if (!(vmInstance.getState().equals(State.Stopped))) {
     throw new InvalidParameterValueException("Unable to upgrade virtual machine " + vmInstance.toString() + " "+ " in state "+ vmInstance.getState()+ "; make sure the virtual machine is stopped");
   }
+  List<VMSnapshotVO> vmSnapshots=_vmSnapshotDao.findByVm(vmId);
+  if (vmSnapshots.size() > 0) {
+    throw new InvalidParameterValueException("Unable to change service offering for VM, please remove VM snapshots before changing service offering of VM");
+  }
   _accountMgr.checkAccess(caller,null,true,vmInstance);
   Map<String,String> customParameters=cmd.getDetails();
   ServiceOfferingVO newServiceOffering=_offeringDao.findById(svcOffId);
@@ -29,16 +33,6 @@
     _resourceLimitMgr.checkResourceLimit(caller,ResourceType.memory,newMemory - currentMemory);
   }
   _itMgr.checkIfCanUpgrade(vmInstance,newServiceOffering);
-  List<VMSnapshotVO> vmSnapshots=_vmSnapshotDao.findByVm(vmId);
-  for (  VMSnapshotVO vmSnapshotVO : vmSnapshots) {
-    if (vmSnapshotVO.getType() == VMSnapshot.Type.DiskAndMemory) {
-      if (!_vmSnapshotMgr.deleteAllVMSnapshots(vmId,VMSnapshot.Type.DiskAndMemory)) {
-        String errMsg="Failed to remove VM snapshot during upgrading, snapshot id " + vmSnapshotVO.getId();
-        s_logger.debug(errMsg);
-        throw new CloudRuntimeException(errMsg);
-      }
-    }
-  }
   _itMgr.upgradeVmDb(vmId,svcOffId);
   if (newServiceOffering.isDynamic()) {
     saveCustomOfferingDetails(vmId,newServiceOffering);
