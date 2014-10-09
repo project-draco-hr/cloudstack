@@ -1,0 +1,32 @@
+{
+  if (!status) {
+    return false;
+  }
+  Event event=transition.getEvent();
+  State oldState=transition.getCurrentState();
+  State newState=transition.getToState();
+  pubishOnEventBus(event.name(),"postStateTransitionEvent",vo,oldState,newState);
+  if (vo.getType() != VirtualMachine.Type.User) {
+    return true;
+  }
+  if (transition.isImpacted(StateMachine2.Transition.Impact.USAGE)) {
+    if (oldState == State.Destroyed && newState == State.Stopped) {
+      generateUsageEvent(vo.getServiceOfferingId(),vo,EventTypes.EVENT_VM_CREATE);
+    }
+ else     if (newState == State.Running) {
+      generateUsageEvent(vo.getServiceOfferingId(),vo,EventTypes.EVENT_VM_START);
+    }
+ else     if (newState == State.Stopped) {
+      generateUsageEvent(vo.getServiceOfferingId(),vo,EventTypes.EVENT_VM_STOP);
+      List<NicVO> nics=_nicDao.listByVmId(vo.getId());
+      for (      NicVO nic : nics) {
+        NetworkVO network=_networkDao.findById(nic.getNetworkId());
+        UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NETWORK_OFFERING_REMOVE,vo.getAccountId(),vo.getDataCenterId(),vo.getId(),Long.toString(nic.getId()),network.getNetworkOfferingId(),null,0L,vo.getClass().getName(),vo.getUuid(),vo.isDisplay());
+      }
+    }
+ else     if (newState == State.Destroyed || newState == State.Error || newState == State.Expunging) {
+      generateUsageEvent(vo.getServiceOfferingId(),vo,EventTypes.EVENT_VM_DESTROY);
+    }
+  }
+  return true;
+}
