@@ -1,0 +1,33 @@
+{
+  SnapshotVO snapshotVO=_snapshotDao.acquireInLockTable(snapshotInfo.getId());
+  if (snapshotVO == null) {
+    throw new CloudRuntimeException("Failed to acquire lock on the following snapshot: " + snapshotInfo.getId());
+  }
+  try {
+    VolumeInfo volumeInfo=snapshotInfo.getBaseVolume();
+    volumeInfo.stateTransit(Volume.Event.SnapshotRequested);
+    SnapshotResult result=null;
+    try {
+      result=snapshotSvr.takeSnapshot(snapshotInfo);
+      if (result.isFailed()) {
+        s_logger.debug("Failed to take the following snapshot: " + result.getResult());
+        throw new CloudRuntimeException(result.getResult());
+      }
+      markAsBackedUp((SnapshotObject)result.getSnashot());
+    }
+  finally {
+      if (result != null && result.isSuccess()) {
+        volumeInfo.stateTransit(Volume.Event.OperationSucceeded);
+      }
+ else {
+        volumeInfo.stateTransit(Volume.Event.OperationFailed);
+      }
+    }
+  }
+  finally {
+    if (snapshotVO != null) {
+      _snapshotDao.releaseFromLockTable(snapshotInfo.getId());
+    }
+  }
+  return snapshotInfo;
+}
