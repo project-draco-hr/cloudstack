@@ -1,0 +1,64 @@
+{
+  _router=router;
+  Pair<Map<String,PublicIpAddress>,Map<String,PublicIpAddress>> nicsToChange=getNicsToChangeOnRouter(visitor);
+  Map<String,PublicIpAddress> nicsToPlug=nicsToChange.first();
+  Map<String,PublicIpAddress> nicsToUnplug=nicsToChange.second();
+  NetworkModel networkModel=visitor.getVirtualNetworkApplianceFactory().getNetworkModel();
+  VirtualMachineManager itMgr=visitor.getVirtualNetworkApplianceFactory().getItMgr();
+  for (  Entry<String,PublicIpAddress> entry : nicsToUnplug.entrySet()) {
+    Network publicNtwk=null;
+    try {
+      publicNtwk=networkModel.getNetwork(entry.getValue().getNetworkId());
+      URI broadcastUri=BroadcastDomainType.Vlan.toUri(entry.getKey());
+      itMgr.removeVmFromNetwork(_router,publicNtwk,broadcastUri);
+    }
+ catch (    ConcurrentOperationException e) {
+      s_logger.warn("Failed to remove router " + _router + " from vlan "+ entry.getKey()+ " in public network "+ publicNtwk+ " due to ",e);
+      return false;
+    }
+  }
+  _netUsageCommands=new Commands(Command.OnError.Continue);
+  VpcDao vpcDao=visitor.getVirtualNetworkApplianceFactory().getVpcDao();
+  VpcVO vpc=vpcDao.findById(_router.getVpcId());
+  for (  String vlanTag : nicsToPlug.keySet()) {
+    PublicIpAddress ip=nicsToPlug.get(vlanTag);
+    NicProfile defaultNic=new NicProfile();
+    if (ip.isSourceNat()) {
+      defaultNic.setDefaultNic(true);
+    }
+    defaultNic.setIp4Address(ip.getAddress().addr());
+    defaultNic.setGateway(ip.getGateway());
+    defaultNic.setNetmask(ip.getNetmask());
+    defaultNic.setMacAddress(ip.getMacAddress());
+    defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+    defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(ip.getVlanTag()));
+    defaultNic.setIsolationUri(IsolationType.Vlan.toUri(ip.getVlanTag()));
+    NicProfile publicNic=null;
+    Network publicNtwk=null;
+    try {
+      publicNtwk=networkModel.getNetwork(ip.getNetworkId());
+      publicNic=itMgr.addVmToNetwork(_router,publicNtwk,defaultNic);
+    }
+ catch (    ConcurrentOperationException e) {
+      s_logger.warn("Failed to add router " + _router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk+ " due to ",e);
+    }
+catch (    InsufficientCapacityException e) {
+      s_logger.warn("Failed to add router " + _router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk+ " due to ",e);
+    }
+ finally {
+      if (publicNic == null) {
+        s_logger.warn("Failed to add router " + _router + " to vlan "+ vlanTag+ " in public network "+ publicNtwk);
+        return false;
+      }
+    }
+    NetworkUsageCommand netUsageCmd=new NetworkUsageCommand(_router.getPrivateIpAddress(),_router.getInstanceName(),true,defaultNic.getIp4Address(),vpc.getCidr());
+    _netUsageCommands.addCommand(netUsageCmd);
+    UserStatisticsDao userStatsDao=visitor.getVirtualNetworkApplianceFactory().getUserStatsDao();
+    UserStatisticsVO stats=userStatsDao.findBy(_router.getAccountId(),_router.getDataCenterId(),publicNtwk.getId(),publicNic.getIp4Address(),_router.getId(),_router.getType().toString());
+    if (stats == null) {
+      stats=new UserStatisticsVO(_router.getAccountId(),_router.getDataCenterId(),publicNic.getIp4Address(),_router.getId(),_router.getType().toString(),publicNtwk.getId());
+      userStatsDao.persist(stats);
+    }
+  }
+  return true;
+}

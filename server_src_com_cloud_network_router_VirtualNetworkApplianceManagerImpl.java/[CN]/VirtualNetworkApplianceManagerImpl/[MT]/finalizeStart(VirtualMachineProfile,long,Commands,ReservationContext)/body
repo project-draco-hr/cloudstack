@@ -1,10 +1,10 @@
 {
-  DomainRouterVO router=_routerDao.findById(profile.getId());
-  for (  Answer answer : cmds.getAnswers()) {
+  final DomainRouterVO router=_routerDao.findById(profile.getId());
+  for (  final Answer answer : cmds.getAnswers()) {
     if (!answer.getResult()) {
-      String cmdClassName=answer.getClass().getCanonicalName().replace("Answer","Command");
-      String errorMessage="Command: " + cmdClassName + " failed while starting virtual router";
-      String errorDetails="Details: " + answer.getDetails() + " "+ answer.toString();
+      final String cmdClassName=answer.getClass().getCanonicalName().replace("Answer","Command");
+      final String errorMessage="Command: " + cmdClassName + " failed while starting virtual router";
+      final String errorDetails="Details: " + answer.getDetails() + " "+ answer.toString();
       _alertMgr.sendAlert(AlertService.AlertType.ALERT_TYPE_DOMAIN_ROUTER,router.getDataCenterId(),router.getPodIdToDeployIn(),errorMessage,errorDetails);
       s_logger.warn(errorMessage);
       return false;
@@ -15,16 +15,23 @@
   final List<? extends Nic> routerNics=_nicDao.listByVmId(profile.getId());
   for (  final Nic nic : routerNics) {
     final Network network=_networkModel.getNetwork(nic.getNetworkId());
+    final DataCenterVO dcVO=_dcDao.findById(network.getDataCenterId());
     if (network.getTrafficType() == TrafficType.Guest) {
       guestNetworks.add(network);
       if (nic.getBroadcastUri().getScheme().equals("pvlan")) {
         final NicProfile nicProfile=new NicProfile(nic,network,nic.getBroadcastUri(),nic.getIsolationUri(),0,false,"pvlan-nic");
-        result=setupDhcpForPvlan(true,router,router.getHostId(),nicProfile);
+        final NetworkTopology networkTopology=_networkTopologyContext.retrieveNetworkTopology(dcVO);
+        try {
+          result=networkTopology.setupDhcpForPvlan(true,router,router.getHostId(),nicProfile);
+        }
+ catch (        final ResourceUnavailableException e) {
+          s_logger.debug("ERROR in finalizeStart: ",e);
+        }
       }
     }
   }
   if (result) {
-    GetDomRVersionAnswer versionAnswer=(GetDomRVersionAnswer)cmds.getAnswer("getDomRVersion");
+    final GetDomRVersionAnswer versionAnswer=(GetDomRVersionAnswer)cmds.getAnswer("getDomRVersion");
     router.setTemplateVersion(versionAnswer.getTemplateVersion());
     router.setScriptsVersion(versionAnswer.getScriptsVersion());
     _routerDao.persist(router,guestNetworks);

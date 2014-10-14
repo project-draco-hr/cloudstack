@@ -1,0 +1,100 @@
+{
+  LinkedHashMap<Network,List<? extends NicProfile>> networks=new LinkedHashMap<Network,List<? extends NicProfile>>(3);
+  boolean hasGuestNetwork=false;
+  if (routerDeploymentDefinition.getGuestNetwork() != null) {
+    s_logger.debug("Adding nic for Virtual Router in Guest network " + routerDeploymentDefinition.getGuestNetwork());
+    String defaultNetworkStartIp=null, defaultNetworkStartIpv6=null;
+    if (!routerDeploymentDefinition.isPublicNetwork()) {
+      final Nic placeholder=_networkModel.getPlaceholderNicForRouter(routerDeploymentDefinition.getGuestNetwork(),routerDeploymentDefinition.getPodId());
+      if (routerDeploymentDefinition.getGuestNetwork().getCidr() != null) {
+        if ((placeholder != null) && (placeholder.getIp4Address() != null)) {
+          s_logger.debug("Requesting ipv4 address " + placeholder.getIp4Address() + " stored in placeholder nic for the network "+ routerDeploymentDefinition.getGuestNetwork());
+          defaultNetworkStartIp=placeholder.getIp4Address();
+        }
+ else {
+          final String startIp=_networkModel.getStartIpAddress(routerDeploymentDefinition.getGuestNetwork().getId());
+          if ((startIp != null) && (_ipAddressDao.findByIpAndSourceNetworkId(routerDeploymentDefinition.getGuestNetwork().getId(),startIp).getAllocatedTime() == null)) {
+            defaultNetworkStartIp=startIp;
+          }
+ else           if (s_logger.isDebugEnabled()) {
+            s_logger.debug("First ipv4 " + startIp + " in network id="+ routerDeploymentDefinition.getGuestNetwork().getId()+ " is already allocated, can't use it for domain router; will get random ip address from the range");
+          }
+        }
+      }
+      if (routerDeploymentDefinition.getGuestNetwork().getIp6Cidr() != null) {
+        if ((placeholder != null) && (placeholder.getIp6Address() != null)) {
+          s_logger.debug("Requesting ipv6 address " + placeholder.getIp6Address() + " stored in placeholder nic for the network "+ routerDeploymentDefinition.getGuestNetwork());
+          defaultNetworkStartIpv6=placeholder.getIp6Address();
+        }
+ else {
+          final String startIpv6=_networkModel.getStartIpv6Address(routerDeploymentDefinition.getGuestNetwork().getId());
+          if ((startIpv6 != null) && (_ipv6Dao.findByNetworkIdAndIp(routerDeploymentDefinition.getGuestNetwork().getId(),startIpv6) == null)) {
+            defaultNetworkStartIpv6=startIpv6;
+          }
+ else           if (s_logger.isDebugEnabled()) {
+            s_logger.debug("First ipv6 " + startIpv6 + " in network id="+ routerDeploymentDefinition.getGuestNetwork().getId()+ " is already allocated, can't use it for domain router; will get random ipv6 address from the range");
+          }
+        }
+      }
+    }
+    final NicProfile gatewayNic=new NicProfile(defaultNetworkStartIp,defaultNetworkStartIpv6);
+    if (routerDeploymentDefinition.isPublicNetwork()) {
+      if (routerDeploymentDefinition.isRedundant()) {
+        gatewayNic.setIp4Address(_ipAddrMgr.acquireGuestIpAddress(routerDeploymentDefinition.getGuestNetwork(),null));
+      }
+ else {
+        gatewayNic.setIp4Address(routerDeploymentDefinition.getGuestNetwork().getGateway());
+      }
+      gatewayNic.setBroadcastUri(routerDeploymentDefinition.getGuestNetwork().getBroadcastUri());
+      gatewayNic.setBroadcastType(routerDeploymentDefinition.getGuestNetwork().getBroadcastDomainType());
+      gatewayNic.setIsolationUri(routerDeploymentDefinition.getGuestNetwork().getBroadcastUri());
+      gatewayNic.setMode(routerDeploymentDefinition.getGuestNetwork().getMode());
+      final String gatewayCidr=routerDeploymentDefinition.getGuestNetwork().getCidr();
+      gatewayNic.setNetmask(NetUtils.getCidrNetmask(gatewayCidr));
+    }
+ else {
+      gatewayNic.setDefaultNic(true);
+    }
+    networks.put(routerDeploymentDefinition.getGuestNetwork(),new ArrayList<NicProfile>(Arrays.asList(gatewayNic)));
+    hasGuestNetwork=true;
+  }
+  s_logger.debug("Adding nic for Virtual Router in Control network ");
+  List<? extends NetworkOffering> offerings=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemControlNetwork);
+  NetworkOffering controlOffering=offerings.get(0);
+  Network controlConfig=_networkMgr.setupNetwork(s_systemAccount,controlOffering,routerDeploymentDefinition.getPlan(),null,null,false).get(0);
+  networks.put(controlConfig,new ArrayList<NicProfile>());
+  if (routerDeploymentDefinition.isPublicNetwork()) {
+    s_logger.debug("Adding nic for Virtual Router in Public network ");
+    final NicProfile defaultNic=new NicProfile();
+    defaultNic.setDefaultNic(true);
+    final PublicIp sourceNatIp=routerDeploymentDefinition.getSourceNatIP();
+    defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
+    defaultNic.setGateway(sourceNatIp.getGateway());
+    defaultNic.setNetmask(sourceNatIp.getNetmask());
+    defaultNic.setMacAddress(sourceNatIp.getMacAddress());
+    final Network pubNet=_networkDao.findById(sourceNatIp.getNetworkId());
+    if (pubNet.getBroadcastDomainType() == BroadcastDomainType.Vxlan) {
+      defaultNic.setBroadcastType(BroadcastDomainType.Vxlan);
+      defaultNic.setBroadcastUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setIsolationUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
+    }
+ else {
+      defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+      defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
+    }
+    if (hasGuestNetwork) {
+      defaultNic.setDeviceId(2);
+    }
+    final NetworkOffering publicOffering=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemPublicNetwork).get(0);
+    final List<? extends Network> publicNetworks=_networkMgr.setupNetwork(s_systemAccount,publicOffering,routerDeploymentDefinition.getPlan(),null,null,false);
+    final String publicIp=defaultNic.getIp4Address();
+    final NicVO peerNic=_nicDao.findByIp4AddressAndNetworkId(publicIp,publicNetworks.get(0).getId());
+    if (peerNic != null) {
+      s_logger.info("Use same MAC as previous RvR, the MAC is " + peerNic.getMacAddress());
+      defaultNic.setMacAddress(peerNic.getMacAddress());
+    }
+    networks.put(publicNetworks.get(0),new ArrayList<NicProfile>(Arrays.asList(defaultNic)));
+  }
+  return networks;
+}

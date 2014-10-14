@@ -1,0 +1,70 @@
+{
+  final ServiceOfferingVO routerOffering=_serviceOfferingDao.findById(routerDeploymentDefinition.getOfferingId());
+  final Account owner=routerDeploymentDefinition.getOwner();
+  final List<HypervisorType> hypervisors=getHypervisors(routerDeploymentDefinition);
+  int allocateRetry=0;
+  int startRetry=0;
+  DomainRouterVO router=null;
+  for (final Iterator<HypervisorType> iter=hypervisors.iterator(); iter.hasNext(); ) {
+    final HypervisorType hType=iter.next();
+    try {
+      final long id=_routerDao.getNextInSequence(Long.class,"id");
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(String.format("Allocating the VR with id=%s in datacenter %s with the hypervisor type %s",id,routerDeploymentDefinition.getDest().getDataCenter(),hType));
+      }
+      String templateName=retrieveTemplateName(hType,routerDeploymentDefinition.getDest().getDataCenter().getId());
+      final VMTemplateVO template=_templateDao.findRoutingTemplate(hType,templateName);
+      if (template == null) {
+        s_logger.debug(hType + " won't support system vm, skip it");
+        continue;
+      }
+      boolean offerHA=routerOffering.getOfferHA();
+      if (routerDeploymentDefinition.isRedundant()) {
+        offerHA=false;
+      }
+      Long vpcId=routerDeploymentDefinition.getVpc() != null ? routerDeploymentDefinition.getVpc().getId() : null;
+      router=new DomainRouterVO(id,routerOffering.getId(),routerDeploymentDefinition.getVirtualProvider().getId(),VirtualMachineName.getRouterName(id,s_vmInstanceName),template.getId(),template.getHypervisorType(),template.getGuestOSId(),owner.getDomainId(),owner.getId(),routerDeploymentDefinition.isRedundant(),0,false,RedundantState.UNKNOWN,offerHA,false,vpcId);
+      router.setDynamicallyScalable(template.isDynamicallyScalable());
+      router.setRole(Role.VIRTUAL_ROUTER);
+      router=_routerDao.persist(router);
+      LinkedHashMap<Network,List<? extends NicProfile>> networks=createRouterNetworks(routerDeploymentDefinition);
+      _itMgr.allocate(router.getInstanceName(),template,routerOffering,networks,routerDeploymentDefinition.getPlan(),null);
+      router=_routerDao.findById(router.getId());
+    }
+ catch (    final InsufficientCapacityException ex) {
+      if ((allocateRetry < 2) && iter.hasNext()) {
+        s_logger.debug("Failed to allocate the VR with hypervisor type " + hType + ", retrying one more time");
+        continue;
+      }
+ else {
+        throw ex;
+      }
+    }
+ finally {
+      allocateRetry++;
+    }
+    if (startRouter) {
+      try {
+        router=startVirtualRouter(router,_accountMgr.getSystemUser(),_accountMgr.getSystemAccount(),routerDeploymentDefinition.getParams());
+        break;
+      }
+ catch (      final InsufficientCapacityException ex) {
+        if ((startRetry < 2) && iter.hasNext()) {
+          s_logger.debug("Failed to start the VR  " + router + " with hypervisor type "+ hType+ ", "+ "destroying it and recreating one more time");
+          destroyRouter(router.getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM),User.UID_SYSTEM);
+          continue;
+        }
+ else {
+          throw ex;
+        }
+      }
+ finally {
+        startRetry++;
+      }
+    }
+ else {
+      return router;
+    }
+  }
+  return router;
+}
