@@ -1,3 +1,55 @@
 {
+  SnapshotInfo snapshotInfo=_snapshotDataFactory.getSnapshot(snapshotId,DataStoreRole.Primary);
+  VolumeInfo volumeInfo=snapshotInfo.getBaseVolume();
+  VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
+  if (volume.getVolumeType() == Type.DATADISK) {
+    if (volume.getAttached() != null) {
+      throw new CloudRuntimeException("A data disk must be in the detached state in order to perform a revert.");
+    }
+  }
+ else   if (volume.getVolumeType() == Type.ROOT) {
+    Long instanceId=volume.getInstanceId();
+    UserVm vm=_entityMgr.findById(UserVm.class,instanceId);
+    Long hostId=vm.getHostId();
+    HostVO hostVO=_hostDao.findById(hostId);
+    Long clusterId=hostVO.getClusterId();
+    ClusterVO clusterVO=_clusterDao.findById(clusterId);
+    if (clusterVO.getHypervisorType() != HypervisorType.XenServer && clusterVO.getHypervisorType() != HypervisorType.KVM) {
+      throw new CloudRuntimeException("Unsupported hypervisor type for root disk revert. Create a template from this disk and use it instead.");
+    }
+    if (vm.getState() != State.Stopped) {
+      throw new CloudRuntimeException("A root disk cannot be reverted unless the VM it's attached to is in the stopped state.");
+    }
+  }
+ else {
+    throw new CloudRuntimeException("Unsupported volume type");
+  }
+  SnapshotVO snapshotVO=_snapshotDao.acquireInLockTable(snapshotId);
+  if (snapshotVO == null) {
+    throw new CloudRuntimeException("Failed to acquire lock on the following snapshot: " + snapshotId);
+  }
+  try {
+    volumeInfo.stateTransit(Volume.Event.RevertRequested);
+    boolean result=false;
+    try {
+      result=snapshotSvr.revertSnapshot(snapshotId);
+    }
+  finally {
+      if (result) {
+        volumeInfo.stateTransit(Volume.Event.OperationSucceeded);
+      }
+ else {
+        String msg="Failed to revert the volume to a snapshot";
+        s_logger.debug(msg);
+        volumeInfo.stateTransit(Volume.Event.OperationFailed);
+        throw new CloudRuntimeException("Failed to revert the volume to a snapshot");
+      }
+    }
+  }
+  finally {
+    if (snapshotVO != null) {
+      _snapshotDao.releaseFromLockTable(snapshotId);
+    }
+  }
   return true;
 }
