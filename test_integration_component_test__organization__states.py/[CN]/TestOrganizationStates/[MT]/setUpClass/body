@@ -1,0 +1,34 @@
+@classmethod
+def setUpClass(cls):
+    try:
+        cls.testclient = super(TestOrganizationStates, cls).getClsTestClient()
+        cls.apiclient = cls.testclient.getApiClient()
+        cls.testdata = cls.testClient.getParsedTestDataConfig()
+        cls.cleanup = []
+        zone = get_zone(cls.apiclient, cls.testclient.getZoneForTests())
+        cls.zone = Zone(zone.__dict__)
+        cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+        hostList = Host.list(cls.apiclient, zoneid=cls.zone.id, type='routing')
+        cls.host = Host(hostList[0].__dict__)
+        clusterList = Cluster.list(cls.apiclient, id=hostList[0].clusterid)
+        cls.cluster = Cluster(clusterList[0].__dict__)
+        podList = Pod.list(cls.apiclient, id=hostList[0].podid)
+        cls.pod = Pod(podList[0].__dict__)
+        cls.serviceOffering = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'], hosttags='test')
+        hostupdResp = Host.update(cls.apiclient, id=cls.host.id, hosttags='test')
+        userAccountName = '-'.join(('TestOrgUser', random_gen()))
+        adminAccountName = '-'.join(('TestOrgAdmin', random_gen()))
+        cls.user_apiclient = cls.testclient.getUserApiClient(UserName=userAccountName, DomainName='ROOT')
+        cls.admin_apiclient = cls.testclient.getUserApiClient(UserName=adminAccountName, DomainName='ROOT', type=1)
+        accountList = Account.list(cls.apiclient, name=userAccountName, listAll='true')
+        cls.account = Account(accountList[0].__dict__)
+        accountList = Account.list(cls.apiclient, name=adminAccountName, listAll='true')
+        cls.adminAccount = Account(accountList[0].__dict__)
+        cls.cleanup = [cls.account, cls.adminAccount, cls.serviceOffering]
+        cls.vm_admin = VirtualMachine.create(cls.admin_apiclient, {}, zoneid=cls.zone.id, serviceofferingid=cls.serviceOffering.id, templateid=cls.template.id)
+        cls.vm_user = VirtualMachine.create(cls.user_apiclient, {}, zoneid=cls.zone.id, serviceofferingid=cls.serviceOffering.id, templateid=cls.template.id)
+    except Exception as e:
+        printex = traceback.format_exc()
+        cls.debug('Exception Occurred : {0}'.format(printex))
+        cleanup_resources(cls.apiclient, cls.cleanup)
+        raise Exception(('Failed to create the setup required to execute the test cases: %s' % e))
