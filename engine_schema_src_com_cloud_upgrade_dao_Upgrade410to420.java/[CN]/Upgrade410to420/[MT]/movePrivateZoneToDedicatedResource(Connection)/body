@@ -1,109 +1,97 @@
 {
-  PreparedStatement pstmt=null;
-  ResultSet rs=null;
-  PreparedStatement pstmtUpdate=null;
-  PreparedStatement pstmt3=null;
-  ResultSet rs3=null;
-  try {
-    pstmt3=conn.prepareStatement("SELECT distinct(`domain_id`) FROM `cloud`.`data_center` WHERE `domain_id` IS NOT NULL AND removed IS NULL");
-    rs3=pstmt3.executeQuery();
-    while (rs3.next()) {
-      long domainId=rs3.getLong(1);
-      long affinityGroupId=0;
-      PreparedStatement pstmt2=null;
-      ResultSet rs2=null;
-      pstmt2=conn.prepareStatement("SELECT affinity_group.id FROM `cloud`.`affinity_group` INNER JOIN `cloud`.`affinity_group_domain_map` ON affinity_group.id=affinity_group_domain_map.affinity_group_id WHERE affinity_group.type = 'ExplicitDedication' AND affinity_group.acl_type = 'Domain'  AND  (affinity_group_domain_map.domain_id = ?)");
-      pstmt2.setLong(1,domainId);
-      rs2=pstmt2.executeQuery();
-      if (rs2.next()) {
-        affinityGroupId=rs2.getLong(1);
-      }
+  String domainName="";
+  try (PreparedStatement sel_dc_dom_id=conn.prepareStatement("SELECT distinct(`domain_id`) FROM `cloud`.`data_center` WHERE `domain_id` IS NOT NULL AND removed IS NULL")){
+    try (ResultSet rs3=sel_dc_dom_id.executeQuery()){
+      while (rs3.next()) {
+        long domainId=rs3.getLong(1);
+        long affinityGroupId=0;
+        try (PreparedStatement sel_aff_grp_pstmt=conn.prepareStatement("SELECT affinity_group.id FROM `cloud`.`affinity_group` INNER JOIN `cloud`.`affinity_group_domain_map` ON affinity_group.id=affinity_group_domain_map.affinity_group_id WHERE affinity_group.type = 'ExplicitDedication' AND affinity_group.acl_type = 'Domain'  AND  (affinity_group_domain_map.domain_id = ?)")){
+          sel_aff_grp_pstmt.setLong(1,domainId);
+          try (ResultSet rs2=sel_aff_grp_pstmt.executeQuery()){
+            if (rs2.next()) {
+              affinityGroupId=rs2.getLong(1);
+            }
  else {
-        rs2.close();
-        pstmt2.close();
-        pstmt2=conn.prepareStatement("SELECT name FROM `cloud`.`domain` where id = ?");
-        pstmt2.setLong(1,domainId);
-        rs2=pstmt2.executeQuery();
-        String domainName="";
-        if (rs2.next()) {
-          domainName=rs2.getString(1);
+              try (PreparedStatement sel_dom_id_pstmt=conn.prepareStatement("SELECT name FROM `cloud`.`domain` where id = ?")){
+                sel_dom_id_pstmt.setLong(1,domainId);
+                try (ResultSet sel_dom_id_res=sel_dom_id_pstmt.executeQuery()){
+                  if (sel_dom_id_res.next()) {
+                    domainName=sel_dom_id_res.getString(1);
+                  }
+                }
+               }
+ catch (              SQLException e) {
+                throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+              }
+              String type="ExplicitDedication";
+              String uuid=UUID.randomUUID().toString();
+              String groupName="DedicatedGrp-domain-" + domainName;
+              s_logger.debug("Adding AffinityGroup of type " + type + " for domain id "+ domainId);
+              String sql="INSERT INTO `cloud`.`affinity_group` (`name`, `type`, `uuid`, `description`, `domain_id`, `account_id`, `acl_type`) VALUES (?, ?, ?, ?, 1, 1, 'Domain')";
+              try (PreparedStatement insert_pstmt=conn.prepareStatement(sql)){
+                insert_pstmt.setString(1,groupName);
+                insert_pstmt.setString(2,type);
+                insert_pstmt.setString(3,uuid);
+                insert_pstmt.setString(4,"dedicated resources group");
+                insert_pstmt.executeUpdate();
+                try (PreparedStatement sel_aff_pstmt=conn.prepareStatement("SELECT affinity_group.id FROM `cloud`.`affinity_group` where uuid = ?")){
+                  sel_aff_pstmt.setString(1,uuid);
+                  try (ResultSet sel_aff_res=sel_aff_pstmt.executeQuery()){
+                    if (sel_aff_res.next()) {
+                      affinityGroupId=sel_aff_res.getLong(1);
+                    }
+                  }
+ catch (                  SQLException e) {
+                    throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+                  }
+                }
+ catch (                SQLException e) {
+                  throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+                }
+              }
+ catch (              SQLException e) {
+                throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+              }
+              String sqlMap="INSERT INTO `cloud`.`affinity_group_domain_map` (`domain_id`, `affinity_group_id`) VALUES (?, ?)";
+              try (PreparedStatement pstmtUpdate=conn.prepareStatement(sqlMap)){
+                pstmtUpdate.setLong(1,domainId);
+                pstmtUpdate.setLong(2,affinityGroupId);
+                pstmtUpdate.executeUpdate();
+              }
+ catch (              SQLException e) {
+                throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+              }
+            }
+          }
+ catch (          SQLException e) {
+            throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+          }
         }
-        rs2.close();
-        pstmt2.close();
-        String type="ExplicitDedication";
-        String uuid=UUID.randomUUID().toString();
-        String groupName="DedicatedGrp-domain-" + domainName;
-        s_logger.debug("Adding AffinityGroup of type " + type + " for domain id "+ domainId);
-        String sql="INSERT INTO `cloud`.`affinity_group` (`name`, `type`, `uuid`, `description`, `domain_id`, `account_id`, `acl_type`) VALUES (?, ?, ?, ?, 1, 1, 'Domain')";
-        pstmtUpdate=conn.prepareStatement(sql);
-        pstmtUpdate.setString(1,groupName);
-        pstmtUpdate.setString(2,type);
-        pstmtUpdate.setString(3,uuid);
-        pstmtUpdate.setString(4,"dedicated resources group");
-        pstmtUpdate.executeUpdate();
-        pstmtUpdate.close();
-        pstmt2=conn.prepareStatement("SELECT affinity_group.id FROM `cloud`.`affinity_group` where uuid = ?");
-        pstmt2.setString(1,uuid);
-        rs2=pstmt2.executeQuery();
-        if (rs2.next()) {
-          affinityGroupId=rs2.getLong(1);
+ catch (        SQLException e) {
+          throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
         }
-        String sqlMap="INSERT INTO `cloud`.`affinity_group_domain_map` (`domain_id`, `affinity_group_id`) VALUES (?, ?)";
-        pstmtUpdate=conn.prepareStatement(sqlMap);
-        pstmtUpdate.setLong(1,domainId);
-        pstmtUpdate.setLong(2,affinityGroupId);
-        pstmtUpdate.executeUpdate();
-        pstmtUpdate.close();
+        try (PreparedStatement sel_pstmt=conn.prepareStatement("SELECT `id` FROM `cloud`.`data_center` WHERE `domain_id` = ? AND removed IS NULL")){
+          sel_pstmt.setLong(1,domainId);
+          try (ResultSet sel_pstmt_rs=sel_pstmt.executeQuery()){
+            while (sel_pstmt_rs.next()) {
+              long zoneId=sel_pstmt_rs.getLong(1);
+              dedicateZone(conn,zoneId,domainId,affinityGroupId);
+            }
+          }
+ catch (          SQLException e) {
+            throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+          }
+        }
+ catch (        SQLException e) {
+          throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
+        }
       }
-      rs2.close();
-      pstmt2.close();
-      pstmt=conn.prepareStatement("SELECT `id` FROM `cloud`.`data_center` WHERE `domain_id` = ? AND removed IS NULL");
-      pstmt.setLong(1,domainId);
-      rs=pstmt.executeQuery();
-      while (rs.next()) {
-        long zoneId=rs.getLong(1);
-        dedicateZone(conn,zoneId,domainId,affinityGroupId);
-      }
+    }
+ catch (    SQLException e) {
+      throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
     }
   }
  catch (  SQLException e) {
     throw new CloudRuntimeException("Exception while Moving private zone information to dedicated resources",e);
-  }
- finally {
-    if (pstmtUpdate != null) {
-      try {
-        pstmtUpdate.close();
-      }
- catch (      SQLException e) {
-      }
-    }
-    if (rs != null) {
-      try {
-        rs.close();
-      }
- catch (      SQLException e) {
-      }
-    }
-    if (pstmt != null) {
-      try {
-        pstmt.close();
-      }
- catch (      SQLException e) {
-      }
-    }
-    if (rs3 != null) {
-      try {
-        rs3.close();
-      }
- catch (      SQLException e) {
-      }
-    }
-    if (pstmt3 != null) {
-      try {
-        pstmt3.close();
-      }
- catch (      SQLException e) {
-      }
-    }
   }
 }

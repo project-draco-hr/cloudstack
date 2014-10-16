@@ -1,6 +1,4 @@
 {
-  PreparedStatement clustersQuery=null;
-  ResultSet clusters=null;
   Long clusterId;
   String clusterHypervisorType;
   final String NEXUS_GLOBAL_CONFIG_PARAM_NAME="vmware.use.nexus.vswitch";
@@ -15,34 +13,39 @@
   String guestVswitchType=VMWARE_STANDARD_VSWITCH;
   Map<Long,List<Pair<String,String>>> detailsMap=new HashMap<Long,List<Pair<String,String>>>();
   List<Pair<String,String>> detailsList;
-  try {
-    clustersQuery=conn.prepareStatement("select id, hypervisor_type from `cloud`.`cluster` where removed is NULL");
-    clusters=clustersQuery.executeQuery();
-    while (clusters.next()) {
-      clusterHypervisorType=clusters.getString("hypervisor_type");
-      clusterId=clusters.getLong("id");
-      if (clusterHypervisorType.equalsIgnoreCase("VMware")) {
-        if (!readGlobalConfigParam) {
-          paramValStr=getConfigurationParameter(conn,VSWITCH_GLOBAL_CONFIG_PARAM_CATEGORY,NEXUS_GLOBAL_CONFIG_PARAM_NAME);
-          if (paramValStr.equalsIgnoreCase("true")) {
-            nexusEnabled=true;
+  try (PreparedStatement clustersQuery=conn.prepareStatement("select id, hypervisor_type from `cloud`.`cluster` where removed is NULL")){
+    try (ResultSet clusters=clustersQuery.executeQuery()){
+      while (clusters.next()) {
+        clusterHypervisorType=clusters.getString("hypervisor_type");
+        clusterId=clusters.getLong("id");
+        if (clusterHypervisorType.equalsIgnoreCase("VMware")) {
+          if (!readGlobalConfigParam) {
+            paramValStr=getConfigurationParameter(conn,VSWITCH_GLOBAL_CONFIG_PARAM_CATEGORY,NEXUS_GLOBAL_CONFIG_PARAM_NAME);
+            if (paramValStr.equalsIgnoreCase("true")) {
+              nexusEnabled=true;
+            }
           }
+          if (nexusEnabled) {
+            publicVswitchType=NEXUS_1000V_DVSWITCH;
+            guestVswitchType=NEXUS_1000V_DVSWITCH;
+          }
+          detailsList=new ArrayList<Pair<String,String>>();
+          detailsList.add(new Pair<String,String>(ApiConstants.VSWITCH_TYPE_GUEST_TRAFFIC,guestVswitchType));
+          detailsList.add(new Pair<String,String>(ApiConstants.VSWITCH_TYPE_PUBLIC_TRAFFIC,publicVswitchType));
+          detailsMap.put(clusterId,detailsList);
+          updateClusterDetails(conn,detailsMap);
+          s_logger.debug("Persist vSwitch Configuration: Successfully persisted vswitch configuration for cluster " + clusterId);
         }
-        if (nexusEnabled) {
-          publicVswitchType=NEXUS_1000V_DVSWITCH;
-          guestVswitchType=NEXUS_1000V_DVSWITCH;
-        }
-        detailsList=new ArrayList<Pair<String,String>>();
-        detailsList.add(new Pair<String,String>(ApiConstants.VSWITCH_TYPE_GUEST_TRAFFIC,guestVswitchType));
-        detailsList.add(new Pair<String,String>(ApiConstants.VSWITCH_TYPE_PUBLIC_TRAFFIC,publicVswitchType));
-        detailsMap.put(clusterId,detailsList);
-        updateClusterDetails(conn,detailsMap);
-        s_logger.debug("Persist vSwitch Configuration: Successfully persisted vswitch configuration for cluster " + clusterId);
-      }
  else {
-        s_logger.debug("Persist vSwitch Configuration: Ignoring cluster " + clusterId + " with hypervisor type "+ clusterHypervisorType);
-        continue;
+          s_logger.debug("Persist vSwitch Configuration: Ignoring cluster " + clusterId + " with hypervisor type "+ clusterHypervisorType);
+          continue;
+        }
       }
+    }
+ catch (    SQLException e) {
+      String msg="Unable to persist vswitch configuration of VMware clusters." + e.getMessage();
+      s_logger.error(msg);
+      throw new CloudRuntimeException(msg,e);
     }
     if (nexusEnabled) {
       setConfigurationParameter(conn,VSWITCH_GLOBAL_CONFIG_PARAM_CATEGORY,DVS_GLOBAL_CONFIG_PARAM_NAME,"true");
@@ -52,17 +55,5 @@
     String msg="Unable to persist vswitch configuration of VMware clusters." + e.getMessage();
     s_logger.error(msg);
     throw new CloudRuntimeException(msg,e);
-  }
- finally {
-    try {
-      if (clusters != null) {
-        clusters.close();
-      }
-      if (clustersQuery != null) {
-        clustersQuery.close();
-      }
-    }
- catch (    SQLException e) {
-    }
   }
 }
