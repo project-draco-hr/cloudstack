@@ -1,24 +1,29 @@
 {
-  String link=buildLink(struct.getSwitchIp(),struct.getVlan());
+  String link=buildLink(struct.getSwitchIp(),String.format("/api/running/ftos/interface/vlan/%s",struct.getVlan()));
   HttpHeaders headers=createBasicAuthenticationHeader(struct);
   HttpEntity<String> request=new HttpEntity<>(headers);
   ResponseEntity rsp=rest.exchange(link,HttpMethod.GET,request,String.class);
+  logger.debug(String.format("http get: %s",link));
   if (rsp.getStatusCode() == HttpStatus.NOT_FOUND) {
     PortInfo port=new PortInfo(struct);
-    XmlObject xml=new XmlObject("vlan").putElement("vlan-id",String.valueOf(struct.getVlan())).putElement("tagged",new XmlObject(port.interfaceType).putElement("name",port.port)).putElement("shutdown","false");
-    request=new HttpEntity<>(xml.toString(),headers);
-    link=buildLink(struct.getSwitchIp(),null);
-    rsp=rest.exchange(link,HttpMethod.GET,request,String.class);
-    if (rsp.getStatusCode() != HttpStatus.OK) {
-      throw new CloudRuntimeException(String.format("unable to create vlan[%s] on force10 switch[ip:%s]. HTTP status code:%s, body dump:%s",struct.getVlan(),rsp.getStatusCode(),struct.getSwitchIp(),rsp.getBody()));
+    XmlObject xml=new XmlObject("vlan").putElement("vlan-id",new XmlObject("vlan-id").setText(String.valueOf(struct.getVlan()))).putElement("untagged",new XmlObject("untagged").putElement(port.interfaceType,new XmlObject(port.interfaceType).putElement("name",new XmlObject("name").setText(port.port)))).putElement("shutdown",new XmlObject("shutdown").setText("false"));
+    request=new HttpEntity<>(xml.dump(),headers);
+    link=buildLink(struct.getSwitchIp(),String.format("/api/running/ftos/interface/"));
+    logger.debug(String.format("http get: %s, body: %s",link,request));
+    rsp=rest.exchange(link,HttpMethod.POST,request,String.class);
+    if (!successHttpStatusCode.contains(rsp.getStatusCode())) {
+      throw new CloudRuntimeException(String.format("unable to create vlan[%s] on force10 switch[ip:%s]. HTTP status code:%s, body dump:%s",struct.getVlan(),struct.getSwitchIp(),rsp.getStatusCode(),rsp.getBody()));
+    }
+ else {
+      logger.debug(String.format("successfully programmed vlan[%s] on Force10[ip:%s, port:%s]. http response[status code:%s, body:%s]",struct.getVlan(),struct.getSwitchIp(),struct.getPort(),rsp.getStatusCode(),rsp.getBody()));
     }
   }
- else   if (rsp.getStatusCode() == HttpStatus.OK) {
+ else   if (successHttpStatusCode.contains(rsp.getStatusCode())) {
     PortInfo port=new PortInfo(struct);
     XmlObject xml=XmlObjectParser.parseFromString((String)rsp.getBody());
-    List<XmlObject> ports=xml.getAsList("tagged.tengigabitethernet");
-    ports.addAll(xml.<XmlObject>getAsList("tagged.gigabitethernet"));
-    ports.addAll(xml.<XmlObject>getAsList("tagged.fortyGigE"));
+    List<XmlObject> ports=xml.getAsList("untagged.tengigabitethernet");
+    ports.addAll(xml.<XmlObject>getAsList("untagged.gigabitethernet"));
+    ports.addAll(xml.<XmlObject>getAsList("untagged.fortyGigE"));
     for (    XmlObject pxml : ports) {
       XmlObject name=pxml.get("name");
       if (port.port.equals(name.getText())) {
@@ -26,13 +31,23 @@
         return;
       }
     }
-    XmlObject tag=xml.get("tagged");
-    tag.putElement(port.interfaceType,new XmlObject("name").setText(port.port));
-    request=new HttpEntity<>(xml.toString(),headers);
-    link=buildLink(struct.getSwitchIp(),struct.getVlan());
+    xml.removeElement("mtu");
+    xml.setText(null);
+    XmlObject tag=xml.get("untagged");
+    if (tag == null) {
+      tag=new XmlObject("untagged");
+      xml.putElement("untagged",tag);
+    }
+    tag.putElement(port.interfaceType,new XmlObject(port.interfaceType).putElement("name",new XmlObject("name").setText(port.port)));
+    request=new HttpEntity<>(xml.dump(),headers);
+    link=buildLink(struct.getSwitchIp(),String.format("/api/running/ftos/interface/vlan/%s",struct.getVlan()));
+    logger.debug(String.format("http get: %s, body: %s",link,request));
     rsp=rest.exchange(link,HttpMethod.PUT,request,String.class);
-    if (rsp.getStatusCode() != HttpStatus.NO_CONTENT) {
+    if (!successHttpStatusCode.contains(rsp.getStatusCode())) {
       throw new CloudRuntimeException(String.format("failed to program vlan[%s] for port[%s] on force10[ip:%s]. http status:%s, body dump:%s",struct.getVlan(),struct.getPort(),struct.getSwitchIp(),rsp.getStatusCode(),rsp.getBody()));
+    }
+ else {
+      logger.debug(String.format("successfully join port[%s] into vlan[%s] on Force10[ip:%s]. http response[status code:%s, body:%s]",struct.getPort(),struct.getVlan(),struct.getSwitchIp(),rsp.getStatusCode(),rsp.getBody()));
     }
   }
  else {
