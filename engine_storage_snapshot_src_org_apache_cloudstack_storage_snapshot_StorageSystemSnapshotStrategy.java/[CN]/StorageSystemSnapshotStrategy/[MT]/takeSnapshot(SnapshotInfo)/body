@@ -1,18 +1,50 @@
 {
+  VolumeInfo volumeInfo=snapshotInfo.getBaseVolume();
+  if (volumeInfo.getFormat() != ImageFormat.VHD) {
+    throw new CloudRuntimeException("Only the " + ImageFormat.VHD.toString() + " image type is currently supported.");
+  }
   SnapshotVO snapshotVO=_snapshotDao.acquireInLockTable(snapshotInfo.getId());
   if (snapshotVO == null) {
     throw new CloudRuntimeException("Failed to acquire lock on the following snapshot: " + snapshotInfo.getId());
   }
   try {
-    VolumeInfo volumeInfo=snapshotInfo.getBaseVolume();
     volumeInfo.stateTransit(Volume.Event.SnapshotRequested);
     SnapshotResult result=null;
     try {
       result=snapshotSvr.takeSnapshot(snapshotInfo);
       if (result.isFailed()) {
-        s_logger.debug("Failed to take the following snapshot: " + result.getResult());
+        s_logger.debug("Failed to take a snapshot: " + result.getResult());
         throw new CloudRuntimeException(result.getResult());
       }
+      Map<String,String> sourceDetails=null;
+      VolumeVO volumeVO=_volumeDao.findById(volumeInfo.getId());
+      Long vmInstanceId=volumeVO.getInstanceId();
+      VMInstanceVO vmInstanceVO=_vmInstanceDao.findById(vmInstanceId);
+      Long hostId=null;
+      if (vmInstanceVO != null) {
+        hostId=vmInstanceVO.getHostId();
+        if (hostId == null) {
+          sourceDetails=getSourceDetails(volumeInfo);
+          hostId=vmInstanceVO.getLastHostId();
+        }
+      }
+ else {
+        sourceDetails=getSourceDetails(volumeInfo);
+      }
+      long storagePoolId=volumeVO.getPoolId();
+      StoragePoolVO storagePoolVO=_storagePoolDao.findById(storagePoolId);
+      Map<String,String> destDetails=getDestDetails(storagePoolVO,snapshotInfo);
+      SnapshotAndCopyCommand snapshotAndCopyCommand=new SnapshotAndCopyCommand(volumeInfo.getPath(),sourceDetails,destDetails);
+      SnapshotAndCopyAnswer snapshotAndCopyAnswer=null;
+      try {
+        snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)_agentMgr.send(getHostId(hostId,volumeVO),snapshotAndCopyCommand);
+      }
+ catch (      Exception e) {
+        throw new CloudRuntimeException(e.getMessage());
+      }
+      String path=snapshotAndCopyAnswer.getPath();
+      SnapshotDetailsVO snapshotDetail=new SnapshotDetailsVO(snapshotInfo.getId(),DiskTO.PATH,path,false);
+      _snapshotDetailsDao.persist(snapshotDetail);
       markAsBackedUp((SnapshotObject)result.getSnashot());
     }
   finally {
