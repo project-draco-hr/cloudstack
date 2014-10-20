@@ -31,16 +31,37 @@
  else {
         sourceDetails=getSourceDetails(volumeInfo);
       }
+      HostVO hostVO=getHostId(hostId,volumeVO);
       long storagePoolId=volumeVO.getPoolId();
       StoragePoolVO storagePoolVO=_storagePoolDao.findById(storagePoolId);
+      DataStore dataStore=_dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
       Map<String,String> destDetails=getDestDetails(storagePoolVO,snapshotInfo);
       SnapshotAndCopyCommand snapshotAndCopyCommand=new SnapshotAndCopyCommand(volumeInfo.getPath(),sourceDetails,destDetails);
       SnapshotAndCopyAnswer snapshotAndCopyAnswer=null;
       try {
-        snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)_agentMgr.send(getHostId(hostId,volumeVO),snapshotAndCopyCommand);
+        if (sourceDetails != null) {
+          _volService.connectVolumeToHost(volumeInfo,hostVO,dataStore);
+        }
+        VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
+        volume.setFolder(destDetails.get(DiskTO.VOLUME_ID));
+        _volService.connectVolumeToHost(volumeInfo,hostVO,dataStore);
+        snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)_agentMgr.send(hostVO.getId(),snapshotAndCopyCommand);
       }
  catch (      Exception e) {
         throw new CloudRuntimeException(e.getMessage());
+      }
+ finally {
+        try {
+          VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
+          volume.setFolder(destDetails.get(DiskTO.VOLUME_ID));
+          _volService.disconnectVolumeFromHost(volumeInfo,hostVO,dataStore);
+          if (sourceDetails != null) {
+            _volService.disconnectVolumeFromHost(volumeInfo,hostVO,dataStore);
+          }
+        }
+ catch (        Exception ex) {
+          s_logger.debug(ex.getMessage(),ex);
+        }
       }
       String path=snapshotAndCopyAnswer.getPath();
       SnapshotDetailsVO snapshotDetail=new SnapshotDetailsVO(snapshotInfo.getId(),DiskTO.PATH,path,false);
