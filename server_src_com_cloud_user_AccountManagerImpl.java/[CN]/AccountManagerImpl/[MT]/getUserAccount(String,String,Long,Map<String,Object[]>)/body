@@ -2,9 +2,20 @@
   if (s_logger.isDebugEnabled()) {
     s_logger.debug("Attempting to log in user: " + username + " in domain "+ domainId);
   }
+  UserAccount userAccount=_userAccountDao.getUserAccount(username,domainId);
+  if (userAccount == null) {
+    s_logger.warn("Unable to find an user with username " + username + " in domain "+ domainId);
+    return null;
+  }
   boolean authenticated=false;
   HashSet<ActionOnFailedAuthentication> actionsOnFailedAuthenticaion=new HashSet<ActionOnFailedAuthentication>();
+  User.Source userSource=userAccount.getSource();
   for (  UserAuthenticator authenticator : _userAuthenticators) {
+    if (userSource != User.Source.UNKNOWN) {
+      if (!authenticator.getName().equalsIgnoreCase(userSource.name())) {
+        continue;
+      }
+    }
     Pair<Boolean,ActionOnFailedAuthentication> result=authenticator.authenticate(username,password,domainId,requestParameters);
     if (result.first()) {
       authenticated=true;
@@ -16,11 +27,6 @@
   }
   boolean updateIncorrectLoginCount=actionsOnFailedAuthenticaion.contains(ActionOnFailedAuthentication.INCREMENT_INCORRECT_LOGIN_ATTEMPT_COUNT);
   if (authenticated) {
-    UserAccount userAccount=_userAccountDao.getUserAccount(username,domainId);
-    if (userAccount == null) {
-      s_logger.warn("Unable to find an authenticated user with username " + username + " in domain "+ domainId);
-      return null;
-    }
     Domain domain=_domainMgr.getDomain(domainId);
     String domainName=null;
     if (domain != null) {
@@ -39,7 +45,6 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Unable to authenticate user with username " + username + " in domain "+ domainId);
     }
-    UserAccount userAccount=_userAccountDao.getUserAccount(username,domainId);
     if (userAccount != null) {
       if (userAccount.getState().equalsIgnoreCase(Account.State.enabled.toString())) {
         if (!isInternalAccount(userAccount.getId())) {
