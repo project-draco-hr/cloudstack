@@ -1,0 +1,58 @@
+{
+  Map<String,String> sourceDetails=null;
+  VolumeVO volumeVO=_volumeDao.findById(volumeInfo.getId());
+  Long vmInstanceId=volumeVO.getInstanceId();
+  VMInstanceVO vmInstanceVO=_vmInstanceDao.findById(vmInstanceId);
+  Long hostId=null;
+  if (vmInstanceVO != null) {
+    hostId=vmInstanceVO.getHostId();
+    if (hostId == null) {
+      sourceDetails=getSourceDetails(volumeInfo);
+      hostId=vmInstanceVO.getLastHostId();
+    }
+  }
+ else {
+    sourceDetails=getSourceDetails(volumeInfo);
+  }
+  HostVO hostVO=getHostId(hostId,volumeVO);
+  long storagePoolId=volumeVO.getPoolId();
+  StoragePoolVO storagePoolVO=_storagePoolDao.findById(storagePoolId);
+  DataStore dataStore=_dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
+  Map<String,String> destDetails=getDestDetails(storagePoolVO,snapshotInfo);
+  SnapshotAndCopyCommand snapshotAndCopyCommand=new SnapshotAndCopyCommand(volumeInfo.getPath(),sourceDetails,destDetails);
+  SnapshotAndCopyAnswer snapshotAndCopyAnswer=null;
+  try {
+    if (sourceDetails != null) {
+      _volService.grantAccess(volumeInfo,hostVO,dataStore);
+    }
+    _volService.grantAccess(snapshotInfo,hostVO,dataStore);
+    snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)_agentMgr.send(hostVO.getId(),snapshotAndCopyCommand);
+  }
+ catch (  Exception ex) {
+    throw new CloudRuntimeException(ex.getMessage());
+  }
+ finally {
+    try {
+      _volService.revokeAccess(snapshotInfo,hostVO,dataStore);
+      if (sourceDetails != null) {
+        _volService.revokeAccess(volumeInfo,hostVO,dataStore);
+      }
+    }
+ catch (    Exception ex) {
+      s_logger.debug(ex.getMessage(),ex);
+    }
+  }
+  if (snapshotAndCopyAnswer == null || !snapshotAndCopyAnswer.getResult()) {
+    final String errMsg;
+    if (snapshotAndCopyAnswer != null && snapshotAndCopyAnswer.getDetails() != null && !snapshotAndCopyAnswer.getDetails().isEmpty()) {
+      errMsg=snapshotAndCopyAnswer.getDetails();
+    }
+ else {
+      errMsg="Unable to perform host-side operation";
+    }
+    throw new CloudRuntimeException(errMsg);
+  }
+  String path=snapshotAndCopyAnswer.getPath();
+  SnapshotDetailsVO snapshotDetail=new SnapshotDetailsVO(snapshotInfo.getId(),DiskTO.PATH,path,false);
+  _snapshotDetailsDao.persist(snapshotDetail);
+}
