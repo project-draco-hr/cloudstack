@@ -1,16 +1,24 @@
 {
   try {
     @SuppressWarnings("rawtypes") final GenericDao dao=GenericDaoBase.getDao(job.getClass());
-    return Transaction.execute(new TransactionCallback<Long>(){
-      @Override public Long doInTransaction(      TransactionStatus status){
-        job.setInitMsid(getMsid());
-        dao.persist(job);
-        publishOnEventBus(job,"submit");
-        syncAsyncJobExecution(job,syncObjType,syncObjId,1);
-        return job.getId();
-      }
+    publishOnEventBus(job,"submit");
+    if (!_vmInstanceDao.lockInLockTable(String.valueOf(syncObjId),VmJobLockTimeout.value())) {
+      throw new CloudRuntimeException("Failed to acquire lock in submitting async job: " + job.getCmd() + " with timeout value = "+ VmJobLockTimeout.value());
     }
+    try {
+      return Transaction.execute(new TransactionCallback<Long>(){
+        @Override public Long doInTransaction(        TransactionStatus status){
+          job.setInitMsid(getMsid());
+          dao.persist(job);
+          syncAsyncJobExecution(job,syncObjType,syncObjId,1);
+          return job.getId();
+        }
+      }
 );
+    }
+  finally {
+      _vmInstanceDao.unlockFromLockTable(String.valueOf(syncObjId));
+    }
   }
  catch (  Exception e) {
     String errMsg="Unable to schedule async job for command " + job.getCmd() + ", unexpected exception.";
