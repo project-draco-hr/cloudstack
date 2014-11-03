@@ -1,2 +1,27 @@
 {
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      Account owner=_accountMgr.getAccount(addr.getAllocatedToAccountId());
+synchronized (this) {
+        if (_ipAddressDao.lockRow(addr.getId(),true) != null) {
+          IPAddressVO userIp=_ipAddressDao.findById(addr.getId());
+          if (userIp.getState() == IpAddress.State.Allocating || addr.getState() == IpAddress.State.Free) {
+            addr.setState(IpAddress.State.Allocated);
+            _ipAddressDao.update(addr.getId(),addr);
+            if (owner.getAccountId() != Account.ACCOUNT_ID_SYSTEM) {
+              VlanVO vlan=_vlanDao.findById(addr.getVlanId());
+              String guestType=vlan.getVlanType().toString();
+              if (!isIpDedicated(addr)) {
+                UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_ASSIGN,owner.getId(),addr.getDataCenterId(),addr.getId(),addr.getAddress().toString(),addr.isSourceNat(),guestType,addr.getSystem(),addr.getClass().getName(),addr.getUuid());
+              }
+              if (updateIpResourceCount(addr)) {
+                _resourceLimitMgr.incrementResourceCount(owner.getId(),ResourceType.public_ip);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+);
 }
