@@ -1,4 +1,4 @@
-@attr(tags=['advanced', 'intervlan'])
+@attr(tags=['advanced', 'multihost', 'intervlan'])
 def test_05_destroy_instance_in_network(self):
     ' Test destroy an instance in VPC networks\n        '
     self.debug('Validating if the network rules work properly or not?')
@@ -6,7 +6,9 @@ def test_05_destroy_instance_in_network(self):
     self.debug(('Destroying the virtual machines in account: %s' % self.account.name))
     try:
         self.vm_1.delete(self.apiclient, expunge=False)
-        self.vm_2.delete(self.apiclient, expunge=False)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_1.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Destroyed', 'VM state should be destroyed')
     except Exception as e:
         self.fail(('Failed to stop the virtual instances, %s' % e))
     self.debug('Checking if NAT rules ')
@@ -14,9 +16,42 @@ def test_05_destroy_instance_in_network(self):
     self.assertEqual(isinstance(nat_rules, list), True, 'List NAT rules shall return a valid list')
     lb_rules = LoadBalancerRule.list(self.apiclient, id=self.lb_rule.id, listall=True)
     self.assertEqual(isinstance(lb_rules, list), True, 'List LB rules shall return a valid list')
+    self.debug(('Recovering the expunged virtual machine vm1 in account: %s' % self.account.name))
     try:
         self.vm_1.recover(self.apiclient)
-        self.vm_2.recover(self.apiclient)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_1.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Stopped', 'VM state should be stopped')
     except Exception as e:
         self.fail(('Failed to recover the virtual instances, %s' % e))
+    try:
+        self.vm_2.delete(self.apiclient, expunge=False)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_2.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Destroyed', 'VM state should be destroyed')
+    except Exception as e:
+        self.fail(('Failed to stop the virtual instances, %s' % e))
+    self.debug(('Recovering the expunged virtual machine vm2 in account: %s' % self.account.name))
+    try:
+        self.vm_2.recover(self.apiclient)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_2.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Stopped', 'VM state should be stopped')
+    except Exception as e:
+        self.fail(('Failed to recover the virtual instances, %s' % e))
+    self.debug('Starting the two instances..')
+    try:
+        self.vm_1.start(self.apiclient)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_1.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Running', 'VM state should be running')
+        self.vm_2.start(self.apiclient)
+        list_vm_response = list_virtual_machines(self.apiclient, id=self.vm_2.id)
+        vm_response = list_vm_response[0]
+        self.assertEqual(vm_response.state, 'Running', 'VM state should be running')
+    except Exception as e:
+        self.fail(('Failed to start the instances, %s' % e))
+    time.sleep(120)
+    self.debug('Validating if the network rules work properly or not?')
+    self.validate_network_rules()
     return
