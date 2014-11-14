@@ -1,6 +1,8 @@
 @attr(tags=['advanced', 'intervlan'])
 def test_01_enable_maintenance_with_vpc_nw(self):
     ' Test enable Maintenance Mode on Hosts which have VPC elements\n        '
+    Host.update(self.apiclient, id=self.hosts[0].id, hosttags='hosttag1,hosttag2')
+    Host.update(self.apiclient, id=self.hosts[1].id, hosttags='hosttag1,hosttag2')
     self.validate_vm_deployment()
     self.debug('Stop the host on which the VPC virtual router is running')
     try:
@@ -10,10 +12,24 @@ def test_01_enable_maintenance_with_vpc_nw(self):
     self.debug('Check if all instances belonging to the account are up again?')
     routers = Router.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
     self.assertEqual(isinstance(routers, list), True, 'List routers shall return a valid VPCVR for account')
-    for router in routers:
-        self.assertEqual(router.state, 'Running', 'Router state should be running after migration')
+    router = routers[0]
+    try:
+        timeout = self.services['timeout']
+        self.debug(('Timeout Value %d : ' % timeout))
+        while True:
+            list_router_response = Router.list(self.apiclient, id=router.id, state='Running')
+            if (list_router_response is not None):
+                break
+            elif (timeout == 0):
+                raise Exception('Router state should be running after migration')
+            time.sleep(self.services['sleep'])
+            timeout = (timeout - 1)
+            self.debug(('Waiting for %d seconds - %d tries left' % (self.services['sleep'], timeout)))
+        self.debug('Verified that the Router is in Running State')
+    except Exception as e:
+        self.fail(('Failed to find the Router in Running state %s ' % e))
     vms = VirtualMachine.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
     self.assertEqual(isinstance(vms, list), True, 'VM response should return instances running for account')
     for vm in vms:
-        self.assertEqual(vm.state, 'Ruuning', 'Vm state should be running after migration')
+        self.assertEqual(vm.state, 'Running', 'Vm state should be running after migration')
     return
