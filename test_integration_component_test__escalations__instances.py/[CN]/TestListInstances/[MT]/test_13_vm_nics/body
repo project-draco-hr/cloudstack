@@ -3,9 +3,12 @@ def test_13_vm_nics(self):
     '\n        @Desc: Test to verify Nics for a VM\n        @Steps:\n        Step1: Deploying a VM\n        Step2: Listing all the Networks\n        Step3: Verifying that the list size is 1\n        Step4: Creating 1 network\n        Step5: Listing all the networks again\n        Step6: Verifying that the list size is 2\n        Step7: Verifying that VM deployed in step1 has only 1 nic\n                and it is same as network listed in step3\n        Step8: Adding the networks created in step4 to VM deployed in step1\n        Step9: Verifying that VM deployed in step1 has 2 nics\n        Step10: Verifying that isdefault is set to true for only 1 nic\n        Step11: Verifying that isdefault is set to true for the Network\n                created when deployed a VM\n        Step12: Making the nic created in step4 as default nic\n        Step13: Verifying that isdefault is set to true for only 1 nic\n        Step14: Verifying that the isdefault is set to true for the\n                nic created in step4\n        Step15: Removing the non-default nic from VM\n        Step16: Verifying that VM deployed in step1 has only 1 nic\n        '
     if (self.hypervisor.lower() in ['hyperv']):
         raise unittest.SkipTest('This feature is not supported on existing hypervisor.                        Hence, skipping the test')
+    hypervisorIsVmware = False
+    if (self.hypervisor.lower() == 'vmware'):
+        hypervisorIsVmware = True
     list_vms_before = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
     self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
-    vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+    vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=(self.zone.networktype if hypervisorIsVmware else 'default'))
     self.assertIsNotNone(vm_created, 'VM creation failed')
     list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'])
     status = validateList(list_vms_after)
@@ -62,13 +65,24 @@ def test_13_vm_nics(self):
             non_default_nic = vm_nics_after[i]
     self.assertEquals(1, default_count, 'Default NIC count is not matching')
     self.assertEquals(network2.id, default_nic.networkid, 'Default NIC is not matching for VM')
-    vm_created.remove_nic(self.userapiclient, non_default_nic.id)
-    list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
-    status = validateList(list_vms_after)
-    self.assertEquals(PASS, status[0], 'Listing of VM failed')
-    vm = list_vms_after[0]
-    vm_nics_after = vm.nic
-    self.assertIsNotNone(vm_nics_after, 'Nic not found for the deployed VM')
-    self.assertEquals(1, len(vm_nics_after), "VM NIC's count is not matching")
-    self.assertEquals(network2.id, vm_nics_after[0].networkid, 'VM NIC is not same as expected')
+    isVmwareToolInstalled = False
+    if hypervisorIsVmware:
+        sshClient = vm_created.get_ssh_client()
+        result = str(sshClient.execute('service vmware-tools status')).lower()
+        self.debug(('and result is: %s' % result))
+        if ('running' in result):
+            isVmwareToolInstalled = True
+    goForUnplugOperation = True
+    if (hypervisorIsVmware and (not isVmwareToolInstalled)):
+        goForUnplugOperation = False
+    if goForUnplugOperation:
+        vm_created.remove_nic(self.userapiclient, non_default_nic.id)
+        list_vms_after = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+        status = validateList(list_vms_after)
+        self.assertEquals(PASS, status[0], 'Listing of VM failed')
+        vm = list_vms_after[0]
+        vm_nics_after = vm.nic
+        self.assertIsNotNone(vm_nics_after, 'Nic not found for the deployed VM')
+        self.assertEquals(1, len(vm_nics_after), "VM NIC's count is not matching")
+        self.assertEquals(network2.id, vm_nics_after[0].networkid, 'VM NIC is not same as expected')
     return
