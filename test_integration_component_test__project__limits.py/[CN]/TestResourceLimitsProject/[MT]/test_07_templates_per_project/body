@@ -4,18 +4,28 @@ def test_07_templates_per_project(self):
     update_resource_limit(self.apiclient, 2, max=5, projectid=self.project.id)
     self.debug(('Updating template resource limits for domain: %s' % self.account.domainid))
     update_resource_limit(self.apiclient, 4, max=1, projectid=self.project.id)
-    self.debug(('Deploying VM for account: %s' % self.account.name))
-    virtual_machine_1 = VirtualMachine.create(self.apiclient, self.services['server'], templateid=self.template.id, serviceofferingid=self.service_offering.id, projectid=self.project.id)
-    self.cleanup.append(virtual_machine_1)
-    self.assertEqual(virtual_machine_1.state, 'Running', 'Check VM state is Running or not')
-    virtual_machine_1.stop(self.apiclient)
-    volumes = list_volumes(self.apiclient, virtualmachineid=virtual_machine_1.id, projectid=self.project.id, type='ROOT')
-    self.assertEqual(isinstance(volumes, list), True, 'Check for list volume response return valid data')
-    volume = volumes[0]
-    self.debug(('Creating template from volume: %s' % volume.id))
-    template_1 = Template.create(self.userapiclient, self.services['template'], volumeid=volume.id, projectid=self.project.id)
-    self.cleanup.append(template_1)
-    self.assertEqual(template_1.isready, True, 'Check Template is in ready state or not')
+    self.debug('Register the First Template in the project')
+    builtin_info = get_builtin_template_info(self.apiclient, self.zone.id)
+    self.services['template']['url'] = builtin_info[0]
+    self.services['template']['hypervisor'] = builtin_info[1]
+    self.services['template']['format'] = builtin_info[2]
+    template = Template.register(self.userapiclient, self.services['template'], zoneid=self.zone.id, projectid=self.project.id)
+    self.debug(('Registered a template of format: %s with ID: %s' % (self.services['template']['format'], template.id)))
+    self.cleanup.append(template)
+    time.sleep(self.services['sleep'])
+    timeout = self.services['timeout']
+    while True:
+        list_template_response = Template.list(self.apiclient, templatefilter='all', id=template.id, zoneid=self.zone.id, projectid=self.project.id)
+        if (list_template_response[0].isready is True):
+            break
+        elif (timeout == 0):
+            raise Exception(('Template state is not ready, it is %s' % list_template_response[0].isready))
+        time.sleep(self.services['sleep'])
+        timeout = (timeout - 1)
+    self.assertEqual(isinstance(list_template_response, list), True, 'Check for list template response return valid data')
+    self.assertNotEqual(len(list_template_response), 0, 'Check template available in List Templates')
+    template_response = list_template_response[0]
+    self.assertEqual(template_response.isready, True, ('Template state is not ready, it is %s' % template_response.isready))
     with self.assertRaises(Exception):
-        Template.create(self.userapiclient, self.services['template'], volumeid=volume.id, projectid=self.project.id)
+        Template.register(self.userapiclient, self.services['template'], zoneid=self.zone.id, projectid=self.project.id)
     return
