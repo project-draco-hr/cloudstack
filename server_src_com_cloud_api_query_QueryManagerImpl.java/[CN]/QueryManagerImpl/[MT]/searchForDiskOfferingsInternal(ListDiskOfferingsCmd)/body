@@ -10,6 +10,7 @@
   Object keyword=cmd.getKeyword();
   Long domainId=cmd.getDomainId();
   Boolean isRootAdmin=_accountMgr.isRootAdmin(account.getAccountId());
+  Boolean isRecursive=cmd.isRecursive();
   if (domainId != null) {
     if (_accountMgr.isRootAdmin(account.getId()) || isPermissible(account.getDomainId(),domainId)) {
       sc.addAnd("domainId",SearchCriteria.Op.EQ,domainId);
@@ -24,23 +25,29 @@
   }
   List<Long> domainIds=null;
   if ((_accountMgr.isNormalUser(account.getId()) || _accountMgr.isDomainAdmin(account.getId())) || account.getType() == Account.ACCOUNT_TYPE_RESOURCE_DOMAIN_ADMIN) {
-    domainIds=new ArrayList<Long>();
-    DomainVO domainRecord=_domainDao.findById(account.getDomainId());
-    if (domainRecord == null) {
-      s_logger.error("Could not find the domainId for account:" + account.getAccountName());
-      throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+    if (isRecursive) {
+      if (account.getType() == Account.ACCOUNT_TYPE_NORMAL)       throw new InvalidParameterValueException("Only ROOT admins and Domain admins can list disk offerings with isrecursive=true");
+      DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+      sc.addAnd("domainPath",SearchCriteria.Op.LIKE,domainRecord.getPath() + "%");
     }
-    domainIds.add(domainRecord.getId());
-    while (domainRecord.getParent() != null) {
-      domainRecord=_domainDao.findById(domainRecord.getParent());
+ else {
+      domainIds=new ArrayList<Long>();
+      DomainVO domainRecord=_domainDao.findById(account.getDomainId());
+      if (domainRecord == null) {
+        s_logger.error("Could not find the domainId for account:" + account.getAccountName());
+        throw new CloudAuthenticationException("Could not find the domainId for account:" + account.getAccountName());
+      }
       domainIds.add(domainRecord.getId());
+      while (domainRecord.getParent() != null) {
+        domainRecord=_domainDao.findById(domainRecord.getParent());
+        domainIds.add(domainRecord.getId());
+      }
+      SearchCriteria<DiskOfferingJoinVO> spc=_diskOfferingJoinDao.createSearchCriteria();
+      spc.addOr("domainId",SearchCriteria.Op.IN,domainIds.toArray());
+      spc.addOr("domainId",SearchCriteria.Op.NULL);
+      sc.addAnd("domainId",SearchCriteria.Op.SC,spc);
+      sc.addAnd("systemUse",SearchCriteria.Op.EQ,false);
     }
-    SearchCriteria<DiskOfferingJoinVO> spc=_diskOfferingJoinDao.createSearchCriteria();
-    spc.addOr("domainId",SearchCriteria.Op.IN,domainIds.toArray());
-    spc.addOr("domainId",SearchCriteria.Op.NULL);
-    sc.addAnd("domainId",SearchCriteria.Op.SC,spc);
-    sc.addAnd("displayOffering",SearchCriteria.Op.EQ,1);
-    sc.addAnd("systemUse",SearchCriteria.Op.EQ,false);
   }
   if (keyword != null) {
     SearchCriteria<DiskOfferingJoinVO> ssc=_diskOfferingJoinDao.createSearchCriteria();

@@ -4,6 +4,26 @@
   if (offering == null) {
     throw new InvalidParameterValueException("Unable to find disk offering by id " + diskOfferingId);
   }
+  Long userId=CallContext.current().getCallingUserId();
+  if (userId == null) {
+    userId=Long.valueOf(User.UID_SYSTEM);
+  }
+  User user=_userDao.findById(userId);
+  if (user == null || user.getRemoved() != null) {
+    throw new InvalidParameterValueException("Unable to find active user by id " + userId);
+  }
+  Account account=_accountDao.findById(user.getAccountId());
+  if (account.getType() == Account.ACCOUNT_TYPE_DOMAIN_ADMIN) {
+    if (offering.getDomainId() == null) {
+      throw new InvalidParameterValueException("Unable to delete public disk offering by id " + userId + " because it is domain-admin");
+    }
+    if (!_domainDao.isChildDomain(account.getDomainId(),offering.getDomainId())) {
+      throw new InvalidParameterValueException("Unable to delete disk offering by another domain admin with id " + userId);
+    }
+  }
+ else   if (account.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+    throw new InvalidParameterValueException("Unable to delete disk offering by id " + userId + " because it is not root-admin or domain-admin");
+  }
   offering.setState(DiskOffering.State.Inactive);
   if (_diskOfferingDao.update(offering.getId(),offering)) {
     CallContext.current().setEventDetails("Disk offering id=" + diskOfferingId);
