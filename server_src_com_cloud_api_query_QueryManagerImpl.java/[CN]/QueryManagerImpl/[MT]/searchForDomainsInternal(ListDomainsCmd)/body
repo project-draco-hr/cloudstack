@@ -1,0 +1,53 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  Long domainId=cmd.getId();
+  boolean listAll=cmd.listAll();
+  boolean isRecursive=false;
+  if (domainId != null) {
+    Domain domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Domain id=" + domainId + " doesn't exist");
+    }
+    _accountMgr.checkAccess(caller,domain);
+  }
+ else {
+    if (caller.getType() != Account.ACCOUNT_TYPE_ADMIN) {
+      domainId=caller.getDomainId();
+    }
+    if (listAll) {
+      isRecursive=true;
+    }
+  }
+  Filter searchFilter=new Filter(DomainJoinVO.class,"id",true,cmd.getStartIndex(),cmd.getPageSizeVal());
+  String domainName=cmd.getDomainName();
+  Integer level=cmd.getLevel();
+  Object keyword=cmd.getKeyword();
+  SearchBuilder<DomainJoinVO> sb=_domainJoinDao.createSearchBuilder();
+  sb.and("id",sb.entity().getId(),SearchCriteria.Op.EQ);
+  sb.and("name",sb.entity().getName(),SearchCriteria.Op.EQ);
+  sb.and("level",sb.entity().getLevel(),SearchCriteria.Op.EQ);
+  sb.and("path",sb.entity().getPath(),SearchCriteria.Op.LIKE);
+  sb.and("state",sb.entity().getState(),SearchCriteria.Op.EQ);
+  SearchCriteria<DomainJoinVO> sc=sb.create();
+  if (keyword != null) {
+    SearchCriteria<DomainJoinVO> ssc=_domainJoinDao.createSearchCriteria();
+    ssc.addOr("name",SearchCriteria.Op.LIKE,"%" + keyword + "%");
+    sc.addAnd("name",SearchCriteria.Op.SC,ssc);
+  }
+  if (domainName != null) {
+    sc.setParameters("name",domainName);
+  }
+  if (level != null) {
+    sc.setParameters("level",level);
+  }
+  if (domainId != null) {
+    if (isRecursive) {
+      sc.setParameters("path",_domainDao.findById(domainId).getPath() + "%");
+    }
+ else {
+      sc.setParameters("id",domainId);
+    }
+  }
+  sc.setParameters("state",Domain.State.Active);
+  return _domainJoinDao.searchAndCount(sc,searchFilter);
+}
