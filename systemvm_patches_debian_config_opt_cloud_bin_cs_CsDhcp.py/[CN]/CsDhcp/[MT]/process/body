@@ -1,21 +1,23 @@
 def process(self):
-    dnsmasq = CsDnsMasq(self.config)
+    self.hosts = {}
+    self.changed = []
+    self.devinfo = CsHelper.get_device_info()
+    self.preseed()
+    self.cloud = CsFile(DHCP_HOSTS)
+    self.conf = CsFile(CLOUD_CONF)
+    length = len(self.conf)
     for item in self.dbag:
         if (item == 'id'):
             continue
-        dnsmasq.add(self.dbag[item])
-    dnsmasqb4 = CsDnsMasq(self.config, NO_PRELOAD)
-    dnsmasqb4.parse_hosts()
-    dnsmasqb4.parse_dnsmasq()
-    if (not dnsmasq.compare_hosts(dnsmasqb4)):
-        logging.info('Updating hosts file')
-        dnsmasq.write_hosts()
-    else:
-        logging.debug('Hosts file is up to date')
-    diff = dnsmasq.compare_dnsmasq(dnsmasqb4)
-    if (len(diff) > 0):
-        dnsmasq.updated = True
-        dnsmasq.delete_leases(diff)
-        dnsmasq.write_dnsmasq()
-    dnsmasq.first_host = dnsmasqb4.first_host
-    dnsmasq.configure_server()
+        self.add(self.dbag[item])
+    self.write_hosts()
+    if self.cloud.is_changed():
+        self.delete_leases()
+    self.configure_server()
+    self.conf.commit()
+    self.cloud.commit()
+    if self.cloud.is_changed():
+        if (length < 2):
+            CsHelper.service('dnsmasq', 'restart')
+        else:
+            CsHelper.hup_dnsmasq('dnsmasq', 'dnsmasq')
