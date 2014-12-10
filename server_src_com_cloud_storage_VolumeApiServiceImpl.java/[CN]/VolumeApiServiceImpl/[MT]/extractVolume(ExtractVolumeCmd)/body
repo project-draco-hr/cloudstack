@@ -43,34 +43,44 @@
   if (volumeStoreRef != null && volumeStoreRef.getExtractUrl() != null) {
     return volumeStoreRef.getExtractUrl();
   }
-  dataStoreMgr.getPrimaryDataStore(volume.getPoolId());
-  ImageStoreEntity secStore=(ImageStoreEntity)dataStoreMgr.getImageStore(zoneId);
-  secStore.getUri();
-  String value=_configDao.getValue(Config.CopyVolumeWait.toString());
-  NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
-  VolumeInfo srcVol=volFactory.getVolume(volume.getId());
-  AsyncCallFuture<VolumeApiResult> cvAnswer=volService.copyVolume(srcVol,secStore);
-  VolumeApiResult cvResult=null;
-  try {
-    cvResult=cvAnswer.get();
+  VMInstanceVO vm=null;
+  if (volume.getInstanceId() != null) {
+    vm=_vmInstanceDao.findById(volume.getInstanceId());
   }
- catch (  InterruptedException e1) {
-    s_logger.debug("failed copy volume",e1);
-    throw new CloudRuntimeException("Failed to copy volume",e1);
+  if (vm != null) {
+    AsyncJobExecutionContext jobContext=AsyncJobExecutionContext.getCurrentExecutionContext();
+    if (jobContext.isJobDispatchedBy(VmWorkConstants.VM_WORK_JOB_DISPATCHER)) {
+      VmWorkJobVO placeHolder=null;
+      placeHolder=createPlaceHolderWork(vm.getId());
+      try {
+        return orchestrateExtractVolume(volume.getId(),zoneId);
+      }
+  finally {
+        _workJobDao.expunge(placeHolder.getId());
+      }
+    }
+ else {
+      Outcome<String> outcome=extractVolumeThroughJobQueue(vm.getId(),volume.getId(),zoneId);
+      try {
+        outcome.get();
+      }
+ catch (      InterruptedException e) {
+        throw new RuntimeException("Operation is interrupted",e);
+      }
+catch (      java.util.concurrent.ExecutionException e) {
+        throw new RuntimeException("Execution excetion",e);
+      }
+      Object jobResult=_jobMgr.unmarshallResultObject(outcome.getJob());
+      if (jobResult != null) {
+        if (jobResult instanceof ConcurrentOperationException)         throw (ConcurrentOperationException)jobResult;
+ else         if (jobResult instanceof RuntimeException)         throw (RuntimeException)jobResult;
+ else         if (jobResult instanceof Throwable)         throw new RuntimeException("Unexpected exception",(Throwable)jobResult);
+      }
+      if (jobResult != null && jobResult instanceof String) {
+        return (String)jobResult;
+      }
+      return null;
+    }
   }
-catch (  ExecutionException e1) {
-    s_logger.debug("failed copy volume",e1);
-    throw new CloudRuntimeException("Failed to copy volume",e1);
-  }
-  if (cvResult == null || cvResult.isFailed()) {
-    String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
-    throw new CloudRuntimeException(errorString);
-  }
-  VolumeInfo vol=cvResult.getVolume();
-  String extractUrl=secStore.createEntityExtractUrl(vol.getPath(),vol.getFormat(),vol);
-  volumeStoreRef=_volumeStoreDao.findByVolume(volumeId);
-  volumeStoreRef.setExtractUrl(extractUrl);
-  volumeStoreRef.setExtractUrlCreated(DateUtil.now());
-  _volumeStoreDao.update(volumeStoreRef.getId(),volumeStoreRef);
-  return extractUrl;
+  return orchestrateExtractVolume(volume.getId(),zoneId);
 }
