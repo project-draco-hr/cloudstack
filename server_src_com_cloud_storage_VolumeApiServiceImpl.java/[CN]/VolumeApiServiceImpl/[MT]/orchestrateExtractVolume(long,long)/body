@@ -1,0 +1,34 @@
+{
+  VolumeVO volume=_volsDao.findById(volumeId);
+  if (volume == null || volume.getState() != Volume.State.Ready) {
+    throw new InvalidParameterValueException("Volume to be extracted has been removed or not in right state!");
+  }
+  ImageStoreEntity secStore=(ImageStoreEntity)dataStoreMgr.getImageStore(zoneId);
+  String value=_configDao.getValue(Config.CopyVolumeWait.toString());
+  NumbersUtil.parseInt(value,Integer.parseInt(Config.CopyVolumeWait.getDefaultValue()));
+  VolumeInfo srcVol=volFactory.getVolume(volumeId);
+  AsyncCallFuture<VolumeApiResult> cvAnswer=volService.copyVolume(srcVol,secStore);
+  VolumeApiResult cvResult=null;
+  try {
+    cvResult=cvAnswer.get();
+  }
+ catch (  InterruptedException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+catch (  ExecutionException e1) {
+    s_logger.debug("failed copy volume",e1);
+    throw new CloudRuntimeException("Failed to copy volume",e1);
+  }
+  if (cvResult == null || cvResult.isFailed()) {
+    String errorString="Failed to copy the volume from the source primary storage pool to secondary storage.";
+    throw new CloudRuntimeException(errorString);
+  }
+  VolumeInfo vol=cvResult.getVolume();
+  String extractUrl=secStore.createEntityExtractUrl(vol.getPath(),vol.getFormat(),vol);
+  VolumeDataStoreVO volumeStoreRef=_volumeStoreDao.findByVolume(volumeId);
+  volumeStoreRef.setExtractUrl(extractUrl);
+  volumeStoreRef.setExtractUrlCreated(DateUtil.now());
+  _volumeStoreDao.update(volumeStoreRef.getId(),volumeStoreRef);
+  return extractUrl;
+}
