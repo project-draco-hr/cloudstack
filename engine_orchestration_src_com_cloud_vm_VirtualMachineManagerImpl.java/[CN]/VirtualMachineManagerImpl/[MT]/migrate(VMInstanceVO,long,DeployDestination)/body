@@ -1,21 +1,21 @@
 {
   s_logger.info("Migrating " + vm + " to "+ dest);
-  long dstHostId=dest.getHost().getId();
-  Host fromHost=_hostDao.findById(srcHostId);
+  final long dstHostId=dest.getHost().getId();
+  final Host fromHost=_hostDao.findById(srcHostId);
   if (fromHost == null) {
     s_logger.info("Unable to find the host to migrate from: " + srcHostId);
     throw new CloudRuntimeException("Unable to find the host to migrate from: " + srcHostId);
   }
   if (fromHost.getClusterId().longValue() != dest.getCluster().getId()) {
-    List<VolumeVO> volumes=_volsDao.findCreatedByInstance(vm.getId());
-    for (    VolumeVO volume : volumes) {
-      if (!(_storagePoolDao.findById(volume.getPoolId())).getScope().equals(ScopeType.ZONE)) {
+    final List<VolumeVO> volumes=_volsDao.findCreatedByInstance(vm.getId());
+    for (    final VolumeVO volume : volumes) {
+      if (!_storagePoolDao.findById(volume.getPoolId()).getScope().equals(ScopeType.ZONE)) {
         s_logger.info("Source and destination host are not in same cluster and all volumes are not on zone wide primary store, unable to migrate to host: " + dest.getHost().getId());
         throw new CloudRuntimeException("Source and destination host are not in same cluster and all volumes are not on zone wide primary store, unable to migrate to host: " + dest.getHost().getId());
       }
     }
   }
-  VirtualMachineGuru vmGuru=getVmGuru(vm);
+  final VirtualMachineGuru vmGuru=getVmGuru(vm);
   if (vm.getState() != State.Running) {
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("VM is not Running, unable to migrate the vm " + vm);
@@ -29,15 +29,15 @@
  else   if (VirtualMachine.Type.ConsoleProxy.equals(vm.getType())) {
     alertType=AlertManager.AlertType.ALERT_TYPE_CONSOLE_PROXY_MIGRATE;
   }
-  VirtualMachineProfile vmSrc=new VirtualMachineProfileImpl(vm);
-  for (  NicProfile nic : _networkMgr.getNicProfiles(vm)) {
+  final VirtualMachineProfile vmSrc=new VirtualMachineProfileImpl(vm);
+  for (  final NicProfile nic : _networkMgr.getNicProfiles(vm)) {
     vmSrc.addNic(nic);
   }
-  VirtualMachineProfile profile=new VirtualMachineProfileImpl(vm,null,_offeringDao.findById(vm.getId(),vm.getServiceOfferingId()),null,null);
+  final VirtualMachineProfile profile=new VirtualMachineProfileImpl(vm,null,_offeringDao.findById(vm.getId(),vm.getServiceOfferingId()),null,null);
   _networkMgr.prepareNicForMigration(profile,dest);
   volumeMgr.prepareForMigration(profile,dest);
-  VirtualMachineTO to=toVmTO(profile);
-  PrepareForMigrationCommand pfmc=new PrepareForMigrationCommand(to);
+  final VirtualMachineTO to=toVmTO(profile);
+  final PrepareForMigrationCommand pfmc=new PrepareForMigrationCommand(to);
   ItWorkVO work=new ItWorkVO(UUID.randomUUID().toString(),_nodeId,State.Migrating,vm.getType(),vm.getId());
   work.setStep(Step.Prepare);
   work.setResourceType(ItWorkVO.ResourceType.Host);
@@ -47,13 +47,13 @@
   try {
     pfma=_agentMgr.send(dstHostId,pfmc);
     if (pfma == null || !pfma.getResult()) {
-      String details=(pfma != null) ? pfma.getDetails() : "null answer returned";
-      String msg="Unable to prepare for migration due to " + details;
+      final String details=pfma != null ? pfma.getDetails() : "null answer returned";
+      final String msg="Unable to prepare for migration due to " + details;
       pfma=null;
       throw new AgentUnavailableException(msg,dstHostId);
     }
   }
- catch (  OperationTimedoutException e1) {
+ catch (  final OperationTimedoutException e1) {
     throw new AgentUnavailableException("Operation timed out",dstHostId);
   }
  finally {
@@ -71,24 +71,24 @@
       throw new ConcurrentOperationException("Migration cancelled because state has changed: " + vm);
     }
   }
- catch (  NoTransitionException e1) {
+ catch (  final NoTransitionException e1) {
     _networkMgr.rollbackNicForMigration(vmSrc,profile);
     s_logger.info("Migration cancelled because " + e1.getMessage());
     throw new ConcurrentOperationException("Migration cancelled because " + e1.getMessage());
   }
   boolean migrated=false;
   try {
-    boolean isWindows=_guestOsCategoryDao.findById(_guestOsDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
-    MigrateCommand mc=new MigrateCommand(vm.getInstanceName(),dest.getHost().getPrivateIpAddress(),isWindows,to,getExecuteInSequence(vm.getHypervisorType()));
+    final boolean isWindows=_guestOsCategoryDao.findById(_guestOsDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
+    final MigrateCommand mc=new MigrateCommand(vm.getInstanceName(),dest.getHost().getPrivateIpAddress(),isWindows,to,getExecuteInSequence(vm.getHypervisorType()));
     mc.setHostGuid(dest.getHost().getGuid());
     try {
-      Answer ma=_agentMgr.send(vm.getLastHostId(),mc);
+      final Answer ma=_agentMgr.send(vm.getLastHostId(),mc);
       if (ma == null || !ma.getResult()) {
-        String details=(ma != null) ? ma.getDetails() : "null answer returned";
+        final String details=ma != null ? ma.getDetails() : "null answer returned";
         throw new CloudRuntimeException(details);
       }
     }
- catch (    OperationTimedoutException e) {
+ catch (    final OperationTimedoutException e) {
       if (e.isActive()) {
         s_logger.warn("Active migration command so scheduling a restart for " + vm);
         _haMgr.scheduleRestart(vm,true);
@@ -100,7 +100,7 @@
         throw new ConcurrentOperationException("Unable to change the state for " + vm);
       }
     }
- catch (    NoTransitionException e1) {
+ catch (    final NoTransitionException e1) {
       throw new ConcurrentOperationException("Unable to change state due to " + e1.getMessage());
     }
     try {
@@ -109,14 +109,14 @@
         try {
           _agentMgr.send(srcHostId,new Commands(cleanup(vm)),null);
         }
- catch (        AgentUnavailableException e) {
+ catch (        final AgentUnavailableException e) {
           s_logger.error("AgentUnavailableException while cleanup on source host: " + srcHostId);
         }
         cleanup(vmGuru,new VirtualMachineProfileImpl(vm),work,Event.AgentReportStopped,true);
         throw new CloudRuntimeException("Unable to complete migration for " + vm);
       }
     }
- catch (    OperationTimedoutException e) {
+ catch (    final OperationTimedoutException e) {
       s_logger.debug("Error while checking the vm " + vm + " on host "+ dstHostId,e);
     }
     migrated=true;
@@ -129,13 +129,13 @@
       try {
         _agentMgr.send(dstHostId,new Commands(cleanup(vm)),null);
       }
- catch (      AgentUnavailableException ae) {
+ catch (      final AgentUnavailableException ae) {
         s_logger.info("Looks like the destination Host is unavailable for cleanup");
       }
       try {
         stateTransitTo(vm,Event.OperationFailed,srcHostId);
       }
- catch (      NoTransitionException e) {
+ catch (      final NoTransitionException e) {
         s_logger.warn(e.getMessage());
       }
     }
