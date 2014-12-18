@@ -1,5 +1,8 @@
 {
   VMInstanceVO vm=_vmDao.findByUuid(vmUuid);
+  Long srchostId=vm.getHostId() != null ? vm.getHostId() : vm.getLastHostId();
+  HostVO srcHost=_hostDao.findById(srchostId);
+  Long srcClusterId=srcHost.getClusterId();
   try {
     stateTransitTo(vm,VirtualMachine.Event.StorageMigrationRequested,null);
   }
@@ -19,6 +22,24 @@
       }
       vm.setLastHostId(null);
       vm.setPodIdToDeployIn(destPool.getPodId());
+      if (vm.getHypervisorType().equals(HypervisorType.VMware)) {
+        Long destClusterId=destPool.getClusterId();
+        if (srcClusterId != null && destClusterId != null && srcClusterId != destClusterId) {
+          String srcDcName=_clusterDetailsDao.getVmwareDcName(srcClusterId);
+          String destDcName=_clusterDetailsDao.getVmwareDcName(destClusterId);
+          if (srcDcName != null && destDcName != null && !srcDcName.equals(destDcName)) {
+            s_logger.debug("Since VM's storage was successfully migrated across VMware Datacenters, unregistering VM: " + vm.getInstanceName() + " from source host: "+ srcHost.getId());
+            UnregisterVMCommand uvc=new UnregisterVMCommand(vm.getInstanceName());
+            uvc.setCleanupVmFiles(true);
+            try {
+              _agentMgr.send(srcHost.getId(),uvc);
+            }
+ catch (            Exception e) {
+              throw new CloudRuntimeException("Failed to unregister VM: " + vm.getInstanceName() + " from source host: "+ srcHost.getId()+ " after successfully migrating VM's storage across VMware Datacenters");
+            }
+          }
+        }
+      }
     }
  else {
       s_logger.debug("Storage migration failed");
