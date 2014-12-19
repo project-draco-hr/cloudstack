@@ -29,24 +29,33 @@
   SnapshotDataStoreVO parentSnapshotOnBackupStore=snapshotStoreDao.findLatestSnapshotForVolume(snapshot.getVolumeId(),DataStoreRole.Image);
   HypervisorType hypervisorType=snapshot.getBaseVolume().getHypervisorType();
   if (parentSnapshotOnBackupStore != null && hypervisorType == Hypervisor.HypervisorType.XenServer) {
-    int _deltaSnapshotMax=NumbersUtil.parseInt(configDao.getValue("snapshot.delta.max"),SnapshotManager.DELTAMAX);
-    int deltaSnap=_deltaSnapshotMax;
-    int i;
-    for (i=1; i < deltaSnap; i++) {
-      Long prevBackupId=parentSnapshotOnBackupStore.getParentSnapshotId();
-      if (prevBackupId == 0) {
-        break;
-      }
-      parentSnapshotOnBackupStore=snapshotStoreDao.findBySnapshot(prevBackupId,DataStoreRole.Image);
-      if (parentSnapshotOnBackupStore == null) {
-        break;
-      }
-    }
-    if (i >= deltaSnap) {
-      fullBackup=true;
-    }
+    SnapshotDataStoreVO oldestSnapshotOnPrimary=snapshotStoreDao.findOldestSnapshotForVolume(snapshot.getVolumeId(),DataStoreRole.Primary);
+    VolumeVO volume=volumeDao.findById(snapshot.getVolumeId());
+    if (oldestSnapshotOnPrimary != null) {
+      if (oldestSnapshotOnPrimary.getDataStoreId() == volume.getPoolId()) {
+        int _deltaSnapshotMax=NumbersUtil.parseInt(configDao.getValue("snapshot.delta.max"),SnapshotManager.DELTAMAX);
+        int deltaSnap=_deltaSnapshotMax;
+        int i;
+        for (i=1; i < deltaSnap; i++) {
+          Long prevBackupId=parentSnapshotOnBackupStore.getParentSnapshotId();
+          if (prevBackupId == 0) {
+            break;
+          }
+          parentSnapshotOnBackupStore=snapshotStoreDao.findBySnapshot(prevBackupId,DataStoreRole.Image);
+          if (parentSnapshotOnBackupStore == null) {
+            break;
+          }
+        }
+        if (i >= deltaSnap) {
+          fullBackup=true;
+        }
  else {
-      fullBackup=false;
+          fullBackup=false;
+        }
+      }
+ else {
+        snapshotStoreDao.remove(oldestSnapshotOnPrimary.getId());
+      }
     }
   }
   snapshot.addPayload(fullBackup);
