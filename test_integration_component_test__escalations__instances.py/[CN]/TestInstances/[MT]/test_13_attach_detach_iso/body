@@ -7,24 +7,30 @@ def test_13_attach_detach_iso(self):
     self.assertIsNone(list_vms_before, 'Virtual Machine already exists for newly created user')
     vm_created = VirtualMachine.create(self.userapiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
     self.assertIsNotNone(vm_created, 'VM creation failed')
+    self.cleanup.append(vm_created)
     list_vms_after = VirtualMachine.list(self.userapiclient, listall=self.services['listall'], page=1, pagesize=self.services['pagesize'], domainid=self.account.domainid, zoneid=self.zone.id, account=self.account.name)
     status = validateList(list_vms_after)
     self.assertEquals(PASS, status[0], 'VM creation failed')
     self.assertEquals(1, len(list_vms_after), 'VM list count is not matching')
     isos_list = Iso.list(self.userapiclient, isready='true', isofilter='executable', zoneid=self.zone.id)
-    if (isos_list is not None):
-        iso_toattach = isos_list[0]
-        VirtualMachine.attach_iso(vm_created, self.userapiclient, iso_toattach)
-        list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
-        status = validateList(list_vm)
-        self.assertEquals(PASS, status[0], 'VM listing by Id failed')
-        self.assertEquals(iso_toattach.name, list_vm[0].isoname, 'Attached ISO name is not matching')
-        self.assertEquals(iso_toattach.displaytext, list_vm[0].isodisplaytext, 'Attached ISO display is not matching')
-        VirtualMachine.detach_iso(vm_created, self.userapiclient)
-        list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
-        status = validateList(list_vm)
-        self.assertEquals(PASS, status[0], 'VM listing by Id failed')
-        self.assertIsNone(list_vm[0].isoname, 'ISO not detached from VM')
+    self.assertEqual(validateList(isos_list)[0], PASS, 'isos list validation failed')
+    if (self.hypervisor.lower() == 'xenserver'):
+        isoDesc = 'xen'
     else:
-        self.fail('Executable ISO in Ready is not found in the given setup')
+        isoDesc = 'vmware'
+    validIsosToAttach = [iso for iso in isos_list if (isoDesc in iso.displaytext.lower())]
+    if (not validIsosToAttach):
+        self.skipTest('Valid ISO not present in setup suitable to attach to VM')
+    iso_toattach = validIsosToAttach[0]
+    VirtualMachine.attach_iso(vm_created, self.userapiclient, iso_toattach)
+    list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vm)
+    self.assertEquals(PASS, status[0], 'VM listing by Id failed')
+    self.assertEquals(iso_toattach.name, list_vm[0].isoname, 'Attached ISO name is not matching')
+    self.assertEquals(iso_toattach.displaytext, list_vm[0].isodisplaytext, 'Attached ISO display is not matching')
+    VirtualMachine.detach_iso(vm_created, self.userapiclient)
+    list_vm = VirtualMachine.list(self.userapiclient, id=vm_created.id)
+    status = validateList(list_vm)
+    self.assertEquals(PASS, status[0], 'VM listing by Id failed')
+    self.assertIsNone(list_vm[0].isoname, 'ISO not detached from VM')
     return
