@@ -1,0 +1,38 @@
+{
+  HostVO hostVO=getHost(snapshotInfo.getDataStore().getId());
+  DataStore srcDataStore=snapshotInfo.getDataStore();
+  String value=_configDao.getValue(Config.PrimaryStorageDownloadWait.toString());
+  int primaryStorageDownloadWait=NumbersUtil.parseInt(value,Integer.parseInt(Config.PrimaryStorageDownloadWait.getDefaultValue()));
+  CopyCommand copyCommand=new CopyCommand(snapshotInfo.getTO(),templateInfo.getTO(),primaryStorageDownloadWait,VirtualMachineManager.ExecuteInSequence.value());
+  CopyCmdAnswer copyCmdAnswer=null;
+  try {
+    _volumeService.grantAccess(snapshotInfo,hostVO,srcDataStore);
+    Map<String,String> srcDetails=getSnapshotDetails(_storagePoolDao.findById(srcDataStore.getId()),snapshotInfo);
+    copyCommand.setOptions(srcDetails);
+    copyCmdAnswer=(CopyCmdAnswer)_agentMgr.send(hostVO.getId(),copyCommand);
+  }
+ catch (  Exception ex) {
+    throw new CloudRuntimeException(ex.getMessage());
+  }
+ finally {
+    try {
+      _volumeService.revokeAccess(snapshotInfo,hostVO,srcDataStore);
+    }
+ catch (    Exception ex) {
+      s_logger.debug(ex.getMessage(),ex);
+    }
+  }
+  String errMsg=null;
+  if (copyCmdAnswer == null || !copyCmdAnswer.getResult()) {
+    if (copyCmdAnswer != null && copyCmdAnswer.getDetails() != null && !copyCmdAnswer.getDetails().isEmpty()) {
+      errMsg=copyCmdAnswer.getDetails();
+    }
+ else {
+      errMsg="Unable to perform host-side operation";
+    }
+  }
+  CopyCommandResult result=new CopyCommandResult(null,copyCmdAnswer);
+  result.setResult(errMsg);
+  callback.complete(result);
+  return null;
+}

@@ -1,41 +1,22 @@
 {
-  if (srcData instanceof SnapshotInfo && destData.getDataStore().getRole() == DataStoreRole.Image || destData.getDataStore().getRole() == DataStoreRole.ImageCache) {
+  if (srcData instanceof SnapshotInfo) {
     SnapshotInfo snapshotInfo=(SnapshotInfo)srcData;
-    HostVO hostVO=getHost(srcData);
-    DataStore srcDataStore=srcData.getDataStore();
-    String value=_configDao.getValue(Config.PrimaryStorageDownloadWait.toString());
-    int primaryStorageDownloadWait=NumbersUtil.parseInt(value,Integer.parseInt(Config.PrimaryStorageDownloadWait.getDefaultValue()));
-    CopyCommand copyCommand=new CopyCommand(srcData.getTO(),destData.getTO(),primaryStorageDownloadWait,VirtualMachineManager.ExecuteInSequence.value());
-    CopyCmdAnswer copyCmdAnswer=null;
-    try {
-      _volService.grantAccess(snapshotInfo,hostVO,srcDataStore);
-      Map<String,String> srcDetails=getSourceDetails(_storagePoolDao.findById(srcDataStore.getId()),snapshotInfo);
-      copyCommand.setOptions(srcDetails);
-      copyCmdAnswer=(CopyCmdAnswer)_agentMgr.send(hostVO.getId(),copyCommand);
+    validate(snapshotInfo);
+    boolean canHandleSrc=canHandle(srcData.getDataStore());
+    if (canHandleSrc && destData instanceof TemplateInfo && (destData.getDataStore().getRole() == DataStoreRole.Image || destData.getDataStore().getRole() == DataStoreRole.ImageCache)) {
+      return handleCreateTemplateFromSnapshot(snapshotInfo,(TemplateInfo)destData,callback);
     }
- catch (    Exception ex) {
-      throw new CloudRuntimeException(ex.getMessage());
-    }
- finally {
-      try {
-        _volService.revokeAccess(snapshotInfo,hostVO,srcDataStore);
+    if (destData instanceof VolumeInfo) {
+      VolumeInfo volumeInfo=(VolumeInfo)destData;
+      boolean canHandleDest=canHandle(destData.getDataStore());
+      if (canHandleSrc && canHandleDest) {
+        return handleCreateVolumeFromSnapshotBothOnStorageSystem(snapshotInfo,volumeInfo,callback);
       }
- catch (      Exception ex) {
-        s_logger.debug(ex.getMessage(),ex);
+      if (canHandleSrc) {
+      }
+      if (canHandleDest) {
       }
     }
-    String errMsg=null;
-    if (copyCmdAnswer == null || !copyCmdAnswer.getResult()) {
-      if (copyCmdAnswer != null && copyCmdAnswer.getDetails() != null && !copyCmdAnswer.getDetails().isEmpty()) {
-        errMsg=copyCmdAnswer.getDetails();
-      }
- else {
-        errMsg="Unable to perform host-side operation";
-      }
-    }
-    CopyCommandResult result=new CopyCommandResult(null,copyCmdAnswer);
-    result.setResult(errMsg);
-    callback.complete(result);
   }
-  return null;
+  throw new UnsupportedOperationException("This operation is not supported.");
 }

@@ -1,0 +1,63 @@
+{
+  try {
+    DiskOfferingVO diskOffering=_diskOfferingDao.findByIdIncludingRemoved(volumeInfo.getDiskOfferingId());
+    SnapshotVO snapshot=_snapshotDao.findById(snapshotInfo.getId());
+    _volumeMgr.updateHypervisorSnapshotReserveForVolume(diskOffering,volumeInfo,snapshot.getHypervisorType());
+    AsyncCallFuture<VolumeApiResult> future=_volumeService.createVolumeAsync(volumeInfo,volumeInfo.getDataStore());
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      s_logger.debug("Failed to create a volume: " + result.getResult());
+      throw new CloudRuntimeException(result.getResult());
+    }
+  }
+ catch (  Exception ex) {
+    throw new CloudRuntimeException(ex.getMessage());
+  }
+  volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+  volumeInfo.processEvent(Event.MigrationRequested);
+  volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+  HostVO hostVO=getHost(snapshotInfo.getDataStore().getId());
+  String value=_configDao.getValue(Config.PrimaryStorageDownloadWait.toString());
+  int primaryStorageDownloadWait=NumbersUtil.parseInt(value,Integer.parseInt(Config.PrimaryStorageDownloadWait.getDefaultValue()));
+  CopyCommand copyCommand=new CopyCommand(snapshotInfo.getTO(),volumeInfo.getTO(),primaryStorageDownloadWait,VirtualMachineManager.ExecuteInSequence.value());
+  CopyCmdAnswer copyCmdAnswer=null;
+  try {
+    _volumeService.grantAccess(snapshotInfo,hostVO,snapshotInfo.getDataStore());
+    _volumeService.grantAccess(volumeInfo,hostVO,volumeInfo.getDataStore());
+    Map<String,String> srcDetails=getSnapshotDetails(_storagePoolDao.findById(snapshotInfo.getDataStore().getId()),snapshotInfo);
+    copyCommand.setOptions(srcDetails);
+    Map<String,String> destDetails=getVolumeDetails(volumeInfo);
+    copyCommand.setOptions2(destDetails);
+    copyCmdAnswer=(CopyCmdAnswer)_agentMgr.send(hostVO.getId(),copyCommand);
+  }
+ catch (  Exception ex) {
+    throw new CloudRuntimeException(ex.getMessage());
+  }
+ finally {
+    try {
+      _volumeService.revokeAccess(snapshotInfo,hostVO,snapshotInfo.getDataStore());
+    }
+ catch (    Exception ex) {
+      s_logger.debug(ex.getMessage(),ex);
+    }
+    try {
+      _volumeService.revokeAccess(volumeInfo,hostVO,volumeInfo.getDataStore());
+    }
+ catch (    Exception ex) {
+      s_logger.debug(ex.getMessage(),ex);
+    }
+  }
+  String errMsg=null;
+  if (copyCmdAnswer == null || !copyCmdAnswer.getResult()) {
+    if (copyCmdAnswer != null && copyCmdAnswer.getDetails() != null && !copyCmdAnswer.getDetails().isEmpty()) {
+      errMsg=copyCmdAnswer.getDetails();
+    }
+ else {
+      errMsg="Unable to perform host-side operation";
+    }
+  }
+  CopyCommandResult result=new CopyCommandResult(null,copyCmdAnswer);
+  result.setResult(errMsg);
+  callback.complete(result);
+  return null;
+}
