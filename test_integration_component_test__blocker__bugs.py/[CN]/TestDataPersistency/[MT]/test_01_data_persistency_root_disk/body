@@ -1,0 +1,24 @@
+@attr(tags=['advanced', 'basic', 'advancedns', 'eip'], required_hardware='true')
+def test_01_data_persistency_root_disk(self):
+    '\n        Test the timing issue of root disk data sync\n\n        # 1. Write data to root disk of a VM\n        # 2. Create a template from the root disk of VM\n        # 3. Create a new VM from this template\n        # 4. Check that the data is present in the new VM\n\n        This is to test that data is persisted on root disk of VM or not\n        when template is created immediately from it\n        '
+    ssh = self.virtual_machine.get_ssh_client()
+    sampleText = 'This is sample data'
+    cmds = ['cd /root/', 'touch testFile.txt', 'chmod 600 testFile.txt', ('echo %s >> testFile.txt' % sampleText)]
+    for c in cmds:
+        ssh.execute(c)
+    self.virtual_machine.stop(self.api_client)
+    list_volume = Volume.list(self.api_client, virtualmachineid=self.virtual_machine.id, type='ROOT', listall=True)
+    if isinstance(list_volume, list):
+        self.volume = list_volume[0]
+    else:
+        raise Exception(('Exception: Unable to find root volume for VM: %s' % self.virtual_machine.id))
+    self.services['template']['ostype'] = self.services['ostype']
+    customTemplate = Template.create(self.userapiclient, self.services['template'], self.volume.id, account=self.account.name, domainid=self.account.domainid)
+    self.cleanup.append(customTemplate)
+    self.virtual_machine.delete(self.apiclient)
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=customTemplate.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, mode=self.services['mode'])
+    ssh = virtual_machine.get_ssh_client()
+    response = ssh.execute('cat /root/testFile.txt')
+    res = str(response[0])
+    self.assertEqual(res, sampleText, ('The data %s does not match                with sample test %s' % (res, sampleText)))
+    return
