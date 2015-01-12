@@ -1,6 +1,5 @@
 {
   final LinkedHashMap<Network,List<? extends NicProfile>> networks=new LinkedHashMap<Network,List<? extends NicProfile>>(3);
-  boolean hasGuestNetwork=false;
   final Network guestNetwork=routerDeploymentDefinition.getGuestNetwork();
   if (guestNetwork != null) {
     s_logger.debug("Adding nic for Virtual Router in Guest network " + guestNetwork);
@@ -57,45 +56,6 @@
       gatewayNic.setDefaultNic(true);
     }
     networks.put(guestNetwork,new ArrayList<NicProfile>(Arrays.asList(gatewayNic)));
-    hasGuestNetwork=true;
-  }
-  s_logger.debug("Adding nic for Virtual Router in Control network ");
-  final List<? extends NetworkOffering> offerings=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemControlNetwork);
-  final NetworkOffering controlOffering=offerings.get(0);
-  final Network controlConfig=_networkMgr.setupNetwork(s_systemAccount,controlOffering,routerDeploymentDefinition.getPlan(),null,null,false).get(0);
-  networks.put(controlConfig,new ArrayList<NicProfile>());
-  if (routerDeploymentDefinition.isPublicNetwork()) {
-    s_logger.debug("Adding nic for Virtual Router in Public network ");
-    final NicProfile defaultNic=new NicProfile();
-    defaultNic.setDefaultNic(true);
-    final PublicIp sourceNatIp=routerDeploymentDefinition.getSourceNatIP();
-    defaultNic.setIp4Address(sourceNatIp.getAddress().addr());
-    defaultNic.setGateway(sourceNatIp.getGateway());
-    defaultNic.setNetmask(sourceNatIp.getNetmask());
-    defaultNic.setMacAddress(sourceNatIp.getMacAddress());
-    final Network pubNet=_networkDao.findById(sourceNatIp.getNetworkId());
-    if (pubNet.getBroadcastDomainType() == BroadcastDomainType.Vxlan) {
-      defaultNic.setBroadcastType(BroadcastDomainType.Vxlan);
-      defaultNic.setBroadcastUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
-      defaultNic.setIsolationUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
-    }
- else {
-      defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
-      defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
-      defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
-    }
-    if (hasGuestNetwork) {
-      defaultNic.setDeviceId(2);
-    }
-    final NetworkOffering publicOffering=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemPublicNetwork).get(0);
-    final List<? extends Network> publicNetworks=_networkMgr.setupNetwork(s_systemAccount,publicOffering,routerDeploymentDefinition.getPlan(),null,null,false);
-    final String publicIp=defaultNic.getIp4Address();
-    final NicVO peerNic=_nicDao.findByIp4AddressAndNetworkId(publicIp,publicNetworks.get(0).getId());
-    if (peerNic != null) {
-      s_logger.info("Use same MAC as previous RvR, the MAC is " + peerNic.getMacAddress());
-      defaultNic.setMacAddress(peerNic.getMacAddress());
-    }
-    networks.put(publicNetworks.get(0),new ArrayList<NicProfile>(Arrays.asList(defaultNic)));
   }
   return networks;
 }
