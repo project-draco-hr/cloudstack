@@ -1,22 +1,17 @@
 {
-  PreparedStatement pstmt=null;
-  ResultSet rs=null;
   s_logger.debug("Updating System Vm template IDs");
-  try {
-    Set<Hypervisor.HypervisorType> hypervisorsListInUse=new HashSet<Hypervisor.HypervisorType>();
-    try {
-      pstmt=conn.prepareStatement("select distinct(hypervisor_type) from `cloud`.`cluster` where removed is null");
-      rs=pstmt.executeQuery();
-      while (rs.next()) {
+  Set<Hypervisor.HypervisorType> hypervisorsListInUse=new HashSet<Hypervisor.HypervisorType>();
+  try (PreparedStatement pstmt=conn.prepareStatement("select distinct(hypervisor_type) from `cloud`.`cluster` where removed is null");ResultSet rs=pstmt.executeQuery()){
+    while (rs.next()) {
 switch (Hypervisor.HypervisorType.getType(rs.getString(1))) {
 case XenServer:
-          hypervisorsListInUse.add(Hypervisor.HypervisorType.XenServer);
-        break;
+        hypervisorsListInUse.add(Hypervisor.HypervisorType.XenServer);
+      break;
 case KVM:
-      hypervisorsListInUse.add(Hypervisor.HypervisorType.KVM);
-    break;
+    hypervisorsListInUse.add(Hypervisor.HypervisorType.KVM);
+  break;
 case VMware:
-  hypervisorsListInUse.add(Hypervisor.HypervisorType.VMware);
+hypervisorsListInUse.add(Hypervisor.HypervisorType.VMware);
 break;
 case Hyperv:
 hypervisorsListInUse.add(Hypervisor.HypervisorType.Hyperv);
@@ -24,11 +19,14 @@ break;
 case LXC:
 hypervisorsListInUse.add(Hypervisor.HypervisorType.LXC);
 break;
+default :
+break;
 }
 }
 }
  catch (SQLException e) {
-throw new CloudRuntimeException("Error while listing hypervisors in use",e);
+s_logger.error("updateSystemVmTemplates:Exception while getting hypervisor types from clusters: " + e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while getting hypervisor types from clusters",e);
 }
 Map<Hypervisor.HypervisorType,String> NewTemplateNameList=new HashMap<Hypervisor.HypervisorType,String>(){
 {
@@ -72,28 +70,45 @@ put(Hypervisor.HypervisorType.Hyperv,"70bd30ea02ee9ed67d2c6b85c179cee9");
 ;
 for (Map.Entry<Hypervisor.HypervisorType,String> hypervisorAndTemplateName : NewTemplateNameList.entrySet()) {
 s_logger.debug("Updating " + hypervisorAndTemplateName.getKey() + " System Vms");
-try {
-pstmt=conn.prepareStatement("select id from `cloud`.`vm_template` where name = ? and removed is null order by id desc limit 1");
+try (PreparedStatement pstmt=conn.prepareStatement("select id from `cloud`.`vm_template` where name = ? and removed is null order by id desc limit 1")){
+long templateId=-1;
 pstmt.setString(1,hypervisorAndTemplateName.getValue());
-rs=pstmt.executeQuery();
+try (ResultSet rs=pstmt.executeQuery()){
 if (rs.next()) {
-long templateId=rs.getLong(1);
-rs.close();
-pstmt.close();
-pstmt=conn.prepareStatement("update `cloud`.`vm_template` set type='SYSTEM' where id = ?");
-pstmt.setLong(1,templateId);
-pstmt.executeUpdate();
-pstmt.close();
-pstmt=conn.prepareStatement("update `cloud`.`vm_instance` set vm_template_id = ? where type <> 'User' and hypervisor_type = ?");
-pstmt.setLong(1,templateId);
-pstmt.setString(2,hypervisorAndTemplateName.getKey().toString());
-pstmt.executeUpdate();
-pstmt.close();
-pstmt=conn.prepareStatement("UPDATE `cloud`.`configuration` SET value = ? WHERE name = ?");
-pstmt.setString(1,hypervisorAndTemplateName.getValue());
-pstmt.setString(2,routerTemplateConfigurationNames.get(hypervisorAndTemplateName.getKey()));
-pstmt.executeUpdate();
-pstmt.close();
+templateId=rs.getLong(1);
+}
+}
+ catch (SQLException e) {
+s_logger.error("updateSystemVmTemplates:Exception while getting ids of templates: " + e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while getting ids of templates",e);
+}
+if (templateId != -1) {
+try (PreparedStatement templ_type_pstmt=conn.prepareStatement("update `cloud`.`vm_template` set type='SYSTEM' where id = ?")){
+templ_type_pstmt.setLong(1,templateId);
+templ_type_pstmt.executeUpdate();
+}
+ catch (SQLException e) {
+s_logger.error("updateSystemVmTemplates:Exception while updating template with id " + templateId + " to be marked as 'system': "+ e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while updating template with id " + templateId + " to be marked as 'system'",e);
+}
+try (PreparedStatement update_templ_id_pstmt=conn.prepareStatement("update `cloud`.`vm_instance` set vm_template_id = ? where type <> 'User' and hypervisor_type = ?")){
+update_templ_id_pstmt.setLong(1,templateId);
+update_templ_id_pstmt.setString(2,hypervisorAndTemplateName.getKey().toString());
+update_templ_id_pstmt.executeUpdate();
+}
+ catch (Exception e) {
+s_logger.error("updateSystemVmTemplates:Exception while setting template for " + hypervisorAndTemplateName.getKey().toString() + " to "+ templateId+ ": "+ e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while setting template for " + hypervisorAndTemplateName.getKey().toString() + " to "+ templateId,e);
+}
+try (PreparedStatement update_pstmt=conn.prepareStatement("UPDATE `cloud`.`configuration` SET value = ? WHERE name = ?")){
+update_pstmt.setString(1,hypervisorAndTemplateName.getValue());
+update_pstmt.setString(2,routerTemplateConfigurationNames.get(hypervisorAndTemplateName.getKey()));
+update_pstmt.executeUpdate();
+}
+ catch (SQLException e) {
+s_logger.error("updateSystemVmTemplates:Exception while setting " + routerTemplateConfigurationNames.get(hypervisorAndTemplateName.getKey()) + " to "+ hypervisorAndTemplateName.getValue()+ ": "+ e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while setting " + routerTemplateConfigurationNames.get(hypervisorAndTemplateName.getKey()) + " to "+ hypervisorAndTemplateName.getValue(),e);
+}
 }
  else {
 if (hypervisorsListInUse.contains(hypervisorAndTemplateName.getKey())) {
@@ -101,31 +116,23 @@ throw new CloudRuntimeException("4.5.0 " + hypervisorAndTemplateName.getKey() + 
 }
  else {
 s_logger.warn("4.5.0 " + hypervisorAndTemplateName.getKey() + " SystemVm template not found. "+ hypervisorAndTemplateName.getKey()+ " hypervisor is not used, so not failing upgrade");
-pstmt=conn.prepareStatement("UPDATE `cloud`.`vm_template` SET url = ? , checksum = ? WHERE hypervisor_type = ? AND type = 'SYSTEM' AND removed is null order by id desc limit 1");
-pstmt.setString(1,newTemplateUrl.get(hypervisorAndTemplateName.getKey()));
-pstmt.setString(2,newTemplateChecksum.get(hypervisorAndTemplateName.getKey()));
-pstmt.setString(3,hypervisorAndTemplateName.getKey().toString());
-pstmt.executeUpdate();
-pstmt.close();
+try (PreparedStatement update_templ_url_pstmt=conn.prepareStatement("UPDATE `cloud`.`vm_template` SET url = ? , checksum = ? WHERE hypervisor_type = ? AND type = 'SYSTEM' AND removed is null order by id desc limit 1")){
+update_templ_url_pstmt.setString(1,newTemplateUrl.get(hypervisorAndTemplateName.getKey()));
+update_templ_url_pstmt.setString(2,newTemplateChecksum.get(hypervisorAndTemplateName.getKey()));
+update_templ_url_pstmt.setString(3,hypervisorAndTemplateName.getKey().toString());
+update_templ_url_pstmt.executeUpdate();
+}
+ catch (SQLException e) {
+s_logger.error("updateSystemVmTemplates:Exception while updating 'url' and 'checksum' for hypervisor type " + hypervisorAndTemplateName.getKey().toString() + ": "+ e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while updating 'url' and 'checksum' for hypervisor type " + hypervisorAndTemplateName.getKey().toString(),e);
+}
 }
 }
 }
  catch (SQLException e) {
-throw new CloudRuntimeException("Error while updating " + hypervisorAndTemplateName.getKey() + " systemVm template",e);
+s_logger.error("updateSystemVmTemplates:Exception while getting ids of templates: " + e.getMessage());
+throw new CloudRuntimeException("updateSystemVmTemplates:Exception while getting ids of templates",e);
 }
 }
 s_logger.debug("Updating System Vm Template IDs Complete");
-}
-  finally {
-try {
-if (rs != null) {
-rs.close();
-}
-if (pstmt != null) {
-pstmt.close();
-}
-}
- catch (SQLException e) {
-}
-}
 }
