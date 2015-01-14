@@ -1,0 +1,57 @@
+{
+  if (s_logger.isInfoEnabled())   s_logger.info("Create blank VM. cpuCount: " + cpuCount + ", cpuSpeed(MHz): "+ cpuSpeedMHz+ ", mem(Mb): "+ memoryMB);
+  VirtualDeviceConfigSpec controllerSpec=null;
+  VirtualMachineConfigSpec vmConfig=new VirtualMachineConfigSpec();
+  vmConfig.setName(vmName);
+  if (vmInternalCSName == null)   vmInternalCSName=vmName;
+  VmwareHelper.setBasicVmConfig(vmConfig,cpuCount,cpuSpeedMHz,cpuReservedMHz,memoryMB,memoryReserveMB,guestOsIdentifier,limitCpuUse);
+  String recommendedController=host.getRecommendedDiskController(guestOsIdentifier);
+  String newRootDiskController=controllerInfo.first();
+  String newDataDiskController=controllerInfo.second();
+  if (DiskControllerType.getType(controllerInfo.first()) == DiskControllerType.osdefault) {
+    newRootDiskController=recommendedController;
+  }
+  if (DiskControllerType.getType(controllerInfo.second()) == DiskControllerType.osdefault) {
+    newDataDiskController=recommendedController;
+  }
+  Pair<String,String> updatedControllerInfo=new Pair<String,String>(newRootDiskController,newDataDiskController);
+  String scsiDiskController=HypervisorHostHelper.getScsiController(updatedControllerInfo,recommendedController);
+  if (scsiDiskController != null) {
+    int busNum=0;
+    int maxControllerCount=VmwareHelper.MAX_SCSI_CONTROLLER_COUNT;
+    if (systemVm) {
+      maxControllerCount=1;
+    }
+    while (busNum < maxControllerCount) {
+      VirtualDeviceConfigSpec scsiControllerSpec=new VirtualDeviceConfigSpec();
+      scsiControllerSpec=getControllerSpec(DiskControllerType.getType(scsiDiskController).toString(),busNum);
+      vmConfig.getDeviceChange().add(scsiControllerSpec);
+      busNum++;
+    }
+  }
+  VirtualMachineFileInfo fileInfo=new VirtualMachineFileInfo();
+  DatastoreMO dsMo=new DatastoreMO(host.getContext(),morDs);
+  fileInfo.setVmPathName(String.format("[%s]",dsMo.getName()));
+  vmConfig.setFiles(fileInfo);
+  VirtualMachineVideoCard videoCard=new VirtualMachineVideoCard();
+  videoCard.setControllerKey(100);
+  videoCard.setUseAutoDetect(true);
+  VirtualDeviceConfigSpec videoDeviceSpec=new VirtualDeviceConfigSpec();
+  videoDeviceSpec.setDevice(videoCard);
+  videoDeviceSpec.setOperation(VirtualDeviceConfigSpecOperation.ADD);
+  vmConfig.getDeviceChange().add(videoDeviceSpec);
+  if (host.createVm(vmConfig)) {
+    VirtualMachineMO vmMo=host.findVmOnHyperHost(vmName);
+    assert(vmMo != null);
+    vmMo.setCustomFieldValue(CustomFieldConstants.CLOUD_VM_INTERNAL_NAME,vmInternalCSName);
+    int ideControllerKey=-1;
+    while (ideControllerKey < 0) {
+      ideControllerKey=vmMo.tryGetIDEDeviceControllerKey();
+      if (ideControllerKey >= 0)       break;
+      s_logger.info("Waiting for IDE controller be ready in VM: " + vmInternalCSName);
+      Thread.sleep(1000);
+    }
+    return true;
+  }
+  return false;
+}
