@@ -1,0 +1,55 @@
+{
+  final StateMachine2<Volume.State,Event,Volume> stateMachine=Volume.State.getStateMachine();
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      VolumeVO tmpVolume=_volumeDao.findById(volume.getId());
+      VolumeDataStoreVO tmpVolumeDataStore=_volumeDataStoreDao.findById(volumeDataStore.getId());
+      try {
+switch (answer.getStatus()) {
+case COMPLETED:
+          tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.UPLOADED);
+        stateMachine.transitTo(tmpVolume,Event.OperationSucceeded,null,_volumeDao);
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Volume " + tmpVolume.getUuid() + " uploaded successfully");
+      }
+    break;
+case IN_PROGRESS:
+  tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.UPLOAD_IN_PROGRESS);
+if (tmpVolumeDataStore.getDownloadState() == VMTemplateStorageResourceAssoc.Status.NOT_UPLOADED || tmpVolumeDataStore.getDownloadState() == VMTemplateStorageResourceAssoc.Status.UPLOAD_IN_PROGRESS) {
+  if (System.currentTimeMillis() - tmpVolumeDataStore.getCreated().getTime() > _uploadOperationTimeout) {
+    tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.ABANDONED);
+    stateMachine.transitTo(tmpVolume,Event.OperationTimeout,null,_volumeDao);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload due to operation timed out");
+    }
+  }
+}
+break;
+case ERROR:
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.UPLOAD_ERROR);
+stateMachine.transitTo(tmpVolume,Event.OperationFailed,null,_volumeDao);
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload. Error details: "+ answer.getDetails());
+}
+break;
+case UNKNOWN:
+if (tmpVolumeDataStore.getDownloadState() == VMTemplateStorageResourceAssoc.Status.NOT_UPLOADED || tmpVolumeDataStore.getDownloadState() == VMTemplateStorageResourceAssoc.Status.UPLOAD_IN_PROGRESS) {
+if (System.currentTimeMillis() - tmpVolumeDataStore.getCreated().getTime() > _uploadOperationTimeout) {
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.ABANDONED);
+stateMachine.transitTo(tmpVolume,Event.OperationTimeout,null,_volumeDao);
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload due to operation timed out");
+}
+}
+}
+break;
+}
+_volumeDataStoreDao.update(tmpVolumeDataStore.getId(),tmpVolumeDataStore);
+}
+ catch (NoTransitionException e) {
+s_logger.error("Unexpected error " + e.getMessage());
+}
+}
+}
+);
+}
