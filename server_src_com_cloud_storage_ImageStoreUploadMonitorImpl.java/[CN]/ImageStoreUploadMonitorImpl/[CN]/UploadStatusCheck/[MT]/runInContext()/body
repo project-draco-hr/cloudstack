@@ -23,4 +23,28 @@
       handleVolumeStatusResponse((UploadStatusAnswer)answer,volume,volumeDataStore);
     }
   }
+  List<TemplateDataStoreVO> templateDataStores=_templateDataStoreDao.listByTemplateState(VirtualMachineTemplate.State.NotUploaded,VirtualMachineTemplate.State.UploadInProgress);
+  for (  TemplateDataStoreVO templateDataStore : templateDataStores) {
+    DataStore dataStore=storeMgr.getDataStore(templateDataStore.getDataStoreId(),DataStoreRole.Image);
+    EndPoint ep=_epSelector.select(dataStore,templateDataStore.getExtractUrl());
+    if (ep == null) {
+      s_logger.warn("There is no secondary storage VM for image store " + dataStore.getName());
+      continue;
+    }
+    VMTemplateVO template=_templateDao.findById(templateDataStore.getTemplateId());
+    if (template == null) {
+      s_logger.warn("Template with id " + templateDataStore.getTemplateId() + " not found");
+      continue;
+    }
+    Host host=_hostDao.findById(ep.getId());
+    if (host != null && host.getManagementServerId() != null && _nodeId == host.getManagementServerId().longValue()) {
+      UploadStatusCommand cmd=new UploadStatusCommand(template.getId(),EntityType.Template);
+      Answer answer=ep.sendMessage(cmd);
+      if (answer == null || !(answer instanceof UploadStatusAnswer)) {
+        s_logger.warn("No or invalid answer corresponding to UploadStatusCommand for template " + templateDataStore.getTemplateId());
+        continue;
+      }
+      handleTemplateStatusResponse((UploadStatusAnswer)answer,template,templateDataStore);
+    }
+  }
 }
