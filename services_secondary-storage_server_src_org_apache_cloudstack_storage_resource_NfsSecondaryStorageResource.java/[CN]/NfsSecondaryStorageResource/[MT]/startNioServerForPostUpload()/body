@@ -1,5 +1,33 @@
 {
-  NioServer server=new NioServer("PostUploadServer",8210,15,this);
-  s_logger.info("Listening on 8210 with 15 workers");
-  server.start();
+  int port=8210;
+  HttpProcessor httpproc=HttpProcessorBuilder.create().add(new ResponseDate()).add(new ResponseServer("HTTP/1.1")).add(new ResponseContent()).add(new ResponseConnControl()).build();
+  UriHttpAsyncRequestHandlerMapper reqistry=new UriHttpAsyncRequestHandlerMapper();
+  reqistry.register("/upload*",new PostUploadRequestHandler());
+  HttpAsyncService protocolHandler=new HttpAsyncService(httpproc,reqistry){
+    @Override public void connected(    final NHttpServerConnection conn){
+      s_logger.info(conn + ": connection open");
+      super.connected(conn);
+    }
+    @Override public void closed(    final NHttpServerConnection conn){
+      s_logger.info(conn + ": connection closed");
+      super.closed(conn);
+    }
+  }
+;
+  NHttpConnectionFactory<DefaultNHttpServerConnection> connFactory;
+  connFactory=new DefaultNHttpServerConnectionFactory(ConnectionConfig.DEFAULT);
+  IOEventDispatch ioEventDispatch=new DefaultHttpServerIODispatch(protocolHandler,connFactory);
+  IOReactorConfig config=IOReactorConfig.custom().setIoThreadCount(15).setSoTimeout(3000).setConnectTimeout(3000).build();
+  try {
+    ListeningIOReactor ioReactor=new DefaultListeningIOReactor(config);
+    ioReactor.listen(new InetSocketAddress(port));
+    ioReactor.execute(ioEventDispatch);
+  }
+ catch (  InterruptedIOException ex) {
+    s_logger.info("Interrupted");
+  }
+catch (  IOException e) {
+    s_logger.info("I/O error: " + e.getMessage());
+  }
+  s_logger.info("Shutdown");
 }
