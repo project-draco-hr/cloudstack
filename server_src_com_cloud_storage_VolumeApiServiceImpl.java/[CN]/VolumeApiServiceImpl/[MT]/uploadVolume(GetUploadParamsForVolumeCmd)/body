@@ -13,22 +13,25 @@
   VolumeInfo vol=volFactory.getVolume(volume.getId());
   RegisterVolumePayload payload=new RegisterVolumePayload(null,cmd.getChecksum(),cmd.getFormat());
   vol.addPayload(payload);
-  EndPoint ep=volService.registerVolumeForPostUpload(vol,store);
-  TemplateOrVolumePostUploadCommand command=new TemplateOrVolumePostUploadCommand(vol,ep);
+  Pair<EndPoint,DataObject> pair=volService.registerVolumeForPostUpload(vol,store);
+  EndPoint ep=pair.first();
+  DataObject dataObject=pair.second();
   GetUploadParamsResponse response=new GetUploadParamsResponse();
-  String url="https://" + command.getEndPoint().getPublicAddr() + "/upload/"+ command.getDataObject().getUuid();
+  String url="https://" + ep.getPublicAddr() + "/upload/"+ vol.getUuid();
   response.setPostURL(new URL(url));
   VolumeDataStoreVO volumeStore=_volumeStoreDao.findByVolume(volume.getId());
   if (volumeStore != null) {
     volumeStore.setExtractUrl(url);
+    _volumeStoreDao.persist(volumeStore);
   }
-  response.setId(UUID.fromString(command.getDataObject().getUuid()));
+  response.setId(UUID.fromString(vol.getUuid()));
   DateTime currentDateTime=new DateTime(DateTimeZone.UTC);
   currentDateTime.plusHours(1);
   String expires=currentDateTime.toString();
   response.setTimeout(expires);
   String key=_configDao.getValue(Config.SSVMPSK.key());
-  Gson gson=new GsonBuilder().registerTypeAdapter(TemplateOrVolumePostUploadCommand.class,new TemplateOrVolumePostUploadCommandTypeAdapter()).create();
+  TemplateOrVolumePostUploadCommand command=new TemplateOrVolumePostUploadCommand(vol.getId(),vol.getUuid(),volumeStore.getInstallPath(),volumeStore.getChecksum(),vol.getType().toString(),vol.getName(),volumeStore.getLocalDownloadPath(),vol.getFormat().toString(),dataObject.getDataStore().getUri(),dataObject.getDataStore().getRole().toString());
+  Gson gson=new GsonBuilder().create();
   String jsonPayload=gson.toJson(command);
   response.setMetadata(EncryptionUtil.encodeData(jsonPayload,key));
   response.setSignature(EncryptionUtil.generateSignature(jsonPayload + url + expires,key));
