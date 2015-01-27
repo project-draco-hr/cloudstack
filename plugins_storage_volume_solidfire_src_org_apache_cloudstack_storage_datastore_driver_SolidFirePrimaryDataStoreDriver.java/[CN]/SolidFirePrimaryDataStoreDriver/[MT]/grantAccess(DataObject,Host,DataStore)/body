@@ -5,22 +5,32 @@
   long sfVolumeId=getSolidFireVolumeId(dataObject);
   long clusterId=host.getClusterId();
   long storagePoolId=dataStore.getId();
-  ClusterDetailsVO clusterDetail=_clusterDetailsDao.findDetail(clusterId,SolidFireUtil.getVagKey(storagePoolId));
-  String vagId=clusterDetail != null ? clusterDetail.getValue() : null;
-  List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
-  if (!SolidFireUtil.hostsSupport_iScsi(hosts)) {
-    return false;
+  ClusterVO cluster=_clusterDao.findById(clusterId);
+  GlobalLock lock=GlobalLock.getInternLock(cluster.getUuid());
+  if (!lock.lock(s_lockTimeInSeconds)) {
+    s_logger.debug("Couldn't lock the DB (in grantAccess) on the following string: " + cluster.getUuid());
   }
-  SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
-  if (vagId != null) {
-    SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection,Long.parseLong(vagId));
-    String[] hostIqns=SolidFireUtil.getNewHostIqns(sfVag.getInitiators(),SolidFireUtil.getIqnsFromHosts(hosts));
-    long[] volumeIds=SolidFireUtil.getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
-    SolidFireUtil.modifySolidFireVag(sfConnection,sfVag.getId(),hostIqns,volumeIds);
-  }
+  try {
+    ClusterDetailsVO clusterDetail=_clusterDetailsDao.findDetail(clusterId,SolidFireUtil.getVagKey(storagePoolId));
+    String vagId=clusterDetail != null ? clusterDetail.getValue() : null;
+    List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
+    if (!SolidFireUtil.hostsSupport_iScsi(hosts)) {
+      return false;
+    }
+    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+    if (vagId != null) {
+      SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection,Long.parseLong(vagId));
+      String[] hostIqns=SolidFireUtil.getNewHostIqns(sfVag.getInitiators(),SolidFireUtil.getIqnsFromHosts(hosts));
+      long[] volumeIds=SolidFireUtil.getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
+      SolidFireUtil.modifySolidFireVag(sfConnection,sfVag.getId(),hostIqns,volumeIds);
+    }
  else {
-    ClusterVO cluster=_clusterDao.findById(clusterId);
-    SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolumeId,storagePoolId,cluster.getUuid(),hosts,_clusterDetailsDao);
+      SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolumeId,storagePoolId,cluster.getUuid(),hosts,_clusterDetailsDao);
+    }
+    return true;
   }
-  return true;
+  finally {
+    lock.unlock();
+    lock.releaseRef();
+  }
 }
