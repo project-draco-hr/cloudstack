@@ -1,0 +1,192 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_02_positive_tests_usage(self):
+    ' Positive test for usage test path\n\n        # 1.  Scale up VM and check that usage is generated for\n              new cpu and ram value (Check in usage_vm_instance table)\n        # 2.  Scale down VM and check that usage is generated for\n              new cpu and ram value (Check in usage_vm_instance table)\n        # 3.  Attach disk to VM and check that volume usage is\n              generated for correct disk offering\n        # 4.  Detach volume from and verify that usage for volue remains\n              the same there afterwards\n        # 5.  Create snapshot of the root disk and verify correct usage is\n              generated for snapshot with correct size\n        # 6.  Create template from root disk and check correct usage is\n              generated for template with correct size\n        # 7.  Delete the template and verify that usage is stopped for\n              template\n        # 8.  Create volume from snaopshot and verify correct disk usage\n              is generated\n        # 9.  Delete the volume and verify that the usage is stopped\n        # 10. Create template from snapshot and verify correct usage\n              is generated for the template with correct size\n        '
+    self.testdata['service_offering']['cpunumber'] = ''
+    self.testdata['service_offering']['cpuspeed'] = ''
+    self.testdata['service_offering']['memory'] = ''
+    serviceOffering_dynamic = ServiceOffering.create(self.apiclient, self.testdata['service_offering'])
+    self.cleanup.append(serviceOffering_dynamic)
+    customcpunumber = 1
+    customcpuspeed = 256
+    custommemory = 128
+    virtualMachine = VirtualMachine.create(self.userapiclient, self.testdata['virtual_machine'], serviceofferingid=serviceOffering_dynamic.id, templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, customcpunumber=customcpunumber, customcpuspeed=customcpuspeed, custommemory=custommemory)
+    virtualMachine.stop(self.userapiclient)
+    scaledcpunumber = 2
+    scaledcpuspeed = 512
+    scaledmemory = 256
+    virtualMachine.scale(self.userapiclient, serviceOfferingId=serviceOffering_dynamic.id, customcpunumber=scaledcpunumber, customcpuspeed=scaledcpuspeed, custommemory=scaledmemory)
+    self.listUsageRecords(usagetype=1)
+    qresultset = self.dbclient.execute(("select cpu_cores, memory, cpu_speed from usage_vm_instance where vm_name = '%s';" % str(virtualMachine.name)), db='cloud_usage')
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    dbcpucores = qresultset[(-1)][0]
+    dbmemory = qresultset[(-1)][1]
+    dbcpuspeed = qresultset[(-1)][2]
+    self.assertEqual(int(dbcpucores), scaledcpunumber, 'scaled cpu number not matching with db record')
+    self.assertEqual(int(dbmemory), scaledmemory, 'scaled memory not matching with db record')
+    self.assertEqual(int(dbcpuspeed), scaledcpuspeed, 'scaled cpu speed not matching with db record')
+    scaledcpunumber = 1
+    scaledcpuspeed = 512
+    scaledmemory = 256
+    virtualMachine.scale(self.userapiclient, serviceOfferingId=serviceOffering_dynamic.id, customcpunumber=scaledcpunumber, customcpuspeed=scaledcpuspeed, custommemory=scaledmemory)
+    self.listUsageRecords(usagetype=1)
+    qresultset = self.dbclient.execute(("select cpu_cores, memory, cpu_speed from usage_vm_instance where vm_name = '%s';" % str(virtualMachine.name)), db='cloud_usage')
+    self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+    dbcpucores = qresultset[(-1)][0]
+    dbmemory = qresultset[(-1)][1]
+    dbcpuspeed = qresultset[(-1)][2]
+    self.assertEqual(int(dbcpucores), scaledcpunumber, 'scaled cpu number not matching with db record')
+    self.assertEqual(int(dbmemory), scaledmemory, 'scaled memory not matching with db record')
+    self.assertEqual(int(dbcpuspeed), scaledcpuspeed, 'scaled cpu speed not matching with db record')
+    disk_offering = DiskOffering.create(self.apiclient, self.testdata['disk_offering'])
+    self.cleanup.append(disk_offering)
+    volume = Volume.create(self.userapiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering.id)
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    virtual_machine.attach_volume(self.userapiclient, volume=volume)
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = [record for record in response[1] if (volume.id == record.usageid)]
+    self.assertTrue((len(volumeUsageRecords) >= 1), 'Volume usage record for attached volume is not generated')
+    volumeRawUsageBeforeDetach = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volume.id == record.usageid)]))
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(volume.name)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeCreatedDateTime = response[1]
+    self.debug(('Volume creation date: %s' % volumeCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - volumeCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('Volume expected usage: %s' % expectedUsage))
+    actualUsage = format(volumeRawUsageBeforeDetach, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    virtual_machine.detach_volume(self.userapiclient, volume=volume)
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = response[1]
+    volumeRawUsageAfterDetach_time_1 = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volume.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = response[1]
+    volumeRawUsageAfterDetach_time_2 = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volume.id == record.usageid)]))
+    self.debug(volumeRawUsageAfterDetach_time_1)
+    self.debug(volumeRawUsageAfterDetach_time_2)
+    self.assertTrue((volumeRawUsageAfterDetach_time_1 < volumeRawUsageAfterDetach_time_2), 'Raw volume usage should continue running after detach operation')
+    volumes = Volume.list(self.userapiclient, virtualmachineid=virtual_machine.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(volumes)[0], PASS, 'Volumes list validation failed')
+    rootVolume = volumes[0]
+    snapshotFromRootVolume = Snapshot.create(self.userapiclient, rootVolume.id)
+    response = self.listUsageRecords(usagetype=9)
+    self.assertEqual(response[0], PASS, response[1])
+    snapshotUsageRecords = [record for record in response[1] if (snapshotFromRootVolume.id == record.usageid)]
+    self.assertEqual(snapshotUsageRecords[0].size, snapshotFromRootVolume.physicalsize, 'The snapshot size in the usage record and                         does not match with the created snapshot size')
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(snapshotFromRootVolume.name)
+    self.assertEqual(response[0], PASS, response[1])
+    snapshotCreatedDateTime = response[1]
+    self.debug(('Snapshot creation date: %s' % snapshotCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - snapshotCreatedDateTime).total_seconds() / 3600), '.2f')
+    actualUsage = format(sum((float(record.rawusage) for record in snapshotUsageRecords)), '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    virtual_machine.stop(self.userapiclient)
+    templateFromVolume = Template.create(self.userapiclient, self.testdata['templates'], rootVolume.id, self.account.name, self.account.domainid)
+    templates = Template.list(self.userapiclient, listall=True, id=templateFromVolume.id, templatefilter='self')
+    self.assertEqual(validateList(templates)[0], PASS, 'templates list validation failed')
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = [record for record in response[1] if (templateFromVolume.id == record.usageid)]
+    self.assertEqual(templateUsageRecords[0].virtualsize, templates[(-1)].size, 'The template size in the usage record and                         does not match with the created template size')
+    templateRawUsage = sum((float(record.rawusage) for record in templateUsageRecords))
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(templateFromVolume.name)
+    self.assertEqual(response[0], PASS, response[1])
+    templateCreatedDateTime = response[1]
+    self.debug(('Template creation date: %s' % templateCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - templateCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('Template expected usage: %s' % expectedUsage))
+    actualUsage = format(templateRawUsage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    templateFromVolume.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForTemplateFromVolumeAfterDeletion_1 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (templateFromVolume.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForTemplateFromVolumeAfterDeletion_2 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (templateFromVolume.id == record.usageid)]))
+    self.assertTrue((usageForTemplateFromVolumeAfterDeletion_1 == usageForTemplateFromVolumeAfterDeletion_2), 'usage for template after deletion should remain the same                        after specific intervals of time')
+    self.testdata['volume_from_snapshot']['zoneid'] = self.zone.id
+    volumeFromSnapshot = Volume.create_from_snapshot(self.userapiclient, snapshot_id=snapshotFromRootVolume.id, services=self.testdata['volume_from_snapshot'], account=self.account.name, domainid=self.account.domainid)
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = response[1]
+    usageForVolumeFromSnapshotBeforeDeletion = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volumeFromSnapshot.id == record.usageid)]))
+    self.debug(usageForVolumeFromSnapshotBeforeDeletion)
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(volumeFromSnapshot.name)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeCreatedDateTime = response[1]
+    self.debug(('Volume creation date: %s' % volumeCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - volumeCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('Volume expected usage: %s' % expectedUsage))
+    actualUsage = format(usageForVolumeFromSnapshotBeforeDeletion, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    volumeFromSnapshot.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = response[1]
+    usageForVolumeFromSnapshotAfterDeletion_1 = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volumeFromSnapshot.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=6)
+    self.assertEqual(response[0], PASS, response[1])
+    volumeUsageRecords = response[1]
+    usageForVolumeFromSnapshotAfterDeletion_2 = sum((float(record.rawusage) for record in [record for record in volumeUsageRecords if (volumeFromSnapshot.id == record.usageid)]))
+    self.debug(usageForVolumeFromSnapshotAfterDeletion_1)
+    self.debug(usageForVolumeFromSnapshotAfterDeletion_2)
+    self.assertTrue((usageForVolumeFromSnapshotAfterDeletion_1 == usageForVolumeFromSnapshotAfterDeletion_2), 'usage for volume after deletion should remain the same                        after specific intervals of time')
+    templateFromSnapshot = Template.create_from_snapshot(self.userapiclient, snapshotFromRootVolume, self.testdata['privatetemplate'])
+    templates = Template.list(self.userapiclient, listall=True, id=templateFromSnapshot.id, templatefilter='self')
+    self.assertEqual(validateList(templates)[0], PASS, 'templates list validation failed')
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    templateUsageRecords = [record for record in usageRecords if (templateFromSnapshot.id == record.usageid)]
+    self.assertTrue((len(templateUsageRecords) >= 1), 'template usage record list is empty')
+    self.assertEqual(templateUsageRecords[(-1)].virtualsize, templates[0].size, 'The template size in the usage record and                         does not match with the created template size')
+    templateRawUsage = sum((float(record.rawusage) for record in templateUsageRecords))
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(templateFromSnapshot.name)
+    self.assertEqual(response[0], PASS, response[1])
+    templateCreatedDateTime = response[1]
+    self.debug(('Template creation date: %s' % templateCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - templateCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('Template expected usage: %s' % expectedUsage))
+    actualUsage = format(templateRawUsage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    templateFromSnapshot.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForTemplateAfterDeletion_1 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (templateFromSnapshot.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=7)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForTemplateAfterDeletion_2 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (templateFromSnapshot.id == record.usageid)]))
+    self.assertTrue((usageForTemplateAfterDeletion_1 == usageForTemplateAfterDeletion_2), 'usage for volume after deletion should remain the same                        after specific intervals of time')
+    snapshotFromRootVolume.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=9)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForSnapshotAfterDeletion_1 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (snapshotFromRootVolume.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=9)
+    self.assertEqual(response[0], PASS, response[1])
+    templateUsageRecords = response[1]
+    usageForSnapshotAfterDeletion_2 = sum((float(record.rawusage) for record in [record for record in templateUsageRecords if (snapshotFromRootVolume.id == record.usageid)]))
+    self.assertTrue((usageForSnapshotAfterDeletion_1 == usageForSnapshotAfterDeletion_2), 'usage for volume after deletion should remain the same                        after specific intervals of time')
+    return

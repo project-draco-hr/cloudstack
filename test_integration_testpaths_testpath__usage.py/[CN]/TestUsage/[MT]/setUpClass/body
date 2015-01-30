@@ -1,0 +1,47 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestUsage, cls).getClsTestClient()
+    cls.hypervisor = testClient.getHypervisorInfo()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient, testClient.getZoneForTests())
+    cls.mgtSvrDetails = cls.config.__dict__['mgtSvr'][0].__dict__
+    isUsageJobRunning = cls.IsUsageJobRunning()
+    if (not isUsageJobRunning):
+        raise unittest.SkipTest('Skipping, usage job is not running')
+    if cls.testdata['configurableData']['setUsageConfigurationThroughTestCase']:
+        cls.setUsageConfiguration()
+        cls.RestartServers()
+    cls.hypervisor = testClient.getHypervisorInfo()
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+    cls._cleanup = []
+    try:
+        if cls.zone.localstorageenable:
+            cls.testdata['service_offering']['storagetype'] = 'local'
+        cls.testdata['service_offering']['cpunumber'] = '1'
+        cls.testdata['service_offering']['cpuspeed'] = '128'
+        cls.testdata['service_offering']['memory'] = '256'
+        cls.service_offering = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+        cls._cleanup.append(cls.service_offering)
+        cls.testdata['service_offering']['cpunumber'] = '2'
+        cls.testdata['service_offering']['cpuspeed'] = '256'
+        cls.testdata['service_offering']['memory'] = '512'
+        cls.service_offering_2 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+        cls._cleanup.append(cls.service_offering_2)
+        cls.isolated_network_offering = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['isolated_network_offering'])
+        cls._cleanup.append(cls.isolated_network_offering)
+        cls.isolated_network_offering_2 = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['isolated_network_offering'])
+        cls._cleanup.append(cls.isolated_network_offering_2)
+        cls.isolated_network_offering_vpc = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['nw_offering_isolated_vpc'])
+        cls._cleanup.append(cls.isolated_network_offering_vpc)
+        cls.testdata['shared_network_offering_all_services']['specifyVlan'] = 'True'
+        cls.testdata['shared_network_offering_all_services']['specifyIpRanges'] = 'True'
+        cls.shared_network_offering = CreateEnabledNetworkOffering(cls.apiclient, cls.testdata['shared_network_offering_all_services'])
+        cls._cleanup.append(cls.shared_network_offering)
+        configs = Configurations.list(cls.apiclient, name='usage.stats.job.aggregation.range')
+        cls.usageJobAggregationRange = ((int(configs[0].value) + 1) * 60)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return

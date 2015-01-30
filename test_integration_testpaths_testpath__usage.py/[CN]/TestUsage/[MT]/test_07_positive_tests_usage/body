@@ -1,0 +1,143 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_07_positive_tests_usage(self):
+    '\n        Steps:\n        # 1.  Add VM in VPC network, verify that\n        #     usage is genrated for source nat ip pf network in vpc\n        # 2.  Acquire a public ip in VPC network and verify\n              usage is genrated for the public ip\n        # 3.  Create multiple PF rule on this ip in VPC network,\n              and verify that usage is generated for both pf rules\n        # 4.  Enable vpn on source nat ip in vpc network\n        # 5.  Add 2 vpn user\n              And verify that usage is genrated for both the vpn users\n        # 6.  Delete one VPn user, and verify that usage is stopped\n              for deleted user\n        # 7.  Open Egress rules on this VPC network\n        # 8.  Create network traffic on this network ping www.google.com,\n              and verify that usage is genrated for network traffic\n        # 9.  Delete onePF rule in VPC network\n              And verify that usage is stopped for the pf rule\n        # 10. Stop  router for VPC network\n              Verify iptables counters are reset when domR stops\n        #     Verify current_bytes in user_statistics table are moved to\n              net_bytes\n        #     Verify currnt_bytes becomes zero\n        # 11. Start router for VPC network\n              Verify iptables counters are reset when domR starts\n        #     Verify a diff of total (current_bytes + net_bytes) in previous\n              aggregation period and current period will give the network usage\n        '
+    vpc_off = VpcOffering.create(self.apiclient, self.testdata['vpc_offering'])
+    vpc_off.update(self.apiclient, state='Enabled')
+    self.testdata['vpc']['cidr'] = '10.1.1.0/24'
+    vpc = VPC.create(self.userapiclient, self.testdata['vpc'], vpcofferingid=vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+    self.testdata['isolated_network']['zoneid'] = self.zone.id
+    isolated_network = Network.create(self.userapiclient, self.testdata['isolated_network'], self.account.name, self.account.domainid, vpcid=vpc.id, networkofferingid=self.isolated_network_offering_vpc.id, gateway='10.1.1.1', netmask='255.255.255.0')
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, networkids=[isolated_network.id])
+    response = self.listUsageRecords(usagetype=13)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    nwOfferingUsageRecords = [record for record in usageRecords if (self.isolated_network_offering_vpc.id == record.offeringid)]
+    self.assertTrue((validateList(nwOfferingUsageRecords)[0] == PASS), 'Network Offering usage record list validation failed')
+    self.assertTrue((float(nwOfferingUsageRecords[0].rawusage) > 0), 'Raw usage not started for isolated network offering')
+    public_ip = PublicIPAddress.create(self.userapiclient, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=isolated_network.id, vpcid=vpc.id)
+    nat_rule_1 = NATRule.create(self.userapiclient, virtual_machine, self.testdata['natrule'], ipaddressid=public_ip.ipaddress.id, openfirewall=False, networkid=isolated_network.id, vpcid=vpc.id)
+    self.debug('Adding NetworkACL rules to make NAT rule accessible')
+    NetworkACL.create(self.userapiclient, networkid=isolated_network.id, services=self.testdata['natrule'], traffictype='Ingress')
+    NetworkACL.create(self.userapiclient, networkid=isolated_network.id, services=self.testdata['natrule'], traffictype='Egress')
+    self.testdata['natrule']['privateport'] = 23
+    self.testdata['natrule']['publicport'] = 23
+    nat_rule_2 = NATRule.create(self.userapiclient, virtual_machine, self.testdata['natrule'], ipaddressid=public_ip.ipaddress.id, openfirewall=False, networkid=isolated_network.id, vpcid=vpc.id)
+    ipAddresses = PublicIPAddress.list(self.userapiclient, vpcid=vpc.id, issourcenat=True, listall=True, forvirtualnetwork=True)
+    sourceNatIP = ipAddresses[0]
+    response = self.listUsageRecords(usagetype=3)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    ipUsageRecords = [record for record in usageRecords if (sourceNatIP.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for source NAT ip')
+    ipUsageRecords = [record for record in usageRecords if (public_ip.ipaddress.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for source NAT ip')
+    response = self.listUsageRecords(usagetype=12, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRuleUsageRecords = [record for record in usageRecords if (nat_rule_1.id == record.usageid)]
+    self.assertTrue((validateList(natRuleUsageRecords)[0] == PASS), 'NAT rule usage record list validation failed')
+    self.assertTrue((float(natRuleUsageRecords[0].rawusage) > 0), 'Raw usage not started for nat rule')
+    natRuleUsageRecords = [record for record in usageRecords if (nat_rule_2.id == record.usageid)]
+    self.assertTrue((validateList(natRuleUsageRecords)[0] == PASS), 'NAT rule usage record list validation failed')
+    self.assertTrue((float(natRuleUsageRecords[0].rawusage) > 0), 'Raw usage not started for nat rule')
+    Vpn.create(self.apiclient, sourceNatIP.id, account=self.account.name, domainid=self.account.domainid)
+    self.debug('Verifying the remote VPN access')
+    vpns = Vpn.list(self.apiclient, publicipid=sourceNatIP.id, listall=True)
+    self.assertEqual(isinstance(vpns, list), True, 'List VPNs shall return a valid response')
+    vpnuser_1 = VpnUser.create(self.apiclient, self.testdata['vpn_user']['username'], self.testdata['vpn_user']['password'], account=self.account.name, domainid=self.account.domainid, rand_name=True)
+    vpnuser_2 = VpnUser.create(self.apiclient, self.testdata['vpn_user']['username'], self.testdata['vpn_user']['password'], account=self.account.name, domainid=self.account.domainid, rand_name=True)
+    response = self.listUsageRecords(usagetype=14)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    vpnUserUsageRecords_1 = [record for record in usageRecords if (vpnuser_1.id == record.usageid)]
+    vpnuser1_rawusage = sum((float(record.rawusage) for record in vpnUserUsageRecords_1))
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(vpnuser_1.username)
+    self.assertEqual(response[0], PASS, response[1])
+    vpnUserCreatedDateTime = response[1]
+    self.debug(('VPN creation date: %s' % vpnUserCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - vpnUserCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('VPN user expected usage: %s' % expectedUsage))
+    actualUsage = format(vpnuser1_rawusage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    vpnUserUsageRecords_2 = [record for record in usageRecords if (vpnuser_2.id == record.usageid)]
+    self.assertTrue((validateList(vpnUserUsageRecords_2)[0] == PASS), 'VPN user usage record list validation failed')
+    vpnuser2_rawusage = sum((float(record.rawusage) for record in vpnUserUsageRecords_2))
+    response = self.getEventCreatedDateTime(vpnuser_2.username)
+    self.assertEqual(response[0], PASS, response[1])
+    vpnUserCreatedDateTime = response[1]
+    self.debug(('VPN creation date: %s' % vpnUserCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - vpnUserCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('VPN user expected usage: %s' % expectedUsage))
+    actualUsage = format(vpnuser2_rawusage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    vpnuser_1.delete(self.apiclient)
+    response = self.listUsageRecords(usagetype=14)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    vpnuser_1_Usage_t1 = sum((float(record.rawusage) for record in [record for record in usageRecords if (vpnuser_1.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=14)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    vpnuser_1_Usage_t2 = sum((float(record.rawusage) for record in [record for record in usageRecords if (vpnuser_1.id == record.usageid)]))
+    self.assertTrue((vpnuser_1_Usage_t1 == vpnuser_1_Usage_t2), 'vpn user usage should be stopped once the user is deleted')
+    ssh_client = virtual_machine.get_ssh_client(ipaddress=public_ip.ipaddress.ipaddress)
+    res = ssh_client.execute('ping -c 1 www.google.com')
+    self.assertEqual(str(res).count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    routers = list_routers(self.apiclient, networkid=isolated_network.id, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'Routers list validation failed')
+    router = routers[0]
+    result = self.getCommandResultFromRouter(router, 'iptables -L NETWORK_STATS -n -v -x')
+    self.debug(('iptables -L NETWORK_STATS -n -v -x: %s' % result))
+    bytesReceivedIptableRows = [record for record in result if ('eth2   eth0' in record)]
+    self.debug(('bytes received rows: %s' % bytesReceivedIptableRows))
+    bytesReceivedOnRouter = sum((int(record[1]) for record in [x.split() for x in bytesReceivedIptableRows]))
+    self.debug(('Bytes received extracted from router: %s' % bytesReceivedOnRouter))
+    response = self.listUsageRecords(usagetype=5)
+    self.assertEqual(response[0], PASS, response[1])
+    bytesReceivedUsage = sum((int(record.rawusage) for record in response[1]))
+    self.assertTrue((bytesReceivedUsage == bytesReceivedOnRouter), 'Total bytes received usage should be                         equal to bytes received on router')
+    nat_rule_2.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=12)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRule_2_Usage_t1 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_2.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=12)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRule_2_Usage_t2 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_2.id == record.usageid)]))
+    self.assertTrue((natRule_2_Usage_t1 == natRule_2_Usage_t2), 'NAT rule usage should be stopped once the rule is deleted')
+    qresultset = self.dbclient.execute(("select id from account where account_name = '%s';" % self.account.name))
+    accountid = qresultset[0][0]
+    self.debug(('accountid: %s' % accountid))
+    qresultset = self.dbclient.execute(("select current_bytes_sent, current_bytes_received  from user_statistics where account_id = '%s';" % accountid), db='cloud_usage')[0]
+    currentBytesSentBeforeRouterStop = qresultset[0]
+    currentBytesReceivedBeforeRouterStop = qresultset[1]
+    self.debug(currentBytesSentBeforeRouterStop)
+    self.debug(currentBytesReceivedBeforeRouterStop)
+    routers = Router.list(self.api_client, account=self.account.name, domainid=self.account.domainid, listall=True)
+    self.assertEqual(isinstance(routers, list), True, 'List Routers should return a valid list')
+    router = routers[0]
+    self.debug(('Stopping the router with ID: %s' % router.id))
+    Router.stop(self.apiclient, id=router.id)
+    response = verifyRouterState(self.apiclient, router.id, 'stopped')
+    self.assertEqual(response[0], PASS, response[1])
+    qresultset = self.dbclient.execute(("select current_bytes_sent, current_bytes_received, net_bytes_sent, net_bytes_received from user_statistics where account_id = '%s';" % accountid), db='cloud_usage')[0]
+    currentBytesSentAfterRouterStop = int(qresultset[0])
+    currentBytesReceivedAfterRouterStop = int(qresultset[1])
+    netBytesSentAfterRouterStop = int(qresultset[0])
+    netBytesReceivedAfterRouterStop = int(qresultset[1])
+    self.debug(currentBytesSentAfterRouterStop)
+    self.debug(currentBytesReceivedAfterRouterStop)
+    self.debug(netBytesSentAfterRouterStop)
+    self.debug(netBytesReceivedAfterRouterStop)
+    self.assertTrue(((currentBytesSentAfterRouterStop + currentBytesReceivedAfterRouterStop) == 0), 'Current bytes should be 0')
+    self.assertTrue(((currentBytesSentBeforeRouterStop + currentBytesReceivedBeforeRouterStop) == (netBytesSentAfterRouterStop + netBytesReceivedAfterRouterStop)), 'current bytes should be moved to net bytes')
+    Router.start(self.apiclient, id=router.id)
+    response = verifyRouterState(self.apiclient, router.id, 'running')
+    self.assertEqual(response[0], PASS, response[1])
+    return

@@ -1,0 +1,84 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_04_positive_tests_usage(self):
+    ' Positive test for usage test path\n        Steps:\n        # 1. Create a VM in the account\n        # 2. Acquire public IP in VM network and verify correct usage\n             is generated for IP\n        # 3. Create LB rule for the IP address and verify LB rule usage\n             is generated for the account\n        # 4. Create another LB rule with different ports and verify\n             seperate usage is generated for new LB rule\n\n        # 5. Create egress firewall rule for VM and SSH to VM\n        # 6. Ping external network from the VM and verify that\n             network byte usage is genrated correctly\n        # 7. Delete one LB rule and verify that the usage\n             is stopped for the LB rule\n        # 8. Stop the network router and\n        #    Verify iptables counters are reset when domR stops\n        #    Verify current_bytes in user_statistics table are moved to\n             net_bytes\n        #    Verify currnt_bytes becomes zero\n        # 9. Start the router and\n        #    Verify iptables counters are reset when domR starts\n        #    Verify a diff of total (current_bytes + net_bytes) in previous\n             aggregation period and current period will give the network usage\n\n        '
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    public_ip_1 = PublicIPAddress.create(self.userapiclient, accountid=virtual_machine.account, zoneid=virtual_machine.zoneid, domainid=virtual_machine.domainid, services=self.testdata['server'])
+    self.testdata['lbrule']['privateport'] = 22
+    self.testdata['lbrule']['publicport'] = 2222
+    publicport = self.testdata['lbrule']['publicport']
+    lbrule_1 = LoadBalancerRule.create(self.apiclient, self.testdata['lbrule'], ipaddressid=public_ip_1.ipaddress.id, accountid=self.account.name, networkid=virtual_machine.nic[0].networkid, domainid=self.account.domainid)
+    self.testdata['lbrule']['privateport'] = 23
+    self.testdata['lbrule']['publicport'] = 2223
+    lbrule_2 = LoadBalancerRule.create(self.apiclient, self.testdata['lbrule'], ipaddressid=public_ip_1.ipaddress.id, accountid=self.account.name, networkid=virtual_machine.nic[0].networkid, domainid=self.account.domainid)
+    response = self.listUsageRecords(usagetype=3)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    ipUsageRecords = [record for record in usageRecords if (public_ip_1.ipaddress.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for ip address')
+    response = self.listUsageRecords(usagetype=11, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    lbRule_1_UsageRecords = [record for record in usageRecords if (lbrule_1.id == record.usageid)]
+    self.assertTrue((validateList(lbRule_1_UsageRecords)[0] == PASS), 'LB rule usage record list validation failed')
+    self.assertTrue((float(lbRule_1_UsageRecords[0].rawusage) > 0), 'LB usage not started for nat rule')
+    lbRule_2_UsageRecords = [record for record in usageRecords if (lbrule_2.id == record.usageid)]
+    self.assertTrue((validateList(lbRule_2_UsageRecords)[0] == PASS), 'LB rule usage record list validation failed')
+    self.assertTrue((float(lbRule_2_UsageRecords[0].rawusage) > 0), 'LB usage not started for nat rule')
+    EgressFireWallRule.create(self.userapiclient, networkid=virtual_machine.nic[0].networkid, protocol=self.testdata['icmprule']['protocol'], type=self.testdata['icmprule']['icmptype'], code=self.testdata['icmprule']['icmpcode'], cidrlist=self.testdata['icmprule']['cidrlist'])
+    lbrule_1.assign(self.userapiclient, [virtual_machine])
+    ssh_client = virtual_machine.get_ssh_client(ipaddress=public_ip_1.ipaddress.ipaddress, port=publicport)
+    res = ssh_client.execute('ping -c 1 www.google.com')
+    self.assertEqual(str(res).count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    routers = list_routers(self.apiclient, networkid=virtual_machine.nic[0].networkid, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'Routers list validation failed')
+    router = routers[0]
+    result = self.getCommandResultFromRouter(router, 'iptables -L NETWORK_STATS -n -v -x')
+    self.debug(('iptables -L NETWORK_STATS -n -v -x: %s' % result))
+    bytesReceivedIptableRows = [record for record in result if ('eth2   eth0' in record)]
+    self.debug(('bytes received rows: %s' % bytesReceivedIptableRows))
+    bytesReceivedOnRouter = sum((int(record[1]) for record in [x.split() for x in bytesReceivedIptableRows]))
+    self.debug(('Bytes received extracted from router: %s' % bytesReceivedOnRouter))
+    response = self.listUsageRecords(usagetype=5)
+    self.assertEqual(response[0], PASS, response[1])
+    bytesReceivedUsage = sum((int(record.rawusage) for record in response[1]))
+    self.assertTrue((bytesReceivedUsage == bytesReceivedOnRouter), 'Total bytes received usage should be                         equal to bytes received on router')
+    lbrule_1.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=11)
+    self.assertEqual(response[0], PASS, response[1])
+    lbUsageRecords = response[1]
+    usageForLbRuleAfterDeletion_t1 = sum((float(record.rawusage) for record in [record for record in lbUsageRecords if (lbrule_1.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=11)
+    self.assertEqual(response[0], PASS, response[1])
+    lbUsageRecords = response[1]
+    usageForLbRuleAfterDeletion_t2 = sum((float(record.rawusage) for record in [record for record in lbUsageRecords if (lbrule_1.id == record.usageid)]))
+    self.assertTrue((usageForLbRuleAfterDeletion_t1 == usageForLbRuleAfterDeletion_t2), 'usage for LB rule after deletion should remain the same                        after specific intervals of time')
+    qresultset = self.dbclient.execute(("select id from account where account_name = '%s';" % self.account.name))
+    accountid = qresultset[0][0]
+    self.debug(('accountid: %s' % accountid))
+    qresultset = self.dbclient.execute(("select current_bytes_sent, current_bytes_received  from user_statistics where account_id = '%s';" % accountid), db='cloud_usage')[0]
+    currentBytesSentBeforeRouterStop = qresultset[0]
+    currentBytesReceivedBeforeRouterStop = qresultset[1]
+    self.debug(currentBytesSentBeforeRouterStop)
+    self.debug(currentBytesReceivedBeforeRouterStop)
+    routers = Router.list(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(validateList(routers)[0], PASS, 'Check for list routers response return valid data')
+    router = routers[0]
+    Router.stop(self.apiclient, id=router.id)
+    response = verifyRouterState(self.apiclient, router.id, 'stopped')
+    self.assertEqual(response[0], PASS, response[1])
+    qresultset = self.dbclient.execute(("select current_bytes_sent, current_bytes_received, net_bytes_sent, net_bytes_received from user_statistics where account_id = '%s';" % accountid), db='cloud_usage')[0]
+    currentBytesSentAfterRouterStop = int(qresultset[0])
+    currentBytesReceivedAfterRouterStop = int(qresultset[1])
+    netBytesSentAfterRouterStop = int(qresultset[0])
+    netBytesReceivedAfterRouterStop = int(qresultset[1])
+    self.debug(currentBytesSentAfterRouterStop)
+    self.debug(currentBytesReceivedAfterRouterStop)
+    self.debug(netBytesSentAfterRouterStop)
+    self.debug(netBytesReceivedAfterRouterStop)
+    self.assertTrue(((currentBytesSentAfterRouterStop + currentBytesReceivedAfterRouterStop) == 0), 'Current bytes should be 0')
+    self.assertTrue(((currentBytesSentBeforeRouterStop + currentBytesReceivedBeforeRouterStop) == (netBytesSentAfterRouterStop + netBytesReceivedAfterRouterStop)), 'current bytes should be moved to net bytes')
+    Router.start(self.apiclient, id=router.id)
+    response = verifyRouterState(self.apiclient, router.id, 'running')
+    self.assertEqual(response[0], PASS, response[1])
+    return

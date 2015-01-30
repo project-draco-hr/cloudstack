@@ -1,0 +1,30 @@
+@attr(tags=['basic'], required_hardware='true')
+def test_01_positive_tests_usage_basic_zone(self):
+    ' Positive test for usage test path Basic Zone\n\n        # 1.  Deploy VM in basic zone and verify that VM usage is generated\n              for the account with correct service offering\n        # 2.  SSH to VM and ping to external network\n        # 3.  Verify correct network byte usage is generated for the account\n        '
+    vm = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, mode=self.zone.networktype)
+    response = self.listUsageRecords(usagetype=1)
+    self.assertEqual(response[0], PASS, response[1])
+    vmRunningUsageRecords = [record for record in response[1] if (record.virtualmachineid == vm.id)]
+    vmRunningRawUsage = sum((float(record.rawusage) for record in vmRunningUsageRecords))
+    self.assertEqual(vmRunningUsageRecords[0].offeringid, self.service_offering.id, 'The service offering id in the usage record                        does not match with id of service offering                        with which the VM was created')
+    self.assertEqual(vmRunningUsageRecords[0].templateid, self.template.id, 'The template id in the usage record                        does not match with id of template                        with which the VM was created')
+    response = self.listUsageRecords(usagetype=2, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    vmAllocatedUsageRecords = [record for record in response[1] if (record.virtualmachineid == vm.id)]
+    vmAllocatedRawUsage = sum((float(record.rawusage) for record in vmAllocatedUsageRecords))
+    self.debug(('running vm usage: %s' % vmRunningRawUsage))
+    self.debug(('allocated vm usage: %s' % vmAllocatedRawUsage))
+    self.assertTrue((vmRunningRawUsage < vmAllocatedRawUsage), 'Allocated VM usage should be greater than Running VM usage')
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(vm.name)
+    self.assertEqual(response[0], PASS, response[1])
+    vmCreatedDateTime = response[1]
+    self.debug(('Vm creation date: %s' % vmCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - vmCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('VM expected usage: %s' % expectedUsage))
+    actualUsage = format(vmAllocatedRawUsage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    'ssh_client = vm.get_ssh_client()\n\n        res = ssh_client.execute("ping -c 1 www.google.com")\n        result = str(res)\n\n        self.assertEqual(\n            result.count("1 received"),\n            1,\n            "Ping to outside world from VM should be successful"\n        )\n\n        result = str(res[1])\n        bytesReceived = int(result.split("bytes", 1)[0])\n        response = self.listUsageRecords(usagetype=5)\n        self.assertEqual(response[0], PASS, response[1])\n        bytesReceivedUsageRecord = sum(\n            int(record.rawusage) for record in response[1])\n\n        self.assertTrue(bytesReceivedUsageRecord >=\n                        bytesReceived,\n                        "Total bytes received usage should be greater than                        or equal to bytes received by pinging                        www.google.com")'
+    return

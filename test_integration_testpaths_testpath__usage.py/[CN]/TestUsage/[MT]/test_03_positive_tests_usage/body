@@ -1,0 +1,136 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_03_positive_tests_usage(self):
+    ' Positive test for usage test path T28 - T35\n\n        Steps:\n        # 1. Add an isolated network to VM and verify that network offering\n             usage is generated for account\n             Also verify that IP usage is generated for source NAT IP of\n             network\n        # 2. Enabled VPN on source nat IP of default network of VM\n        # 3. Add two VPN users and check that usage is generated for VPN users\n        # 4. Acquire public IP in the network and verify that IP usage\n             is generated for the acquired IP\n        # 5. Create two PF rules on this IP and verify that PF rules usage\n             is generated for the account\n        # 6. Acquire another IP and enabled static NAT on it and create\n             egress firewall rule on it\n        # 7. Verify IP usage is generated for above acquired IP\n        # 8. SSH to VM with above IP and ping to google.com\n        # 9. Verify that Network bytes usage is generated for account\n             and it matches with the actual number of bytes\n        # 10. Repeat the same for other acquired IP\n        # 11. Delete one of the PF rules and verify that usage is stopped for the PF rule\n        # 12. Also verify that usage is not stopped for other PF rule which\n        #     is still present\n        '
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    self.testdata['isolated_network']['zoneid'] = self.zone.id
+    isolated_network = Network.create(self.userapiclient, self.testdata['isolated_network'], self.account.name, self.account.domainid, networkofferingid=self.isolated_network_offering_2.id)
+    virtual_machine.add_nic(self.userapiclient, isolated_network.id)
+    ipAddresses = PublicIPAddress.list(self.apiclient, associatednetworkid=isolated_network.id, listall=True)
+    sourceNatIP = ipAddresses[0]
+    ipAddressesDefaultNetwork = PublicIPAddress.list(self.apiclient, associatednetworkid=virtual_machine.nic[0].networkid, listall=True)
+    sourceNatIPDefaultNetwork = ipAddressesDefaultNetwork[0]
+    Vpn.create(self.apiclient, sourceNatIPDefaultNetwork.id, account=self.account.name, domainid=self.account.domainid)
+    self.debug('Verifying the remote VPN access')
+    vpns = Vpn.list(self.apiclient, publicipid=sourceNatIPDefaultNetwork.id, listall=True)
+    self.assertEqual(isinstance(vpns, list), True, 'List VPNs shall return a valid response')
+    vpnuser_1 = VpnUser.create(self.apiclient, self.testdata['vpn_user']['username'], self.testdata['vpn_user']['password'], account=self.account.name, domainid=self.account.domainid, rand_name=True)
+    vpnuser_2 = VpnUser.create(self.apiclient, self.testdata['vpn_user']['username'], self.testdata['vpn_user']['password'], account=self.account.name, domainid=self.account.domainid, rand_name=True)
+    public_ip_1 = PublicIPAddress.create(self.userapiclient, accountid=virtual_machine.account, zoneid=virtual_machine.zoneid, domainid=virtual_machine.domainid, services=self.testdata['server'], networkid=virtual_machine.nic[0].networkid)
+    FireWallRule.create(self.userapiclient, ipaddressid=public_ip_1.ipaddress.id, protocol=self.testdata['fwrule']['protocol'], cidrlist=[self.testdata['fwrule']['cidr']], startport=self.testdata['fwrule']['startport'], endport=self.testdata['fwrule']['endport'])
+    self.testdata['natrule']['startport'] = 22
+    self.testdata['natrule']['endport'] = 22
+    nat_rule_1 = NATRule.create(self.userapiclient, virtual_machine, self.testdata['natrule'], public_ip_1.ipaddress.id)
+    self.testdata['natrule']['privateport'] = 23
+    self.testdata['natrule']['publicport'] = 23
+    nat_rule_2 = NATRule.create(self.userapiclient, virtual_machine, self.testdata['natrule'], public_ip_1.ipaddress.id)
+    response = self.listUsageRecords(usagetype=13)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    nwOfferingUsageRecords = [record for record in usageRecords if (self.isolated_network_offering_2.id == record.offeringid)]
+    self.assertTrue((validateList(nwOfferingUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(nwOfferingUsageRecords[0].rawusage) > 0), 'Raw usage not started for source NAT ip')
+    response = self.listUsageRecords(usagetype=3, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    ipUsageRecords = [record for record in usageRecords if (sourceNatIP.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for source NAT ip')
+    response = self.listUsageRecords(usagetype=3, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    ipUsageRecords = [record for record in usageRecords if (public_ip_1.ipaddress.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for acquired public ip')
+    response = self.listUsageRecords(usagetype=12, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRuleUsageRecords = [record for record in usageRecords if (nat_rule_1.id == record.usageid)]
+    self.assertTrue((validateList(natRuleUsageRecords)[0] == PASS), 'NAT rule usage record list validation failed')
+    self.assertTrue((float(natRuleUsageRecords[0].rawusage) > 0), 'Raw usage not started for nat rule')
+    natRuleUsageRecords = [record for record in usageRecords if (nat_rule_2.id == record.usageid)]
+    self.assertTrue((validateList(natRuleUsageRecords)[0] == PASS), 'NAT rule usage record list validation failed')
+    self.assertTrue((float(natRuleUsageRecords[0].rawusage) > 0), 'Raw usage not started for nat rule')
+    response = self.listUsageRecords(usagetype=14, sleep=False)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    vpnUserUsageRecords_1 = [record for record in usageRecords if (vpnuser_1.id == record.usageid)]
+    self.assertTrue((validateList(vpnUserUsageRecords_1)[0] == PASS), 'VPN user usage record list validation failed')
+    vpnuser1_rawusage = sum((float(record.rawusage) for record in vpnUserUsageRecords_1))
+    response = self.getLatestUsageJobExecutionTime()
+    self.assertEqual(response[0], PASS, response[1])
+    lastUsageJobExecTime = response[1]
+    response = self.getEventCreatedDateTime(vpnuser_1.username)
+    self.assertEqual(response[0], PASS, response[1])
+    vpnUserCreatedDateTime = response[1]
+    self.debug(('VPN creation date: %s' % vpnUserCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - vpnUserCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('VPN user expected usage: %s' % expectedUsage))
+    actualUsage = format(vpnuser1_rawusage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    vpnUserUsageRecords_2 = [record for record in usageRecords if (vpnuser_2.id == record.usageid)]
+    self.assertTrue((validateList(vpnUserUsageRecords_2)[0] == PASS), 'VPN user usage record list validation failed')
+    vpnuser2_rawusage = sum((float(record.rawusage) for record in vpnUserUsageRecords_2))
+    response = self.getEventCreatedDateTime(vpnuser_2.username)
+    self.assertEqual(response[0], PASS, response[1])
+    vpnUserCreatedDateTime = response[1]
+    self.debug(('VPN creation date: %s' % vpnUserCreatedDateTime))
+    expectedUsage = format(((lastUsageJobExecTime - vpnUserCreatedDateTime).total_seconds() / 3600), '.2f')
+    self.debug(('VPN user expected usage: %s' % expectedUsage))
+    actualUsage = format(vpnuser2_rawusage, '.2f')
+    self.assertEqual(expectedUsage, actualUsage, ('expected usage %s and actual usage %s not matching' % (expectedUsage, actualUsage)))
+    public_ip_2 = PublicIPAddress.create(self.userapiclient, accountid=virtual_machine.account, zoneid=virtual_machine.zoneid, domainid=virtual_machine.domainid, services=self.testdata['server'], networkid=virtual_machine.nic[0].networkid)
+    StaticNATRule.enable(self.userapiclient, ipaddressid=public_ip_2.ipaddress.id, virtualmachineid=virtual_machine.id)
+    response = self.listUsageRecords(usagetype=3)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    ipUsageRecords = [record for record in usageRecords if (public_ip_2.ipaddress.id == record.usageid)]
+    self.assertTrue((validateList(ipUsageRecords)[0] == PASS), 'IP usage record list validation failed')
+    self.assertTrue((float(ipUsageRecords[0].rawusage) > 0), 'Raw usage not started for public ip')
+    FireWallRule.create(self.userapiclient, ipaddressid=public_ip_2.ipaddress.id, protocol=self.testdata['fwrule']['protocol'], cidrlist=[self.testdata['fwrule']['cidr']], startport=self.testdata['fwrule']['startport'], endport=self.testdata['fwrule']['endport'])
+    EgressFireWallRule.create(self.userapiclient, networkid=virtual_machine.nic[0].networkid, protocol=self.testdata['icmprule']['protocol'], type=self.testdata['icmprule']['icmptype'], code=self.testdata['icmprule']['icmpcode'], cidrlist=self.testdata['icmprule']['cidrlist'])
+    ssh_client = virtual_machine.get_ssh_client(ipaddress=public_ip_1.ipaddress.ipaddress)
+    res = ssh_client.execute('ping -c 1 www.google.com')
+    self.assertEqual(str(res).count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    routers = list_routers(self.apiclient, networkid=virtual_machine.nic[0].networkid, listall=True)
+    self.assertEqual(validateList(routers)[0], PASS, 'Routers list validation failed')
+    router = routers[0]
+    result = self.getCommandResultFromRouter(router, 'iptables -L NETWORK_STATS -n -v -x')
+    self.debug(('iptables -L NETWORK_STATS -n -v -x: %s' % result))
+    bytesReceivedIptableRows = [record for record in result if ('eth2   eth0' in record)]
+    self.debug(('bytes received rows: %s' % bytesReceivedIptableRows))
+    bytesReceivedOnRouter = sum((int(record[1]) for record in [x.split() for x in bytesReceivedIptableRows]))
+    self.debug(('Bytes received extracted from router: %s' % bytesReceivedOnRouter))
+    response = self.listUsageRecords(usagetype=5)
+    self.assertEqual(response[0], PASS, response[1])
+    bytesReceivedUsage = sum((int(record.rawusage) for record in response[1]))
+    self.assertTrue((bytesReceivedUsage == bytesReceivedOnRouter), 'Total bytes received usage should be                         equal to bytes received on router')
+    ssh_client = virtual_machine.get_ssh_client(ipaddress=public_ip_2.ipaddress.ipaddress)
+    res = ssh_client.execute('ping -c 1 www.google.com')
+    self.assertEqual(str(res).count('1 received'), 1, 'Ping to outside world from VM should be successful')
+    result = self.getCommandResultFromRouter(router, 'iptables -L NETWORK_STATS -n -v -x')
+    self.debug(('iptables -L NETWORK_STATS -n -v -x: %s' % result))
+    bytesReceivedIptableRows = [record for record in result if ('eth2   eth0' in record)]
+    self.debug(('bytes received rows: %s' % bytesReceivedIptableRows))
+    bytesReceivedOnRouter = sum((int(record[1]) for record in [x.split() for x in bytesReceivedIptableRows]))
+    self.debug(('Bytes received extracted from router: %s' % bytesReceivedOnRouter))
+    response = self.listUsageRecords(usagetype=5)
+    self.assertEqual(response[0], PASS, response[1])
+    bytesReceivedUsage = sum((int(record.rawusage) for record in response[1]))
+    self.assertTrue((bytesReceivedUsage == bytesReceivedOnRouter), 'Total bytes received usage should be                         equal to bytes received on router')
+    nat_rule_1.delete(self.userapiclient)
+    response = self.listUsageRecords(usagetype=12, sleep=True)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRule_1_Usage_t1 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_1.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=12)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRule_1_Usage_t2 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_1.id == record.usageid)]))
+    self.assertTrue((natRule_1_Usage_t1 == natRule_1_Usage_t2), 'NAT rule usage should be stopped once the rule is deleted')
+    natRule_2_Usage_t1 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_2.id == record.usageid)]))
+    response = self.listUsageRecords(usagetype=12)
+    self.assertEqual(response[0], PASS, response[1])
+    usageRecords = response[1]
+    natRule_2_Usage_t2 = sum((float(record.rawusage) for record in [record for record in usageRecords if (nat_rule_1.id == record.usageid)]))
+    self.assertTrue((natRule_2_Usage_t1 > natRule_2_Usage_t2), 'NAT rule usage for second rule should be running')
+    return
