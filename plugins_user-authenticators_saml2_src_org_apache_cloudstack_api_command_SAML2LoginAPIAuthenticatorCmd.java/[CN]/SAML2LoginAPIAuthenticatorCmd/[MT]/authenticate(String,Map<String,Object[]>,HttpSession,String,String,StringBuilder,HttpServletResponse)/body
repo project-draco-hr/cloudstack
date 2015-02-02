@@ -33,10 +33,8 @@
           throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"SAML Response's signature failed to be validated by IDP signing key",params,responseType));
         }
       }
-      String uniqueUserId=null;
-      String accountName=_configDao.getValue(Config.SAMLUserAccountName.key());
       String domainString=_configDao.getValue(Config.SAMLUserDomain.key());
-      Long domainId=-1L;
+      Long domainId=null;
       Domain domain=_domainMgr.getDomain(domainString);
       if (domain != null) {
         domainId=domain.getId();
@@ -48,15 +46,16 @@
  catch (        NumberFormatException ignore) {
         }
       }
-      if (domainId == -1L) {
-        s_logger.error("The default domain ID for SAML users is not set correct, it should be a UUID");
+      if (domainId == null) {
+        s_logger.error("The default domain ID for SAML users is not set correct, it should be a UUID. ROOT domain will be used.");
       }
       String username=null;
       String password=SAMLUtils.generateSecureRandomId();
       String firstName="";
       String lastName="";
-      String timeZone="";
+      String timeZone="GMT";
       String email="";
+      short accountType=0;
       Assertion assertion=processedSAMLResponse.getAssertions().get(0);
       NameID nameId=assertion.getSubject().getNameID();
       String sessionIndex=assertion.getAuthnStatements().get(0).getSessionIndex();
@@ -64,7 +63,6 @@
       session.setAttribute(SAMLUtils.SAML_SESSION,sessionIndex);
       if (nameId.getFormat().equals(NameIDType.PERSISTENT) || nameId.getFormat().equals(NameIDType.EMAIL)) {
         username=nameId.getValue();
-        uniqueUserId=SAMLUtils.createSAMLId(username);
         if (nameId.getFormat().equals(NameIDType.EMAIL)) {
           email=username;
         }
@@ -78,9 +76,8 @@
           for (          Attribute attribute : attributeStatement.getAttributes()) {
             String attributeName=attribute.getName();
             String attributeValue=attribute.getAttributeValues().get(0).getDOM().getTextContent();
-            if (attributeName.equalsIgnoreCase("uid") && uniqueUserId == null) {
+            if (attributeName.equalsIgnoreCase("uid") && username == null) {
               username=attributeValue;
-              uniqueUserId=SAMLUtils.createSAMLId(username);
             }
  else             if (attributeName.equalsIgnoreCase("givenName")) {
               firstName=attributeValue;
@@ -94,15 +91,19 @@
           }
         }
       }
-      User user=_entityMgr.findByUuid(User.class,uniqueUserId);
-      if (user == null && uniqueUserId != null && username != null && accountName != null && domainId != null) {
-        CallContext.current().setEventDetails("UserName: " + username + ", FirstName :"+ password+ ", LastName: "+ lastName);
-        user=_accountService.createUser(username,password,firstName,lastName,email,timeZone,accountName,domainId,uniqueUserId);
+      if (username == null && email != null) {
+        username=email;
       }
-      if (user != null) {
+      final String uniqueUserId=SAMLUtils.createSAMLId(username);
+      UserAccount userAccount=_userAccountDao.getUserAccount(username,domainId);
+      if (userAccount == null && uniqueUserId != null && username != null) {
+        CallContext.current().setEventDetails("SAML Account/User with UserName: " + username + ", FirstName :"+ password+ ", LastName: "+ lastName);
+        _accountService.createUserAccount(username,password,firstName,lastName,email,timeZone,username,(short)accountType,domainId,null,null,UUID.randomUUID().toString(),uniqueUserId);
+      }
+      if (userAccount != null) {
         try {
-          if (_apiServer.verifyUser(user.getId())) {
-            LoginCmdResponse loginResponse=(LoginCmdResponse)_apiServer.loginUser(session,username,user.getPassword(),domainId,null,remoteAddress,params);
+          if (_apiServer.verifyUser(userAccount.getId())) {
+            LoginCmdResponse loginResponse=(LoginCmdResponse)_apiServer.loginUser(session,username,userAccount.getPassword(),domainId,null,remoteAddress,params);
             resp.addCookie(new Cookie("userid",URLEncoder.encode(loginResponse.getUserId(),HttpUtils.UTF_8)));
             resp.addCookie(new Cookie("domainid",URLEncoder.encode(loginResponse.getDomainId(),HttpUtils.UTF_8)));
             resp.addCookie(new Cookie("role",URLEncoder.encode(loginResponse.getType(),HttpUtils.UTF_8)));
