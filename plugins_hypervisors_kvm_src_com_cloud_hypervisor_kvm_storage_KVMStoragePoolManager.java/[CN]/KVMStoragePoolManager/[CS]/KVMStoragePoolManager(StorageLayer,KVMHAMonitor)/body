@@ -1,6 +1,26 @@
 {
   this._haMonitor=monitor;
   this._storageMapper.put("libvirt",new LibvirtStorageAdaptor(storagelayer));
-  this._storageMapper.put(StoragePoolType.Iscsi.toString(),new IscsiAdmStorageAdaptor());
   this._storageMapper.put(StoragePoolType.ManagedNFS.toString(),new ManagedNfsStorageAdaptor(storagelayer));
+  Reflections reflections=new Reflections("com.cloud.hypervisor.kvm.storage");
+  Set<Class<? extends StorageAdaptor>> storageAdaptors=reflections.getSubTypesOf(StorageAdaptor.class);
+  for (  Class<? extends StorageAdaptor> storageAdaptor : storageAdaptors) {
+    StorageAdaptorInfo info=storageAdaptor.getAnnotation(StorageAdaptorInfo.class);
+    if (info != null && info.storagePoolType() != null) {
+      if (this._storageMapper.containsKey(info.storagePoolType().toString())) {
+        s_logger.error("Duplicate StorageAdaptor type " + info.storagePoolType().toString() + ", not loading "+ storageAdaptor.getName());
+      }
+ else {
+        try {
+          this._storageMapper.put(info.storagePoolType().toString(),storageAdaptor.newInstance());
+        }
+ catch (        Exception ex) {
+          throw new CloudRuntimeException(ex.toString());
+        }
+      }
+    }
+  }
+  for (  Map.Entry<String,StorageAdaptor> adaptors : this._storageMapper.entrySet()) {
+    s_logger.debug("Registered a StorageAdaptor for " + adaptors.getKey());
+  }
 }
