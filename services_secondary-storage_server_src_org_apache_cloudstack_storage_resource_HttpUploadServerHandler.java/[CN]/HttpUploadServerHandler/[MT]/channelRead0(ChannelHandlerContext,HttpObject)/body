@@ -1,0 +1,90 @@
+{
+  if (msg instanceof HttpRequest) {
+    HttpRequest request=this.request=(HttpRequest)msg;
+    responseContent.setLength(0);
+    if (request.getMethod().equals(HttpMethod.POST)) {
+      URI uri=new URI(request.getUri());
+      String signature=null;
+      String expires=null;
+      String metadata=null;
+      String hostname=null;
+      for (      Entry<String,String> entry : request.headers()) {
+switch (entry.getKey()) {
+case HEADER_SIGNATURE:
+          signature=entry.getValue();
+        break;
+case HEADER_METADATA:
+      metadata=entry.getValue();
+    break;
+case HEADER_EXPIRES:
+  expires=entry.getValue();
+break;
+case HEADER_HOST:
+hostname=entry.getValue();
+break;
+}
+}
+logger.info("HEADER: signature=" + signature);
+logger.info("HEADER: metadata=" + metadata);
+logger.info("HEADER: expires=" + expires);
+logger.info("HEADER: hostname=" + hostname);
+QueryStringDecoder decoderQuery=new QueryStringDecoder(uri);
+Map<String,List<String>> uriAttributes=decoderQuery.parameters();
+uuid=uriAttributes.get("uuid").get(0);
+logger.info("URI: uuid=" + uuid);
+UploadEntity uploadEntity=null;
+try {
+storageResource.validatePostUploadRequest(signature,metadata,expires,hostname,uuid);
+uploadEntity=storageResource.createUploadEntity(uuid,metadata);
+}
+ catch (InvalidParameterValueException ex) {
+logger.error("post request validation failed",ex);
+responseContent.append(ex.getMessage());
+writeResponse(ctx.channel());
+return;
+}
+if (uploadEntity == null) {
+logger.error("Unable to create upload entity. An exception occurred.");
+responseContent.append("Internal Server Error");
+writeResponse(ctx.channel());
+return;
+}
+DiskFileUpload.baseDirectory=uploadEntity.getInstallPathPrefix();
+logger.info("base directory: " + DiskFileUpload.baseDirectory);
+try {
+decoder=new HttpPostRequestDecoder(factory,request);
+}
+ catch (ErrorDataDecoderException|IncompatibleDataDecoderException e) {
+logger.error("exception while initialising the decoder",e);
+responseContent.append(e.getMessage());
+writeResponse(ctx.channel());
+return;
+}
+}
+ else {
+logger.warn("received a get request");
+responseContent.append("only post requests are allowed");
+writeResponse(ctx.channel());
+return;
+}
+}
+if (decoder != null) {
+if (msg instanceof HttpContent) {
+HttpContent chunk=(HttpContent)msg;
+try {
+decoder.offer(chunk);
+}
+ catch (ErrorDataDecoderException e) {
+logger.error("data decoding exception",e);
+responseContent.append(e.getMessage());
+writeResponse(ctx.channel());
+return;
+}
+if (chunk instanceof LastHttpContent) {
+readFileUploadData();
+writeResponse(ctx.channel());
+reset();
+}
+}
+}
+}

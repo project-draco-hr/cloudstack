@@ -1,0 +1,41 @@
+{
+  final int PORT=8210;
+  final int NO_OF_WORKERS=15;
+  final EventLoopGroup bossGroup=new NioEventLoopGroup(1);
+  final EventLoopGroup workerGroup=new NioEventLoopGroup(NO_OF_WORKERS);
+  final ServerBootstrap b=new ServerBootstrap();
+  final NfsSecondaryStorageResource storageResource=this;
+  b.group(bossGroup,workerGroup);
+  b.channel(NioServerSocketChannel.class);
+  b.handler(new LoggingHandler(LogLevel.INFO));
+  b.childHandler(new ChannelInitializer<SocketChannel>(){
+    @Override protected void initChannel(    SocketChannel ch) throws Exception {
+      ChannelPipeline pipeline=ch.pipeline();
+      pipeline.addLast(new HttpRequestDecoder());
+      pipeline.addLast(new HttpResponseEncoder());
+      pipeline.addLast(new HttpContentCompressor());
+      pipeline.addLast(new HttpUploadServerHandler(storageResource));
+    }
+  }
+);
+  new Thread(){
+    @Override public void run(){
+      try {
+        Channel ch=b.bind(PORT).sync().channel();
+        s_logger.info(String.format("Started post upload server on port %d with %d workers",PORT,NO_OF_WORKERS));
+        ch.closeFuture().sync();
+      }
+ catch (      InterruptedException e) {
+        s_logger.info("Failed to start post upload server");
+        s_logger.debug("Exception while starting post upload server",e);
+      }
+ finally {
+        bossGroup.shutdownGracefully();
+        workerGroup.shutdownGracefully();
+        s_logger.info("shutting down post upload server");
+      }
+    }
+  }
+.start();
+  s_logger.info("created a thread to start post upload server");
+}
