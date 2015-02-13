@@ -1,0 +1,121 @@
+@attr(tags=['preupgrade'])
+def test_01_PreUpgradeTest(self):
+    ' Test case no : Generation of CCP Objects Prior to Upgrade\n        '
+    try:
+        self.service_offering_h1 = ServiceOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['service_offering_h1'], hosttags=TestMinimalUpgradeChecks.services['service_offering_h1']['hosttags'])
+        self.service_offering_h2 = ServiceOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['service_offering_h2'], hosttags=TestMinimalUpgradeChecks.services['service_offering_h2']['hosttags'])
+        self.disk_offering_5gb = DiskOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['disk_offering_shared_5GB'], domainid=TestMinimalUpgradeChecks.domain.id)
+        self.disk_offering_15gb = DiskOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['disk_offering_shared_15GB'], domainid=TestMinimalUpgradeChecks.domain.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'service_offering_h1': self.service_offering_h1.__dict__, 'service_offering_h2': self.service_offering_h2.__dict__, 'disk_offering_5gb': self.disk_offering_5gb.__dict__, 'disk_offering_15gb': self.disk_offering_15gb.__dict__, })
+        self.firstaccount = Account.create(self.apiclient, TestMinimalUpgradeChecks.services['account'], admin=True, domainid=TestMinimalUpgradeChecks.domain.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'firstaccount': self.firstaccount.__dict__, })
+        self.template = Template.register(self.apiclient, TestMinimalUpgradeChecks.services['vpn_template'], zoneid=TestMinimalUpgradeChecks.zone.id, account=self.firstaccount.name, domainid=TestMinimalUpgradeChecks.domain.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'template': self.template.__dict__, })
+        TestMinimalUpgradeChecks.services['windows_2008_R2_iso']['zoneid'] = TestMinimalUpgradeChecks.zone.id
+        self.iso = Iso.create(self.apiclient, TestMinimalUpgradeChecks.services['windows_2008_R2_iso'], account=self.firstaccount.name, domainid=TestMinimalUpgradeChecks.domain.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'iso': self.iso.__dict__, })
+        time.sleep(TestMinimalUpgradeChecks.services['sleep'])
+        timeout = TestMinimalUpgradeChecks.services['timeout']
+        while True:
+            list_template_response = list_templates(self.apiclient, templatefilter='all', id=self.template.id, zoneid=TestMinimalUpgradeChecks.zone.id, account=self.firstaccount.name, domainid=TestMinimalUpgradeChecks.domain.id)
+            if isinstance(list_template_response, list):
+                break
+            elif (timeout == 0):
+                raise Exception('List template failed!')
+            time.sleep(5)
+            timeout = (timeout - 1)
+        assert isinstance(list_template_response, list), 'Check for list template response return valid data'
+        assert (len(list_template_response) != 0), 'Check template available in List Templates'
+        template_response = list_template_response[0]
+        assert template_response.isready, ('Template state is not ready, it is %r' % template_response.isready)
+        self.template.download(self.apiclient, interval=120)
+        time.sleep(TestMinimalUpgradeChecks.services['sleep'])
+        timeout = TestMinimalUpgradeChecks.services['timeout']
+        while True:
+            list_isos_response = list_isos(self.apiclient, isofilter='all', id=self.iso.id, zoneid=TestMinimalUpgradeChecks.zone.id, account=self.firstaccount.name, domainid=TestMinimalUpgradeChecks.domain.id)
+            if isinstance(list_isos_response, list):
+                break
+            elif (timeout == 0):
+                raise Exception('List ISO failed!')
+            time.sleep(5)
+            timeout = (timeout - 1)
+        assert isinstance(list_isos_response, list), 'Check for list ISOs response return valid data'
+        assert (len(list_isos_response) != 0), 'Check ISO available in List Templates'
+        iso_response = list_isos_response[0]
+        assert iso_response.isready, ('ISO state is not ready, it is %r' % template_response.isready)
+        self.iso.download(self.apiclient, interval=120)
+        self.firstvm = VirtualMachine.create(self.apiclient, TestMinimalUpgradeChecks.services['virtual_machine'], accountid=self.firstaccount.name, zoneid=TestMinimalUpgradeChecks.zone.id, domainid=self.firstaccount.domainid, serviceofferingid=self.service_offering_h1.id, templateid=self.template.id, diskofferingid=self.disk_offering_5gb.id)
+        self.firstvm.__dict__.update({'nicip': self.firstvm.nic[0].ipaddress, })
+        TestMinimalUpgradeChecks.ug_dict.update({'firstvm': self.firstvm.__dict__, })
+        self.firstvm.access_ssh_over_nat(self.apiclient, TestMinimalUpgradeChecks.services, self.firstvm, allow_egress=True)
+        self.debug(('VM for VPNClient Access Got Created with Public IP Address %s' % self.firstvm.public_ip))
+        self.secondvm = VirtualMachine.create(self.apiclient, TestMinimalUpgradeChecks.services['virtual_machine'], accountid=self.firstaccount.name, zoneid=TestMinimalUpgradeChecks.zone.id, domainid=self.firstaccount.domainid, serviceofferingid=self.service_offering_h2.id, templateid=self.template.id, diskofferingid=self.disk_offering_5gb.id)
+        self.secondvm.__dict__.update({'nicip': self.secondvm.nic[0].ipaddress, })
+        TestMinimalUpgradeChecks.ug_dict.update({'secondvm': self.secondvm.__dict__, })
+        self.secondvm.access_ssh_over_nat(self.apiclient, TestMinimalUpgradeChecks.services, self.secondvm, allow_egress=True)
+        self.debug(('VM for VPNClient Access Got Created with Public IP Address %s' % self.secondvm.public_ip))
+        self.thirdvm = VirtualMachine.create(self.apiclient, TestMinimalUpgradeChecks.services['virtual_machine'], accountid=self.firstaccount.name, zoneid=TestMinimalUpgradeChecks.zone.id, domainid=self.firstaccount.domainid, serviceofferingid=self.service_offering_h1.id, templateid=self.iso.id, diskofferingid=self.disk_offering_15gb.id)
+        self.thirdvm.__dict__.update({'nicip': self.thirdvm.nic[0].ipaddress, })
+        TestMinimalUpgradeChecks.ug_dict.update({'thirdvm': self.thirdvm.__dict__, })
+        self.secondaccount = Account.create(self.apiclient, TestMinimalUpgradeChecks.services['account'], admin=True, domainid=TestMinimalUpgradeChecks.domain.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'secondaccount': self.secondaccount.__dict__, })
+        self.debug('Creating a VPC offering..')
+        self.vpc_offering = VpcOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['vpc_offering'])
+        TestMinimalUpgradeChecks.ug_dict.update({'vpc_offering': self.vpc_offering.__dict__, })
+        self.debug('Enabling the VPC offering created')
+        self.vpc_offering.update(self.apiclient, state='Enabled')
+        self.debug(('Creating a VPC in the account: %s' % self.secondaccount.name))
+        self.firstvpc = VPC.create(self.api_client, TestMinimalUpgradeChecks.services['vpc'], vpcofferingid=self.vpc_offering.id, zoneid=TestMinimalUpgradeChecks.zone.id, account=self.secondaccount.name, domainid=self.secondaccount.domainid)
+        TestMinimalUpgradeChecks.ug_dict.update({'firstvpc': self.firstvpc.__dict__, })
+        self.debug('Create NetworkOffering for Networks in VPC')
+        TestMinimalUpgradeChecks.services['vpc_network_offering']['name'] = ('NET_OFF-RemoteAccessVPNTest-' + random_gen())
+        self.network_off = NetworkOffering.create(self.apiclient, TestMinimalUpgradeChecks.services['vpc_network_offering'], conservemode=False)
+        TestMinimalUpgradeChecks.ug_dict.update({'network_off': self.network_off.__dict__, })
+        self.network_off.update(self.apiclient, state='Enabled')
+        self.debug('Created and Enabled NetworkOffering')
+        TestMinimalUpgradeChecks.services['network']['name'] = ('NETWORK-' + random_gen())
+        self.debug(('Adding Network=%s' % TestMinimalUpgradeChecks.services['network']))
+        self.firstnetworktier = Network.create(self.apiclient, TestMinimalUpgradeChecks.services['network'], accountid=self.secondaccount.name, domainid=self.secondaccount.domainid, networkofferingid=self.network_off.id, zoneid=TestMinimalUpgradeChecks.zone.id, gateway=TestMinimalUpgradeChecks.services['firstnetwork_tier']['gateway'], vpcid=self.firstvpc.id)
+        TestMinimalUpgradeChecks.ug_dict.update({'firstnetworktier': self.firstnetworktier.__dict__, })
+        self.debug(('Created network with ID: %s' % self.firstnetworktier.id))
+        self.debug('Adding NetworkACL rules to make Network accessible for all Protocols and all CIDRs ')
+        NetworkACL.create(self.apiclient, TestMinimalUpgradeChecks.services['all_rule'], networkid=self.firstnetworktier.id, traffictype='Ingress')
+        NetworkACL.create(self.apiclient, TestMinimalUpgradeChecks.services['all_rule'], networkid=self.firstnetworktier.id, traffictype='Egress')
+        listFirstVPC = VPC.list(self.apiclient, id=self.firstvpc.id)
+        self.debug(str(listFirstVPC))
+        self.listFirstVPCPublicIpAddress = list_publicIP(self.apiclient, issourcenat='true', vpcid=listFirstVPC[0].id, listall='true')
+        self.debug(str(self.listFirstVPCPublicIpAddress))
+        self.vm1 = VirtualMachine.create(self.apiclient, TestMinimalUpgradeChecks.services['virtual_machine'], accountid=self.secondaccount.name, zoneid=TestMinimalUpgradeChecks.zone.id, domainid=self.secondaccount.domainid, serviceofferingid=self.service_offering_h1.id, templateid=self.template.id, networkids=[str(self.firstnetworktier.id)])
+        self.debug(' First VM deployed in the first Network Tier')
+        self.vm1.__dict__.update({'nicip': self.vm1.nic[0].ipaddress, })
+        TestMinimalUpgradeChecks.ug_dict.update({'vm1': self.vm1.__dict__, })
+        self.vm2 = VirtualMachine.create(self.apiclient, TestMinimalUpgradeChecks.services['virtual_machine'], accountid=self.secondaccount.name, zoneid=TestMinimalUpgradeChecks.zone.id, domainid=self.secondaccount.domainid, serviceofferingid=self.service_offering_h2.id, templateid=self.template.id, networkids=[str(self.firstnetworktier.id)])
+        self.debug(' Second VM deployed in the first Network Tier')
+        self.vm2.__dict__.update({'nicip': self.vm2.nic[0].ipaddress, })
+        TestMinimalUpgradeChecks.ug_dict.update({'vm2': self.vm2.__dict__, })
+        TestMinimalUpgradeChecks.filecreation(self.firstvm)
+        list_root_volumes = list_volumes(self.apiclient, account=self.firstaccount.name, domainid=self.firstaccount.domainid, listall='True', type='ROOT', virtualmachineid=self.firstvm.id)
+        self.root_volume_firstvm = list_root_volumes[0]
+        TestMinimalUpgradeChecks.ug_dict.update({'root_volume_firstvm': self.root_volume_firstvm.__dict__, })
+        self.snapshot_root_firstvm = Snapshot.create(self.apiclient, volume_id=self.root_volume_firstvm.id, account=self.firstaccount.name, domainid=self.firstaccount.domainid)
+        TestMinimalUpgradeChecks.ug_dict.update({'snapshot_root_firstvm': self.snapshot_root_firstvm.__dict__, })
+        TestMinimalUpgradeChecks.filecreation(self.secondvm)
+        list_root_volumes = list_volumes(self.apiclient, account=self.firstaccount.name, domainid=self.firstaccount.domainid, listall='True', type='ROOT', virtualmachineid=self.secondvm.id)
+        self.root_volume_secondvm = list_root_volumes[0]
+        TestMinimalUpgradeChecks.ug_dict.update({'root_volume_secondvm': self.root_volume_secondvm.__dict__, })
+        self.snapshot_root_secondvm = Snapshot.create(self.apiclient, volume_id=self.root_volume_secondvm.id, account=self.firstaccount.name, domainid=self.firstaccount.domainid)
+        TestMinimalUpgradeChecks.ug_dict.update({'snapshot_root_secondvm': self.snapshot_root_secondvm.__dict__, })
+        self.debug('Check Type Value:')
+        type_dict = self.check_type_value(TestMinimalUpgradeChecks.ug_dict)
+        self.debug(type_dict)
+        self.debug('Value Types Information is as follows')
+        self.debug(type_dict.keys())
+        self.debug('Upgrade Dictionary Objects stored in ug_dict are as mentioned below:')
+        self.debug(TestMinimalUpgradeChecks.ug_dict)
+        self.debug('Refine the Upgrade Dictionary Objects inorder to store them in a Json File')
+        refined_dict = self.contruct_dictionary(TestMinimalUpgradeChecks.ug_dict, type_dict)
+        with open(TestMinimalUpgradeChecks.services['ug_stp_obj_file'], 'wb') as fp:
+            json.dump(refined_dict, fp)
+    except Exception as e:
+        raise Exception(('Warning: Exception during PreUpgrade Test Suite Execution : %s' % e))
+    return
