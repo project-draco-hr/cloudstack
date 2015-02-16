@@ -1,0 +1,23 @@
+@attr(tags=['advanced', 'basic'], required_hardware='False')
+def test_05_pt_startvm_false_attach_disk_change_SO(self):
+    ' Positive test for stopped VM test path - T4\n\n        # 1.  Deploy VM in the network with specifying startvm parameter\n        #     as False\n        # 2.  List VMs and verify that VM is in stopped state\n        # 3.  Create a data disk and attach it to VM\n        # 4.  Change the service offering of VM from small to medium,\n              verify that the operation is successful\n        # 5.  Start the VM\n        # 6.  Now detach the disk from the VM\n        # 7.  Verify that attach and detach operations are successful\n        '
+    disk_offering = DiskOffering.create(self.apiclient, self.testdata['disk_offering'])
+    self.cleanup.append(disk_offering)
+    volume = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering.id)
+    self.cleanup.append(volume)
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.defaultTemplateId, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=([self.networkid] if self.networkid else None), zoneid=self.zone.id, startvm=False, mode=self.zone.networktype)
+    self.cleanup.append(virtual_machine)
+    response = virtual_machine.getState(self.apiclient, VirtualMachine.STOPPED)
+    self.assertEqual(response[0], PASS, response[1])
+    virtual_machine.attach_volume(self.userapiclient, volume=volume)
+    volumes = Volume.list(self.userapiclient, virtualmachineid=virtual_machine.id, type='DATADISK', listall=True)
+    self.assertEqual(validateList(volumes)[0], PASS, 'Volumes list validation failed')
+    self.assertEqual(volumes[0].id, volume.id, 'Listed Volume id not matching with attached volume id')
+    virtual_machine.change_service_offering(self.userapiclient, serviceOfferingId=self.service_offering_2.id)
+    response = VerifyChangeInServiceOffering(self, virtual_machine, self.service_offering_2)
+    (exceptionOccured, exceptionMessage) = (response[0], response[1])
+    self.assertFalse(exceptionOccured, exceptionMessage)
+    virtual_machine.detach_volume(self.userapiclient, volume)
+    volumes = Volume.list(self.userapiclient, virtualmachineid=virtual_machine.id, type='DATADISK', listall=True)
+    self.assertEqual(validateList(volumes)[0], FAIL, 'Detached volume should not be listed')
+    return

@@ -1,0 +1,19 @@
+@attr(tags=['advanced', 'basic'], required_hardware='False')
+def test_02_pt_deploy_vm_with_startvm_true(self):
+    ' Positive test for stopped VM test path - T1 variant\n\n        # 1.  Deploy VM in the network specifying startvm parameter as True\n        # 2.  List VMs and verify that VM is in running state\n        # 3.  Verify that router is in running state (Advanced zone)\n        # 4.  Add network rules for VM (done in base.py itself) to make\n        #     it accessible\n        # 5.  Verify that VM is accessible\n        # 6.  Destroy and expunge the VM\n        # 7.  Wait for network gc time interval and check that router is\n        #     in stopped state\n        '
+    virtual_machine = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.defaultTemplateId, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=([self.networkid] if self.networkid else None), zoneid=self.zone.id, startvm=True, mode=self.zone.networktype)
+    response = virtual_machine.getState(self.userapiclient, VirtualMachine.RUNNING)
+    self.assertEqual(response[0], PASS, response[1])
+    if (str(self.zone.networktype).lower() == 'advanced'):
+        response = VerifyRouterState(self.apiclient, self.account.name, self.account.domainid, RUNNING)
+        self.assertTrue(response[0], response[1])
+    try:
+        SshClient(host=virtual_machine.ssh_ip, port=self.testdata['natrule']['publicport'], user=virtual_machine.username, passwd=virtual_machine.password)
+    except Exception as e:
+        self.fail(('Exception while SSHing to VM: %s' % e))
+    virtual_machine.delete(self.apiclient)
+    if (str(self.zone.networktype).lower() == 'advanced'):
+        wait_for_cleanup(self.apiclient, ['network.gc.interval', 'network.gc.wait'])
+        response = VerifyRouterState(self.apiclient, self.account.name, self.account.domainid, STOPPED, retries=10)
+        self.assertTrue(response[0], response[1])
+    return
