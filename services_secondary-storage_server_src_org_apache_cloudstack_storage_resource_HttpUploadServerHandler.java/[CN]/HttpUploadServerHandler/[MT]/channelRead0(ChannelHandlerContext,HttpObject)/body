@@ -8,6 +8,7 @@
       String expires=null;
       String metadata=null;
       String hostname=null;
+      long contentLength=0;
       for (      Entry<String,String> entry : request.headers()) {
 switch (entry.getKey()) {
 case HEADER_SIGNATURE:
@@ -22,20 +23,24 @@ break;
 case HEADER_HOST:
 hostname=entry.getValue();
 break;
+case HttpHeaders.Names.CONTENT_LENGTH:
+contentLength=Long.valueOf(entry.getValue());
+break;
 }
 }
 logger.info("HEADER: signature=" + signature);
 logger.info("HEADER: metadata=" + metadata);
 logger.info("HEADER: expires=" + expires);
 logger.info("HEADER: hostname=" + hostname);
+logger.info("HEADER: Content-Length=" + contentLength);
 QueryStringDecoder decoderQuery=new QueryStringDecoder(uri);
 Map<String,List<String>> uriAttributes=decoderQuery.parameters();
 uuid=uriAttributes.get("uuid").get(0);
 logger.info("URI: uuid=" + uuid);
 UploadEntity uploadEntity=null;
 try {
-storageResource.validatePostUploadRequest(signature,metadata,expires,hostname,uuid);
-uploadEntity=storageResource.createUploadEntity(uuid,metadata);
+storageResource.validatePostUploadRequest(signature,metadata,expires,hostname,contentLength,uuid);
+uploadEntity=storageResource.createUploadEntity(uuid,metadata,contentLength);
 }
  catch (InvalidParameterValueException ex) {
 logger.error("post request validation failed",ex);
@@ -81,9 +86,16 @@ writeResponse(ctx.channel(),HttpResponseStatus.INTERNAL_SERVER_ERROR);
 return;
 }
 if (chunk instanceof LastHttpContent) {
+try {
 readFileUploadData();
 writeResponse(ctx.channel(),HttpResponseStatus.OK);
 reset();
+}
+ catch (InvalidParameterValueException e) {
+logger.error("error during the file install.",e);
+responseContent.append("\n").append(e.getMessage());
+writeResponse(ctx.channel(),HttpResponseStatus.INTERNAL_SERVER_ERROR);
+}
 }
 }
 }
