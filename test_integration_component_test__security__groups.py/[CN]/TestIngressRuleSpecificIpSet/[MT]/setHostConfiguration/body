@@ -1,0 +1,26 @@
+def setHostConfiguration(self):
+    ' Set necessary configuration on hosts for correct functioning of\n        ingress rules '
+    hosts = Host.list(self.apiclient, type='Routing', listall=True)
+    for host in hosts:
+        sshClient = SshClient(host.ipaddress, self.testdata['configurableData']['host']['publicport'], self.testdata['configurableData']['host']['username'], self.testdata['configurableData']['host']['password'])
+        qresultset = self.dbclient.execute(("select guid from host where uuid = '%s';" % host.id), db='cloud')
+        self.assertNotEqual(len(qresultset), 0, 'Check DB Query result set')
+        hostguid = qresultset[(-1)][0]
+        commands = ['echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables', 'echo 1 > /proc/sys/net/bridge/bridge-nf-call-arptables', 'sysctl -w net.bridge.bridge-nf-call-iptables=1', 'sysctl -w net.bridge.bridge-nf-call-arptables=1', ('xe host-param-clear param-name=tags uuid=%s' % hostguid)]
+        for command in commands:
+            response = sshClient.execute(command)
+            self.debug(response)
+        Host.reconnect(self.apiclient, id=host.id)
+        retriesCount = 10
+        while (retriesCount >= 0):
+            hostsList = Host.list(self.apiclient, id=host.id)
+            if (hostsList[0].state.lower() == 'up'):
+                break
+            time.sleep(60)
+            retriesCount -= 1
+            if (retriesCount == 0):
+                raise Exception('Host failed to come in up state')
+        sshClient = SshClient(host.ipaddress, self.testdata['configurableData']['host']['publicport'], self.testdata['configurableData']['host']['username'], self.testdata['configurableData']['host']['password'])
+        response = sshClient.execute('service xapi restart')
+        self.debug(response)
+    return
