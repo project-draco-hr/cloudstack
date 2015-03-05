@@ -1,6 +1,7 @@
 {
   String volumePath=cmd.getVolumePath();
   StorageFilerTO poolTo=cmd.getPool();
+  Volume.Type volumeType=cmd.getVolumeType();
   if (s_logger.isInfoEnabled()) {
     s_logger.info("Executing resource MigrateVolumeCommand: " + _gson.toJson(cmd));
   }
@@ -38,7 +39,19 @@
     diskLocator.setDatastore(morDs);
     diskLocator.setDiskId(diskId);
     diskLocators.add(diskLocator);
-    relocateSpec.getDisk().add(diskLocator);
+    if (cmd.getVolumeType() == Volume.Type.ROOT) {
+      relocateSpec.setDatastore(morDs);
+      List<Pair<Integer,ManagedObjectReference>> diskDatastores=vmMo.getAllDiskDatastores();
+      for (      Pair<Integer,ManagedObjectReference> diskDatastore : diskDatastores) {
+        if (diskDatastore.first().intValue() != diskId) {
+          diskLocator=new VirtualMachineRelocateSpecDiskLocator();
+          diskLocator.setDiskId(diskDatastore.first().intValue());
+          diskLocator.setDatastore(diskDatastore.second());
+          diskLocators.add(diskLocator);
+        }
+      }
+    }
+    relocateSpec.getDisk().addAll(diskLocators);
     if (!vmMo.changeDatastore(relocateSpec)) {
       throw new Exception("Change datastore operation failed during volume migration");
     }
@@ -46,13 +59,11 @@
       s_logger.debug("Successfully migrated volume " + volumePath + " to target datastore "+ tgtDsName);
     }
     String apiVersion=HypervisorHostHelper.getVcenterApiVersion(vmMo.getContext());
-    if (apiVersion.compareTo("5.0") >= 0) {
-      if (!vmMo.consolidateVmDisks()) {
-        s_logger.warn("VM disk consolidation failed after storage migration.");
-      }
+    if (!vmMo.consolidateVmDisks()) {
+      s_logger.warn("VM disk consolidation failed after storage migration.");
+    }
  else {
-        s_logger.debug("Successfully consolidated disks of VM " + vmName + ".");
-      }
+      s_logger.debug("Successfully consolidated disks of VM " + vmName + ".");
     }
     if (!targetDsMo.fileExists(fullVolumePath)) {
       VirtualDisk[] disks=vmMo.getAllDiskDevice();
