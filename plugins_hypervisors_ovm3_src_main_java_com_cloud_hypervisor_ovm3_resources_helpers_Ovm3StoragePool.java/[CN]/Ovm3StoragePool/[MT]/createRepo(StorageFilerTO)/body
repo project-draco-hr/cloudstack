@@ -1,0 +1,76 @@
+{
+  String basePath=config.getAgentOvmRepoPath();
+  Repository repo=new Repository(c);
+  String primUuid=repo.deDash(cmd.getUuid());
+  String ovsRepo=basePath + "/" + primUuid;
+  String mountPoint=String.format("%1$s:%2$s",cmd.getHost(),cmd.getPath());
+  String msg;
+  if (cmd.getType() == StoragePoolType.NetworkFilesystem) {
+    Boolean repoExists=false;
+    try {
+      repo.mountRepoFs(mountPoint,ovsRepo);
+    }
+ catch (    Ovm3ResourceException e) {
+      LOGGER.debug("Unable to mount NFS repository " + mountPoint + " on "+ ovsRepo+ " requested for "+ config.getAgentHostname()+ ": "+ e.getMessage());
+    }
+    try {
+      repo.addRepo(mountPoint,ovsRepo);
+      repoExists=true;
+    }
+ catch (    Ovm3ResourceException e) {
+      LOGGER.debug("NFS repository " + mountPoint + " on "+ ovsRepo+ " not found creating repo: "+ e.getMessage());
+    }
+    if (!repoExists) {
+      try {
+        repo.createRepo(mountPoint,ovsRepo,primUuid,"OVS Repository");
+      }
+ catch (      Ovm3ResourceException e) {
+        msg="NFS repository " + mountPoint + " on "+ ovsRepo+ " create failed!";
+        LOGGER.debug(msg);
+        throw new CloudRuntimeException(msg + " " + e.getMessage(),e);
+      }
+    }
+    if (config.getAgentInOvm3Pool()) {
+      try {
+        msg="Configuring " + config.getAgentHostname() + "("+ config.getAgentIp()+ ") for pool";
+        LOGGER.debug(msg);
+        setupPool(cmd);
+        msg="Configured host for pool";
+        if (config.getAgentInOvm3Cluster()) {
+          msg="Setup " + config.getAgentHostname() + "("+ config.getAgentIp()+ ")  for cluster";
+          LOGGER.debug(msg);
+        }
+      }
+ catch (      Ovm3ResourceException e) {
+        msg="Unable to setup pool on  " + config.getAgentHostname() + "("+ config.getAgentIp()+ ") for "+ ovsRepo;
+        throw new CloudRuntimeException(msg + " " + e.getMessage(),e);
+      }
+    }
+ else {
+      msg="no way dude I can't stand for this";
+      LOGGER.debug(msg);
+    }
+    try {
+      URI uri=new URI(cmd.getType() + "://" + cmd.getHost()+ ":"+ +cmd.getPort()+ cmd.getPath()+ "/VirtualMachines");
+      setupNfsStorage(uri,cmd.getUuid());
+    }
+ catch (    Exception e) {
+      msg="NFS mount " + mountPoint + " on "+ config.getAgentSecStoragePath()+ "/"+ cmd.getUuid()+ " create failed!";
+      throw new CloudRuntimeException(msg + " " + e.getMessage(),e);
+    }
+  }
+ else {
+    msg="NFS repository " + mountPoint + " on "+ ovsRepo+ " create failed, was type "+ cmd.getType();
+    LOGGER.debug(msg);
+    return false;
+  }
+  try {
+    prepareSecondaryStorageStore(ovsRepo,cmd.getUuid(),cmd.getHost());
+  }
+ catch (  Exception e) {
+    msg="systemvm.iso copy failed to " + ovsRepo;
+    LOGGER.debug(msg,e);
+    return false;
+  }
+  return true;
+}

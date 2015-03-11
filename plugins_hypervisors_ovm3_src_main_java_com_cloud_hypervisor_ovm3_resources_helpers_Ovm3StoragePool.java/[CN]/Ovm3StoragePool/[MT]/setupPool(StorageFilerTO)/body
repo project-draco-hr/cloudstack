@@ -1,0 +1,49 @@
+{
+  String primUuid=cmd.getUuid();
+  String ssUuid=ovmObject.deDash(primUuid);
+  String fsType="nfs";
+  String clusterUuid=config.getAgentOwnedByUuid().substring(0,15);
+  String managerId=config.getAgentOwnedByUuid();
+  String poolAlias=cmd.getHost() + ":" + cmd.getPath();
+  String mountPoint=String.format("%1$s:%2$s",cmd.getHost(),cmd.getPath()) + "/VirtualMachines";
+  Integer poolSize=0;
+  Pool poolHost=new Pool(c);
+  PoolOCFS2 poolFs=new PoolOCFS2(c);
+  if (config.getAgentIsMaster()) {
+    try {
+      LOGGER.debug("Create poolfs on " + config.getAgentHostname() + " for repo "+ primUuid);
+      poolFs.createPoolFs(fsType,mountPoint,clusterUuid,primUuid,ssUuid,managerId);
+    }
+ catch (    Ovm3ResourceException e) {
+      throw e;
+    }
+    try {
+      poolHost.createServerPool(poolAlias,primUuid,config.getOvm3PoolVip(),poolSize + 1,config.getAgentHostname(),c.getIp());
+    }
+ catch (    Ovm3ResourceException e) {
+      throw e;
+    }
+  }
+ else   if (config.getAgentHasMaster()) {
+    try {
+      poolHost.joinServerPool(poolAlias,primUuid,config.getOvm3PoolVip(),poolSize + 1,config.getAgentHostname(),c.getIp());
+    }
+ catch (    Ovm3ResourceException e) {
+      throw e;
+    }
+  }
+  try {
+    CloudstackPlugin csp=new CloudstackPlugin(c);
+    Boolean vip=csp.dom0CheckPort(config.getOvm3PoolVip(),22,60,1);
+    if (!vip) {
+      throw new Ovm3ResourceException("Unable to reach Ovm3 Pool VIP " + config.getOvm3PoolVip());
+    }
+    if (!addMembers()) {
+      return false;
+    }
+  }
+ catch (  Ovm3ResourceException e) {
+    throw new Ovm3ResourceException("Unable to add members to pool" + e.getMessage());
+  }
+  return true;
+}

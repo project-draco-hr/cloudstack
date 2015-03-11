@@ -1,0 +1,55 @@
+{
+  final String vmName=cmd.getVmName();
+  String destUuid=cmd.getHostGuid();
+  String destIp=cmd.getDestinationIp();
+  State state=State.Error;
+  String msg="Migrating " + vmName + " to "+ destIp;
+  LOGGER.info(msg);
+  if (!config.getAgentInOvm3Cluster() && !config.getAgentInOvm3Pool()) {
+    try {
+      Xen xen=new Xen(c);
+      Xen.Vm vm=xen.getRunningVmConfig(vmName);
+      HostVO destHost=resourceMgr.findHostByGuid(destUuid);
+      if (destHost == null) {
+        msg="Unable to find migration target host in DB " + destUuid + " with ip "+ destIp;
+        LOGGER.info(msg);
+        return new MigrateAnswer(cmd,false,msg,null);
+      }
+      xen.stopVm(ovmObject.deDash(vm.getVmRootDiskPoolId()),vm.getVmUuid());
+      msg=destHost.toString();
+      state=State.Stopping;
+      return new MigrateAnswer(cmd,false,msg,null);
+    }
+ catch (    Ovm3ResourceException e) {
+      msg="Unpooled VM Migrate of " + vmName + " to "+ destUuid+ " failed due to: "+ e.getMessage();
+      LOGGER.debug(msg,e);
+      return new MigrateAnswer(cmd,false,msg,null);
+    }
+ finally {
+      hypervisor.setVmState(vmName,state);
+    }
+  }
+ else {
+    try {
+      Xen xen=new Xen(c);
+      Xen.Vm vm=xen.getRunningVmConfig(vmName);
+      if (vm == null) {
+        state=State.Stopped;
+        msg=vmName + " is no running on " + config.getAgentHostname();
+        return new MigrateAnswer(cmd,false,msg,null);
+      }
+      xen.migrateVm(ovmObject.deDash(vm.getVmRootDiskPoolId()),vm.getVmUuid(),destIp);
+      state=State.Stopping;
+      msg="Migration of " + vmName + " successfull";
+      return new MigrateAnswer(cmd,true,msg,null);
+    }
+ catch (    Ovm3ResourceException e) {
+      msg="Pooled VM Migrate" + ": Migration of " + vmName + " to "+ destIp+ " failed due to "+ e.getMessage();
+      LOGGER.debug(msg,e);
+      return new MigrateAnswer(cmd,false,msg,null);
+    }
+ finally {
+      hypervisor.setVmState(vmName,state);
+    }
+  }
+}

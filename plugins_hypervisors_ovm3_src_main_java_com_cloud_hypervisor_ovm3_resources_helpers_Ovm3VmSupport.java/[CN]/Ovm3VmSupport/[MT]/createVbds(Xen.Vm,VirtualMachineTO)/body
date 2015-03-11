@@ -1,0 +1,46 @@
+{
+  if (spec.getDisks() == null) {
+    LOGGER.info("No disks defined for " + vm.getVmName());
+    return false;
+  }
+  for (  DiskTO disk : spec.getDisks()) {
+    try {
+      if (disk.getType() == Volume.Type.ROOT) {
+        VolumeObjectTO vol=(VolumeObjectTO)disk.getData();
+        String diskFile=processor.getVirtualDiskPath(vol.getUuid(),vol.getDataStore().getUuid());
+        vm.addRootDisk(diskFile);
+        vm.setPrimaryPoolUuid(vol.getDataStore().getUuid());
+        LOGGER.debug("Adding root disk: " + diskFile);
+      }
+ else       if (disk.getType() == Volume.Type.ISO) {
+        DataTO isoTO=disk.getData();
+        if (isoTO.getPath() != null) {
+          TemplateObjectTO template=(TemplateObjectTO)isoTO;
+          DataStoreTO store=template.getDataStore();
+          if (!(store instanceof NfsTO)) {
+            throw new CloudRuntimeException("unsupported protocol");
+          }
+          NfsTO nfsStore=(NfsTO)store;
+          String secPoolUuid=pool.setupSecondaryStorage(nfsStore.getUrl());
+          String isoPath=config.getAgentSecStoragePath() + File.separator + secPoolUuid+ File.separator+ template.getPath();
+          vm.addIso(isoPath);
+          LOGGER.debug("Adding ISO: " + isoPath);
+        }
+      }
+ else       if (disk.getType() == Volume.Type.DATADISK) {
+        VolumeObjectTO vol=(VolumeObjectTO)disk.getData();
+        String diskFile=processor.getVirtualDiskPath(vol.getUuid(),vol.getDataStore().getUuid());
+        vm.addDataDisk(diskFile);
+        LOGGER.debug("Adding data disk: " + diskFile);
+      }
+ else {
+        throw new CloudRuntimeException("Unknown disk type: " + disk.getType());
+      }
+    }
+ catch (    Exception e) {
+      LOGGER.debug("CreateVbds failed",e);
+      throw new CloudRuntimeException("Exception" + e.getMessage(),e);
+    }
+  }
+  return true;
+}

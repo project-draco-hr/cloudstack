@@ -1,0 +1,93 @@
+{
+  Map<String,State> newStates;
+  Map<String,State> oldStates=null;
+  final Map<String,State> changes=new HashMap<String,State>();
+  try {
+    newStates=getAllVmStates(vmStateMap);
+  }
+ catch (  Ovm3ResourceException e) {
+    LOGGER.error("Ovm3 full sync failed: ",e);
+    throw e;
+  }
+synchronized (vmStateMap) {
+    oldStates=new HashMap<String,State>(vmStateMap.size());
+    oldStates.putAll(vmStateMap);
+    for (    final Map.Entry<String,State> entry : newStates.entrySet()) {
+      final String vmName=entry.getKey();
+      State newState=entry.getValue();
+      final State oldState=oldStates.remove(vmName);
+      LOGGER.trace("state for " + vmName + ", old: "+ oldState+ ", new: "+ newState);
+      if (newState == State.Stopped && oldState != State.Stopping && oldState != null && oldState != State.Stopped) {
+        LOGGER.trace("Getting power state....");
+        newState=State.Running;
+      }
+      if (LOGGER.isTraceEnabled()) {
+        LOGGER.trace("VM " + vmName + ": ovm has state "+ newState+ " and we have state "+ (oldState != null ? oldState.toString() : "null"));
+      }
+      if (newState == State.Migrating) {
+        LOGGER.trace(vmName + " is migrating, skipping state check");
+        continue;
+      }
+      if (oldState == null) {
+        vmStateMap.put(vmName,newState);
+        LOGGER.debug("New state without old state: " + vmName);
+        changes.put(vmName,newState);
+      }
+ else       if (oldState == State.Starting) {
+        if (newState == State.Running) {
+          vmStateMap.put(vmName,newState);
+        }
+ else         if (newState == State.Stopped) {
+          LOGGER.debug("Ignoring vm " + vmName + " because of a lag in starting the vm.");
+        }
+      }
+ else       if (oldState == State.Migrating) {
+        if (newState == State.Running) {
+          LOGGER.debug("Detected that a migrating VM is now running: " + vmName);
+          vmStateMap.put(vmName,newState);
+        }
+      }
+ else       if (oldState == State.Stopping) {
+        if (newState == State.Stopped) {
+          vmStateMap.put(vmName,newState);
+        }
+ else         if (newState == State.Running) {
+          LOGGER.debug("Ignoring vm " + vmName + " because of a lag in stopping the vm. ");
+        }
+      }
+ else       if (oldState != newState) {
+        vmStateMap.put(vmName,newState);
+        if (newState == State.Stopped) {
+        }
+        changes.put(vmName,newState);
+      }
+    }
+    for (    final Map.Entry<String,State> entry : oldStates.entrySet()) {
+      final String vmName=entry.getKey();
+      final State oldState=entry.getValue();
+      if (oldState == State.Stopping) {
+        LOGGER.debug("Removing VM " + vmName + " in transition state stopping.");
+        vmStateMap.remove(vmName);
+      }
+ else       if (oldState == State.Starting) {
+        LOGGER.debug("Removing VM " + vmName + " in transition state starting.");
+        vmStateMap.remove(vmName);
+      }
+ else       if (oldState == State.Stopped) {
+        LOGGER.debug("Stopped VM " + vmName + " removing.");
+        vmStateMap.remove(vmName);
+      }
+ else       if (oldState == State.Migrating) {
+        LOGGER.debug("Ignoring VM " + vmName + " in migrating state.");
+      }
+ else {
+        State state=State.Stopping;
+        LOGGER.debug("VM " + vmName + " is now missing from ovm3 server so removing it");
+        changes.put(vmName,state);
+        vmStateMap.remove(vmName);
+        vmStateMap.put(vmName,state);
+      }
+    }
+  }
+  return changes;
+}

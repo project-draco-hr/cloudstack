@@ -1,0 +1,124 @@
+{
+  Connection c=null;
+  CheckUrl(url);
+  if (clusterId == null) {
+    String msg="must specify cluster Id when add host";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+  if (podId == null) {
+    String msg="must specify pod Id when add host";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+  ClusterVO cluster=clusterDao.findById(clusterId);
+  if (cluster == null || (cluster.getHypervisorType() != HypervisorType.Ovm3)) {
+    String msg="invalid cluster id or cluster is not for Ovm3 hypervisors";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+ else {
+    LOGGER.debug("cluster: " + cluster);
+  }
+  String agentUsername=_params.get("agentusername");
+  if (agentUsername == null) {
+    String msg="Agent user name must be specified";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+  String agentPassword=_params.get("agentpassword");
+  if (agentPassword == null) {
+    String msg="Agent password must be specified";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+  String agentPort=_params.get("agentport");
+  if (agentPort == null) {
+    String msg="Agent port must be specified";
+    LOGGER.info(msg);
+    throw new DiscoveryException(msg);
+  }
+  try {
+    String hostname=url.getHost();
+    InetAddress ia=InetAddress.getByName(hostname);
+    String hostIp=ia.getHostAddress();
+    String guid=UUID.nameUUIDFromBytes(hostIp.getBytes("UTF8")).toString();
+    if (checkIfExisted(guid)) {
+      String msg="The host " + hostIp + " has been added before";
+      LOGGER.info(msg);
+      throw new DiscoveryException(msg);
+    }
+    LOGGER.debug("Ovm3 discover is going to disover host having guid " + guid);
+    ClusterVO clu=clusterDao.findById(clusterId);
+    if (clu.getGuid() == null) {
+      clu.setGuid(UUID.randomUUID().toString());
+    }
+    clusterDao.update(clusterId,clu);
+    Map<String,String> clusterDetails=clusterDetailsDao.findDetails(clusterId);
+    String ovm3vip=(clusterDetails.get("ovm3vip") == null) ? "" : clusterDetails.get("ovm3vip");
+    String ovm3pool=(clusterDetails.get("ovm3pool") == null) ? "false" : clusterDetails.get("ovm3pool");
+    String ovm3cluster=(clusterDetails.get("ovm3cluster") == null) ? "false" : clusterDetails.get("ovm3cluster");
+    com.trilead.ssh2.Connection sshConnection=new com.trilead.ssh2.Connection(hostIp,22);
+    sshConnection.connect(null,60000,60000);
+    sshConnection=SSHCmdHelper.acquireAuthorizedConnection(hostIp,username,password);
+    if (sshConnection == null) {
+      String msg="Cannot Ssh to Ovm3 host(IP=" + hostIp + ", username="+ username+ ", password=*******), discovery failed";
+      LOGGER.warn(msg);
+      throw new DiscoveryException(msg);
+    }
+    Map<String,String> details=new HashMap<String,String>();
+    Ovm3HypervisorResource ovmResource=new Ovm3HypervisorResource();
+    details.put("ip",hostIp);
+    details.put("host",hostname);
+    details.put("username",username);
+    details.put("password",password);
+    details.put("zone",Long.toString(dcId));
+    details.put("guid",guid);
+    details.put("pod",Long.toString(podId));
+    details.put("cluster",Long.toString(clusterId));
+    details.put("agentusername",agentUsername);
+    details.put("agentpassword",agentPassword);
+    details.put("agentport",agentPort.toString());
+    details.put("ovm3vip",ovm3vip);
+    details.put("ovm3pool",ovm3pool);
+    details.put("ovm3cluster",ovm3cluster);
+    if (publicNetworkDevice != null) {
+      details.put("public.network.device",publicNetworkDevice);
+    }
+    if (privateNetworkDevice != null) {
+      details.put("private.network.device",privateNetworkDevice);
+    }
+    if (guestNetworkDevice != null) {
+      details.put("guest.network.device",guestNetworkDevice);
+    }
+    if (storageNetworkDevice != null) {
+      details.put("storage.network.device",storageNetworkDevice);
+    }
+    Map<String,Object> params=new HashMap<String,Object>();
+    params.putAll(details);
+    ovmResource.configure(hostname,params);
+    ovmResource.start();
+    c=new Connection(hostIp,Integer.parseInt(agentPort),agentUsername,agentPassword);
+    Linux host=new Linux(c);
+    details.put("agentVersion",host.getAgentVersion());
+    details.put(HostInfo.HOST_OS_KERNEL_VERSION,host.getHostKernelRelease());
+    details.put(HostInfo.HOST_OS,host.getHostOs());
+    details.put(HostInfo.HOST_OS_VERSION,host.getHostOsVersion());
+    details.put(HostInfo.HYPERVISOR_VERSION,host.getHypervisorVersion());
+    Map<Ovm3HypervisorResource,Map<String,String>> resources=new HashMap<Ovm3HypervisorResource,Map<String,String>>();
+    resources.put(ovmResource,details);
+    return resources;
+  }
+ catch (  UnknownHostException e) {
+    LOGGER.error("Host name resolve failed exception, Unable to discover Ovm3 host: " + url.getHost(),e);
+    return null;
+  }
+catch (  ConfigurationException e) {
+    LOGGER.error("Configure resource failed, Unable to discover Ovm3 host: " + url.getHost(),e);
+    return null;
+  }
+catch (  IOException|Ovm3ResourceException e) {
+    LOGGER.error("Unable to discover Ovm3 host: " + url.getHost(),e);
+    return null;
+  }
+}

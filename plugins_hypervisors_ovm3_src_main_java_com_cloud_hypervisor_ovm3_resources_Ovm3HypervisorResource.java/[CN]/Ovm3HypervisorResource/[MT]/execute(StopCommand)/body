@@ -1,0 +1,46 @@
+{
+  String vmName=cmd.getVmName();
+  State state=State.Error;
+  hypervisorsupport.setVmState(vmName,State.Stopping);
+  try {
+    Xen vms=new Xen(c);
+    Xen.Vm vm=null;
+    vm=vms.getRunningVmConfig(vmName);
+    if (vm == null) {
+      state=State.Stopping;
+      LOGGER.debug("Unable to get details of vm: " + vmName + ", treating it as Stopping");
+      return new StopAnswer(cmd,"success",true);
+    }
+    String repoId=ovmObject.deDash(vm.getVmRootDiskPoolId());
+    String vmId=vm.getVmUuid();
+    vms.stopVm(repoId,vmId);
+    int tries=30;
+    while (vms.getRunningVmConfig(vmName) != null && tries > 0) {
+      String msg="Waiting for " + vmName + " to stop";
+      LOGGER.debug(msg);
+      tries--;
+      Thread.sleep(10 * 1000);
+    }
+    vms.deleteVm(repoId,vmId);
+    vmsupport.cleanup(vm);
+    if (vms.getRunningVmConfig(vmName) != null) {
+      String msg="Stop " + vmName + " failed ";
+      LOGGER.debug(msg);
+      return new StopAnswer(cmd,msg,false);
+    }
+    state=State.Stopped;
+    return new StopAnswer(cmd,"success",true);
+  }
+ catch (  Exception e) {
+    LOGGER.debug("Stop " + vmName + " failed ",e);
+    return new StopAnswer(cmd,e.getMessage(),false);
+  }
+ finally {
+    if (state != null) {
+      hypervisorsupport.setVmState(vmName,state);
+    }
+ else {
+      hypervisorsupport.revmoveVmState(vmName);
+    }
+  }
+}

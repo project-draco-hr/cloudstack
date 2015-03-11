@@ -1,0 +1,39 @@
+{
+  LOGGER.debug("Setup all bits on agent: " + config.getAgentHostname());
+  try {
+    com.trilead.ssh2.Connection sshConnection=SSHCmdHelper.acquireAuthorizedConnection(config.getAgentIp(),config.getAgentSshUserName(),config.getAgentSshPassword());
+    if (sshConnection == null) {
+      throw new ConfigurationException(String.format("Unable to " + "connect to server(IP=%1$s, username=%2$s, " + "password=%3$s",config.getAgentIp(),config.getAgentSshUserName(),config.getAgentSshPassword()));
+    }
+    SCPClient scp=new SCPClient(sshConnection);
+    String userDataScriptDir="scripts/vm/hypervisor/ovm3/";
+    String userDataScriptPath=Script.findScript("",userDataScriptDir);
+    if (userDataScriptPath == null) {
+      throw new ConfigurationException("Can not find " + userDataScriptDir);
+    }
+    String mkdir="mkdir -p " + config.getAgentScriptsDir();
+    if (!SSHCmdHelper.sshExecuteCmd(sshConnection,mkdir)) {
+      throw new ConfigurationException("Failed " + mkdir + " on "+ config.getAgentHostname());
+    }
+    for (    String script : config.getAgentScripts()) {
+      script=userDataScriptPath + "/" + script;
+      scp.put(script,config.getAgentScriptsDir(),"0755");
+    }
+    String prepareCmd=String.format(config.getAgentScriptsDir() + "/" + config.getAgentScript()+ " --ssl="+ c.getUseSsl()+ " "+ "--port="+ c.getPort());
+    if (!SSHCmdHelper.sshExecuteCmd(sshConnection,prepareCmd)) {
+      throw new ConfigurationException("Failed to insert module on " + config.getAgentHostname());
+    }
+ else {
+      Thread.sleep(5000);
+    }
+    CloudstackPlugin cSp=new CloudstackPlugin(c);
+    cSp.ovsUploadSshKey(config.getAgentSshKeyFileName(),FileUtils.readFileToString(getSystemVMKeyFile(key)));
+    cSp.dom0CheckStorageHealthCheck(config.getAgentScriptsDir(),config.getAgentCheckStorageScript(),config.getCsHostGuid(),config.getAgentStorageCheckTimeout(),config.getAgentStorageCheckInterval());
+  }
+ catch (  Exception es) {
+    LOGGER.error("Unexpected exception ",es);
+    String msg="Unable to install module in agent";
+    throw new CloudRuntimeException(msg);
+  }
+  return true;
+}
