@@ -35,7 +35,7 @@
             volService.expungeVolumeAsync(volFactory.getVolume(vol.getId()));
           }
  catch (          Exception e) {
-            s_logger.warn("Unable to destroy " + vol.getId(),e);
+            s_logger.warn("Unable to destroy volume " + vol.getUuid(),e);
           }
         }
         List<SnapshotVO> snapshots=_snapshotDao.listAllByStatus(Snapshot.State.Error);
@@ -48,7 +48,42 @@
             _snapshotDao.expunge(snapshotVO.getId());
           }
  catch (          Exception e) {
-            s_logger.warn("Unable to destroy " + snapshotVO.getId(),e);
+            s_logger.warn("Unable to destroy snapshot " + snapshotVO.getUuid(),e);
+          }
+        }
+        List<VolumeDataStoreVO> volumeDataStores=_volumeDataStoreDao.listByVolumeState(Volume.State.UploadError,Volume.State.UploadAbandoned);
+        for (        VolumeDataStoreVO volumeDataStore : volumeDataStores) {
+          VolumeVO volume=_volumeDao.findById(volumeDataStore.getVolumeId());
+          if (volume == null) {
+            s_logger.warn("Uploaded volume with id " + volumeDataStore.getVolumeId() + " not found, so cannot be destroyed");
+            continue;
+          }
+          try {
+            DataStore dataStore=_dataStoreMgr.getDataStore(volumeDataStore.getDataStoreId(),DataStoreRole.Image);
+            EndPoint ep=_epSelector.select(dataStore,volumeDataStore.getExtractUrl());
+            if (ep == null) {
+              s_logger.warn("There is no secondary storage VM for image store " + dataStore.getName() + ", cannot destroy uploaded volume "+ volume.getUuid());
+              continue;
+            }
+            Host host=_hostDao.findById(ep.getId());
+            if (host != null && host.getManagementServerId() != null) {
+              if (_serverId == host.getManagementServerId().longValue()) {
+                if (!volService.destroyVolume(volume.getId())) {
+                  s_logger.warn("Unable to destroy uploaded volume " + volume.getUuid());
+                  continue;
+                }
+                _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.volume,volume.isDisplayVolume());
+                VolumeInfo volOnSecondary=volFactory.getVolume(volume.getId(),DataStoreRole.Image);
+                if (volOnSecondary != null) {
+                  s_logger.info("Expunging volume " + volume.getUuid() + " uploaded using HTTP POST from secondary data store");
+                  AsyncCallFuture<VolumeApiResult> future=volService.expungeVolumeAsync(volOnSecondary);
+                  future.get();
+                }
+              }
+            }
+          }
+ catch (          Throwable th) {
+            s_logger.warn("Unable to destroy uploaded volume " + volume.getUuid() + ". Error details: "+ th.getMessage());
           }
         }
       }
