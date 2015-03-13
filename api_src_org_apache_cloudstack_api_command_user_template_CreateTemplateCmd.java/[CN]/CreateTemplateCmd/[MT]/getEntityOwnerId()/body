@@ -5,7 +5,7 @@
   if (volumeId != null) {
     Volume volume=_entityMgr.findById(Volume.class,volumeId);
     if (volume != null) {
-      accountId=volume.getAccountId();
+      _accountService.checkAccess(CallContext.current().getCallingAccount(),SecurityChecker.AccessType.UseEntry,false,volume);
     }
  else {
       throw new InvalidParameterValueException("Unable to find volume by id=" + volumeId);
@@ -14,22 +14,29 @@
  else {
     Snapshot snapshot=_entityMgr.findById(Snapshot.class,snapshotId);
     if (snapshot != null) {
-      accountId=snapshot.getAccountId();
+      _accountService.checkAccess(CallContext.current().getCallingAccount(),SecurityChecker.AccessType.UseEntry,false,snapshot);
     }
  else {
       throw new InvalidParameterValueException("Unable to find snapshot by id=" + snapshotId);
     }
   }
-  Account account=_accountService.getAccount(accountId);
-  if (account.getType() == Account.ACCOUNT_TYPE_PROJECT) {
-    Project project=_projectService.findByProjectAccountId(accountId);
-    if (project.getState() != Project.State.Active) {
-      PermissionDeniedException ex=new PermissionDeniedException("Can't add resources to the specified project id in state=" + project.getState() + " as it's no longer active");
-      ex.addProxyObject(project.getUuid(),"projectId");
+  if (projectId != null) {
+    final Project project=_projectService.getProject(projectId);
+    if (project != null) {
+      if (project.getState() == Project.State.Active) {
+        Account projectAccount=_accountService.getAccount(project.getProjectAccountId());
+        _accountService.checkAccess(CallContext.current().getCallingAccount(),SecurityChecker.AccessType.UseEntry,false,projectAccount);
+        return project.getProjectAccountId();
+      }
+ else {
+        final PermissionDeniedException ex=new PermissionDeniedException("Can't add resources to the project with specified projectId in state=" + project.getState() + " as it's no longer active");
+        ex.addProxyObject(project.getUuid(),"projectId");
+        throw ex;
+      }
+    }
+ else {
+      throw new InvalidParameterValueException("Unable to find project by id");
     }
   }
- else   if (account.getState() == Account.State.disabled) {
-    throw new PermissionDeniedException("The owner of template is disabled: " + account);
-  }
-  return accountId;
+  return CallContext.current().getCallingAccount().getId();
 }
