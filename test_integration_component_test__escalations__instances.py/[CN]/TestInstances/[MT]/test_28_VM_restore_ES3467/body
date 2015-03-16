@@ -1,0 +1,55 @@
+@attr(tags=['Xenserver'], required_hardware='false')
+def test_28_VM_restore_ES3467(self):
+    '\n        @Desc:Test to verify  order of root and data disk remains same on Xenserver after VM reset\n        @Steps :\n        1.Create VM from Centos template\n        3.Add data disk to VM\n        5.check disk sequence on hypervisor: 1st = root disk, 2nd = data disk\n        6. Issue "reset VM" command on CCP\n        7. check disk sequence on hypervisor remains same and VM starts successfully\n        '
+    try:
+        virtual_machine = VirtualMachine.create(self.apiClient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+        self.cleanup.append(virtual_machine)
+        self.debug(('creating an instance with template ID: %s' % self.template.id))
+        vm_response = VirtualMachine.list(self.apiClient, id=virtual_machine.id, account=self.account.name, domainid=self.account.domainid)
+        self.assertEqual(isinstance(vm_response, list), True, 'Check for list VMs response after VM deployment')
+        self.assertNotEqual(len(vm_response), 0, 'Check VMs available in List VMs response')
+        vm = vm_response[0]
+        self.assertEqual(vm.state, 'Running', 'Check the state of VM created from Template')
+        disk_offering = DiskOffering.create(self.api_client, self.services['disk_offering'])
+        self.cleanup.append(disk_offering)
+        volume = Volume.create(self.apiClient, self.services['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=disk_offering.id)
+        self.cleanup.append(volume)
+        list_volume_response = Volume.list(self.apiClient, id=volume.id)
+        self.assertNotEqual(list_volume_response, None, 'Check if volume exists in ListVolumes')
+        virtual_machine.attach_volume(self.apiClient, volume)
+        list_volume_response = Volume.list(self.apiClient, virtualmachineid=virtual_machine.id, type='DATADISK', listall=True)
+        self.assertNotEqual(list_volume_response, None, 'Check if volume exists in ListVolumes')
+        self.assertEqual(isinstance(list_volume_response, list), True, 'Check list volumes response for valid list')
+        list_volume_response = Volume.list(self.apiClient, virtualmachineid=virtual_machine.id, type='ROOT', listall=True)
+        cmd = (((('xe vbd-list  vm-name-label=' + virtual_machine.instancename) + ' vdi-name-label=') + list_volume_response[0].name) + ' userdevice=0 --minimal')
+        hosts = Host.list(self.apiClient, id=virtual_machine.hostid)
+        self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+        host = hosts[0]
+        if (self.hypervisor.lower() in 'xenserver'):
+            ssh = SshClient(host.ipaddress, 22, 'root', 'password')
+            result = ssh.execute(cmd)
+            res = str(result)
+            self.assertNotEqual(res, '', 'root disk should have user device=0')
+        virtual_machine.stop(self.apiClient)
+        self.debug(('Restoring the VM: %s' % virtual_machine.id))
+        virtual_machine.restore(self.apiClient, self.template.id)
+        vm_response = VirtualMachine.list(self.apiClient, id=virtual_machine.id)
+        self.assertNotEqual(len(vm_response), 0, 'Check VMs available in List VMs response')
+        self.assertEqual(isinstance(vm_response, list), True, 'Check list VM response for valid list')
+        vm = vm_response[0]
+        self.assertEqual(vm.state, 'Stopped', 'Check the state of VM')
+        virtual_machine.start(self.apiClient)
+        time.sleep(self.services['sleep'])
+        if (self.hypervisor.lower() in 'xenserver'):
+            ssh = SshClient(host.ipaddress, 22, 'root', 'password')
+            result = ssh.execute(cmd)
+            res = str(result)
+            self.assertNotEqual(res, '', 'root disk should have user device=0')
+        vm_response = VirtualMachine.list(self.apiClient, id=virtual_machine.id)
+        self.assertEqual(isinstance(vm_response, list), True, 'Check list VM response for valid list')
+        self.assertNotEqual(len(vm_response), 0, 'Check VMs available in List VMs response')
+        vm = vm_response[0]
+        self.assertEqual(vm.state, 'Running', 'Check the state of VM')
+    except Exception as e:
+        self.fail(('Exception occurred: %s' % e))
+    return

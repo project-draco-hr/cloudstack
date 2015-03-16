@@ -1,0 +1,60 @@
+@attr(tags=['Xenserver'], required_hardware='false')
+def test_27_VM_restore_ES3467(self):
+    '\n        @Desc:Test to verify  order of root and data disk remains same on Xenserver after VM reset\n        @Steps :\n        1.Create VM with data disk from Windows template\n        5.check disk sequence on hypervisor: 1st = root disk, 2nd = data disk\n        6. Issue "reset VM" command on CCP\n        7. check disk sequence on hypervisor remains same and VM starts successfully\n        '
+    try:
+        template = Template.register(self.apiClient, self.services['Windows 7 (64-bit)'], zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+        self.debug(('Registered a template of format: %s with ID: %s' % (self.services['Windows 7 (64-bit)']['format'], template.id)))
+        template.download(self.apiClient)
+        self.cleanup.append(template)
+        time.sleep(self.services['sleep'])
+        timeout = self.services['timeout']
+        while True:
+            list_template_response = Template.list(self.apiClient, templatefilter='all', id=template.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+            if isinstance(list_template_response, list):
+                break
+            elif (timeout == 0):
+                raise Exception('List template failed!')
+            time.sleep(5)
+            timeout -= 1
+        self.assertEqual(isinstance(list_template_response, list), True, 'Check for list template response return valid data')
+        self.assertNotEqual(len(list_template_response), 0, 'Check template available in List Templates')
+        template_response = list_template_response[0]
+        self.assertEqual(template_response.isready, True, ('Template state is not ready, it is %s' % template_response.isready))
+        disk_offering = DiskOffering.create(self.api_client, self.services['disk_offering'])
+        self.cleanup.append(disk_offering)
+        virtual_machine = VirtualMachine.create(self.apiClient, self.services['virtual_machine'], templateid=template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, diskofferingid=disk_offering.id)
+        self.debug(('creating an instance with template ID: %s' % template.id))
+        vm_response = VirtualMachine.list(self.apiClient, id=virtual_machine.id, account=self.account.name, domainid=self.account.domainid)
+        self.assertEqual(isinstance(vm_response, list), True, 'Check for list VMs response after VM deployment')
+        self.assertNotEqual(len(vm_response), 0, 'Check VMs available in List VMs response')
+        vm = vm_response[0]
+        self.assertEqual(vm.state, 'Running', 'Check the state of VM created from Template')
+        self.cleanup.append(virtual_machine)
+        list_volume_response = Volume.list(self.apiClient, virtualmachineid=virtual_machine.id, type='ROOT', listall=True)
+        cmd = (((('xe vbd-list  vm-name-label=' + virtual_machine.instancename) + ' vdi-name-label=') + list_volume_response[0].name) + ' userdevice=0 --minimal')
+        hosts = Host.list(self.apiClient, id=virtual_machine.hostid)
+        self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+        host = hosts[0]
+        if (self.hypervisor.lower() in 'xenserver'):
+            ssh = SshClient(host.ipaddress, 22, 'root', 'password')
+            result = ssh.execute(cmd)
+            res = str(result)
+            self.assertNotEqual(res, '', 'root disk should have user device=0')
+        self.debug(('Restoring  the VM: %s' % virtual_machine.id))
+        virtual_machine.restore(self.apiClient, template.id)
+        vm_response = VirtualMachine.list(self.apiClient, id=virtual_machine.id)
+        hosts = Host.list(self.apiClient, id=virtual_machine.hostid)
+        self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+        host = hosts[0]
+        if (self.hypervisor.lower() in 'xenserver'):
+            ssh = SshClient(host.ipaddress, 22, 'root', 'password')
+            result = ssh.execute(cmd)
+            res = str(result)
+            self.assertNotEqual(res, '', 'root disk should have user device=0')
+        self.assertNotEqual(len(vm_response), 0, 'Check VMs available in List VMs response')
+        self.assertEqual(isinstance(vm_response, list), True, 'Check list VM response for valid list')
+        vm = vm_response[0]
+        self.assertEqual(vm.state, 'Running', 'Check the state of VM')
+    except Exception as e:
+        self.fail(('Exception occurred: %s' % e))
+    return
