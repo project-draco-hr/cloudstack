@@ -1,0 +1,27 @@
+def set_master(self):
+    ' Set the current router to master '
+    if (not self.cl.is_redundant()):
+        logging.error('Set master called on non-redundant router')
+        return
+    '\n        if self.cl.is_master():\n            logging.error("Set master called on master node")\n            return\n        '
+    s = self.set_lock()
+    logging.debug('Setting router to master')
+    ads = [o for o in self.address.get_ips() if o.is_public()]
+    for o in ads:
+        CsHelper.execute(('ifconfig %s down' % o.get_device()))
+        CsHelper.execute(('ifconfig %s up' % o.get_device()))
+        CsHelper.execute(('arping -I %s -A %s -c 1' % (o.get_device(), o.get_ip())))
+    cmd = ('%s -C %s' % (self.CONNTRACKD_BIN, self.CONNTRACKD_CONF))
+    CsHelper.execute(('%s -c' % cmd))
+    CsHelper.execute(('%s -f' % cmd))
+    CsHelper.execute(('%s -R' % cmd))
+    CsHelper.execute(('%s -B' % cmd))
+    CsHelper.service('ipsec', 'restart')
+    CsHelper.service('xl2tpd', 'restart')
+    ads = [o for o in self.address.get_ips() if o.needs_vrrp()]
+    for o in ads:
+        pwdsvc = CsPasswdSvc(o.get_gateway()).restart()
+    CsHelper.service('dnsmasq', 'restart')
+    self.cl.set_master_state(True)
+    self.cl.save()
+    logging.info('Router switched to master mode')

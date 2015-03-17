@@ -1,38 +1,23 @@
 {
-  Long vpcId=network.getVpcId();
+  final Long vpcId=network.getVpcId();
   if (vpcId == null) {
     s_logger.trace("Network " + network + " is not associated with any VPC");
     return false;
   }
-  Vpc vpc=_vpcMgr.getActiveVpc(vpcId);
+  final Vpc vpc=_vpcMgr.getActiveVpc(vpcId);
   if (vpc == null) {
     s_logger.warn("Unable to find Enabled VPC by id " + vpcId);
     return false;
   }
   if (vm.getType() == VirtualMachine.Type.User) {
-    Map<VirtualMachineProfile.Param,Object> params=new HashMap<VirtualMachineProfile.Param,Object>(1);
+    final Map<VirtualMachineProfile.Param,Object> params=new HashMap<VirtualMachineProfile.Param,Object>(1);
     params.put(VirtualMachineProfile.Param.ReProgramGuestNetworks,true);
-    RouterDeploymentDefinition routerDeploymentDefinition=routerDeploymentDefinitionBuilder.create().setVpc(vpc).setDeployDestination(dest).setAccountOwner(_accountMgr.getAccount(vpc.getAccountId())).setParams(params).build();
-    List<DomainRouterVO> routers=routerDeploymentDefinition.deployVirtualRouter();
+    final RouterDeploymentDefinition routerDeploymentDefinition=routerDeploymentDefinitionBuilder.create().setGuestNetwork(network).setVpc(vpc).setDeployDestination(dest).setAccountOwner(_accountMgr.getAccount(vpc.getAccountId())).setParams(params).build();
+    final List<DomainRouterVO> routers=routerDeploymentDefinition.deployVirtualRouter();
     if (routers == null || routers.size() == 0) {
       throw new ResourceUnavailableException("Can't find at least one running router!",DataCenter.class,network.getDataCenterId());
     }
-    if (routers.size() > 1) {
-      throw new CloudRuntimeException("Found more than one router in vpc " + vpc);
-    }
-    DomainRouterVO router=routers.get(0);
-    if (!_networkMdl.isVmPartOfNetwork(router.getId(),network.getId())) {
-      Map<VirtualMachineProfile.Param,Object> paramsForRouter=new HashMap<VirtualMachineProfile.Param,Object>(1);
-      if (network.getState() == State.Setup) {
-        paramsForRouter.put(VirtualMachineProfile.Param.ReProgramGuestNetworks,true);
-      }
-      if (!_vpcRouterMgr.addVpcRouterToGuestNetwork(router,network,false,paramsForRouter)) {
-        throw new CloudRuntimeException("Failed to add VPC router " + router + " to guest network "+ network);
-      }
- else {
-        s_logger.debug("Successfully added VPC router " + router + " to guest network "+ network);
-      }
-    }
+    configureGuestNetwork(network,routers);
   }
   return true;
 }

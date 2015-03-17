@@ -3,33 +3,32 @@
     s_logger.warn("Type of vpc gateway is not " + VpcGateway.Type.Private);
     return false;
   }
-  List<DomainRouterVO> routers=_vpcRouterMgr.getVpcRouters(gateway.getVpcId());
+  final List<DomainRouterVO> routers=_vpcRouterMgr.getVpcRouters(gateway.getVpcId());
   if (routers == null || routers.isEmpty()) {
     s_logger.debug(getName() + " element doesn't need to create Private gateway on the backend; VPC virtual " + "router doesn't exist in the vpc id="+ gateway.getVpcId());
     return true;
   }
-  if (routers.size() > 1) {
-    throw new CloudRuntimeException("Found more than one router in vpc " + gateway.getVpcId());
-  }
-  VirtualRouter router=routers.get(0);
-  DataCenterVO dcVO=_dcDao.findById(gateway.getZoneId());
-  NetworkTopology networkTopology=networkTopologyContext.retrieveNetworkTopology(dcVO);
-  if (networkTopology.setupPrivateGateway(gateway,router)) {
-    try {
-      List<NetworkACLItemVO> rules=_networkACLItemDao.listByACL(gateway.getNetworkACLId());
-      if (!applyACLItemsToPrivateGw(gateway,rules)) {
+  s_logger.info("Adding VPC routers to Guest Network: " + routers.size() + " to be added!");
+  final DataCenterVO dcVO=_dcDao.findById(gateway.getZoneId());
+  final NetworkTopology networkTopology=networkTopologyContext.retrieveNetworkTopology(dcVO);
+  for (  final DomainRouterVO domainRouterVO : routers) {
+    if (networkTopology.setupPrivateGateway(gateway,domainRouterVO)) {
+      try {
+        final List<NetworkACLItemVO> rules=_networkACLItemDao.listByACL(gateway.getNetworkACLId());
+        if (!applyACLItemsToPrivateGw(gateway,rules)) {
+          s_logger.debug("Failed to apply network acl id  " + gateway.getNetworkACLId() + "  on gateway ");
+          return false;
+        }
+      }
+ catch (      final Exception ex) {
         s_logger.debug("Failed to apply network acl id  " + gateway.getNetworkACLId() + "  on gateway ");
         return false;
       }
     }
- catch (    Exception ex) {
-      s_logger.debug("Failed to apply network acl id  " + gateway.getNetworkACLId() + "  on gateway ");
+ else {
+      s_logger.debug("Failed to setup private gateway  " + gateway);
       return false;
     }
-  }
- else {
-    s_logger.debug("Failed to setup private gateway  " + gateway);
-    return false;
   }
   return true;
 }

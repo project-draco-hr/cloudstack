@@ -1,0 +1,20 @@
+def post_config_change(self, method):
+    route = CsRoute(self.dev)
+    route.routeTable()
+    route.add(self.address, method)
+    self.fw_router()
+    self.fw_vpcrouter()
+    if ((self.get_type() in ['guest']) and self.config.is_vpc()):
+        CsDevice(self.dev, self.config).configure_rp()
+        logging.error('Not able to setup sourcenat for a regular router yet')
+        dns = CsDnsmasq(self)
+        dns.add_firewall_rules()
+        app = CsApache(self)
+        app.setup()
+    if ((self.get_type() in ['guest']) and (not self.config.cl.is_redundant())):
+        pwdsvc = CsPasswdSvc(self.address['public_ip']).start()
+    if ((self.get_type() == 'public') and self.config.is_vpc()):
+        if self.address['source_nat']:
+            vpccidr = self.config.cmdline().get_vpccidr()
+            self.fw.append(['filter', '', ('-A FORWARD -s %s ! -d %s -j ACCEPT' % (vpccidr, vpccidr))])
+            self.fw.append(['nat', '', ('-A POSTROUTING -j SNAT -o %s --to-source %s' % (self.dev, self.address['public_ip']))])

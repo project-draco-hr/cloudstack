@@ -1,0 +1,40 @@
+def configure_ipsec(self, obj):
+    leftpeer = obj['local_public_ip']
+    rightpeer = obj['peer_gateway_ip']
+    peerlist = obj['peer_guest_cidr_list'].lstrip().rstrip().replace(',', ' ')
+    vpnconffile = ('%s/ipsec.vpn-%s.conf' % (self.VPNCONFDIR, rightpeer))
+    vpnsecretsfile = ('%s/ipsec.vpn-%s.secrets' % (self.VPNCONFDIR, rightpeer))
+    if (rightpeer in self.confips):
+        self.confips.remove(rightpeer)
+    file = CsFile(vpnconffile)
+    file.search('conn ', ('conn vpn-%s' % rightpeer))
+    file.addeq((' left=%s' % leftpeer))
+    file.addeq((' leftsubnet=%s' % obj['local_guest_cidr']))
+    file.addeq((' leftnexthop=%s' % obj['local_public_gateway']))
+    file.addeq((' right=%s' % rightpeer))
+    file.addeq((' rightsubnets=%s' % peerlist))
+    file.addeq(' type=tunnel')
+    file.addeq(' authby=secret')
+    file.addeq(' keyexchange=ike')
+    file.addeq((' ike=%s' % obj['ike_policy']))
+    file.addeq((' ikelifetime=%s' % self.convert_sec_to_h(obj['ike_lifetime'])))
+    file.addeq((' esp=%s' % self.convert_sec_to_h(obj['esp_lifetime'])))
+    file.addeq((' salifetime=%s' % self.convert_sec_to_h(obj['esp_lifetime'])))
+    file.addeq((' pfs=%s' % CsHelper.bool_to_yn(obj['dpd'])))
+    file.addeq(' keyingtries=2')
+    file.addeq(' auto=add')
+    if obj['dpd']:
+        file.addeq('  dpddelay=30')
+        file.addeq('  dpdtimeout=120')
+        file.addeq('  dpdaction=restart')
+    file.commit()
+    secret = CsFile(vpnsecretsfile)
+    secret.search(('%s ' % leftpeer), ('%s %s: PSK "%s"' % (leftpeer, rightpeer, obj['ipsec_psk'])))
+    secret.commit()
+    if (secret.is_changed() or file.is_changed()):
+        logging.info('Configured vpn %s %s', leftpeer, rightpeer)
+        CsHelper.execute('ipsec auto --rereadall')
+        CsHelper.execute(('ipsec --add vpn-%s' % rightpeer))
+        if (not obj['passive']):
+            CsHelper.execute(('ipsec --up vpn-%s' % rightpeer))
+    os.chmod(vpnsecretsfile, 256)

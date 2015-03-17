@@ -1,0 +1,56 @@
+def _redundant_on(self):
+    guest = self.address.get_guest_if()
+    if (guest is None):
+        self._redundant_off()
+        if self.cl.is_master():
+            for obj in [o for o in self.address.get_ips() if o.is_public()]:
+                print obj.get_device()
+                self.check_is_up(obj.get_device())
+        return
+    CsHelper.mkdir(self.CS_RAMDISK_DIR, 493, False)
+    CsHelper.mount_tmpfs(self.CS_RAMDISK_DIR)
+    CsHelper.mkdir(self.CS_ROUTER_DIR, 493, False)
+    for s in self.CS_TEMPLATES:
+        d = s
+        if s.endswith('.templ'):
+            d = s.replace('.templ', '')
+        CsHelper.copy_if_needed(('%s/%s' % (self.CS_TEMPLATES_DIR, s)), ('%s/%s' % (self.CS_ROUTER_DIR, d)))
+    CsHelper.copy_if_needed(('%s/%s' % (self.CS_TEMPLATES_DIR, 'keepalived.conf.templ')), self.KEEPALIVED_CONF)
+    CsHelper.copy_if_needed(('%s/%s' % (self.CS_TEMPLATES_DIR, 'conntrackd.conf.templ')), self.CONNTRACKD_CONF)
+    CsHelper.copy_if_needed(('%s/%s' % (self.CS_TEMPLATES_DIR, 'checkrouter.sh.templ')), '/opt/cloud/bin/checkrouter.sh')
+    CsHelper.execute('sed -i "s/--exec\\ \\$DAEMON;/--exec\\ \\$DAEMON\\ --\\ --vrrp;/g" /etc/init.d/keepalived')
+    file = CsFile('/opt/cloud/bin/checkrouter.sh')
+    file.greplace('[RROUTER_LOG]', self.RROUTER_LOG)
+    file.commit()
+    file = CsFile(self.KEEPALIVED_CONF)
+    ads = [o for o in self.address.get_ips() if o.is_public()]
+    i = 0
+    for o in ads:
+        file.addeq(('! %s=%s' % (i, o.get_cidr())))
+        i = (i + 1)
+    file.search(' router_id ', ('    router_id %s' % self.cl.get_name()))
+    file.search(' priority ', ('    priority %s' % self.cl.get_priority()))
+    file.search(' interface ', ('    interface %s' % guest.get_device()))
+    file.search(' state ', ('    state %s' % 'EQUAL'))
+    file.search(' virtual_router_id ', ('    virtual_router_id %s' % self.cl.get_router_id()))
+    file.greplace('[RROUTER_BIN_PATH]', self.CS_ROUTER_DIR)
+    file.section('authentication {', '}', ['        auth_type AH \n', ('        auth_pass %s\n' % self.cl.get_router_password())])
+    file.section('virtual_ipaddress {', '}', self._collect_ips())
+    file.commit()
+    connt = CsFile(self.CONNTRACKD_CONF)
+    if (guest is not None):
+        connt.section('Multicast {', '}', ['IPv4_address 225.0.0.50\n', 'Group 3780\n', ('IPv4_interface %s\n' % guest.get_ip()), ('Interface %s\n' % guest.get_device()), 'SndSocketBuffer 1249280\n', 'RcvSocketBuffer 1249280\n', 'Checksum on\n'])
+        connt.section('Address Ignore {', '}', self._collect_ignore_ips())
+        connt.commit()
+    if connt.is_changed():
+        CsHelper.service('conntrackd', 'restart')
+    if file.is_changed():
+        CsHelper.service('keepalived', 'reload')
+    cron = CsFile('/etc/cron.d/heartbeat')
+    cron.add('SHELL=/bin/bash', 0)
+    cron.add('PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin', 1)
+    cron.add(('*/1 * * * * root $SHELL %s/check_heartbeat.sh 2>&1 > /dev/null' % self.CS_ROUTER_DIR), (-1))
+    cron.commit()
+    proc = CsProcess(['/usr/sbin/keepalived', '--vrrp'])
+    if (not proc.find()):
+        CsHelper.service('keepalived', 'restart')

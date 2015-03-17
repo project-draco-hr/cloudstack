@@ -2,20 +2,32 @@
   while (true) {
     try {
       final Long networkId=_vrUpdateQueue.take();
-      final List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(networkId,Role.VIRTUAL_ROUTER);
+      final NetworkVO network=_networkDao.findById(networkId);
+      final Long vpcId=network.getVpcId();
+      final List<DomainRouterVO> routers;
+      if (vpcId != null) {
+        routers=_routerDao.listByVpcId(vpcId);
+      }
+ else {
+        routers=_routerDao.listByNetworkAndRole(networkId,Role.VIRTUAL_ROUTER);
+      }
       if (routers.size() != 2) {
         continue;
       }
       final DomainRouterVO router0=routers.get(0);
       final DomainRouterVO router1=routers.get(1);
+      if (router0.getState() != State.Running || router1.getState() != State.Running) {
+        updateRoutersRedundantState(routers);
+        continue;
+      }
       DomainRouterVO router=router0;
-      if (router0.getId() < router1.getId() && router0.getHostId() != null) {
+      if (router0.getId() < router1.getId()) {
         router=router0;
       }
  else {
         router=router1;
       }
-      if (router.getHostId() == null) {
+      if (router.getHostId() == null && router.getState() == State.Running) {
         s_logger.debug("Skip router pair (" + router0.getInstanceName() + ","+ router1.getInstanceName()+ ") due to can't find host");
         continue;
       }
