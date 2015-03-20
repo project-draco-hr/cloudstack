@@ -1,0 +1,29 @@
+@attr(tags=['advanced', 'advancedns', 'dvs'], required_hardware='false')
+def test_acquire_ip(self):
+    'Test acquire IP in shared network\n\n        # Steps\n        # 1. Create a shared network in an account\n        # 2. Deploy a VM in the network\n        # 3. Acquire a public IP in the network\n        # 4. List the public IP by passing the id, it should be listed properly\n        # 5. Create Firewall and NAT rules for the public IP and verify that\n             ssh to vm works using the public IP\n        # 6. Disassociate the public IP and try to list the public IP\n        # 7. The list should be empty\n        '
+    account = Account.create(self.api_client, self.testdata['account'], domainid=self.domain.id)
+    self.cleanup_accounts.append(account)
+    (physical_network, shared_vlan) = get_free_vlan(self.api_client, self.zone.id)
+    if (shared_vlan is None):
+        self.fail('Failed to get free vlan id for shared network')
+    self.debug(('Physical network found: %s' % physical_network.id))
+    self.testdata['shared_network']['acltype'] = 'Domain'
+    self.testdata['shared_network']['networkofferingid'] = self.shared_network_offering_all_services.id
+    self.testdata['shared_network']['physicalnetworkid'] = physical_network.id
+    self.testdata['shared_network']['vlan'] = shared_vlan
+    shared_network = Network.create(self.api_client, self.testdata['shared_network'], networkofferingid=self.shared_network_offering_all_services.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(shared_network)
+    self.debug(('Shared Network created for scope domain: %s' % shared_network.id))
+    vm = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], networkids=shared_network.id, serviceofferingid=self.service_offering.id)
+    self.cleanup_vms.append(vm)
+    public_ip = PublicIPAddress.create(self.api_client, accountid=account.name, zoneid=self.zone.id, domainid=account.domainid, networkid=shared_network.id)
+    list_pub_ip_addr_resp = PublicIPAddress.list(self.api_client, id=public_ip.ipaddress.id)
+    self.assertEqual(validateList(list_pub_ip_addr_resp)[0], PASS, 'IP address list validation failed')
+    self.assertEqual(list_pub_ip_addr_resp[0].id, public_ip.ipaddress.id, 'Check Correct IP Address is returned in the List Call')
+    FireWallRule.create(self.api_client, ipaddressid=public_ip.ipaddress.id, protocol='TCP', cidrlist=[self.testdata['fwrule']['cidr']], startport=self.testdata['fwrule']['startport'], endport=self.testdata['fwrule']['endport'])
+    NATRule.create(self.api_client, vm, self.testdata['natrule'], ipaddressid=public_ip.ipaddress.id, networkid=shared_network.id)
+    SshClient(public_ip.ipaddress.ipaddress, vm.ssh_port, vm.username, vm.password)
+    public_ip.delete(self.api_client)
+    list_pub_ip_addr_resp = PublicIPAddress.list(self.api_client, id=public_ip.ipaddress.id)
+    self.assertEqual(list_pub_ip_addr_resp, None, 'Check if disassociated IP Address is no longer available')
+    return

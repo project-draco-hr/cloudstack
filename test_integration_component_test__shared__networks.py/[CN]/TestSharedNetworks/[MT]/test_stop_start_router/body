@@ -1,0 +1,42 @@
+@attr(tags=['advanced', 'advancedns', 'dvs'], required_hardware='false')
+def test_stop_start_router(self):
+    'Test stop and start router\n\n        # Steps\n        # 1. Create a shared network in an account\n        # 2. Deploy a VM in the network\n        # 3. Stop the router related to shared network and start it again\n        # 4. List the router for the network and verify that publicip of\n             the router remain the same\n        '
+    account = Account.create(self.api_client, self.testdata['account'], domainid=self.domain.id)
+    self.cleanup_accounts.append(account)
+    (physical_network, shared_vlan) = get_free_vlan(self.api_client, self.zone.id)
+    if (shared_vlan is None):
+        self.fail('Failed to get free vlan id for shared network')
+    self.debug(('Physical network found: %s' % physical_network.id))
+    self.testdata['shared_network']['acltype'] = 'Domain'
+    self.testdata['shared_network']['networkofferingid'] = self.shared_network_offering.id
+    self.testdata['shared_network']['physicalnetworkid'] = physical_network.id
+    self.testdata['shared_network']['vlan'] = shared_vlan
+    shared_network = Network.create(self.api_client, self.testdata['shared_network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+    self.cleanup_networks.append(shared_network)
+    self.debug(('Shared Network created for scope domain: %s' % shared_network.id))
+    vm = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], networkids=shared_network.id, serviceofferingid=self.service_offering.id)
+    self.cleanup_vms.append(vm)
+    list_router_response = Router.list(self.api_client, networkid=shared_network.id, listall=True)
+    self.assertEqual(validateList(list_router_response)[0], PASS, 'Router list validation failed')
+    router = list_router_response[0]
+    self.debug(('Stopping the router with ID: %s' % router.id))
+    cmd = stopRouter.stopRouterCmd()
+    cmd.id = router.id
+    self.api_client.stopRouter(cmd)
+    response = verifyRouterState(self.api_client, router.id, 'stopped')
+    exceptionOccured = response[0]
+    isNetworkInDesiredState = response[1]
+    exceptionMessage = response[2]
+    if (exceptionOccured or (not isNetworkInDesiredState)):
+        self.fail(exceptionMessage)
+    self.debug(('Starting the router with ID: %s' % router.id))
+    cmd = startRouter.startRouterCmd()
+    cmd.id = router.id
+    self.api_client.startRouter(cmd)
+    response = verifyRouterState(self.api_client, router.id, 'running')
+    exceptionOccured = response[0]
+    isNetworkInDesiredState = response[1]
+    exceptionMessage = response[2]
+    if (exceptionOccured or (not isNetworkInDesiredState)):
+        self.fail(exceptionMessage)
+    return

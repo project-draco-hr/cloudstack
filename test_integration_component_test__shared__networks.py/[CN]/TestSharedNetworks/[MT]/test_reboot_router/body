@@ -1,7 +1,6 @@
-@data(True, False)
 @attr(tags=['advanced', 'advancedns', 'dvs'], required_hardware='false')
-def test_restart_network(self, cleanup):
-    ' Test restart shared Network\n\n        # Steps\n        # 1. Create a shared network in an account\n        # 2. Deploy a VM in the network\n        # 3. Restart the network with cleanup true and false\n        # 4. List the router for the network and verify that publicip of\n             the router remain the same\n        '
+def test_reboot_router(self):
+    'Test reboot router\n\n        # Steps\n        # 1. Create a shared network in an account\n        # 2. Deploy a VM in the network\n        # 3. Restart the router related to shared network\n        # 4. List the router for the network and verify that publicip of\n             the router remain the same\n        '
     account = Account.create(self.api_client, self.testdata['account'], domainid=self.domain.id)
     self.cleanup_accounts.append(account)
     (physical_network, shared_vlan) = get_free_vlan(self.api_client, self.zone.id)
@@ -15,14 +14,25 @@ def test_restart_network(self, cleanup):
     shared_network = Network.create(self.api_client, self.testdata['shared_network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
     self.cleanup_networks.append(shared_network)
     self.debug(('Shared Network created for scope domain: %s' % shared_network.id))
-    VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], networkids=shared_network.id, serviceofferingid=self.service_offering.id)
+    vm = VirtualMachine.create(self.api_client, self.testdata['virtual_machine'], networkids=shared_network.id, serviceofferingid=self.service_offering.id)
+    self.cleanup_vms.append(vm)
     list_router_response = Router.list(self.api_client, networkid=shared_network.id, listall=True)
     self.assertEqual(validateList(list_router_response)[0], PASS, 'Router list validation failed')
     router = list_router_response[0]
-    old_publicip = router.publicip
-    shared_network.restart(self.api_client, cleanup=cleanup)
-    list_router_response = Router.list(self.api_client, networkid=shared_network.id, listall=True)
-    self.assertEqual(validateList(list_router_response)[0], PASS, 'Router list validation failed')
-    router = list_router_response[0]
-    self.assertEqual(router.publicip, old_publicip, 'Public IP of the router should remain same after network restart')
+    public_ip = router.publicip
+    self.debug(('Rebooting the router with ID: %s' % router.id))
+    cmd = rebootRouter.rebootRouterCmd()
+    cmd.id = router.id
+    self.api_client.rebootRouter(cmd)
+    isRouterRunningSuccessfully = False
+    retries_cnt = 6
+    while (retries_cnt >= 0):
+        router_response = Router.list(self.api_client, id=router.id)
+        if self.verifyRouterResponse(router_response, public_ip):
+            isRouterRunningSuccessfully = True
+            break
+        time.sleep(10)
+        retries_cnt = (retries_cnt - 1)
+    if (not isRouterRunningSuccessfully):
+        self.fail('Router response after reboot is either is invalid                    or in stopped state')
     return
