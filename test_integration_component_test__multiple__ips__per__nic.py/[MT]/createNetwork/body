@@ -1,0 +1,28 @@
+def createNetwork(self, networkType):
+    'Create a network of given type (isolated/shared/isolated in VPC)'
+    network = None
+    if (networkType == ISOLATED_NETWORK):
+        try:
+            network = Network.create(self.apiclient, self.services['isolated_network'], networkofferingid=self.isolated_network_offering.id, accountid=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id)
+        except Exception as e:
+            self.fail(('Isolated network creation failed because: %s' % e))
+    elif (networkType == SHARED_NETWORK):
+        (physical_network, vlan) = get_free_vlan(self.api_client, self.zone.id)
+        self.services['shared_network']['acltype'] = 'domain'
+        self.services['shared_network']['vlan'] = vlan
+        self.services['shared_network']['networkofferingid'] = self.shared_network_offering.id
+        self.services['shared_network']['physicalnetworkid'] = physical_network.id
+        self.services['shared_network'] = setSharedNetworkParams(self.services['shared_network'])
+        try:
+            network = Network.create(self.api_client, self.services['shared_network'], networkofferingid=self.shared_network_offering.id, zoneid=self.zone.id)
+            self.cleanup.append(network)
+        except Exception as e:
+            self.fail(('Shared Network creation failed because: %s' % e))
+    elif (networkType == VPC_NETWORK):
+        self.services['vpc']['cidr'] = '10.1.1.1/16'
+        self.debug(('creating a VPC network in the account: %s' % self.account.name))
+        vpc = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+        vpcs = VPC.list(self.apiclient, id=vpc.id)
+        self.assertEqual(validateList(vpcs)[0], PASS, ('VPC list validation failed, vpc list is %s' % vpcs))
+        network = Network.create(self.api_client, self.services['isolated_network'], networkofferingid=self.isolated_network_offering_vpc.id, accountid=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id, vpcid=vpc.id, gateway='10.1.1.1', netmask='255.255.255.0')
+    return network
