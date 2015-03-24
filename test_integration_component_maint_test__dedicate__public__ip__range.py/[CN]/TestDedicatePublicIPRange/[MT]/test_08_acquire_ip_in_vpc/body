@@ -1,0 +1,25 @@
+@attr(tags=['advanced'], required_hardware='false')
+def test_08_acquire_ip_in_vpc(self):
+    'Acquire public IP from dedicated range in network tier of VPC\n\n        # Validate the following:\n        # 1. Create a domain and an account in it\n        # 2. Create a VPC in this account\n        # 3. Create a netwok tier in this VPC\n        # 4. Create a Public IP range and dedicate to account\n        # 5. Dedicate the created IP range to user account\n        # 6. Acquire public IP in the network tier of VPC\n        # 7. Ip should be from the dedicated range\n        # 8. Repeat steps 6 and 7\n        # 9. Repeat step 6, this time the IP should not be from\n             dedicated range, it should be from global pool\n        '
+    user_domain = Domain.create(self.apiclient, services=self.testdata['domain'], parentdomainid=self.domain.id)
+    self.cleanup.append(user_domain)
+    account = Account.create(self.apiclient, self.testdata['account'], domainid=user_domain.id)
+    self.cleanup.insert((-1), account)
+    self.testdata['vpc']['cidr'] = '10.1.1.0/16'
+    vpc = VPC.create(self.apiclient, self.testdata['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=account.name, domainid=account.domainid)
+    network = Network.create(self.apiclient, self.testdata['network'], accountid=account.name, domainid=account.domainid, networkofferingid=self.vpc_network_offering.id, zoneid=self.zone.id, gateway='10.1.1.1', netmask='255.255.255.0', vpcid=vpc.id)
+    public_ip_range = PublicIpRange.create(self.apiclient, self.testdata['publiciprange'])
+    self.cleanup.append(public_ip_range)
+    PublicIpRange.dedicate(self.apiclient, public_ip_range.vlan.id, account=account.name, domainid=account.domainid)
+    formatted_startip = IPAddress(self.testdata['publiciprange']['startip'])
+    formatted_endip = IPAddress(self.testdata['publiciprange']['endip'])
+    public_ip1 = PublicIPAddress.create(self.apiclient, zoneid=self.zone.id, networkid=network.id, accountid=account.name, domainid=account.domainid, vpcid=vpc.id)
+    formatted_publicip1 = IPAddress(public_ip1.ipaddress.ipaddress)
+    self.assertTrue((int(formatted_startip) <= int(formatted_publicip1) <= int(formatted_endip)), 'publicip should be from the dedicated range')
+    public_ip2 = PublicIPAddress.create(self.apiclient, zoneid=self.zone.id, networkid=network.id, accountid=account.name, domainid=account.domainid, vpcid=vpc.id)
+    formatted_publicip2 = IPAddress(public_ip2.ipaddress.ipaddress)
+    self.assertTrue((int(formatted_startip) <= int(formatted_publicip2) <= int(formatted_endip)), 'publicip should be from the dedicated range')
+    public_ip3 = PublicIPAddress.create(self.apiclient, zoneid=self.zone.id, networkid=network.id, accountid=account.name, domainid=account.domainid, vpcid=vpc.id)
+    formatted_publicip3 = IPAddress(public_ip3.ipaddress.ipaddress)
+    self.assertFalse((int(formatted_startip) <= int(formatted_publicip3) <= int(formatted_endip)), 'publicip should be from the dedicated range')
+    return
