@@ -1,0 +1,37 @@
+{
+  final Connection conn=citrixResourceBase.getConnection();
+  final String vmName=command.getVmName();
+  try {
+    final Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    if (vms == null || vms.isEmpty()) {
+      return new PlugNicAnswer(command,false,"Can not find VM " + vmName);
+    }
+    final VM vm=vms.iterator().next();
+    final NicTO nic=command.getNic();
+    String mac=nic.getMac();
+    final Set<VIF> routerVIFs=vm.getVIFs(conn);
+    mac=mac.trim();
+    int counter=0;
+    for (    final VIF vif : routerVIFs) {
+      final String lmac=vif.getMAC(conn);
+      if (lmac.trim().equals(mac)) {
+        counter++;
+      }
+    }
+    if (counter > 2) {
+      final String msg=" Plug Nic failed due to a VIF with the same mac " + nic.getMac() + " exists in more than 2 routers.";
+      s_logger.error(msg);
+      return new PlugNicAnswer(command,false,msg);
+    }
+    final String deviceId=citrixResourceBase.getLowestAvailableVIFDeviceNum(conn,vm);
+    nic.setDeviceId(Integer.parseInt(deviceId));
+    final VIF vif=citrixResourceBase.createVif(conn,vmName,vm,null,nic);
+    vif.plug(conn);
+    return new PlugNicAnswer(command,true,"success");
+  }
+ catch (  final Exception e) {
+    final String msg=" Plug Nic failed due to " + e.toString();
+    s_logger.error(msg,e);
+    return new PlugNicAnswer(command,false,msg);
+  }
+}
