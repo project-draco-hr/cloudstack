@@ -1,0 +1,114 @@
+{
+  final String vmName=command.getVmName();
+  String platformstring=null;
+  try {
+    final Connection conn=citrixResourceBase.getConnection();
+    final Set<VM> vms=VM.getByNameLabel(conn,vmName);
+    final Iterator<VM> iter=vms.iterator();
+    while (iter.hasNext()) {
+      final VM vm=iter.next();
+      final VM.Record vmr=vm.getRecord(conn);
+      if (vmr.powerState != VmPowerState.RUNNING) {
+        continue;
+      }
+      if (citrixResourceBase.isRefNull(vmr.residentOn)) {
+        continue;
+      }
+      if (vmr.residentOn.getUuid(conn).equals(citrixResourceBase.getHost().getUuid())) {
+        continue;
+      }
+      iter.remove();
+    }
+    if (vms.size() == 0) {
+      return new StopAnswer(command,"VM does not exist",true);
+    }
+    for (    final VM vm : vms) {
+      final VM.Record vmr=vm.getRecord(conn);
+      platformstring=StringUtils.mapToString(vmr.platform);
+      if (vmr.isControlDomain) {
+        final String msg="Tring to Shutdown control domain";
+        s_logger.warn(msg);
+        return new StopAnswer(command,msg,false);
+      }
+      if (vmr.powerState == VmPowerState.RUNNING && !citrixResourceBase.isRefNull(vmr.residentOn) && !vmr.residentOn.getUuid(conn).equals(citrixResourceBase.getHost().getUuid())) {
+        final String msg="Stop Vm " + vmName + " failed due to this vm is not running on this host: "+ citrixResourceBase.getHost().getUuid()+ " but host:"+ vmr.residentOn.getUuid(conn);
+        s_logger.warn(msg);
+        return new StopAnswer(command,msg,platformstring,false);
+      }
+      if (command.checkBeforeCleanup() && vmr.powerState == VmPowerState.RUNNING) {
+        final String msg="Vm " + vmName + " is running on host and checkBeforeCleanup flag is set, so bailing out";
+        s_logger.debug(msg);
+        return new StopAnswer(command,msg,false);
+      }
+      s_logger.debug("9. The VM " + vmName + " is in Stopping state");
+      try {
+        if (vmr.powerState == VmPowerState.RUNNING) {
+          vm.setAffinity(conn,vm.getResidentOn(conn));
+          if (citrixResourceBase.canBridgeFirewall()) {
+            final String result=citrixResourceBase.callHostPlugin(conn,"vmops","destroy_network_rules_for_vm","vmName",command.getVmName());
+            if (result == null || result.isEmpty() || !Boolean.parseBoolean(result)) {
+              s_logger.warn("Failed to remove  network rules for vm " + command.getVmName());
+            }
+ else {
+              s_logger.info("Removed  network rules for vm " + command.getVmName());
+            }
+          }
+          citrixResourceBase.shutdownVM(conn,vm,vmName);
+        }
+      }
+ catch (      final Exception e) {
+        final String msg="Catch exception " + e.getClass().getName() + " when stop VM:"+ command.getVmName()+ " due to "+ e.toString();
+        s_logger.debug(msg);
+        return new StopAnswer(command,msg,platformstring,false);
+      }
+ finally {
+        try {
+          if (vm.getPowerState(conn) == VmPowerState.HALTED) {
+            Set<VGPU> vGPUs=null;
+            try {
+              vGPUs=vm.getVGPUs(conn);
+            }
+ catch (            final XenAPIException e2) {
+              s_logger.debug("VM " + vmName + " does not have GPU support.");
+            }
+            if (vGPUs != null && !vGPUs.isEmpty()) {
+              final HashMap<String,HashMap<String,VgpuTypesInfo>> groupDetails=citrixResourceBase.getGPUGroupDetails(conn);
+              command.setGpuDevice(new GPUDeviceTO(null,null,groupDetails));
+            }
+            final Set<VIF> vifs=vm.getVIFs(conn);
+            final List<Network> networks=new ArrayList<Network>();
+            for (            final VIF vif : vifs) {
+              networks.add(vif.getNetwork(conn));
+            }
+            vm.destroy(conn);
+            final SR sr=citrixResourceBase.getISOSRbyVmName(conn,command.getVmName());
+            citrixResourceBase.removeSR(conn,sr);
+            for (            final Network network : networks) {
+              try {
+                if (network.getNameLabel(conn).startsWith("VLAN")) {
+                  citrixResourceBase.disableVlanNetwork(conn,network);
+                }
+              }
+ catch (              final Exception e) {
+              }
+            }
+            return new StopAnswer(command,"Stop VM " + vmName + " Succeed",platformstring,true);
+          }
+        }
+ catch (        final Exception e) {
+          final String msg="VM destroy failed in Stop " + vmName + " Command due to "+ e.getMessage();
+          s_logger.warn(msg,e);
+        }
+ finally {
+          s_logger.debug("10. The VM " + vmName + " is in Stopped state");
+        }
+      }
+    }
+  }
+ catch (  final Exception e) {
+    final String msg="Stop Vm " + vmName + " fail due to "+ e.toString();
+    s_logger.warn(msg,e);
+    return new StopAnswer(command,msg,platformstring,false);
+  }
+  return new StopAnswer(command,"Stop VM failed",platformstring,false);
+}

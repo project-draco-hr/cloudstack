@@ -1,0 +1,41 @@
+{
+  final String snapshotName=command.getTarget().getSnapshotName();
+  final Connection conn=citrixResourceBase.getConnection();
+  try {
+    final List<VDI> vdiList=new ArrayList<VDI>();
+    final Set<VM> snapshots=VM.getByNameLabel(conn,snapshotName);
+    if (snapshots == null || snapshots.size() == 0) {
+      s_logger.warn("VM snapshot with name " + snapshotName + " does not exist, assume it is already deleted");
+      return new DeleteVMSnapshotAnswer(command,command.getVolumeTOs());
+    }
+    final VM snapshot=snapshots.iterator().next();
+    final Set<VBD> vbds=snapshot.getVBDs(conn);
+    for (    final VBD vbd : vbds) {
+      if (vbd.getType(conn) == Types.VbdType.DISK) {
+        final VDI vdi=vbd.getVDI(conn);
+        vdiList.add(vdi);
+      }
+    }
+    if (command.getTarget().getType() == VMSnapshot.Type.DiskAndMemory) {
+      vdiList.add(snapshot.getSuspendVDI(conn));
+    }
+    snapshot.destroy(conn);
+    for (    final VDI vdi : vdiList) {
+      vdi.destroy(conn);
+    }
+    try {
+      Thread.sleep(5000);
+    }
+ catch (    final InterruptedException ex) {
+    }
+    for (    final VolumeObjectTO volumeTo : command.getVolumeTOs()) {
+      final long size=citrixResourceBase.getVMSnapshotChainSize(conn,volumeTo,command.getVmName());
+      volumeTo.setSize(size);
+    }
+    return new DeleteVMSnapshotAnswer(command,command.getVolumeTOs());
+  }
+ catch (  final Exception e) {
+    s_logger.warn("Catch Exception: " + e.getClass().toString() + " due to "+ e.toString(),e);
+    return new DeleteVMSnapshotAnswer(command,false,e.getMessage());
+  }
+}

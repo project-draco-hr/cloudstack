@@ -1,0 +1,68 @@
+{
+  final Connection conn=citrixResourceBase.getConnection();
+  final boolean attach=command.isAttach();
+  final String vmName=command.getVmName();
+  final String isoURL=command.getIsoPath();
+  String errorMsg;
+  if (attach) {
+    errorMsg="Failed to attach ISO";
+  }
+ else {
+    errorMsg="Failed to detach ISO";
+  }
+  try {
+    if (attach) {
+      VBD isoVBD=null;
+      final VM vm=citrixResourceBase.getVM(conn,vmName);
+      final VDI isoVDI=citrixResourceBase.getIsoVDIByURL(conn,vmName,isoURL);
+      final Set<VBD> vbds=vm.getVBDs(conn);
+      for (      final VBD vbd : vbds) {
+        final String userDevice=vbd.getUserdevice(conn);
+        final Types.VbdType type=vbd.getType(conn);
+        if (userDevice.equals("3") && type == Types.VbdType.CD) {
+          isoVBD=vbd;
+          break;
+        }
+      }
+      if (isoVBD == null) {
+        throw new CloudRuntimeException("Unable to find CD-ROM VBD for VM: " + vmName);
+      }
+ else {
+        if (isoVBD.getEmpty(conn) == false) {
+          isoVBD.eject(conn);
+        }
+        isoVBD.insert(conn,isoVDI);
+      }
+      return new Answer(command);
+    }
+ else {
+      final VM vm=citrixResourceBase.getVM(conn,vmName);
+      final String vmUUID=vm.getUuid(conn);
+      final VDI isoVDI=citrixResourceBase.getIsoVDIByURL(conn,vmName,isoURL);
+      final SR sr=isoVDI.getSR(conn);
+      final Set<VBD> vbds=isoVDI.getVBDs(conn);
+      for (      final VBD vbd : vbds) {
+        final VM vbdVM=vbd.getVM(conn);
+        final String vbdVmUUID=vbdVM.getUuid(conn);
+        if (vbdVmUUID.equals(vmUUID)) {
+          if (!vbd.getEmpty(conn)) {
+            vbd.eject(conn);
+          }
+          break;
+        }
+      }
+      if (!sr.getNameLabel(conn).startsWith("XenServer Tools")) {
+        citrixResourceBase.removeSR(conn,sr);
+      }
+      return new Answer(command);
+    }
+  }
+ catch (  final XenAPIException e) {
+    s_logger.warn(errorMsg + ": " + e.toString(),e);
+    return new Answer(command,false,e.toString());
+  }
+catch (  final Exception e) {
+    s_logger.warn(errorMsg + ": " + e.toString(),e);
+    return new Answer(command,false,e.getMessage());
+  }
+}
