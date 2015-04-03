@@ -1,0 +1,35 @@
+{
+  final Connection connection=xenServer610Resource.getConnection();
+  final VirtualMachineTO vmSpec=command.getVirtualMachine();
+  final Map<VolumeTO,StorageFilerTO> volumeToFiler=command.getVolumeToFiler();
+  try {
+    final Map<VolumeTO,Object> volumeToSr=new HashMap<VolumeTO,Object>();
+    for (    final Map.Entry<VolumeTO,StorageFilerTO> entry : volumeToFiler.entrySet()) {
+      final StorageFilerTO storageFiler=entry.getValue();
+      final SR sr=xenServer610Resource.getStorageRepository(connection,storageFiler.getUuid());
+      volumeToSr.put(entry.getKey(),sr);
+    }
+    final Map<NicTO,Object> nicToNetwork=new HashMap<NicTO,Object>();
+    for (    final NicTO nicTo : vmSpec.getNics()) {
+      final Network network=xenServer610Resource.getNetwork(connection,nicTo);
+      nicToNetwork.put(nicTo,network);
+    }
+    final XsLocalNetwork nativeNetworkForTraffic=xenServer610Resource.getNativeNetworkForTraffic(connection,TrafficType.Storage,null);
+    final Network network=nativeNetworkForTraffic.getNetwork();
+    final XsHost xsHost=xenServer610Resource.getHost();
+    final String uuid=xsHost.getUuid();
+    final Map<String,String> other=new HashMap<String,String>();
+    other.put("live","true");
+    final Host host=Host.getByUuid(connection,uuid);
+    final Map<String,String> token=host.migrateReceive(connection,network,other);
+    return new MigrateWithStorageReceiveAnswer(command,volumeToSr,nicToNetwork,token);
+  }
+ catch (  final CloudRuntimeException e) {
+    s_logger.error("Migration of vm " + vmSpec.getName() + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageReceiveAnswer(command,e);
+  }
+catch (  final Exception e) {
+    s_logger.error("Migration of vm " + vmSpec.getName() + " with storage failed due to "+ e.toString(),e);
+    return new MigrateWithStorageReceiveAnswer(command,e);
+  }
+}
