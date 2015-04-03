@@ -1,0 +1,65 @@
+{
+  final Connection connection=xenServer610Resource.getConnection();
+  final VirtualMachineTO vmSpec=command.getVirtualMachine();
+  final Map<VolumeTO,StorageFilerTO> volumeToFiler=command.getVolumeToFiler();
+  final String vmName=vmSpec.getName();
+  Task task=null;
+  final XsHost xsHost=xenServer610Resource.getHost();
+  final String uuid=xsHost.getUuid();
+  try {
+    xenServer610Resource.prepareISO(connection,vmName);
+    for (    final NicTO nicTo : vmSpec.getNics()) {
+      xenServer610Resource.getNetwork(connection,nicTo);
+    }
+    final Map<String,String> other=new HashMap<String,String>();
+    other.put("live","true");
+    final XsLocalNetwork nativeNetworkForTraffic=xenServer610Resource.getNativeNetworkForTraffic(connection,TrafficType.Storage,null);
+    final Network networkForSm=nativeNetworkForTraffic.getNetwork();
+    final Map<VIF,Network> vifMap=new HashMap<VIF,Network>();
+    final Map<VDI,SR> vdiMap=new HashMap<VDI,SR>();
+    for (    final Map.Entry<VolumeTO,StorageFilerTO> entry : volumeToFiler.entrySet()) {
+      vdiMap.put(xenServer610Resource.getVDIbyUuid(connection,entry.getKey().getPath()),xenServer610Resource.getStorageRepository(connection,entry.getValue().getUuid()));
+    }
+    final Set<VM> vms=VM.getByNameLabel(connection,vmSpec.getName());
+    final VM vmToMigrate=vms.iterator().next();
+    final Host host=Host.getByUuid(connection,uuid);
+    final Map<String,String> token=host.migrateReceive(connection,networkForSm,other);
+    task=vmToMigrate.assertCanMigrateAsync(connection,token,true,vdiMap,vifMap,other);
+    try {
+      final long timeout=xenServer610Resource.getMigrateWait() * 1000L;
+      xenServer610Resource.waitForTask(connection,task,1000,timeout);
+      xenServer610Resource.checkForSuccess(connection,task);
+    }
+ catch (    final Types.HandleInvalid e) {
+      s_logger.error("Error while checking if vm " + vmName + " can be migrated to the destination host "+ host,e);
+      throw new CloudRuntimeException("Error while checking if vm " + vmName + " can be migrated to the "+ "destination host "+ host,e);
+    }
+    task=vmToMigrate.migrateSendAsync(connection,token,true,vdiMap,vifMap,other);
+    try {
+      final long timeout=xenServer610Resource.getMigrateWait() * 1000L;
+      xenServer610Resource.waitForTask(connection,task,1000,timeout);
+      xenServer610Resource.checkForSuccess(connection,task);
+    }
+ catch (    final Types.HandleInvalid e) {
+      s_logger.error("Error while migrating vm " + vmName + " to the destination host "+ host,e);
+      throw new CloudRuntimeException("Error while migrating vm " + vmName + " to the destination host "+ host,e);
+    }
+    final List<VolumeObjectTO> volumeToList=xenServer610Resource.getUpdatedVolumePathsOfMigratedVm(connection,vmToMigrate,vmSpec.getDisks());
+    vmToMigrate.setAffinity(connection,host);
+    return new MigrateWithStorageAnswer(command,volumeToList);
+  }
+ catch (  final Exception e) {
+    s_logger.warn("Catch Exception " + e.getClass().getName() + ". Storage motion failed due to "+ e.toString(),e);
+    return new MigrateWithStorageAnswer(command,e);
+  }
+ finally {
+    if (task != null) {
+      try {
+        task.destroy(connection);
+      }
+ catch (      final Exception e) {
+        s_logger.debug("Unable to destroy task " + task.toString() + " on host "+ uuid+ " due to "+ e.toString());
+      }
+    }
+  }
+}
