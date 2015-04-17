@@ -1,29 +1,29 @@
-def verifyVCenterPortGroups(api_client, vcenter_conn, zone_list, traffic_types_to_validate):
-    ' Generate expected port groups for given traffic types and\n        verify they are present in the vcenter\n\n        Parameters:\n        @api_client:    API client of root admin account\n        @vcenter_conn:  connection object for vcenter used to fetch data\n                        using vcenterAPI\n        @zone_list:     List of zones for which port groups are to be verified\n        traffic_types:  Traffic types (public, guest, management, storage) for\n                        which verification is to be done\n\n        Return value:\n        [PASS/FAIL, exception message if FAIL else None]\n    '
+def verifyVCenterPortGroups(api_client, vcenter_conn, zoneid, traffic_types_to_validate, switchTypes):
+    ' Generate expected port groups for given traffic types and\n        verify they are present in the vcenter\n\n        Parameters:\n        @api_client:    API client of root admin account\n        @vcenter_conn:  connection object for vcenter used to fetch data\n                        using vcenterAPI\n        @zone_id:       Zone for which port groups are to be verified\n        @traffic_types_to_validate:\n                        Traffic types (public, guest, management, storage) for\n                        which verification is to be done\n        @switchTypes:   The switch types for which port groups\n                        are to be verified e.g vmwaredvs\n\n        Return value:\n        [PASS/FAIL, exception message if FAIL else None]\n    '
     try:
         expectedDVPortGroupNames = []
         vcenterPortGroups = []
         config = Configurations.list(api_client, name='network.throttling.rate')
         networkRate = config[0].value
         switchDict = {}
-        for zone in zone_list:
-            physicalNetworks = PhysicalNetwork.list(api_client, zoneid=zone.id)
-            assert (validateList(physicalNetworks)[0] == PASS), 'listPhysicalNetworks returned invalid object in response.'
-            for physicalNetwork in physicalNetworks:
-                trafficTypes = TrafficType.list(api_client, physicalnetworkid=physicalNetwork.id)
-                for trafficType in traffic_types_to_validate:
-                    response = analyzeTrafficType(trafficTypes, trafficType)
-                    assert (response[0] == PASS), response[1]
-                    (filteredList, switchName, vlanSpecified) = (response[1], response[2], response[3])
-                    if (not filteredList):
-                        continue
-                    if (switchName not in switchDict):
-                        dvswitches = vcenter_conn.get_dvswitches(name=switchName)
-                        switchDict[switchName] = dvswitches[0]['dvswitch']['portgroupNameList']
-                    response = getExpectedPortGroupNames(api_client, physicalNetwork, networkRate, switchName, trafficTypes, switchDict, vcenter_conn, vlanSpecified, trafficType)
-                    assert (response[0] == PASS), response[1]
-                    dvPortGroups = response[1]
-                    expectedDVPortGroupNames.extend(dvPortGroups)
+        physicalNetworks = PhysicalNetwork.list(api_client, zoneid=zoneid)
+        if (validateList(physicalNetworks)[0] != PASS):
+            return [PASS, None]
+        for physicalNetwork in physicalNetworks:
+            trafficTypes = TrafficType.list(api_client, physicalnetworkid=physicalNetwork.id)
+            for trafficType in traffic_types_to_validate:
+                response = analyzeTrafficType(trafficTypes, trafficType, switchTypes)
+                assert (response[0] == PASS), response[1]
+                (filteredList, switchName, vlanSpecified) = (response[1], response[2], response[3])
+                if (not filteredList):
+                    continue
+                if (switchName not in switchDict):
+                    dvswitches = vcenter_conn.get_dvswitches(name=switchName)
+                    switchDict[switchName] = dvswitches[0]['dvswitch']['portgroupNameList']
+                response = getExpectedPortGroupNames(api_client, physicalNetwork, networkRate, switchName, trafficTypes, switchDict, vcenter_conn, vlanSpecified, trafficType)
+                assert (response[0] == PASS), response[1]
+                dvPortGroups = response[1]
+                expectedDVPortGroupNames.extend(dvPortGroups)
         vcenterPortGroups = list(itertools.chain(*switchDict.values()))
         for expectedDVPortGroupName in expectedDVPortGroupNames:
             assert (expectedDVPortGroupName in vcenterPortGroups), ('Port group %s not present in VCenter DataCenter' % expectedDVPortGroupName)
