@@ -1,0 +1,56 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestXDCCPInterop, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.services = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient, testClient.getZoneForTests())
+    cls.services['mode'] = cls.zone.networktype
+    hosts = list_hosts(cls.apiclient, type='Routing')
+    if (hosts is None):
+        raise unittest.SkipTest("There are no hypervisor's available.Check list hosts response")
+    for hypervisorhost in hosts:
+        if (hypervisorhost.hypervisor == 'XenServer'):
+            cls.uploadtemplateformat = 'VHD'
+            break
+        elif (hypervisorhost.hypervisor == 'VMware'):
+            cls.uploadtemplateformat = 'OVA'
+            break
+        elif (hypervisorhost.hypervisor == 'KVM'):
+            cls.uploadtemplateformat = 'KVM'
+        break
+    if (cls.uploadtemplateformat == 'KVM'):
+        assert False, 'Interop is not supported on KVM'
+    cls.uploadurl = cls.services['interop'][cls.uploadtemplateformat]['url']
+    cls.xtemplate = get_template(cls.apiclient, cls.zone.id, cls.services['ostype'])
+    if (cls.xtemplate == FAILED):
+        assert False, ('get_template() failed to return template with description %s' % cls.services['ostype'])
+    cls.account = Account.create(cls.apiclient, cls.services['account'], domainid=cls.domain.id)
+    cls.debug(cls.account.id)
+    cls.service_offering = ServiceOffering.create(cls.apiclient, cls.services['service_offerings']['large'])
+    cls.template = get_windows_template(cls.apiclient, cls.zone.id, ostype_desc='Windows 8 (64-bit)')
+    if (cls.template == FAILED):
+        if ('http://pleaseupdateURL/' in cls.uploadurl):
+            raise unittest.SkipTest('Check Test Data file if it has the valid template URL')
+        cls.template = Template.register(cls.apiclient, cls.services['interop'][cls.uploadtemplateformat], zoneid=cls.zone.id, domainid=cls.account.domainid, account=cls.account.name, isdynamicallyscalable='true')
+        timeout = cls.services['vgpu']['timeout']
+        while True:
+            time.sleep(cls.services['vgpu']['sleep'])
+            list_template_response = Template.list(cls.apiclient, templatefilter=cls.services['templatefilter'], id=cls.template.id)
+            if (isinstance(list_template_response, list) is not True):
+                raise unittest.SkipTest('Check list template api response returns a valid list')
+            if (len(list_template_response) is None):
+                raise unittest.SkipTest('Check template registered is in List Templates')
+            template_response = list_template_response[0]
+            if template_response.isready:
+                break
+            if (timeout == 0):
+                raise unittest.SkipTest(('Failed to download template(ID: %s). ' % template_response.id))
+            timeout = (timeout - 1)
+    cls.volume = []
+    cls.services['small']['zoneid'] = cls.zone.id
+    cls.services['small']['template'] = cls.template.id
+    cls.services['medium']['zoneid'] = cls.zone.id
+    cls.services['medium']['template'] = cls.template.id
+    '\n        cls.virtual_machine = VirtualMachine.create(\n            cls.apiclient,\n            cls.services["medium"],\n            accountid=cls.account.name,\n            domainid=cls.account.domainid,\n            serviceofferingid=cls.service_offering.id,  \n            mode=cls.services[\'mode\'],\n            startvm="false"\n        )\n        '
+    cls.cleanup = [cls.service_offering, cls.account]
