@@ -1,0 +1,56 @@
+@attr(tags=['advanced', 'basic'])
+def test_02_concurrent_snapshots_configuration(self):
+    'Concurrent Snapshots\n            1. Verify that CreateSnapshot command fails when it\n                takes more time than job.expire.minute\n            2. Verify that snapshot creation fails if CreateSnapshot command\n                takes more time than concurrent.snapshots.threshold.perhost\n            3. Check the event generation when snapshot creation\n                fails if CreateSnapshot takes more time than\n                concurrent.snapshots.threshold.perhost\n\n        '
+    if (not self.testdata['configurableData']['restartManagementServerThroughTestCase']):
+        self.skipTest('Skip test if restartManagementServerThroughTestCase                         is not provided')
+    configs = Configurations.list(self.apiclient, name='job.expire.minutes')
+    orig_expire = configs[0].value
+    Configurations.update(self.apiclient, name='concurrent.snapshots.threshold.perhost', value='2')
+    Configurations.update(self.apiclient, name='job.expire.minutes', value='1')
+    self.RestartServer()
+    time.sleep(120)
+    try:
+        thread_pool = []
+        for i in range(4):
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[i], False))
+            thread_pool.append(create_snapshot_thread_1)
+        for thread in thread_pool:
+            thread.start()
+        for thread in thread_pool:
+            thread.join()
+    except Exception as e:
+        raise Exception(('Warning: Exception unable to start thread : %s' % e))
+    Configurations.update(self.apiclient, name='job.expire.minutes', value=orig_expire)
+    self.RestartServer()
+    time.sleep(120)
+    Configurations.update(self.apiclient, name='concurrent.snapshots.threshold.perhost', value='3')
+    Configurations.update(self.apiclient, name='job.expire.minutes', value='1')
+    self.RestartServer()
+    time.sleep(120)
+    configs = Configurations.list(self.apiclient, name='job.expire.minutes')
+    with self.assertRaises(Exception):
+        CreateSnapshot(self, self.root_pool[0], False)
+    Configurations.update(self.apiclient, name='job.expire.minutes', value=orig_expire)
+    self.RestartServer()
+    time.sleep(120)
+    configs = Configurations.list(self.apiclient, name='job.cancel.threshold.minutes')
+    orig_cancel = configs[0].value
+    Configurations.update(self.apiclient, name='concurrent.snapshots.threshold.perhost', value='3')
+    Configurations.update(self.apiclient, name='job.cancel.threshold.minutes', value='1')
+    self.RestartServer()
+    time.sleep(120)
+    configs = Configurations.list(self.apiclient, name='job.expire.minutes')
+    with self.assertRaises(Exception):
+        CreateSnapshot(self, self.root_pool[0], False)
+    Configurations.update(self.apiclient, name='job.cancel.threshold.minutes', value=orig_cancel)
+    self.RestartServer()
+    time.sleep(120)
+    Configurations.update(self.apiclient, name='concurrent.snapshots.threshold.perhost', value='3')
+    self.RestartServer()
+    time.sleep(120)
+    Configurations.update(self.apiclient, name='job.cancel.threshold.minutes', value='1')
+    self.RestartServer()
+    time.sleep(120)
+    with self.assertRaises(Exception):
+        CreateSnapshot(self, self.root_pool[0], True)
+    return

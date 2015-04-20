@@ -1,0 +1,40 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestConcurrentSnapshots, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.hypervisor = cls.testClient.getHypervisorInfo()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient, testClient.getZoneForTests())
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+    cls._cleanup = []
+    cls.sleep_time_for_hourly_policy = ((60 * 60) * 1)
+    cls.mgtSvrDetails = cls.config.__dict__['mgtSvr'][0].__dict__
+    try:
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
+        cls._cleanup.append(cls.account)
+        cls.userapiclient = testClient.getUserApiClient(UserName=cls.account.name, DomainName=cls.account.domain)
+        cls.service_offering = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+        cls._cleanup.append(cls.service_offering)
+        cls.vm_pool = []
+        for i in range(4):
+            cls.vm = VirtualMachine.create(cls.apiclient, cls.testdata['small'], templateid=cls.template.id, accountid=cls.account.name, domainid=cls.account.domainid, serviceofferingid=cls.service_offering.id, zoneid=cls.zone.id, mode=cls.zone.networktype)
+            cls.vm_pool.append(cls.vm)
+            cls._cleanup.append(cls.vm)
+        cls.checksum_pool = []
+        cls.root_pool = []
+        cls.snapshot_pool = []
+        cls.rec_policy_pool = []
+        for vm in cls.vm_pool:
+            root_volumes = list_volumes(cls.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)
+            checksum_root = createChecksum(cls.testdata, vm, root_volumes[0], 'rootdiskdevice')
+            cls.checksum_pool.append(checksum_root)
+            cls.root_pool.append(root_volumes[0])
+        try:
+            cls.pools = StoragePool.list(cls.apiclient, zoneid=cls.zone.id)
+        except Exception as e:
+            raise unittest.SkipTest(e)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return

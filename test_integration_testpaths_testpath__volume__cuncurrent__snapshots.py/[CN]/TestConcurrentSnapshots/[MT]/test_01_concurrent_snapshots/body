@@ -1,0 +1,164 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_01_concurrent_snapshots(self):
+    'Concurrent Snapshots\n            1. Create snapshot on 2 new VMs in parallel and check\n                    1. all snapshot jobs are running\n                    2. listSnapshots should list all the snapshots\n                    3. Verify secondary_storage NFS share\n                       contains the required volume under\n                       /secondary/snapshots/$accountid/$volumeid/$snapshot_uuid.\n                    4. Verify backup_snap_id was non null in "snapshots"table\n            2. Perform step 1 for all the 4 VM\'s.\n            3. Verify that VM gets migrated when snapshot\n                is in pregress for the VM.\n            4. Verify that snapshots get created when\n                VM\'s are stoped in between snapshot creation.\n            5. Perform live Migration then stop all the\n                VM\'s after that verify that snapshot creation success .\n            6. Verify success of snapshots creation in case:\n                Stop the running VM while performing\n                concurrent snapshot on volumes\n            7. Verify success of snapshots creation in case:\n                Start Migration of VM\'s and then Stop the running VM then\n                performing concurrent snapshot on volumes\n        '
+    try:
+        create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[0], False))
+        create_snapshot_thread_2 = Thread(target=CreateSnapshot, args=(self, self.root_pool[1], False))
+        create_snapshot_thread_1.start()
+        create_snapshot_thread_2.start()
+        create_snapshot_thread_1.join()
+        create_snapshot_thread_2.join()
+    except:
+        self.debug('Error: unable to start thread')
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    thread_pool = []
+    for i in range(4):
+        try:
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[i], False))
+            thread_pool.append(create_snapshot_thread_1)
+        except Exception as e:
+            raise Exception(('Warning: Exception unable to start thread : %s' % e))
+    for thread in thread_pool:
+        thread.start()
+    for thread in thread_pool:
+        thread.join()
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    try:
+        create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[0], True))
+        create_snapshot_thread_2 = Thread(target=CreateSnapshot, args=(self, self.root_pool[1], True))
+        create_snapshot_thread_1.start()
+        create_snapshot_thread_2.start()
+        create_snapshot_thread_1.join()
+        create_snapshot_thread_2.join()
+    except:
+        self.debug('Error: unable to start thread')
+    for rec_snap in self.rec_policy_pool:
+        list_snapshots_policy_1 = list_snapshot_policy(self.apiclient, id=rec_snap.id)
+        list_validation = validateList(list_snapshots_policy_1)
+        self.assertEqual(list_validation[0], PASS, ('snapshot list validation failed due to %s' % list_validation[2]))
+    time.sleep(self.sleep_time_for_hourly_policy)
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    for rec_snap_pol in self.rec_policy_pool:
+        rec_snap_pol.delete(self.apiclient)
+    self.rec_policy_pool = []
+    thread_pool = []
+    for i in range(4):
+        try:
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[i], True))
+            thread_pool.append(create_snapshot_thread_1)
+        except Exception as e:
+            raise Exception(('Warning: Exception unable to start thread : %s' % e))
+    for thread in thread_pool:
+        thread.start()
+    for thread in thread_pool:
+        thread.join()
+    for rec_snap in self.rec_policy_pool:
+        list_snapshots_policy_1 = list_snapshot_policy(self.apiclient, id=rec_snap.id)
+        list_validation_1 = validateList(list_snapshots_policy_1)
+        self.assertEqual(list_validation[0], PASS, ('snapshot list validation failed due to %s' % list_validation_1[2]))
+    time.sleep(self.sleep_time_for_hourly_policy)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    for rec_snap_pol in self.rec_policy_pool:
+        rec_snap_pol.delete(self.apiclient)
+    self.rec_policy_pool = []
+    try:
+        thread_pool = []
+        for i in range(4):
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[i], False))
+            thread_pool.append(create_snapshot_thread_1)
+        destinationHost = Host.listForMigration(self.apiclient, virtualmachineid=self.vm_pool[3].id)
+        migrate_volume_thread_1 = Thread(target=MigrateRootVolume, args=(self, self.vm_pool[3], destinationHost[0]))
+        thread_pool.append(migrate_volume_thread_1)
+        for thread in thread_pool:
+            thread.start()
+        for thread in thread_pool:
+            thread.join()
+    except Exception as e:
+        raise Exception(('Warning: Exception unable to start thread : %s' % e))
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    try:
+        thread_pool = []
+        for i in range(4):
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[i], False))
+            thread_pool.append(create_snapshot_thread_1)
+        stop_vm_thread_1 = Thread(target=self.StopVM, args=(self.vm_pool,))
+        thread_pool.append(stop_vm_thread_1)
+        for thread in thread_pool:
+            thread.start()
+        for thread in thread_pool:
+            thread.join()
+    except Exception as e:
+        raise Exception(('Warning: Exception unable to start thread : %s' % e))
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
+    thread_pool = []
+    try:
+        for i in range(2):
+            destinationHost = Host.listForMigration(self.apiclient, virtualmachineid=self.vm_pool[i].id)
+            migrate_volume_thread_1 = Thread(target=MigrateRootVolume, args=(self, self.vm_pool[i], destinationHost[0]))
+            thread_pool.append(migrate_volume_thread_1)
+        for thread in thread_pool:
+            thread.start()
+        for thread in thread_pool:
+            thread.join()
+        for vm in self.vm_pool:
+            if (vm.state != 'Stopped'):
+                vm.stop(self.apiclient)
+        thread_pool = []
+        for vm in self.vm_pool[:2]:
+            create_snapshot_thread_1 = Thread(target=CreateSnapshot, args=(self, self.root_pool[0], False))
+            thread_pool.append(create_snapshot_thread_1)
+        for thread in thread_pool:
+            thread.start()
+        for thread in thread_pool:
+            thread.join()
+    except:
+        self.debug('Error: unable to start thread')
+    snapshots = list_snapshots(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(((snapshot.id in any(s.id)) for s in snapshots))
+    for snapshot in self.snapshot_pool:
+        self.assertTrue(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snapshot.id))
+    for snapshot in self.snapshot_pool:
+        snapshot.delete(self.apiclient)
+    self.snapshot_pool = []
