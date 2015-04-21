@@ -1,0 +1,28 @@
+@data(ISOLATED_NETWORK, SHARED_NETWORK, VPC_NETWORK)
+@attr(tags=['advanced', 'dvs'])
+def test_delete_PF_nat_rule(self, value):
+    ' Add secondary IP to NIC of a VM'
+    if ((value == VPC_NETWORK) and (self.hypervisor == 'hyperv')):
+        self.skipTest('VPC is not supported on Hyper-V')
+    self.account = Account.create(self.apiclient, self.services['account'], domainid=self.domain.id)
+    self.cleanup.append(self.account)
+    network = createNetwork(self, value)
+    firewallrule = None
+    virtual_machine = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], networkids=[network.id], serviceofferingid=self.service_offering.id, accountid=self.account.name, domainid=self.account.domainid)
+    ipaddress_1 = NIC.addIp(self.apiclient, id=virtual_machine.nic[0].id)
+    public_ip = PublicIPAddress.create(self.api_client, accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, networkid=network.id, vpcid=(network.vpcid if (value == VPC_NETWORK) else None))
+    if (value != VPC_NETWORK):
+        firewallrule = FireWallRule.create(self.apiclient, ipaddressid=public_ip.ipaddress.id, protocol='TCP', cidrlist=[self.services['fwrule']['cidr']], startport=self.services['fwrule']['startport'], endport=self.services['fwrule']['endport'])
+    natrule = NATRule.create(self.api_client, virtual_machine, self.services['natrule'], ipaddressid=public_ip.ipaddress.id, networkid=network.id, vmguestip=ipaddress_1.ipaddress)
+    try:
+        NIC.removeIp(self.apiclient, ipaddressid=ipaddress_1.id)
+        self.fail('Removing secondary IP succeeded while it had active NAT rule on it, should have failed')
+    except Exception as e:
+        self.debug('Removing secondary IP with active NAT rule failed as expected')
+    if firewallrule:
+        try:
+            firewallrule.delete(self.apiclient)
+        except Exception as e:
+            self.fail(('Exception while deleting firewall rule %s: %s' % (firewallrule.id, e)))
+    natrule.delete(self.apiclient)
+    return
