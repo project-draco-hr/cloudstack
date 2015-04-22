@@ -1,0 +1,36 @@
+{
+  final String vmName=command.getVmName();
+  if (command.checkBeforeCleanup()) {
+    try {
+      final Connect conn=LibvirtConnection.getConnectionByVmName(vmName);
+      final Domain vm=conn.domainLookupByName(command.getVmName());
+      if (vm != null && vm.getInfo().state == DomainState.VIR_DOMAIN_RUNNING) {
+        return new StopAnswer(command,"vm is still running on host",false);
+      }
+    }
+ catch (    final Exception e) {
+      s_logger.debug("Failed to get vm status in case of checkboforecleanup is true",e);
+    }
+  }
+  try {
+    final Connect conn=LibvirtConnection.getConnectionByVmName(vmName);
+    final List<DiskDef> disks=citrixResourceBase.getDisks(conn,vmName);
+    final List<InterfaceDef> ifaces=citrixResourceBase.getInterfaces(conn,vmName);
+    citrixResourceBase.destroyNetworkRulesForVM(conn,vmName);
+    final String result=citrixResourceBase.stopVM(conn,vmName);
+    if (result == null) {
+      for (      final DiskDef disk : disks) {
+        citrixResourceBase.cleanupDisk(disk);
+      }
+      for (      final InterfaceDef iface : ifaces) {
+        for (        final VifDriver vifDriver : citrixResourceBase.getAllVifDrivers()) {
+          vifDriver.unplug(iface);
+        }
+      }
+    }
+    return new StopAnswer(command,result,true);
+  }
+ catch (  final LibvirtException e) {
+    return new StopAnswer(command,e.getMessage(),false);
+  }
+}
