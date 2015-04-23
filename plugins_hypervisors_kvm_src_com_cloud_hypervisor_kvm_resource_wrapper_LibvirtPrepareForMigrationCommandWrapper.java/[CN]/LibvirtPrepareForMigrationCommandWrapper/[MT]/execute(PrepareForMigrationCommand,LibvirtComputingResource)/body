@@ -1,0 +1,40 @@
+{
+  final VirtualMachineTO vm=command.getVirtualMachine();
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Preparing host for migrating " + vm);
+  }
+  final NicTO[] nics=vm.getNics();
+  boolean skipDisconnect=false;
+  try {
+    final LibvirtConnectionWrapper libvirtConnectionWrapper=libvirtComputingResource.getLibvirtConnectionWrapper();
+    final Connect conn=libvirtConnectionWrapper.getConnectionByVmName(vm.getName());
+    for (    final NicTO nic : nics) {
+      libvirtComputingResource.getVifDriver(nic.getType()).plug(nic,null,"");
+    }
+    final DiskTO[] volumes=vm.getDisks();
+    for (    final DiskTO volume : volumes) {
+      if (volume.getType() == Volume.Type.ISO) {
+        libvirtComputingResource.getVolumePath(conn,volume);
+      }
+    }
+    skipDisconnect=true;
+    if (!libvirtComputingResource.getStoragePoolMgr().connectPhysicalDisksViaVmSpec(vm)) {
+      return new PrepareForMigrationAnswer(command,"failed to connect physical disks to host");
+    }
+    return new PrepareForMigrationAnswer(command);
+  }
+ catch (  final LibvirtException e) {
+    return new PrepareForMigrationAnswer(command,e.toString());
+  }
+catch (  final InternalErrorException e) {
+    return new PrepareForMigrationAnswer(command,e.toString());
+  }
+catch (  final URISyntaxException e) {
+    return new PrepareForMigrationAnswer(command,e.toString());
+  }
+ finally {
+    if (!skipDisconnect) {
+      libvirtComputingResource.getStoragePoolMgr().disconnectPhysicalDisksViaVmSpec(vm);
+    }
+  }
+}
