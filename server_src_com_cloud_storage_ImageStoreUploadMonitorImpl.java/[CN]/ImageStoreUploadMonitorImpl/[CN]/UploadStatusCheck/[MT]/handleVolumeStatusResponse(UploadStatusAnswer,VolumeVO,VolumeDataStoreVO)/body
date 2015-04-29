@@ -1,0 +1,74 @@
+{
+  final StateMachine2<Volume.State,Event,Volume> stateMachine=Volume.State.getStateMachine();
+  Transaction.execute(new TransactionCallbackNoReturn(){
+    @Override public void doInTransactionWithoutResult(    TransactionStatus status){
+      VolumeVO tmpVolume=_volumeDao.findById(volume.getId());
+      VolumeDataStoreVO tmpVolumeDataStore=_volumeDataStoreDao.findById(volumeDataStore.getId());
+      try {
+switch (answer.getStatus()) {
+case COMPLETED:
+          tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.DOWNLOADED);
+        tmpVolumeDataStore.setState(State.Ready);
+      tmpVolumeDataStore.setInstallPath(answer.getInstallPath());
+    tmpVolumeDataStore.setPhysicalSize(answer.getPhysicalSize());
+  tmpVolumeDataStore.setSize(answer.getVirtualSize());
+tmpVolumeDataStore.setDownloadPercent(100);
+VolumeVO volumeUpdate=_volumeDao.createForUpdate();
+volumeUpdate.setSize(answer.getVirtualSize());
+_volumeDao.update(tmpVolume.getId(),volumeUpdate);
+stateMachine.transitTo(tmpVolume,Event.OperationSucceeded,null,_volumeDao);
+_resourceLimitMgr.incrementResourceCount(volume.getAccountId(),Resource.ResourceType.secondary_storage,answer.getVirtualSize());
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " uploaded successfully");
+}
+break;
+case IN_PROGRESS:
+if (tmpVolume.getState() == Volume.State.NotUploaded) {
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.DOWNLOAD_IN_PROGRESS);
+tmpVolumeDataStore.setDownloadPercent(answer.getDownloadPercent());
+stateMachine.transitTo(tmpVolume,Event.UploadRequested,null,_volumeDao);
+}
+ else if (tmpVolume.getState() == Volume.State.UploadInProgress) {
+if (System.currentTimeMillis() - tmpVolumeDataStore.getCreated().getTime() > _uploadOperationTimeout) {
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR);
+tmpVolumeDataStore.setState(State.Failed);
+stateMachine.transitTo(tmpVolume,Event.OperationFailed,null,_volumeDao);
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload due to operation timed out");
+}
+}
+ else {
+tmpVolumeDataStore.setDownloadPercent(answer.getDownloadPercent());
+}
+}
+break;
+case ERROR:
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.DOWNLOAD_ERROR);
+tmpVolumeDataStore.setState(State.Failed);
+stateMachine.transitTo(tmpVolume,Event.OperationFailed,null,_volumeDao);
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload. Error details: "+ answer.getDetails());
+}
+break;
+case UNKNOWN:
+if (tmpVolume.getState() == Volume.State.NotUploaded) {
+if (System.currentTimeMillis() - tmpVolumeDataStore.getCreated().getTime() > _uploadOperationTimeout) {
+tmpVolumeDataStore.setDownloadState(VMTemplateStorageResourceAssoc.Status.ABANDONED);
+tmpVolumeDataStore.setState(State.Failed);
+stateMachine.transitTo(tmpVolume,Event.OperationTimeout,null,_volumeDao);
+if (s_logger.isDebugEnabled()) {
+s_logger.debug("Volume " + tmpVolume.getUuid() + " failed to upload due to operation timed out");
+}
+}
+}
+break;
+}
+_volumeDataStoreDao.update(tmpVolumeDataStore.getId(),tmpVolumeDataStore);
+}
+ catch (NoTransitionException e) {
+s_logger.error("Unexpected error " + e.getMessage());
+}
+}
+}
+);
+}

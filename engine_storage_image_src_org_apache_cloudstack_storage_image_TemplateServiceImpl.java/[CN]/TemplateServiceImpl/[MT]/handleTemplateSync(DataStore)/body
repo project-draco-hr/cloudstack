@@ -39,6 +39,7 @@
           }
         }
         toBeDownloaded.addAll(allTemplates);
+        final StateMachine2<VirtualMachineTemplate.State,VirtualMachineTemplate.Event,VirtualMachineTemplate> stateMachine=VirtualMachineTemplate.State.getStateMachine();
         for (        VMTemplateVO tmplt : allTemplates) {
           String uniqueName=tmplt.getUniqueName();
           TemplateDataStoreVO tmpltStore=_vmTemplateStoreDao.findByStoreTemplate(storeId,tmplt.getId());
@@ -54,9 +55,19 @@
                 tmpltStore.setDownloadState(Status.DOWNLOAD_ERROR);
                 String msg="Template " + tmplt.getName() + ":"+ tmplt.getId()+ " is corrupted on secondary storage "+ tmpltStore.getId();
                 tmpltStore.setErrorString(msg);
-                s_logger.info("msg");
-                if (tmplt.getUrl() == null) {
-                  msg="Private Template (" + tmplt + ") with install path "+ tmpltInfo.getInstallPath()+ "is corrupted, please check in image store: "+ tmpltStore.getDataStoreId();
+                s_logger.info(msg);
+                if (tmplt.getState() == VirtualMachineTemplate.State.NotUploaded || tmplt.getState() == VirtualMachineTemplate.State.UploadInProgress) {
+                  s_logger.info("Template Sync found " + uniqueName + " on image store "+ storeId+ " uploaded using SSVM as corrupted, marking it as failed");
+                  tmpltStore.setState(State.Failed);
+                  try {
+                    stateMachine.transitTo(tmplt,VirtualMachineTemplate.Event.OperationFailed,null,_templateDao);
+                  }
+ catch (                  NoTransitionException e) {
+                    s_logger.error("Unexpected state transition exception for template " + tmplt.getName() + ". Details: "+ e.getMessage());
+                  }
+                }
+ else                 if (tmplt.getUrl() == null) {
+                  msg="Private template (" + tmplt + ") with install path "+ tmpltInfo.getInstallPath()+ " is corrupted, please check in image store: "+ tmpltStore.getDataStoreId();
                   s_logger.warn(msg);
                 }
  else {
@@ -76,6 +87,14 @@
                 VMTemplateVO tmlpt=_templateDao.findById(tmplt.getId());
                 tmlpt.setSize(tmpltInfo.getSize());
                 _templateDao.update(tmplt.getId(),tmlpt);
+                if (tmplt.getState() == VirtualMachineTemplate.State.NotUploaded || tmplt.getState() == VirtualMachineTemplate.State.UploadInProgress) {
+                  try {
+                    stateMachine.transitTo(tmplt,VirtualMachineTemplate.Event.OperationSucceeded,null,_templateDao);
+                  }
+ catch (                  NoTransitionException e) {
+                    s_logger.error("Unexpected state transition exception for template " + tmplt.getName() + ". Details: "+ e.getMessage());
+                  }
+                }
                 if (tmpltInfo.getSize() > 0 && tmplt.getAccountId() != Account.ACCOUNT_ID_SYSTEM && tmplt.getUrl() != null) {
                   long accountId=tmplt.getAccountId();
                   try {
@@ -102,6 +121,21 @@
               tmlpt.setSize(tmpltInfo.getSize());
               _templateDao.update(tmplt.getId(),tmlpt);
               associateTemplateToZone(tmplt.getId(),zoneId);
+            }
+          }
+ else           if (tmplt.getState() == VirtualMachineTemplate.State.NotUploaded || tmplt.getState() == VirtualMachineTemplate.State.UploadInProgress) {
+            s_logger.info("Template Sync did not find " + uniqueName + " on image store "+ storeId+ " uploaded using SSVM, marking it as failed");
+            toBeDownloaded.remove(tmplt);
+            tmpltStore.setDownloadState(Status.DOWNLOAD_ERROR);
+            String msg="Template " + tmplt.getName() + ":"+ tmplt.getId()+ " is corrupted on secondary storage "+ tmpltStore.getId();
+            tmpltStore.setErrorString(msg);
+            tmpltStore.setState(State.Failed);
+            _vmTemplateStoreDao.update(tmpltStore.getId(),tmpltStore);
+            try {
+              stateMachine.transitTo(tmplt,VirtualMachineTemplate.Event.OperationFailed,null,_templateDao);
+            }
+ catch (            NoTransitionException e) {
+              s_logger.error("Unexpected state transition exception for template " + tmplt.getName() + ". Details: "+ e.getMessage());
             }
           }
  else {

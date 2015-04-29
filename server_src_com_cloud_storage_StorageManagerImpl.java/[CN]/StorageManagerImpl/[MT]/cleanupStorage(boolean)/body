@@ -35,7 +35,7 @@
             volService.expungeVolumeAsync(volFactory.getVolume(vol.getId()));
           }
  catch (          Exception e) {
-            s_logger.warn("Unable to destroy " + vol.getId(),e);
+            s_logger.warn("Unable to destroy volume " + vol.getUuid(),e);
           }
         }
         List<SnapshotVO> snapshots=_snapshotDao.listAllByStatus(Snapshot.State.Error);
@@ -48,7 +48,88 @@
             _snapshotDao.expunge(snapshotVO.getId());
           }
  catch (          Exception e) {
-            s_logger.warn("Unable to destroy " + snapshotVO.getId(),e);
+            s_logger.warn("Unable to destroy snapshot " + snapshotVO.getUuid(),e);
+          }
+        }
+        List<VolumeDataStoreVO> volumeDataStores=_volumeDataStoreDao.listByVolumeState(Volume.State.UploadError,Volume.State.UploadAbandoned);
+        for (        VolumeDataStoreVO volumeDataStore : volumeDataStores) {
+          VolumeVO volume=_volumeDao.findById(volumeDataStore.getVolumeId());
+          if (volume == null) {
+            s_logger.warn("Uploaded volume with id " + volumeDataStore.getVolumeId() + " not found, so cannot be destroyed");
+            continue;
+          }
+          try {
+            DataStore dataStore=_dataStoreMgr.getDataStore(volumeDataStore.getDataStoreId(),DataStoreRole.Image);
+            EndPoint ep=_epSelector.select(dataStore,volumeDataStore.getExtractUrl());
+            if (ep == null) {
+              s_logger.warn("There is no secondary storage VM for image store " + dataStore.getName() + ", cannot destroy uploaded volume "+ volume.getUuid());
+              continue;
+            }
+            Host host=_hostDao.findById(ep.getId());
+            if (host != null && host.getManagementServerId() != null) {
+              if (_serverId == host.getManagementServerId().longValue()) {
+                if (!volService.destroyVolume(volume.getId())) {
+                  s_logger.warn("Unable to destroy uploaded volume " + volume.getUuid());
+                  continue;
+                }
+                _resourceLimitMgr.decrementResourceCount(volume.getAccountId(),ResourceType.volume,volume.isDisplayVolume());
+                VolumeInfo volOnSecondary=volFactory.getVolume(volume.getId(),DataStoreRole.Image);
+                if (volOnSecondary != null) {
+                  s_logger.info("Expunging volume " + volume.getUuid() + " uploaded using HTTP POST from secondary data store");
+                  AsyncCallFuture<VolumeApiResult> future=volService.expungeVolumeAsync(volOnSecondary);
+                  VolumeApiResult result=future.get();
+                  if (!result.isSuccess()) {
+                    s_logger.warn("Failed to expunge volume " + volume.getUuid() + " from the image store "+ dataStore.getName()+ " due to: "+ result.getResult());
+                  }
+                }
+              }
+            }
+          }
+ catch (          Throwable th) {
+            s_logger.warn("Unable to destroy uploaded volume " + volume.getUuid() + ". Error details: "+ th.getMessage());
+          }
+        }
+        List<TemplateDataStoreVO> templateDataStores=_templateStoreDao.listByTemplateState(VirtualMachineTemplate.State.UploadError,VirtualMachineTemplate.State.UploadAbandoned);
+        for (        TemplateDataStoreVO templateDataStore : templateDataStores) {
+          VMTemplateVO template=_templateDao.findById(templateDataStore.getTemplateId());
+          if (template == null) {
+            s_logger.warn("Uploaded template with id " + templateDataStore.getTemplateId() + " not found, so cannot be destroyed");
+            continue;
+          }
+          try {
+            DataStore dataStore=_dataStoreMgr.getDataStore(templateDataStore.getDataStoreId(),DataStoreRole.Image);
+            EndPoint ep=_epSelector.select(dataStore,templateDataStore.getExtractUrl());
+            if (ep == null) {
+              s_logger.warn("There is no secondary storage VM for image store " + dataStore.getName() + ", cannot destroy uploaded template "+ template.getUuid());
+              continue;
+            }
+            Host host=_hostDao.findById(ep.getId());
+            if (host != null && host.getManagementServerId() != null) {
+              if (_serverId == host.getManagementServerId().longValue()) {
+                AsyncCallFuture<TemplateApiResult> future=_imageSrv.deleteTemplateAsync(tmplFactory.getTemplate(template.getId(),dataStore));
+                TemplateApiResult result=future.get();
+                if (!result.isSuccess()) {
+                  s_logger.warn("Failed to delete template " + template.getUuid() + " from the image store "+ dataStore.getName()+ " due to: "+ result.getResult());
+                  continue;
+                }
+                List<VMTemplateZoneVO> templateZones=_vmTemplateZoneDao.listByZoneTemplate(((ImageStoreEntity)dataStore).getDataCenterId(),template.getId());
+                if (templateZones != null) {
+                  for (                  VMTemplateZoneVO templateZone : templateZones) {
+                    _vmTemplateZoneDao.remove(templateZone.getId());
+                  }
+                }
+                _templateStoreDao.removeByTemplateStore(template.getId(),dataStore.getId());
+                List<DataStore> imageStores=_tmpltMgr.getImageStoreByTemplate(template.getId(),null);
+                if (imageStores == null || imageStores.size() == 0) {
+                  template.setState(VirtualMachineTemplate.State.Inactive);
+                  _templateDao.update(template.getId(),template);
+                  _resourceLimitMgr.decrementResourceCount(template.getAccountId(),ResourceType.template);
+                }
+              }
+            }
+          }
+ catch (          Throwable th) {
+            s_logger.warn("Unable to destroy uploaded template " + template.getUuid() + ". Error details: "+ th.getMessage());
           }
         }
       }

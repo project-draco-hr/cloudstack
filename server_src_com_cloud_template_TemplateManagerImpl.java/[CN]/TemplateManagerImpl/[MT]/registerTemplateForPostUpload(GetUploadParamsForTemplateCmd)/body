@@ -1,0 +1,31 @@
+{
+  TemplateAdapter adapter=getAdapter(HypervisorType.getType(cmd.getHypervisor()));
+  TemplateProfile profile=adapter.prepare(cmd);
+  List<TemplateOrVolumePostUploadCommand> payload=adapter.createTemplateForPostUpload(profile);
+  if (CollectionUtils.isNotEmpty(payload)) {
+    GetUploadParamsResponse response=new GetUploadParamsResponse();
+    TemplateOrVolumePostUploadCommand firstCommand=payload.get(0);
+    String ssvmUrlDomain=_configDao.getValue(Config.SecStorageSecureCopyCert.key());
+    String url=ImageStoreUtil.generatePostUploadUrl(ssvmUrlDomain,firstCommand.getRemoteEndPoint(),firstCommand.getEntityUUID());
+    response.setPostURL(new URL(url));
+    TemplateDataStoreVO templateStore=_tmplStoreDao.findByTemplate(firstCommand.getEntityId(),DataStoreRole.getRole(firstCommand.getDataToRole()));
+    if (templateStore != null) {
+      templateStore.setExtractUrl(url);
+      _tmplStoreDao.persist(templateStore);
+    }
+    response.setId(UUID.fromString(firstCommand.getEntityUUID()));
+    int timeout=ImageStoreUploadMonitorImpl.getUploadOperationTimeout();
+    DateTime currentDateTime=new DateTime(DateTimeZone.UTC);
+    String expires=currentDateTime.plusMinutes(timeout).toString();
+    response.setTimeout(expires);
+    String key=_configDao.getValue(Config.SSVMPSK.key());
+    Gson gson=new GsonBuilder().create();
+    String metadata=EncryptionUtil.encodeData(gson.toJson(firstCommand),key);
+    response.setMetadata(metadata);
+    response.setSignature(EncryptionUtil.generateSignature(metadata + url + expires,key));
+    return response;
+  }
+ else {
+    throw new CloudRuntimeException("Unable to register template.");
+  }
+}

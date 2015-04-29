@@ -1,0 +1,53 @@
+{
+  TemplateOrVolumePostUploadCommand cmd=getTemplateOrVolumePostUploadCmd(metadata);
+  UploadEntity uploadEntity=null;
+  if (cmd == null) {
+    String errorMessage="unable decode and deserialize metadata.";
+    updateStateMapWithError(uuid,errorMessage);
+    throw new InvalidParameterValueException(errorMessage);
+  }
+ else {
+    uuid=cmd.getEntityUUID();
+    if (isOneTimePostUrlUsed(cmd)) {
+      uploadEntity=uploadEntityStateMap.get(uuid);
+      StringBuilder errorMessage=new StringBuilder("The one time post url is already used");
+      if (uploadEntity != null) {
+        errorMessage.append(" and the upload is in ").append(uploadEntity.getUploadState()).append(" state.");
+      }
+      throw new InvalidParameterValueException(errorMessage.toString());
+    }
+    int maxSizeInGB=Integer.valueOf(cmd.getMaxUploadSize());
+    int contentLengthInGB=getSizeInGB(contentLength);
+    if (contentLengthInGB > maxSizeInGB) {
+      String errorMessage="Maximum file upload size exceeded. Content Length received: " + contentLengthInGB + "GB. Maximum allowed size: "+ maxSizeInGB+ "GB.";
+      updateStateMapWithError(uuid,errorMessage);
+      throw new InvalidParameterValueException(errorMessage);
+    }
+    checkSecondaryStorageResourceLimit(cmd,contentLengthInGB);
+    try {
+      String absolutePath=cmd.getAbsolutePath();
+      uploadEntity=new UploadEntity(uuid,cmd.getEntityId(),UploadEntity.Status.IN_PROGRESS,cmd.getName(),absolutePath);
+      uploadEntity.setMetaDataPopulated(true);
+      uploadEntity.setResourceType(UploadEntity.ResourceType.valueOf(cmd.getType()));
+      uploadEntity.setFormat(Storage.ImageFormat.valueOf(cmd.getImageFormat()));
+      uploadEntity.setTemplatePath(absolutePath);
+      String dataStoreUrl=cmd.getDataTo();
+      String installPathPrefix=this.getRootDir(dataStoreUrl) + File.separator + absolutePath;
+      uploadEntity.setInstallPathPrefix(installPathPrefix);
+      uploadEntity.setHvm(cmd.getRequiresHvm());
+      uploadEntity.setChksum(cmd.getChecksum());
+      uploadEntity.setMaxSizeInGB(maxSizeInGB);
+      uploadEntity.setDescription(cmd.getDescription());
+      uploadEntity.setContentLength(contentLength);
+      if (!_storage.exists(installPathPrefix)) {
+        _storage.mkdir(installPathPrefix);
+      }
+      uploadEntityStateMap.put(uuid,uploadEntity);
+    }
+ catch (    Exception e) {
+      s_logger.error("exception occurred while creating upload entity ",e);
+      updateStateMapWithError(uuid,e.getMessage());
+    }
+  }
+  return uploadEntity;
+}

@@ -1,0 +1,49 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  long ownerId=cmd.getEntityOwnerId();
+  final Account owner=_entityMgr.findById(Account.class,ownerId);
+  final Long zoneId=cmd.getZoneId();
+  final String volumeName=cmd.getName();
+  String format=cmd.getFormat();
+  final Long diskOfferingId=cmd.getDiskOfferingId();
+  String imageStoreUuid=cmd.getImageStoreUuid();
+  final DataStore store=_tmpltMgr.getImageStore(imageStoreUuid,zoneId);
+  validateVolume(caller,ownerId,zoneId,volumeName,null,format,diskOfferingId);
+  return Transaction.execute(new TransactionCallbackWithException<GetUploadParamsResponse,MalformedURLException>(){
+    @Override public GetUploadParamsResponse doInTransaction(    TransactionStatus status) throws MalformedURLException {
+      VolumeVO volume=persistVolume(owner,zoneId,volumeName,null,cmd.getFormat(),diskOfferingId,Volume.State.NotUploaded);
+      VolumeInfo vol=volFactory.getVolume(volume.getId());
+      RegisterVolumePayload payload=new RegisterVolumePayload(null,cmd.getChecksum(),cmd.getFormat());
+      vol.addPayload(payload);
+      Pair<EndPoint,DataObject> pair=volService.registerVolumeForPostUpload(vol,store);
+      EndPoint ep=pair.first();
+      DataObject dataObject=pair.second();
+      GetUploadParamsResponse response=new GetUploadParamsResponse();
+      String ssvmUrlDomain=_configDao.getValue(Config.SecStorageSecureCopyCert.key());
+      String url=ImageStoreUtil.generatePostUploadUrl(ssvmUrlDomain,ep.getPublicAddr(),vol.getUuid());
+      response.setPostURL(new URL(url));
+      VolumeDataStoreVO volumeStore=_volumeStoreDao.findByVolume(vol.getId());
+      if (volumeStore != null) {
+        volumeStore.setExtractUrl(url);
+        _volumeStoreDao.persist(volumeStore);
+      }
+      response.setId(UUID.fromString(vol.getUuid()));
+      int timeout=ImageStoreUploadMonitorImpl.getUploadOperationTimeout();
+      DateTime currentDateTime=new DateTime(DateTimeZone.UTC);
+      String expires=currentDateTime.plusMinutes(timeout).toString();
+      response.setTimeout(expires);
+      String key=_configDao.getValue(Config.SSVMPSK.key());
+      TemplateOrVolumePostUploadCommand command=new TemplateOrVolumePostUploadCommand(vol.getId(),vol.getUuid(),volumeStore.getInstallPath(),cmd.getChecksum(),vol.getType().toString(),vol.getName(),vol.getFormat().toString(),dataObject.getDataStore().getUri(),dataObject.getDataStore().getRole().toString());
+      command.setLocalPath(volumeStore.getLocalDownloadPath());
+      command.setMaxUploadSize(_configDao.getValue(Config.MaxUploadVolumeSize.key()));
+      command.setDefaultMaxAccountSecondaryStorage(_configDao.getValue(Config.DefaultMaxAccountSecondaryStorage.key()));
+      command.setAccountId(vol.getAccountId());
+      Gson gson=new GsonBuilder().create();
+      String metadata=EncryptionUtil.encodeData(gson.toJson(command),key);
+      response.setMetadata(metadata);
+      response.setSignature(EncryptionUtil.generateSignature(metadata + url + expires,key));
+      return response;
+    }
+  }
+);
+}
