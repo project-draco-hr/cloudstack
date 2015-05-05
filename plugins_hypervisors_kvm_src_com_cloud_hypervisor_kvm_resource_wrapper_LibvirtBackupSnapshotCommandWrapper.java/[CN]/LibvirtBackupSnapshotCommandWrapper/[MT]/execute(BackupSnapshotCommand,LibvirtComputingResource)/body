@@ -1,21 +1,25 @@
 {
-  final Long dcId=cmd.getDataCenterId();
-  final Long accountId=cmd.getAccountId();
-  final Long volumeId=cmd.getVolumeId();
-  final String secondaryStoragePoolUrl=cmd.getSecondaryStorageUrl();
-  final String snapshotName=cmd.getSnapshotName();
+  final Long dcId=command.getDataCenterId();
+  final Long accountId=command.getAccountId();
+  final Long volumeId=command.getVolumeId();
+  final String secondaryStoragePoolUrl=command.getSecondaryStorageUrl();
+  final String snapshotName=command.getSnapshotName();
   String snapshotDestPath=null;
   String snapshotRelPath=null;
-  final String vmName=cmd.getVmName();
+  final String vmName=command.getVmName();
   KVMStoragePool secondaryStoragePool=null;
+  final KVMStoragePoolManager storagePoolMgr=libvirtComputingResource.getStoragePoolMgr();
   try {
-    final Connect conn=LibvirtConnection.getConnectionByVmName(vmName);
-    secondaryStoragePool=_storagePoolMgr.getStoragePoolByURI(secondaryStoragePoolUrl);
+    final LibvirtConnectionWrapper libvirtConnectionWrapper=libvirtComputingResource.getLibvirtConnectionWrapper();
+    final Connect conn=libvirtConnectionWrapper.getConnectionByVmName(vmName);
+    secondaryStoragePool=storagePoolMgr.getStoragePoolByURI(secondaryStoragePoolUrl);
     final String ssPmountPath=secondaryStoragePool.getLocalPath();
     snapshotRelPath=File.separator + "snapshots" + File.separator+ dcId+ File.separator+ accountId+ File.separator+ volumeId;
     snapshotDestPath=ssPmountPath + File.separator + "snapshots"+ File.separator+ dcId+ File.separator+ accountId+ File.separator+ volumeId;
-    final KVMStoragePool primaryPool=_storagePoolMgr.getStoragePool(cmd.getPool().getType(),cmd.getPrimaryStoragePoolNameLabel());
-    final KVMPhysicalDisk snapshotDisk=primaryPool.getPhysicalDisk(cmd.getVolumePath());
+    final KVMStoragePool primaryPool=storagePoolMgr.getStoragePool(command.getPool().getType(),command.getPrimaryStoragePoolNameLabel());
+    final KVMPhysicalDisk snapshotDisk=primaryPool.getPhysicalDisk(command.getVolumePath());
+    final String manageSnapshotPath=libvirtComputingResource.manageSnapshotPath();
+    final int cmdsTimeout=libvirtComputingResource.getCmdsTimeout();
     if (primaryPool.getType() == StoragePoolType.RBD) {
       try {
         final Rados r=new Rados(primaryPool.getAuthUserName());
@@ -50,71 +54,72 @@
       }
  catch (      final RadosException e) {
         s_logger.error("A RADOS operation failed. The error was: " + e.getMessage());
-        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+        return new BackupSnapshotAnswer(command,false,e.toString(),null,true);
       }
 catch (      final RbdException e) {
         s_logger.error("A RBD operation on " + snapshotDisk.getName() + " failed. The error was: "+ e.getMessage());
-        return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+        return new BackupSnapshotAnswer(command,false,e.toString(),null,true);
       }
     }
  else {
-      final Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
-      command.add("-b",snapshotDisk.getPath());
-      command.add("-n",snapshotName);
-      command.add("-p",snapshotDestPath);
-      command.add("-t",snapshotName);
-      final String result=command.execute();
+      final Script scriptCommand=new Script(manageSnapshotPath,cmdsTimeout,s_logger);
+      scriptCommand.add("-b",snapshotDisk.getPath());
+      scriptCommand.add("-n",snapshotName);
+      scriptCommand.add("-p",snapshotDestPath);
+      scriptCommand.add("-t",snapshotName);
+      final String result=scriptCommand.execute();
       if (result != null) {
         s_logger.debug("Failed to backup snaptshot: " + result);
-        return new BackupSnapshotAnswer(cmd,false,result,null,true);
+        return new BackupSnapshotAnswer(command,false,result,null,true);
       }
     }
     DomainState state=null;
     Domain vm=null;
     if (vmName != null) {
       try {
-        vm=getDomain(conn,cmd.getVmName());
+        vm=libvirtComputingResource.getDomain(conn,command.getVmName());
         state=vm.getInfo().state;
       }
  catch (      final LibvirtException e) {
         s_logger.trace("Ignoring libvirt error.",e);
       }
     }
-    final KVMStoragePool primaryStorage=_storagePoolMgr.getStoragePool(cmd.getPool().getType(),cmd.getPool().getUuid());
+    final KVMStoragePool primaryStorage=storagePoolMgr.getStoragePool(command.getPool().getType(),command.getPool().getUuid());
     if (state == DomainState.VIR_DOMAIN_RUNNING && !primaryStorage.isExternalSnapshot()) {
+      final MessageFormat snapshotXML=new MessageFormat("   <domainsnapshot>" + "       <name>{0}</name>" + "          <domain>"+ "            <uuid>{1}</uuid>"+ "        </domain>"+ "    </domainsnapshot>");
       final String vmUuid=vm.getUUIDString();
       final Object[] args=new Object[]{snapshotName,vmUuid};
-      final String snapshot=SnapshotXML.format(args);
+      final String snapshot=snapshotXML.format(args);
       s_logger.debug(snapshot);
       final DomainSnapshot snap=vm.snapshotLookupByName(snapshotName);
       snap.delete(0);
-      vm=getDomain(conn,cmd.getVmName());
+      vm=libvirtComputingResource.getDomain(conn,command.getVmName());
       state=vm.getInfo().state;
       if (state == DomainState.VIR_DOMAIN_PAUSED) {
         vm.resume();
       }
     }
  else {
-      final Script command=new Script(_manageSnapshotPath,_cmdsTimeout,s_logger);
-      command.add("-d",snapshotDisk.getPath());
-      command.add("-n",snapshotName);
-      final String result=command.execute();
+      final Script scriptCommand=new Script(manageSnapshotPath,cmdsTimeout,s_logger);
+      scriptCommand.add("-d",snapshotDisk.getPath());
+      scriptCommand.add("-n",snapshotName);
+      final String result=scriptCommand.execute();
       if (result != null) {
         s_logger.debug("Failed to backup snapshot: " + result);
-        return new BackupSnapshotAnswer(cmd,false,"Failed to backup snapshot: " + result,null,true);
+        return new BackupSnapshotAnswer(command,false,"Failed to backup snapshot: " + result,null,true);
       }
     }
   }
  catch (  final LibvirtException e) {
-    return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+    return new BackupSnapshotAnswer(command,false,e.toString(),null,true);
   }
 catch (  final CloudRuntimeException e) {
-    return new BackupSnapshotAnswer(cmd,false,e.toString(),null,true);
+    return new BackupSnapshotAnswer(command,false,e.toString(),null,true);
   }
  finally {
     if (secondaryStoragePool != null) {
-      _storagePoolMgr.deleteStoragePool(secondaryStoragePool.getType(),secondaryStoragePool.getUuid());
+      storagePoolMgr.deleteStoragePool(secondaryStoragePool.getType(),secondaryStoragePool.getUuid());
     }
   }
-  return new BackupSnapshotAnswer(cmd,true,null,snapshotRelPath + File.separator + snapshotName,true);
+  return new BackupSnapshotAnswer(command,true,null,snapshotRelPath + File.separator + snapshotName,true);
 }
