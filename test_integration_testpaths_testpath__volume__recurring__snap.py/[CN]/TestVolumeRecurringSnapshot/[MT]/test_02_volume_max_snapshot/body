@@ -1,0 +1,43 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_02_volume_max_snapshot(self):
+    ' Test Volume Snapshot\n        # 1. Create Hourly reccuring snapshot policy with maxsnaps=2 \n                verify that when 3rd snapshot is taken first snapshot gets deleted\n        '
+    if (self.hypervisor.lower() not in ['kvm', 'vmware']):
+        self.skipTest('Skip test for hypervisor other than KVM and VMWare')
+    self.testdata['recurring_snapshot']['intervaltype'] = 'HOURLY'
+    self.testdata['recurring_snapshot']['schedule'] = 1
+    recurring_snapshot_1 = SnapshotPolicy.create(self.apiclient, self.volume[0].id, self.testdata['recurring_snapshot'])
+    list_snapshots_policy = list_snapshot_policy(self.apiclient, id=recurring_snapshot_1.id, volumeid=self.volume[0].id)
+    list_validation = validateList(list_snapshots_policy)
+    self.assertEqual(list_validation[0], PASS, ('snapshot list validation failed due to %s' % list_validation[2]))
+    timeout = self.testdata['timeout']
+    while True:
+        snapshots = list_snapshots(self.apiclient, volumeid=self.volume[0].id, intervaltype=self.testdata['recurring_snapshot']['intervaltype'], snapshottype='RECURRING', listall=True)
+        if isinstance(snapshots, list):
+            break
+        elif (timeout == 0):
+            raise Exception('List snapshots API call failed.')
+    snap_to_delete = snapshots[0]
+    time.sleep((self.testdata['recurring_snapshot']['maxsnaps'] * 3600))
+    snapshots_1 = list_snapshots(self.apiclient, volumeid=self.volume[0].id, intervaltype=self.testdata['recurring_snapshot']['intervaltype'], snapshottype='RECURRING', listall=True)
+    self.assertTrue((snap_to_delete not in snapshots_1))
+    time.sleep(360)
+    self.assertEqual(self.dbclient.execute(("select status  from snapshots where uuid='%s'" % snap_to_delete.id))[0][0], 'Destroyed')
+    self.assertFalse(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, snap_to_delete.id))
+    recurring_snapshot_data = SnapshotPolicy.create(self.apiclient, self.data_volume[0].id, self.testdata['recurring_snapshot'])
+    list_snapshots_policy = list_snapshot_policy(self.apiclient, id=recurring_snapshot_data.id, volumeid=self.data_volume[0].id)
+    list_validation = validateList(list_snapshots_policy)
+    self.assertEqual(list_validation[0], PASS, ('snapshot list validation failed due to %s' % list_validation[2]))
+    timeout = self.testdata['timeout']
+    while True:
+        snapshots = list_snapshots(self.apiclient, volumeid=self.volume[0].id, intervaltype=self.testdata['recurring_snapshot']['intervaltype'], snapshottype='RECURRING', listall=True)
+        if isinstance(snapshots, list):
+            break
+        elif (timeout == 0):
+            raise Exception('List snapshots API call failed.')
+    data_snap_to_delete = snapshots[0]
+    time.sleep((self.testdata['recurring_snapshot']['maxsnaps'] * 3600))
+    data_snapshots_1 = list_snapshots(self.apiclient, volumeid=self.volume[0].id, intervaltype=self.testdata['recurring_snapshot']['intervaltype'], snapshottype='RECURRING', listall=True)
+    self.assertTrue((data_snap_to_delete not in data_snapshots_1))
+    time.sleep(360)
+    self.assertEqual(self.dbclient.execute(("select status  from snapshots where uuid='%s'" % snap_to_delete.id))[0][0], 'Destroyed')
+    self.assertFalse(is_snapshot_on_nfs(self.apiclient, self.dbclient, self.config, self.zone.id, data_snap_to_delete.id))
