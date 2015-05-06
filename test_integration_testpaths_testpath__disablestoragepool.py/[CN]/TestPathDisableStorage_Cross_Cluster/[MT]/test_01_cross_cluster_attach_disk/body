@@ -1,0 +1,126 @@
+@attr(tags=['advanced', 'advancedsg', 'basic'], required_hardware='false')
+def test_01_cross_cluster_attach_disk(self):
+    '\n            Test Steps:\n            ========\n\n            1. Deploy VM in one cluster\n            2. Migrate to other cluster\n            3. Add data disk, Attach to VM\n            4. Disable first storage pool\n            5. List for migration should not list the first pool anymore\n            6. Stop VM and detach disk\n            7. Enable first Pool\n            8. Migrate root to first pool\n            9. Now disable first pool again\n            10. Attach the disk which is running from enabled pool - Should fail\n            11.Enable pool again\n            12. Attach disk should now pass\n\n            '
+    cluster_id_list = []
+    clusters = list_clusters(self.userapiclient, listall='true')
+    if (len(clusters) == 1):
+        raise unittest.SkipTest('Found only one cluster... skipping test')
+    for cluster in clusters:
+        try:
+            self.debug(('Processing for cluster % s ' % cluster.id))
+            self.list_storage = StoragePool.list(self.userapiclient, clusterid=cluster.id, scope='CLUSTER')
+            count_st_pools = len(self.list_storage)
+            if (count_st_pools > 1):
+                self.debug(('Found % s storage pools in cluster % s, keeping one and disabling rest' % (count_st_pools, cluster.id)))
+                for pool in self.list_storage[1:]:
+                    self.disabled_pool_1 = self.list_storage[1]
+                    if (pool.state == 'Up'):
+                        self.debug(('Trying to disable storage %s' % pool.id))
+                        try:
+                            StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                            self.disabled_list.append(pool.id)
+                            self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                        except Exception as e:
+                            raise e
+            elif (count_st_pools == 1):
+                self.debug('Only one cluster wide storage found')
+            else:
+                self.fail('No cluster wide storage pools found')
+        except Exception as e:
+            raise e
+    try:
+        self.list_storage = StoragePool.list(self.userapiclient, scope='ZONE')
+        if self.list_storage:
+            for pool in self.list_storage:
+                if (pool.state == 'Up'):
+                    self.debug(('Trying to disable storage % s' % pool.id))
+                    try:
+                        StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                        self.disabled_list.append(pool.id)
+                        self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                    except Exception as e:
+                        self.fail(("Couldn't disable storage % s" % pool.id))
+        else:
+            self.debug('No zone wide storage pools found')
+    except Exception as e:
+        raise e
+    self.virtual_machine_1 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    root_vol = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='ROOT')[0]
+    storage_1 = root_vol.storageid
+    host_1 = self.virtual_machine_1.hostid
+    self.debug(('Step 1: VM1 is running on % s host and % s storage pool' % (host_1, storage_1)))
+    hosts_for_migration = Host.listForMigration(self.userapiclient, virtualmachineid=self.virtual_machine_1.id)
+    self.debug(('Step 2: List of hosts suitable for migration: % s ' % hosts_for_migration))
+    host_2 = None
+    for host in hosts_for_migration:
+        self.debug(('Step 2: Host Requires storage motion is % s ' % host.requiresStorageMotion))
+        if (host.requiresStorageMotion == True):
+            host_2 = host.id
+    if host_2:
+        self.debug(('Step 2: Migrating VM % s to Host % s' % (self.virtual_machine_1.id, host_2)))
+        self.virtual_machine_1.migrate_vm_with_volume(self.userapiclient, hostid=host_2)
+    else:
+        self.fail('Step 2: No host found suitable for migration')
+    self.volume_1 = Volume.create(self.userapiclient, services=self.testdata['volume'], diskofferingid=self.disk_offering.id, zoneid=self.zone.id)
+    self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_1)
+    list_volume = Volume.list(self.userapiclient, id=self.volume_1.id)
+    self.assertEqual(list_volume[0].virtualmachineid, self.virtual_machine_1.id, 'Step 3: Check if volume state (attached) is reflected')
+    self.debug(('Step 3: volume id:% s successfully attached to vm id % s' % (self.volume_1.id, self.virtual_machine_1.id)))
+    root_vol = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='ROOT')[0]
+    storage_2 = root_vol.storageid
+    data_vol = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='DATA')[0]
+    self.debug(('Step 3: Data Volume is in storage pool: % s' % data_vol.storageid))
+    self.assertEqual(data_vol.storageid, root_vol.storageid, 'Step 3: Root and Data disk should be running from 2nd storage pool where the VM was live migrated')
+    try:
+        StoragePool.update(self.userapiclient, id=storage_1, enabled=False)
+        self.disabled_list.append(storage_1)
+        self.debug(('Step 4: Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+    except Exception as e:
+        self.fail(("Step 4: Couldn't disable storage % s" % storage_1))
+    hosts_for_migration = Host.listForMigration(self.userapiclient, virtualmachineid=self.virtual_machine_1.id)
+    self.debug(('Step 5: List of Hosts For Migration is % s' % hosts_for_migration))
+    if hosts_for_migration:
+        for host in hosts_for_migration:
+            if (host_1 == host.id):
+                self.fail('Step 5: All pools in the cluster are disabled, hence host should not be listed for migration')
+    self.virtual_machine_1.stop(self.userapiclient)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
+    verify_vm_storage_pool(self, self.virtual_machine_1.id, storage_2)
+    self.debug('Step 6: Stopping VM and detaching disk')
+    self.virtual_machine_1.detach_volume(self.userapiclient, volume=self.volume_1)
+    try:
+        StoragePool.update(self.userapiclient, id=storage_1, enabled=True)
+        if (storage_1 in self.disabled_list):
+            self.disabled_list.remove(storage_1)
+    except Exception as e:
+        self.fail(("Step 7: Couldn't enable storage % s" % storage_1))
+    self.virtual_machine_1.start(self.userapiclient)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    try:
+        self.debug(('Step 8: Migrating VM % s to Host % s' % (self.virtual_machine_1.id, host_1)))
+        self.virtual_machine_1.migrate_vm_with_volume(self.userapiclient, hostid=host_1)
+    except Exception as e:
+        self.fail(("Step 8: Couldn't live migrate VM to host % s due to % s" % (host_1, e)))
+    try:
+        StoragePool.update(self.userapiclient, id=storage_1, enabled=False)
+        self.debug(('Step 9: Disabling storage pool: % s ' % storage_1))
+        self.disabled_list.append(storage_1)
+    except Exception as e:
+        self.fail(("Step 9: Couldn't disable storage % s" % storage_1))
+    st_list = StoragePool.list(self.userapiclient, id=storage_1)
+    self.debug(('9.5 Status of storage pool 1 % s  is % s ' % (st_list[0].name, st_list[0].state)))
+    with self.assertRaises(Exception):
+        self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_1)
+        self.debug(('Step 10: Trying to attach volume % s' % self.volume_1.id))
+    try:
+        StoragePool.update(self.userapiclient, id=storage_1, enabled=True)
+        self.debug(('Step 11: Enable storage pool: % s ' % storage_1))
+        self.disabled_list.remove(storage_1)
+    except Exception as e:
+        self.fail(("Step 11: Couldn't enable storage % s" % storage_1))
+    self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_1)
+    self.debug('Step 12: Trying to attach volume')
+    list_volume = Volume.list(self.userapiclient, id=self.volume_1.id)
+    self.assertEqual(list_volume[0].virtualmachineid, self.virtual_machine_1.id, 'Step 12: Check if volume state (attached) is reflected')
+    self.debug(('Step 12: volume id:%s successfully attached to vm id%s' % (self.volume_1.id, self.virtual_machine_1.id)))

@@ -1,0 +1,139 @@
+@data('host', 'CLUSTER', 'ZONE')
+@attr(tags=['advanced', 'advancedsg', 'basic'], required_hardware='false')
+def test_01_disable_enable_pool(self, value):
+    '\n\n                Test Steps:\n                =========\n                1. Deploy 2 VMs\n                2. Stop VM2\n                3. Disable storage pool SP1\n                4. Try to deploy a new VM, should fail\n                5. Start VM2 which was stopped, should run from same pool\n                6. Remove disabled Storage pool SP1, should fail\n                7. Enable storage pool SP1\n                8. Deploy new VM, VM4 - should succeed\n                9. Create and attach new disk to VM4\n                10. Disable storage pool SP1 again and enable new pool\n                11. Deploy new VM, VM5 - should succeed\n                12. Stop VM1 which is running from disabled pool\n                13. Migrate ROOT volume of VM1 to another enabled storage pool - should succeed\n                14. findStoragePoolsforMigration should not list the disabled pool\n                '
+    self.disabled_list = []
+    if (value == 'CLUSTER'):
+        other_scope = 'ZONE'
+        self.service_offering = self.service_offering_shared
+        self.disk_offering = self.disk_offering_shared
+    elif (value == 'ZONE'):
+        other_scope = 'CLUSTER'
+        self.service_offering = self.service_offering_shared
+        self.disk_offering = self.disk_offering_shared
+    else:
+        other_scope = None
+        self.service_offering = self.service_offering_local
+        self.disk_offering = self.disk_offering_local
+    try:
+        self.list_storage = StoragePool.list(self.userapiclient, scope=value)
+        count_st_pools = len(self.list_storage)
+        if (count_st_pools > 1):
+            self.debug(('Found % s storage pools, keeping one and disabling rest' % count_st_pools))
+            for pool in self.list_storage[1:]:
+                self.disabled_pool_1 = self.list_storage[1]
+                if (pool.state == 'Up'):
+                    self.debug(('Trying to disable storage %s' % pool.id))
+                    try:
+                        StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                        self.disabled_list.append(pool.id)
+                        self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                    except Exception as e:
+                        raise e
+        elif (count_st_pools == 1):
+            self.debug(('Only one % s wide storage found - will not be able to complete all tests' % value))
+        else:
+            self.fail(('No % s  storage pools found' % value))
+    except Exception as e:
+        raise e
+    if (value != 'host'):
+        try:
+            self.list_storage = StoragePool.list(self.userapiclient, scope=other_scope)
+            if self.list_storage:
+                for pool in self.list_storage:
+                    if (pool.state == 'Up'):
+                        self.debug(('Trying to disable storage % s' % pool.id))
+                        try:
+                            StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                            self.disabled_list.append(pool.id)
+                            self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                        except Exception as e:
+                            self.fail(("Couldn't disable storage % s" % pool.id))
+            else:
+                self.debug(('No % s wide storage pools found' % other_scope))
+        except Exception as e:
+            raise e
+    self.virtual_machine_1 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    self.virtual_machine_2 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_2.id, 'Running')
+    try:
+        self.debug('Step 2: Stopping one of the VMs')
+        self.virtual_machine_2.stop(self.userapiclient)
+        verify_vm_state(self, self.virtual_machine_2.id, 'Stopped')
+    except Exception as e:
+        self.fail(('Step 2: Failed to stop VM: %s' % e))
+    self.storage_pools_list = StoragePool.list(self.userapiclient, scope=value, state='Up')
+    self.storage_pool_1 = self.storage_pools_list[0]
+    try:
+        self.debug(('Step 3: Disabling Storage Pool: %s' % self.storage_pool_1.id))
+        StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=False)
+    except Exception as e:
+        self.debug(("Step 3: Couldn't disable pool %s" % e))
+    verify_pool_state(self, self.storage_pool_1.id, 'Disabled')
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    verify_vm_state(self, self.virtual_machine_2.id, 'Stopped')
+    self.debug('Step 4: Trying to deploy VM on disabled storage - should fail')
+    with self.assertRaises(Exception):
+        VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    try:
+        self.virtual_machine_2.start(self.userapiclient)
+        verify_vm_state(self, self.virtual_machine_2.id, 'Running')
+        verify_vm_storage_pool(self, self.virtual_machine_2.id, self.storage_pool_1.id)
+    except Exception as e:
+        self.fail(('Step 5: Failed to start VM: %s' % e))
+    self.debug('Step 6: Trying to remove disabled storage pool')
+    with self.assertRaises(Exception):
+        StoragePool.delete(self.userapiclient, self.storage_pool_1.id)
+    try:
+        self.debug(('Step 7: Enabling Storage Pool: %s' % self.storage_pool_1.id))
+        StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=True)
+    except Exception as e:
+        self.debug(("Step 7: Couldn't enable pool %s" % e))
+    verify_pool_state(self, self.storage_pool_1.id, 'Up')
+    self.virtual_machine_3 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_3.id, 'Running')
+    self.volume = Volume.create(self.userapiclient, services=self.testdata['volume'], diskofferingid=self.disk_offering.id, zoneid=self.zone.id)
+    list_volume = Volume.list(self.userapiclient, id=self.volume.id, accountid=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(validateList(list_volume)[0], PASS, ('Step 9: Check List volume response for volume %s' % self.volume.id))
+    self.assertEqual(list_volume[0].id, self.volume.id, ('Step 9: check list volume response for volume id:  %s' % self.volume.id))
+    self.debug(('Step 9: volume id %s got created successfully' % list_volume[0].id))
+    self.virtual_machine_3.attach_volume(self.userapiclient, self.volume)
+    list_volume = Volume.list(self.userapiclient, id=self.volume.id)
+    self.assertEqual(list_volume[0].virtualmachineid, self.virtual_machine_3.id, 'Step 9: Check if volume state (attached) is reflected')
+    self.debug(('Step 9: volume id:%s successfully attached to vm id%s' % (self.volume.id, self.virtual_machine_3.id)))
+    if self.disabled_pool_1:
+        newpoolid = self.disabled_pool_1.id
+    else:
+        self.fail('Step 9: Could not find a second storage pool to complete the remaining tests')
+    try:
+        StoragePool.update(self.userapiclient, id=newpoolid, enabled=True)
+    except Exception as e:
+        self.fail(('Step 10: Enable storage pool %s' % e), 'failed')
+    verify_pool_state(self, newpoolid, 'Up')
+    try:
+        self.debug(('Step 10: Disabling Storage Pool: %s' % self.storage_pool_1.id))
+        StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=False)
+        self.disabled_list.append(self.storage_pool_1.id)
+        self.debug(('Step 10: Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+    except Exception as e:
+        self.debug(("Step 10: Couldn't disable pool %s" % e))
+    verify_pool_state(self, self.storage_pool_1.id, 'Disabled')
+    self.virtual_machine_4 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_4.id, 'Running')
+    self.virtual_machine_1.stop(self.userapiclient)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
+    if (value != 'host'):
+        root_volume = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='ROOT')
+        try:
+            Volume.migrate(self.userapiclient, volumeid=root_volume[0].id, storageid=newpoolid)
+        except Exception as e:
+            raise e
+        list_volume = list_volumes(self.userapiclient, id=root_volume[0].id)
+        self.assertEqual(isinstance(list_volume, list), True, 'Step 13: Check list volumes response for valid list')
+    if (value != 'host'):
+        pools_for_migration = StoragePool.listForMigration(self.userapiclient, id=root_volume[0].id)
+        self.debug(('Step 14: List of pools suitable for migration: % s ' % pools_for_migration))
+        if pools_for_migration:
+            if (self.storage_pool_1 in pools_for_migration):
+                self.fail(('Step 14: Storage pool % s is supposed to be disabled and not suitable for migration,                     but found in the list of pools suitable for migration' % self.storage_pool_1.id))

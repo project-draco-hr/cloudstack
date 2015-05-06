@@ -1,0 +1,148 @@
+@data('host', 'CLUSTER', 'ZONE')
+@attr(tags=['advanced', 'advancedsg', 'debug', 'basic'], required_hardware='false')
+def test_01_maint_capacity_tags(self, value):
+    '\n\n        Test Steps:\n        ========\n\n        1. Deploy VM\n        2. Add storage to maintenance\n        3. Cancel Maintenance\n        4. Disable pool and then Start the VM - verify it runs off the same pool\n        5. Perform more VM operations - reboot\n        6. Add tags to pool\n        7. Create tagged offering with same tags\n        8. Enable pool\n        9. Deploy VM using the tagged offering\n        10. Disable storage pool again\n        11. Calculate current capacity used so far for the storage pool\n        12. Delete VM and check capacity is re-calculated in the disabled pool\n        13. Perform VM deploy - should fail since pool is disabled\n        14. Re-calculate Capacity, should not be altered\n\n\n            '
+    self.disabled_list = []
+    if (value == 'CLUSTER'):
+        other_scope = 'ZONE'
+        self.service_offering = self.service_offering_shared
+        self.disk_offering = self.disk_offering_shared
+    elif (value == 'ZONE'):
+        other_scope = 'CLUSTER'
+        self.service_offering = self.service_offering_shared
+        self.disk_offering = self.disk_offering_shared
+    else:
+        other_scope = None
+        self.service_offering = self.service_offering_local
+        self.disk_offering = self.disk_offering_local
+    try:
+        self.list_storage = StoragePool.list(self.userapiclient, scope=value)
+        count_st_pools = len(self.list_storage)
+        if (count_st_pools <= 1):
+            raise unittest.SkipTest(('Found 1 or less storage pools in % s wide scope- cannot proceed' % value))
+        elif (count_st_pools > 2):
+            for pool in self.list_storage[2:]:
+                if (pool.state == 'Up'):
+                    self.debug(('Trying to disable storage %s' % pool.id))
+                    try:
+                        StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                        self.disabled_list.append(pool.id)
+                        self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                    except Exception as e:
+                        raise e
+        elif (count_st_pools == 2):
+            for pool in self.list_storage:
+                if (pool.state != 'Up'):
+                    raise unittest.SkipTest(('Found storage pool % s not in Up State.. cannot proceed' % pool.id))
+    except Exception as e:
+        raise e
+    if (value != 'host'):
+        try:
+            self.list_storage = StoragePool.list(self.userapiclient, scope=other_scope)
+            if self.list_storage:
+                for pool in self.list_storage:
+                    if (pool.state == 'Up'):
+                        self.debug(('Trying to disable storage % s' % pool.id))
+                        try:
+                            StoragePool.update(self.userapiclient, id=pool.id, enabled=False)
+                            self.disabled_list.append(pool.id)
+                            self.debug(('Appended to list of disabled pools. List is now: % s ' % self.disabled_list))
+                        except Exception as e:
+                            self.fail(("Couldn't disable storage % s" % pool.id))
+            else:
+                self.debug(('No % s wide storage pools found' % other_scope))
+        except Exception as e:
+            raise e
+    self.debug('Step 1: Deploy VM')
+    self.virtual_machine_1 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    self.debug('Step 2: Adding storage to maintenance mode ')
+    root_volume = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='ROOT')[0]
+    list_volume = Volume.list(self.userapiclient, id=root_volume.id)
+    storage_id = list_volume[0].storageid
+    try:
+        StoragePool.enableMaintenance(self.userapiclient, id=storage_id)
+        self.debug('Step 2: Added % s to Maintenance mode')
+        self.maint_list.append(storage_id)
+    except Exception as e:
+        self.fail(('Step 2: Failed to add Storage pool % s to Maintenance mode' % storage_id))
+    verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
+    try:
+        StoragePool.cancelMaintenance(self.userapiclient, id=storage_id)
+        self.debug(('Step 3: Cancelled Maintenance mode for % s' % storage_id))
+        self.maint_list.remove(storage_id)
+    except Exception as e:
+        self.fail(("Step 3: Couldn't cancel Maintenance mode for storage % s " % storage_id))
+    try:
+        self.debug('Step 4: Starting VM after disabling pool')
+        self.list_storage = StoragePool.list(self.userapiclient, id=storage_id)
+        if (self.list_storage[0].state == 'Up'):
+            StoragePool.update(self.userapiclient, id=storage_id, enabled=False)
+            self.debug(('Step 4: Disabled pool % s' % storage_id))
+            self.disabled_list.append(storage_id)
+    except Exception as e:
+        raise e
+    list_vm = list_virtual_machines(self.userapiclient, account=self.account.name, domainid=self.account.domainid, id=self.virtual_machine_1.id)
+    vm = list_vm[0]
+    if (vm.state != 'Running'):
+        self.virtual_machine_1.start(self.userapiclient)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
+    verify_vm_storage_pool(self, self.virtual_machine_1.id, storage_id)
+    self.debug(('Step 5: Performing reboot of VM % s' % self.virtual_machine_1.id))
+    self.virtual_machine_1.reboot(self.userapiclient)
+    verify_vm_storage_pool(self, self.virtual_machine_1.id, storage_id)
+    try:
+        self.list_storage = StoragePool.list(self.userapiclient, id=storage_id)
+        if (self.list_storage[0].state == 'Disabled'):
+            StoragePool.update(self.userapiclient, id=storage_id, enabled=True)
+            self.disabled_list.remove(storage_id)
+    except Exception as e:
+        raise e
+    self.debug('Step 6: Adding tags to storage pool')
+    StoragePool.update(self.userapiclient, id=storage_id, tags='disable_prov')
+    self.testdata['service_offerings']['tags'] = 'disable_prov'
+    self.testdata['service_offerings']['storagetype'] = 'local'
+    self.tagged_so = ServiceOffering.create(self.userapiclient, self.testdata['service_offerings'])
+    self.testdata['service_offerings']['tags'] = ' '
+    self.testdata['service_offerings']['storagetype'] = ' '
+    self.cleanup.append(self.tagged_so)
+    try:
+        self.debug('Step 8: Enabling pool')
+        self.list_storage = StoragePool.list(self.userapiclient, id=storage_id)
+        if (self.list_storage[0].state == 'Disabled'):
+            StoragePool.update(self.userapiclient, id=storage_id, enabled=True)
+            self.disabled_list.remove(storage_id)
+    except Exception as e:
+        raise e
+    self.debug('Step 9: Deploying VM using tagged offering')
+    self.virtual_machine_2 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.tagged_so.id, zoneid=self.zone.id)
+    verify_vm_state(self, self.virtual_machine_2.id, 'Running')
+    verify_vm_storage_pool(self, self.virtual_machine_2.id, storage_id)
+    try:
+        self.list_storage = StoragePool.list(self.userapiclient, id=storage_id)
+        if (self.list_storage[0].state == 'Up'):
+            StoragePool.update(self.userapiclient, id=storage_id, enabled=False)
+            if (storage_id not in self.disabled_list):
+                self.disabled_list.append(storage_id)
+    except Exception as e:
+        raise e
+    if (value != 'host'):
+        capacity_type = 2
+    else:
+        capacity_type = 9
+    self.debug('Step 11: Getting current capacity...')
+    list_capacity_allocated = Capacities.list(self.userapiclient, fetchlatest='true', type=capacity_type)
+    capacity_1 = list_capacity_allocated[0].capacityused
+    self.debug(('Capacity 1: % s' % capacity_1))
+    self.debug('Step 12: Deleting Vm and re-calculating capacity')
+    self.virtual_machine_2.delete(self.userapiclient)
+    list_capacity_allocated = Capacities.list(self.userapiclient, fetchlatest='true', type=capacity_type)
+    capacity_2 = list_capacity_allocated[0].capacityused
+    self.debug(('Capacity 2: % s' % capacity_2))
+    self.assertGreater(capacity_1, capacity_2, 'Step 12: Capacity Used should be greater after VM delete although Storage is not enabled')
+    with self.assertRaises(Exception):
+        self.virtual_machine_3 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.tagged_so.id, zoneid=self.zone.id)
+    self.debug('Step 14: Checking capacity is not altered after deploy VM fails')
+    list_capacity_allocated = Capacities.list(self.userapiclient, fetchlatest='true', type=capacity_type)
+    capacity_3 = list_capacity_allocated[0].capacityused
+    self.assertEqual(capacity_2, capacity_3, "Step 14: Capacity Used shouldn't be altered since VM deployment failed")

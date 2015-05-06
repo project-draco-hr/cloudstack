@@ -1,0 +1,43 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestPathDisableStorage_Basic, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient)
+    cls.testdata['mode'] = cls.zone.networktype
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+    cls.testdata['template']['ostypeid'] = cls.template.ostypeid
+    if (cls.template == FAILED):
+        cls.fail(('get_template() failed to return template with description %s' % cls.testdata['ostype']))
+    cls._cleanup = []
+    cls.disabled_list = []
+    cls.testdata['template_2']['zoneid'] = cls.zone.id
+    cls.testdata['template_2']['ostypeid'] = cls.template.ostypeid
+    cls.hypervisor = testClient.getHypervisorInfo()
+    try:
+        cls.debug('Creating account')
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], admin=True)
+        cls._cleanup.append(cls.account)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    cls.service_offering_shared = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'])
+    cls._cleanup.append(cls.service_offering_shared)
+    cls.disk_offering_shared = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'])
+    cls.resized_disk_offering = DiskOffering.create(cls.apiclient, cls.testdata['resized_disk_offering'])
+    cls._cleanup.append(cls.disk_offering_shared)
+    if cls.zone.localstorageenabled:
+        cls.testdata['service_offerings']['storagetype'] = 'local'
+        cls.service_offering_local = ServiceOffering.create(cls.apiclient, cls.testdata['service_offerings'])
+        cls._cleanup.append(cls.service_offering_local)
+        cls.testdata['disk_offering']['storagetype'] = 'local'
+        cls.disk_offering_local = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'])
+        cls._cleanup.append(cls.disk_offering_local)
+        cls.testdata['disk_offering']['storagetype'] = ' '
+        cls.testdata['service_offerings']['storagetype'] = ' '
+    else:
+        cls.debug('No local storage found')
+    cls.userapiclient = testClient.getUserApiClient(UserName=cls.account.name, DomainName=cls.account.domain)
+    response = User.login(cls.userapiclient, username=cls.account.name, password=cls.testdata['account']['password'])
+    assert (response.sessionkey is not None)
