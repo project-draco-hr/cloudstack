@@ -1,0 +1,68 @@
+{
+  final VirtualMachineTO vmSpec=Mockito.mock(VirtualMachineTO.class);
+  final com.cloud.host.Host host=Mockito.mock(com.cloud.host.Host.class);
+  final boolean executeInSequence=false;
+  final StartCommand command=new StartCommand(vmSpec,host,executeInSequence);
+  final KVMStoragePoolManager storagePoolMgr=Mockito.mock(KVMStoragePoolManager.class);
+  final LibvirtUtilitiesHelper libvirtUtilitiesHelper=Mockito.mock(LibvirtUtilitiesHelper.class);
+  final Connect conn=Mockito.mock(Connect.class);
+  final LibvirtVMDef vmDef=Mockito.mock(LibvirtVMDef.class);
+  final VirtualRoutingResource virtRouterResource=Mockito.mock(VirtualRoutingResource.class);
+  final NicTO nic=Mockito.mock(NicTO.class);
+  final NicTO[] nics=new NicTO[]{nic};
+  final String vmName="Test";
+  final String controlIp="169.122.10.10";
+  when(libvirtComputingResource.getStoragePoolMgr()).thenReturn(storagePoolMgr);
+  when(vmSpec.getNics()).thenReturn(nics);
+  when(vmSpec.getType()).thenReturn(VirtualMachine.Type.DomainRouter);
+  when(vmSpec.getName()).thenReturn(vmName);
+  when(libvirtComputingResource.createVMFromSpec(vmSpec)).thenReturn(vmDef);
+  when(libvirtComputingResource.getLibvirtUtilitiesHelper()).thenReturn(libvirtUtilitiesHelper);
+  try {
+    when(libvirtUtilitiesHelper.getConnectionByType(vmDef.getHvsType())).thenReturn(conn);
+    doNothing().when(libvirtComputingResource).createVbd(conn,vmSpec,vmName,vmDef);
+  }
+ catch (  final LibvirtException e) {
+    fail(e.getMessage());
+  }
+catch (  final InternalErrorException e) {
+    fail(e.getMessage());
+  }
+catch (  final URISyntaxException e) {
+    fail(e.getMessage());
+  }
+  when(storagePoolMgr.connectPhysicalDisksViaVmSpec(vmSpec)).thenReturn(true);
+  try {
+    doNothing().when(libvirtComputingResource).createVifs(vmSpec,vmDef);
+    when(libvirtComputingResource.startVM(conn,vmName,vmDef.toString())).thenReturn("SUCCESS");
+    when(nic.isSecurityGroupEnabled()).thenReturn(true);
+    when(nic.getIsolationUri()).thenReturn(new URI("ec2://test"));
+    when(vmSpec.getBootArgs()).thenReturn("ls -lart");
+    when(libvirtComputingResource.passCmdLine(vmName,vmSpec.getBootArgs())).thenReturn(true);
+    when(nic.getIp()).thenReturn(controlIp);
+    when(nic.getType()).thenReturn(TrafficType.Control);
+    when(libvirtComputingResource.getVirtRouterResource()).thenReturn(virtRouterResource);
+    when(virtRouterResource.connect(controlIp,1,5000)).thenReturn(true);
+  }
+ catch (  final InternalErrorException e) {
+    fail(e.getMessage());
+  }
+catch (  final LibvirtException e) {
+    fail(e.getMessage());
+  }
+catch (  final URISyntaxException e) {
+    fail(e.getMessage());
+  }
+  final LibvirtRequestWrapper wrapper=LibvirtRequestWrapper.getInstance();
+  assertNotNull(wrapper);
+  final Answer answer=wrapper.execute(command,libvirtComputingResource);
+  assertTrue(answer.getResult());
+  verify(libvirtComputingResource,times(1)).getStoragePoolMgr();
+  verify(libvirtComputingResource,times(1)).getLibvirtUtilitiesHelper();
+  try {
+    verify(libvirtUtilitiesHelper,times(1)).getConnectionByType(vmDef.getHvsType());
+  }
+ catch (  final LibvirtException e) {
+    fail(e.getMessage());
+  }
+}

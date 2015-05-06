@@ -1,9 +1,11 @@
 {
-  final VirtualMachineTO vmSpec=cmd.getVirtualMachine();
-  vmSpec.setVncAddr(cmd.getHostIp());
+  final VirtualMachineTO vmSpec=command.getVirtualMachine();
+  vmSpec.setVncAddr(command.getHostIp());
   final String vmName=vmSpec.getName();
   LibvirtVMDef vm=null;
   DomainState state=DomainState.VIR_DOMAIN_SHUTOFF;
+  final KVMStoragePoolManager storagePoolMgr=libvirtComputingResource.getStoragePoolMgr();
+  final LibvirtUtilitiesHelper libvirtUtilitiesHelper=libvirtComputingResource.getLibvirtUtilitiesHelper();
   Connect conn=null;
   try {
     final NicTO[] nics=vmSpec.getNics();
@@ -12,19 +14,19 @@
         nic.setPxeDisable(true);
       }
     }
-    vm=createVMFromSpec(vmSpec);
-    conn=LibvirtConnection.getConnectionByType(vm.getHvsType());
-    createVbd(conn,vmSpec,vmName,vm);
-    if (!_storagePoolMgr.connectPhysicalDisksViaVmSpec(vmSpec)) {
-      return new StartAnswer(cmd,"Failed to connect physical disks to host");
+    vm=libvirtComputingResource.createVMFromSpec(vmSpec);
+    conn=libvirtUtilitiesHelper.getConnectionByType(vm.getHvsType());
+    libvirtComputingResource.createVbd(conn,vmSpec,vmName,vm);
+    if (!storagePoolMgr.connectPhysicalDisksViaVmSpec(vmSpec)) {
+      return new StartAnswer(command,"Failed to connect physical disks to host");
     }
-    createVifs(vmSpec,vm);
+    libvirtComputingResource.createVifs(vmSpec,vm);
     s_logger.debug("starting " + vmName + ": "+ vm.toString());
-    startVM(conn,vmName,vm.toString());
+    libvirtComputingResource.startVM(conn,vmName,vm.toString());
     for (    final NicTO nic : nics) {
       if (nic.isSecurityGroupEnabled() || nic.getIsolationUri() != null && nic.getIsolationUri().getScheme().equalsIgnoreCase(IsolationType.Ec2.toString())) {
         if (vmSpec.getType() != VirtualMachine.Type.User) {
-          configureDefaultNetworkRulesForSystemVm(conn,vmName);
+          libvirtComputingResource.configureDefaultNetworkRulesForSystemVm(conn,vmName);
           break;
         }
  else {
@@ -40,7 +42,7 @@
  else {
             secIpsStr="0:";
           }
-          default_network_rules(conn,vmName,nic,vmSpec.getId(),secIpsStr);
+          libvirtComputingResource.defaultNetworkRules(conn,vmName,nic,vmSpec.getId(),secIpsStr);
         }
       }
     }
@@ -53,40 +55,41 @@
         }
       }
       for (int count=0; count < 30; count++) {
-        passCmdLine(vmName,vmSpec.getBootArgs());
-        final boolean result=_virtRouterResource.connect(controlIp,1,5000);
+        libvirtComputingResource.passCmdLine(vmName,vmSpec.getBootArgs());
+        final VirtualRoutingResource virtRouterResource=libvirtComputingResource.getVirtRouterResource();
+        final boolean result=virtRouterResource.connect(controlIp,1,5000);
         if (result) {
           break;
         }
       }
     }
     state=DomainState.VIR_DOMAIN_RUNNING;
-    return new StartAnswer(cmd);
+    return new StartAnswer(command);
   }
  catch (  final LibvirtException e) {
     s_logger.warn("LibvirtException ",e);
     if (conn != null) {
-      handleVmStartFailure(conn,vmName,vm);
+      libvirtComputingResource.handleVmStartFailure(conn,vmName,vm);
     }
-    return new StartAnswer(cmd,e.getMessage());
+    return new StartAnswer(command,e.getMessage());
   }
 catch (  final InternalErrorException e) {
     s_logger.warn("InternalErrorException ",e);
     if (conn != null) {
-      handleVmStartFailure(conn,vmName,vm);
+      libvirtComputingResource.handleVmStartFailure(conn,vmName,vm);
     }
-    return new StartAnswer(cmd,e.getMessage());
+    return new StartAnswer(command,e.getMessage());
   }
 catch (  final URISyntaxException e) {
     s_logger.warn("URISyntaxException ",e);
     if (conn != null) {
-      handleVmStartFailure(conn,vmName,vm);
+      libvirtComputingResource.handleVmStartFailure(conn,vmName,vm);
     }
-    return new StartAnswer(cmd,e.getMessage());
+    return new StartAnswer(command,e.getMessage());
   }
  finally {
     if (state != DomainState.VIR_DOMAIN_RUNNING) {
-      _storagePoolMgr.disconnectPhysicalDisksViaVmSpec(vmSpec);
+      storagePoolMgr.disconnectPhysicalDisksViaVmSpec(vmSpec);
     }
   }
 }
