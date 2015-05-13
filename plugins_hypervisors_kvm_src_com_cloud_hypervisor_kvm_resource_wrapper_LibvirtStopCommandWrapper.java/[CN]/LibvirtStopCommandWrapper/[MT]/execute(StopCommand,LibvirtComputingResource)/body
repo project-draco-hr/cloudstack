@@ -1,0 +1,37 @@
+{
+  final String vmName=command.getVmName();
+  final LibvirtUtilitiesHelper libvirtUtilitiesHelper=libvirtComputingResource.getLibvirtUtilitiesHelper();
+  if (command.checkBeforeCleanup()) {
+    try {
+      final Connect conn=libvirtUtilitiesHelper.getConnectionByVmName(vmName);
+      final Domain vm=conn.domainLookupByName(command.getVmName());
+      if (vm != null && vm.getInfo().state == DomainState.VIR_DOMAIN_RUNNING) {
+        return new StopAnswer(command,"vm is still running on host",false);
+      }
+    }
+ catch (    final Exception e) {
+      s_logger.debug("Failed to get vm status in case of checkboforecleanup is true",e);
+    }
+  }
+  try {
+    final Connect conn=libvirtUtilitiesHelper.getConnectionByVmName(vmName);
+    final List<DiskDef> disks=libvirtComputingResource.getDisks(conn,vmName);
+    final List<InterfaceDef> ifaces=libvirtComputingResource.getInterfaces(conn,vmName);
+    libvirtComputingResource.destroyNetworkRulesForVM(conn,vmName);
+    final String result=libvirtComputingResource.stopVM(conn,vmName);
+    if (result == null) {
+      for (      final DiskDef disk : disks) {
+        libvirtComputingResource.cleanupDisk(disk);
+      }
+      for (      final InterfaceDef iface : ifaces) {
+        for (        final VifDriver vifDriver : libvirtComputingResource.getAllVifDrivers()) {
+          vifDriver.unplug(iface);
+        }
+      }
+    }
+    return new StopAnswer(command,result,true);
+  }
+ catch (  final LibvirtException e) {
+    return new StopAnswer(command,e.getMessage(),false);
+  }
+}
