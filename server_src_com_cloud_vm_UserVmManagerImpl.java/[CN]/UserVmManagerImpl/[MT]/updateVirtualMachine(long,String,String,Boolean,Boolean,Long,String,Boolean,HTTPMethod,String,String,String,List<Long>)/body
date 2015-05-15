@@ -1,7 +1,7 @@
 {
   UserVmVO vm=_vmDao.findById(id);
   if (vm == null) {
-    throw new CloudRuntimeException("Unable to find virual machine with id " + id);
+    throw new CloudRuntimeException("Unable to find virtual machine with id " + id);
   }
   if (instanceName != null) {
     VMInstanceVO vmInstance=_vmInstanceDao.findVMByInstanceName(instanceName);
@@ -46,6 +46,40 @@
   }
   if (isDynamicallyScalable == null) {
     isDynamicallyScalable=vm.isDynamicallyScalable();
+  }
+  boolean isVMware=(vm.getHypervisorType() == HypervisorType.VMware);
+  if (securityGroupIdList != null && isVMware) {
+    throw new InvalidParameterValueException("Security group feature is not supported for vmWare hypervisor");
+  }
+ else {
+    Network defaultNetwork=null;
+    try {
+      DataCenterVO zone=_dcDao.findById(vm.getDataCenterId());
+      if (zone.getNetworkType() == NetworkType.Basic) {
+        defaultNetwork=_networkModel.getExclusiveGuestNetwork(zone.getId());
+      }
+ else       if (zone.isSecurityGroupEnabled()) {
+        NicVO defaultNic=_nicDao.findDefaultNicForVM(vm.getId());
+        if (defaultNic != null) {
+          defaultNetwork=_networkDao.findById(defaultNic.getNetworkId());
+        }
+      }
+    }
+ catch (    InvalidParameterValueException e) {
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug(e.getMessage(),e);
+      }
+      defaultNetwork=_networkModel.getDefaultNetworkForVm(id);
+    }
+    if (securityGroupIdList != null && _networkModel.isSecurityGroupSupportedInNetwork(defaultNetwork) && _networkModel.canAddDefaultSecurityGroup()) {
+      if (vm.getState() == State.Stopped) {
+        _securityGroupMgr.removeInstanceFromGroups(id);
+        _securityGroupMgr.addInstanceToGroups(id,securityGroupIdList);
+      }
+ else {
+        throw new InvalidParameterValueException("Virtual machine must be stopped prior to update security groups ");
+      }
+    }
   }
   if (hostName != null) {
     checkNameForRFCCompliance(hostName);
