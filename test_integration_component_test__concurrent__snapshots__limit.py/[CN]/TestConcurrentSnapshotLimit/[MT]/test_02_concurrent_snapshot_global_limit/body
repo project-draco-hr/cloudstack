@@ -1,0 +1,25 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_02_concurrent_snapshot_global_limit(self):
+    ' Test if global value concurrent.snapshots.threshold.perhost\n            value is respected\n            This is negative test cases and tests no more concurrent\n            snapshots as specified in global value are created\n        # 1. Read the global value for concurrent.snapshots.threshold.perhost\n        # 2. If the value is Null, skip the test case\n        # 3. Create an account and a VM in it\n        # 4. Create more concurrent snapshots than specified in\n             global allowed limit\n        # 5. Verify that exception is raised while creating snapshots\n        '
+    config = Configurations.list(self.apiclient, name='concurrent.snapshots.threshold.perhost')
+    self.assertEqual(isinstance(config, list), True, 'concurrent.snapshots.threshold.perhost should be present                    in global config')
+    if config[0].value:
+        concurrentSnapshots = int(config[0].value)
+    else:
+        self.skipTest('Skipping tests as the config value                     concurrent.snapshots.threshold.perhost is Null')
+    account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    userapiclient = self.testClient.getUserApiClient(UserName=account.name, DomainName=account.domain)
+    virtual_machine = VirtualMachine.create(userapiclient, self.testdata['small'], templateid=self.template.id, accountid=account.name, domainid=account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    volumes = Volume.list(self.apiclient, virtualmachineid=virtual_machine.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(volumes)[0], PASS, 'Volumes list validation failed')
+    root_volume = volumes[0]
+    threads = []
+    for i in range(0, (concurrentSnapshots + 1)):
+        thread = Thread(target=self.createSnapshot, args=(self.apiclient, root_volume.id))
+        threads.append(thread)
+        thread.start()
+    for thread in threads:
+        thread.join()
+    self.assertTrue(self.exceptionOccured, 'Concurrent snapshots                more than concurrent.snapshots.threshold.perhost                value successfully created')
+    return

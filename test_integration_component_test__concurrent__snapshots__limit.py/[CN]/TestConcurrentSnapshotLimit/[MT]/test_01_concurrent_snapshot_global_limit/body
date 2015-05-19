@@ -1,0 +1,29 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_01_concurrent_snapshot_global_limit(self):
+    ' Test if global value concurrent.snapshots.threshold.perhost\n            value respected\n            This is positive test cases and tests if we are able to create\n            as many snapshots mentioned in global value\n        # 1. Create an account and a VM in it\n        # 2. Read the global value for concurrent.snapshots.threshold.perhost\n        # 3. If the value is Null, create at least 10 concurrent snapshots\n             and verify they are created successfully\n        # 4. Else, create as many snapshots specified in the global value, and\n             verify they are created successfully\n        '
+    account = Account.create(self.apiclient, self.testdata['account'], domainid=self.domain.id)
+    self.cleanup.append(account)
+    userapiclient = self.testClient.getUserApiClient(UserName=account.name, DomainName=account.domain)
+    virtual_machine = VirtualMachine.create(userapiclient, self.testdata['small'], templateid=self.template.id, accountid=account.name, domainid=account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    concurrentSnapshots = 10
+    volumes = Volume.list(self.apiclient, virtualmachineid=virtual_machine.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(volumes)[0], PASS, 'Volumes list validation failed')
+    root_volume = volumes[0]
+    config = Configurations.list(self.apiclient, name='concurrent.snapshots.threshold.perhost')
+    self.assertEqual(isinstance(config, list), True, 'concurrent.snapshots.threshold.perhost should be present                    in global config')
+    if config[0].value:
+        concurrentSnapshots = int(config[0].value)
+    self.debug(('concurrent Snapshots: %s' % concurrentSnapshots))
+    threads = []
+    for i in range(0, concurrentSnapshots):
+        thread = Thread(target=Snapshot.create, args=(self.apiclient, root_volume.id))
+        threads.append(thread)
+        thread.start()
+    for thread in threads:
+        thread.join()
+    snapshots = Snapshot.list(self.apiclient, volumeid=root_volume.id, listall=True)
+    self.assertEqual(validateList(snapshots)[0], PASS, 'Snapshots list validation failed')
+    self.assertEqual(len(snapshots), concurrentSnapshots, ('There should be exactly %s snapshots present' % concurrentSnapshots))
+    for snapshot in snapshots:
+        self.assertEqual(str(snapshot.state).lower(), BACKED_UP, ('Snapshot state should be backedUp but it is                            %s' % snapshot.state))
+    return
