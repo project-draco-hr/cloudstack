@@ -1,0 +1,45 @@
+{
+  GetVmIpAddressCommand cmd=new GetVmIpAddressCommand(vmName,networkCidr,isWindows);
+  boolean decrementCount=true;
+  try {
+    s_logger.debug("Trying for vm " + vmId + " nic Id "+ nicId+ " ip retrieval ...");
+    Answer answer=_agentMgr.send(hostId,cmd);
+    NicVO nic=_nicDao.findById(nicId);
+    if (answer.getResult()) {
+      String vmIp=answer.getDetails();
+      if (NetUtils.isValidIp(vmIp)) {
+        if (nic != null) {
+          nic.setIp4Address(vmIp);
+          _nicDao.update(nicId,nic);
+          s_logger.debug("Vm " + vmId + " IP "+ vmIp+ " got retrieved successfully");
+          vmIdCountMap.remove(nicId);
+          decrementCount=false;
+          ActionEventUtils.onActionEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,Domain.ROOT_DOMAIN,EventTypes.EVENT_NETWORK_EXTERNAL_DHCP_VM_IPFETCH,"VM " + vmId + " nic id "+ nicId+ " ip address "+ vmIp+ " got fetched successfully");
+        }
+      }
+    }
+ else {
+      if (nic.getIp4Address() != null) {
+        nic.setIp4Address(null);
+        _nicDao.update(nicId,nic);
+      }
+      if (answer.getDetails() != null) {
+        s_logger.debug("Failed to get vm ip for Vm " + vmId + answer.getDetails());
+      }
+    }
+  }
+ catch (  OperationTimedoutException e) {
+    s_logger.warn("Timed Out",e);
+  }
+catch (  AgentUnavailableException e) {
+    s_logger.warn("Agent Unavailable ",e);
+  }
+ finally {
+    if (decrementCount) {
+      VmAndCountDetails vmAndCount=vmIdCountMap.get(nicId);
+      vmAndCount.decrementCount();
+      s_logger.debug("Ip is not retrieved for VM " + vmId + " nic "+ nicId+ " ... decremented count to "+ vmAndCount.getRetrievalCount());
+      vmIdCountMap.put(nicId,vmAndCount);
+    }
+  }
+}

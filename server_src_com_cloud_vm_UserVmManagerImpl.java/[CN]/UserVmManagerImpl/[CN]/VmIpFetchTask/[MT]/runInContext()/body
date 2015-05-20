@@ -1,0 +1,37 @@
+{
+  GlobalLock scanLock=GlobalLock.getInternLock("vmIpFetch");
+  try {
+    if (scanLock.lock(ACQUIRE_GLOBAL_LOCK_TIMEOUT_FOR_COOPERATION)) {
+      try {
+        for (        Entry<Long,VmAndCountDetails> entry : vmIdCountMap.entrySet()) {
+          long nicId=entry.getKey();
+          VmAndCountDetails vmIdAndCount=entry.getValue();
+          long vmId=vmIdAndCount.getVmId();
+          if (vmIdAndCount.getRetrievalCount() <= 0) {
+            vmIdCountMap.remove(nicId);
+            s_logger.debug("Vm " + vmId + " nic "+ nicId+ " count is zero .. removing vm nic from map ");
+            ActionEventUtils.onActionEvent(User.UID_SYSTEM,Account.ACCOUNT_ID_SYSTEM,Domain.ROOT_DOMAIN,EventTypes.EVENT_NETWORK_EXTERNAL_DHCP_VM_IPFETCH,"VM " + vmId + " nic id "+ nicId+ " ip addr fetch failed ");
+            continue;
+          }
+          UserVm userVm=_vmDao.findById(vmId);
+          VMInstanceVO vmInstance=_vmInstanceDao.findById(vmId);
+          NicVO nicVo=_nicDao.findById(nicId);
+          NetworkVO network=_networkDao.findById(nicVo.getNetworkId());
+          VirtualMachineProfile vmProfile=new VirtualMachineProfileImpl(userVm);
+          VirtualMachine vm=vmProfile.getVirtualMachine();
+          boolean isWindows=_guestOSCategoryDao.findById(_guestOSDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
+          _vmIpFetchThreadExecutor.execute(new VmIpAddrFetchThread(vmId,nicId,vmInstance.getInstanceName(),isWindows,vm.getHostId(),network.getCidr()));
+        }
+      }
+ catch (      Exception e) {
+        s_logger.error("Caught the Exception in VmIpFetchTask",e);
+      }
+ finally {
+        scanLock.unlock();
+      }
+    }
+  }
+  finally {
+    scanLock.releaseRef();
+  }
+}
