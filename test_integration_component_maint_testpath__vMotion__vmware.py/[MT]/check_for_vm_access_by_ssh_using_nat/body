@@ -1,0 +1,31 @@
+def check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype=None):
+    '\n    This function allocated a public ip, and creates a nat rule for the VM\n    Then tries to ssh into the VM using that public IP\n    This function again is to check VM accessibility post migration\n    '
+    if (ostype == 'windows'):
+        self.debug("SSH check on the VM can't be done as it is a windows VM")
+        return
+    src_nat_ip_addrs = list_publicIP(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(src_nat_ip_addrs, list), True, 'Check list response returns a valid list')
+    src_nat_ip_addr = src_nat_ip_addrs[0]
+    firewall_rule = FireWallRule.create(self.apiclient, ipaddressid=src_nat_ip_addr.id, protocol=self.testdata['natrule']['protocol'], cidrlist=['0.0.0.0/0'], startport=self.testdata['natrule']['publicport'], endport=self.testdata['natrule']['publicport'])
+    nat_rule = NATRule.create(self.apiclient, virtual_machine_1, self.testdata['natrule'], src_nat_ip_addr.id)
+    list_nat_rule_response = list_nat_rules(self.apiclient, id=nat_rule.id)
+    self.assertEqual(isinstance(list_nat_rule_response, list), True, 'Check list response returns a valid list')
+    self.assertNotEqual(len(list_nat_rule_response), 0, 'Check Port Forwarding Rule is created')
+    self.assertEqual(list_nat_rule_response[0].id, nat_rule.id, 'Check Correct Port forwarding Rule is returned')
+    try:
+        self.debug(('SSHing into VM with IP address %s with NAT IP %s' % (virtual_machine_1.ipaddress, src_nat_ip_addr.ipaddress)))
+        virtual_machine_1.get_ssh_client(src_nat_ip_addr.ipaddress)
+        vm_response = VirtualMachine.list(self.apiclient, id=virtual_machine_1.id)
+        if (vm_response[0].state != 'Running'):
+            self.fail(('State of VM : %s is not found to be Running' % str(virtual_machine_1.ipaddress)))
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (virtual_machine_1.ipaddress, e)))
+    try:
+        nat_rule.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('NAT Rule Deletion Failed: %s' % e))
+    try:
+        firewall_rule.delete(self.apiclient)
+    except Exception as e:
+        self.fail(('Firewall Rule Deletion Failed: %s' % e))
+    return

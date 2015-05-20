@@ -1,0 +1,271 @@
+@data(('VMFS', 'within_cluster', 'linux'), ('VMFS', 'within_cluster', 'windows'), ('VMFS', 'across_cluster', 'linux'), ('VMFS', 'across_cluster', 'windows'), ('NetworkFilesystem', 'within_cluster', 'linux'), ('NetworkFilesystem', 'within_cluster', 'windows'), ('NetworkFilesystem', 'across_cluster', 'linux'), ('NetworkFilesystem', 'across_cluster', 'windows'))
+@unpack
+@attr(tags=['advanced', 'basic', 'vmware', 'vmfs', 'zwps'], required_hardware='true')
+def test_03_vm_and_volumes_live_migration_for_vmware_vmfs_across_zwps_cwps(self, first_value, second_value, third_value):
+    '\n        This Test Path tests vMotion for NFS as well as VMFS within cluster,\n        across cluster and across zones and for both windows and linux VMs using DATA DRIVEN TESTING\n        1. Migrate VM from one host to another\n        2. Migrate VMs ROOT volume from one storage to another\n        3. Migrate VM to another Host and ROOT volume to another storage\n        4. Attach a data disk to VM, migrate VM to a different host and its volumes to different pools.\n        5. Upload a volume, attach it to VM, migrate VM to a different host and its volumes to different pools.\n        6. Create volume snapshots on all volumes , migrate VM to a different host and its volumes to different pools.\n        7. Resize the data disk, migrate VM to a different host and its volumes to different pools.\n        8. Restore the VM, migrate VM to a different host and its volumes to different pools.\n        9. Detach the data disk, create another VM, attach the data disk to that VM and then migrate that VM and its volumes.\n        10. Detach upload volume, attach it to the 2nd VM, and then migrate that VM and its volumes.\n        11. Create snapshots for all volumes of 2nd vM, then migrate VM and its volumes.\n\n        After each storage migration step, following validation is done\n        a) Create VM snapshots to check data integrity - @method used : VmSnapshotToCheckDataIntegrity(self, vm)\n        b) Login to the Host/storage pool and check for the VMDK and VMX files for VM and its volumes - @method used : check_files(self, vm, destinationHost)\n        c) Check for VM accessibility by sshing to the VM - @method used : check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1)\n        '
+    storage_type = first_value
+    storage_scope = second_value
+    ostype = third_value
+    if ((ostype == 'windows') and (not self.windows_template)):
+        self.skipTest('Windows template is not present, so skipping this test')
+    elif (ostype == 'windows'):
+        template_id = self.windows_template.id
+    else:
+        template_id = self.template.id
+    scope = 'ZONE'
+    list_zwps_pools = list_storage_pools(self.apiclient, scope='ZONE', listall=True)
+    zwps_pools = []
+    for pool in list_zwps_pools:
+        if (pool.type == storage_type):
+            zwps_pools.append(pool)
+    if (len(zwps_pools) < 2):
+        raise self.skipTest(("The setup doesn't have enough zone wide primary storages of %s type, we need atleast 2" % storage_type))
+    count_host = 0
+    count_pool = 0
+    pool_vmfs = []
+    if (len(self.list_vmware_clusters) < 2):
+        if (storage_scope == 'across_cluster'):
+            raise self.skipTest("The setup doesn't have more than one cluster, so can't execute these set of tests")
+    if (len(self.list_vmware_clusters) >= 2):
+        for cluster in self.list_vmware_clusters:
+            if (len(list_hosts(self.apiclient, clusterid=cluster.id)) >= 1):
+                count_host += 1
+            pools = list_storage_pools(self.apiclient, clusterid=cluster.id)
+            for pool in pools:
+                if (pool.storage is storage_type):
+                    pool_vmfs.append(pool)
+            if (len(pool_vmfs) >= 1):
+                count_pool += 1
+            pool_vmfs = []
+    if (count_host < (2 | count_pool) < 2):
+        raise self.skipTest("The setup doesn't have enough pools or enough hosts. To run these tests the setup must have atleast 2 clusters, each having min 1 host and 1 vmfs storage pools")
+    self.debug('---------------This is the test no 1--------------')
+    '\n        Create a VM, live migrate the VM\n        '
+    vm = 'virtual_machine2'
+    virtual_machine_1 = self.deploy_virtual_machine(self.service_offering.id, vm, template_id)
+    self.cleanup.append(virtual_machine_1)
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    destinationHost = self.GetDestinationHost(vm.hostid, virtual_machine_1, storage_scope)
+    if (storage_scope == 'different_cluster'):
+        vol_list = []
+        destinationPools = []
+        vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+        VmSnapshotToCheckDataIntegrity(self, vm)
+        check_files(self, vm, destinationHost)
+        check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    else:
+        vm = MigrateVm(self, virtual_machine_1, destinationHost)
+        check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 2--------------')
+    "\n        Migrate the ROOT Volume to zwps\n        Can't migrate a volume to another cluster, so won't run this test in that case\n        "
+    if (storage_scope != 'across_cluster'):
+        vol_list = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)
+        root_vol = vol_list[0]
+        destinationPool = GetDestinationStoragePool(self, root_vol.storage, storage_scope, storage_type)
+        islive = True
+        MigrateDataVolume(self, root_vol, destinationPool, islive)
+        VmSnapshotToCheckDataIntegrity(self, vm)
+        check_files(self, vm, destinationHost)
+        check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 3--------------')
+    '\n        Migrate the VM and ROOT volume to zwps\n        '
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 4--------------')
+    '\n        Add a data disk and migrate vm, data disk to zwps and root disk to cwps\n        '
+    data_disk_1 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    self.debug(('Created volume with ID: %s' % data_disk_1.id))
+    virtual_machine_1.attach_volume(self.apiclient, data_disk_1)
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)[0]
+    vol_list.append(data_vol)
+    destinationPool = GetDestinationStoragePool(self, data_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 5--------------')
+    '\n        Upload a Volume, Attach it to the VM, Migrate all the volumes and VM.\n        1st data disk to zwps\n        2nd data disk to cwps\n        root disk to zwps\n        '
+    self.testdata['configurableData']['upload_volume']['format'] = 'OVA'
+    self.testdata['configurableData']['upload_volume']['url'] = 'http://nfs1.lab.vmops.com/templates/burbank-systemvm-08012012.ova'
+    upload_volume = Volume.upload(self.apiclient, self.testdata['configurableData']['upload_volume'], account=self.account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    upload_volume.wait_for_upload(self.apiclient)
+    virtual_machine_1.attach_volume(self.apiclient, upload_volume)
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    self.debug(('..............these are the volumes %s ' % vol_list))
+    self.debug(('..............these are the pools %s ' % destinationPools))
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('........................checking for files before taking snapshot ..................................')
+    check_files(self, vm, destinationHost)
+    self.debug('---------------This is the test no 6--------------')
+    '\n        Create snapshots on all the volumes, Migrate all the volumes and VM.\n        root disk to cwps\n        data1 to cwps\n        data2 to zwps\n        '
+    vol_for_snap = list_volumes(self.apiclient, virtualmachineid=vm.id, listall=True)
+    for vol in vol_for_snap:
+        snapshot = Snapshot.create(self.apiclient, volume_id=vol.id)
+        snapshot.validateState(self.apiclient, snapshotstate='backedup')
+    self.debug('..................................checking for files just after taking snapshot...................................')
+    check_files(self, vm, destinationHost)
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('........................checking for files after taking snapshot and migrating VMs........................')
+    check_files(self, vm, destinationHost)
+    self.debug('---------------This is the test no 7--------------')
+    '\n        Resize the data volume , Migrate all the volumes and VM.\n        root disk to zwps\n        data1 to zwps\n        data2 to zwps\n        '
+    data_disk_1.resize(self.apiclient, diskofferingid=self.resized_disk_offering.id)
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 8--------------')
+    '\n        Restore the VM , Migrate all the volumes and VM.\n        root to cpws\n        data1 to zwps\n        data2 to cwps\n        '
+    virtual_machine_1.restore(self.apiclient)
+    virtual_machine_1.getState(self.apiclient, 'Running')
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 9--------------')
+    '\n        Detach the Data disk, Deploy another VM, attach the data disk and migrate.\n        root to zwps\n        data to cwps\n        '
+    virtual_machine_1.detach_volume(self.apiclient, data_disk_1)
+    vm = 'virtual_machine3'
+    virtual_machine_2 = self.deploy_virtual_machine(self.service_offering.id, vm, self.template.id)
+    self.cleanup.append(virtual_machine_2)
+    virtual_machine_2.attach_volume(self.apiclient, data_disk_1)
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_2.id, listall=True)[0]
+    destinationHost = self.GetDestinationHost(vm.hostid, virtual_machine_2, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=virtual_machine_2.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=virtual_machine_2.id, type='DATADISK', listall=True)[0]
+    vol_list.append(data_vol)
+    destinationPool = GetDestinationStoragePool(self, data_vol.storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)
+    self.debug('---------------This is the test no 10--------------')
+    '\n        Detach the uploaded volume, attach it to another vm and migrate.\n        root to cwps\n        data1 to zwps\n        data2 to zwps\n        '
+    virtual_machine_1.detach_volume(self.apiclient, upload_volume)
+    virtual_machine_2.attach_volume(self.apiclient, upload_volume)
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)
+    self.debug('---------------This is the test no 11--------------')
+    '\n        Create snapshots on all the volumes, Migrate all the volumes and VM.\n        root to zwps\n        data1 to cwps\n        data2 to zwps\n        '
+    vol_for_snap = list_volumes(self.apiclient, virtualmachineid=vm.id, listall=True)
+    for vol in vol_for_snap:
+        snapshot = Snapshot.create(self.apiclient, volume_id=vol.id)
+        snapshot.validateState(self.apiclient, snapshotstate='backedup')
+    destinationHost = self.GetDestinationHost(vm.hostid, vm, storage_scope)
+    vol_list = []
+    destinationPools = []
+    root_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='ROOT', listall=True)[0]
+    vol_list.append(root_vol)
+    destinationPool = GetDestinationStoragePool(self, root_vol.storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    data_vol = list_volumes(self.apiclient, virtualmachineid=vm.id, type='DATADISK', listall=True)
+    vol_list.append(data_vol[0])
+    destinationPool = GetDestinationStoragePool(self, data_vol[0].storage, storage_scope, storage_type)
+    destinationPools.append(destinationPool)
+    vol_list.append(data_vol[1])
+    destinationPool = GetDestinationStoragePool(self, data_vol[1].storage, scope, storage_type)
+    destinationPools.append(destinationPool)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)

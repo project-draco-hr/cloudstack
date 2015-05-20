@@ -1,0 +1,27 @@
+def check_files(self, vm, destinationHost):
+    '\n    Check for VMX and VMDK files\n            INPUTS :\n                      1. vm -> The Virtual Machine object\n                      2. destinationHost -> The host to which we want to migrate the VM\n    '
+    vm_volumes = list_volumes(self.apiclient, virtualmachineid=vm.id, listall=True)
+    for vol in vm_volumes:
+        spool = list_storage_pools(self.apiclient, id=vol.storageid)
+        split_path = spool[0].path.split('/')
+        pool_path = split_path[2]
+        if (spool[0].type == 'NetworkFilesystem'):
+            pool_path = spool[0].id.replace('-', '')
+        sshclient = SshClient(host=destinationHost.ipaddress, port=self.testdata['configurableData']['host']['publicport'], user=self.testdata['configurableData']['host']['username'], passwd=self.testdata['configurableData']['host']['password'])
+        pool_data_vmdk = sshclient.execute((((('ls /vmfs/volumes/' + pool_path) + '/') + vm.instancename) + '| grep vmdk'))
+        pool_data_vmx = sshclient.execute((((('ls /vmfs/volumes/' + pool_path) + '/') + vm.instancename) + '| grep vmx'))
+        self.debug(("------------------------volume's actual path is: %s" % vol.path))
+        vol_path_db = self.dbclient.execute(("select path from volumes where uuid='%s';" % vol.id))
+        self.debug(("-----------------------volume's  path in DB is: %s" % vol_path_db))
+        vol_name_db = self.dbclient.execute(("select name from volumes where uuid='%s';" % vol.id))
+        self.debug(("-----------------------volume's  name in DB is: %s" % vol_name_db))
+        if pool_data_vmx:
+            vmx_file = (vm.instancename + '.vmx')
+            if (vol.type == 'ROOT'):
+                self.assertIn(vmx_file, pool_data_vmx, 'The VMX files are missing')
+        if pool_data_vmdk:
+            vmdk_file1 = (vol.path + '.vmdk')
+            vmdk_file2 = (vol.path + '-flat.vmdk')
+            self.assertIn(vmdk_file1, pool_data_vmdk, 'The VMDK files are missing')
+            self.assertIn(vmdk_file2, pool_data_vmdk, 'The VMDK flat files are missing')
+    return

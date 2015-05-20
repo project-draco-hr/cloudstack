@@ -1,0 +1,77 @@
+@attr(tags=['advanced', 'basic', 'vmware', 'vmfs', 'negative'], required_hardware='true')
+def test_05_vm_and_volumes_live_migration_for_vmware_negative_scenarios(self):
+    '\n        Test scenarios like :\n        1. Take VM snapshot when vMotion is in progress\n        2. Take Volume snapshot when vMotion is in progress\n        3. Resize volume when vMotion is in progress\n        4. Set vmware.vcenter.session.timeout to a low value and do migration\n        '
+    vm = 'virtual_machine2'
+    virtual_machine_1 = self.deploy_virtual_machine(self.service_offering.id, vm, self.template.id)
+    data_disk_1 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    self.debug(('Created volume with ID: %s' % data_disk_1.id))
+    virtual_machine_1.attach_volume(self.apiclient, data_disk_1)
+    storage_scope = 'within_cluster'
+    storage_type = 'VMFS'
+    '\n        1. VM snapshot negative test\n        '
+    try:
+        vm = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+        (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, vm, storage_scope, storage_type)
+        thread_1 = Thread(target=MigrateVmWithVolume, args=(self, virtual_machine_1, destinationHost, vol_list, destinationPools))
+        thread_2 = Thread(target=self.takeVmSnapshotNegative, args=(virtual_machine_1.id,))
+        thread_1.start()
+        time.sleep(10)
+        thread_2.start()
+        thread_1.join()
+        thread_2.join()
+    except:
+        self.debug('Error: unable to start thread')
+    '\n        2. Volume snapshot negative test\n        '
+    root_vol = list_volumes(self.apiclient, listall=True, type='ROOT', virtualmachineid=virtual_machine_1.id)[0]
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    try:
+        (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, vm, storage_scope, storage_type)
+        thread_3 = Thread(target=MigrateVmWithVolume, args=(self, virtual_machine_1, destinationHost, vol_list, destinationPools))
+        thread_4 = Thread(target=self.takeVolumeSnapshotNegative, args=(root_vol.id,))
+        thread_3.start()
+        time.sleep(10)
+        thread_4.start()
+        thread_3.join()
+        thread_4.join()
+    except:
+        self.debug('Error: unable to start thread')
+    '\n        3. Resize volume negative test\n        '
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    try:
+        (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, vm, storage_scope, storage_type)
+        thread_5 = Thread(target=MigrateVmWithVolume, args=(self, virtual_machine_1, destinationHost, vol_list, destinationPools))
+        thread_6 = Thread(target=self.resizeVolumeNegative, args=(data_disk_1,))
+        thread_5.start()
+        time.sleep(10)
+        thread_6.start()
+        thread_5.join()
+        thread_6.join()
+    except:
+        self.debug('Error: unable to start thread')
+    '\n        4. Deploy a windows VM, set vmware.vcenter.session.timeout to a low value\n           and do migration, migration should fail \n        '
+    vm = 'virtual_machine3'
+    virtual_machine_2 = self.deploy_virtual_machine(self.service_offering.id, vm, self.template.id)
+    vm_host = list_hosts(self.apiclient, id=virtual_machine_2.hostid, listall=True)[0]
+    vm_cluster = list_clusters(self.apiclient, id=vm_host.clusterid, listall=True)[0]
+    host_list = list_hosts(self.apiclient, clusterid=vm_cluster.id, listall=True)
+    Configurations.update(self.apiclient, 'vmware.vcenter.session.timeout', '30')
+    restart_mgmt_server(self, self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd)
+    time.sleep(120)
+    for host in host_list:
+        Host.getState(self.apiclient, host.id, 'Up', 'Enabled')
+    self.cleanup.append(virtual_machine_2)
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_2.id, listall=True)[0]
+    (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, vm, storage_scope, storage_type)
+    try:
+        with self.assertRaises(Exception):
+            MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    except Exception as e:
+        self.exceptionList.append(e)
+    Configurations.update(self.apiclient, 'vmware.vcenter.session.timeout', '1200')
+    restart_mgmt_server(self, self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd)
+    time.sleep(120)
+    for host in host_list:
+        Host.getState(self.apiclient, host.id, 'Up', 'Enabled')
+    if self.exceptionList:
+        for i in self.exceptionList:
+            raise i

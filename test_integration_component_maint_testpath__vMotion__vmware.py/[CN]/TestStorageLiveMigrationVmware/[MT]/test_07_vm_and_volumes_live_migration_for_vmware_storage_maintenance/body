@@ -1,0 +1,74 @@
+@attr(tags=['advanced', 'basic', 'vmware', 'vmfs', 'maint'], required_hardware='true')
+def test_07_vm_and_volumes_live_migration_for_vmware_storage_maintenance(self):
+    '\n        Test scenarios for storage Maintenance\n        1. Create 2 VMs  and attach data disks to each of them\n        2. Put the storage on which VMs are created to maintenance mode\n        3. Wait for the storage to get to maintenance mode, the 2 VMs should be in stopped state\n           and also check that systemvms are in running state.\n        4. Now try to migrate a volume to the storage in maintenance mode, it should pass\n        5. Cancel maintenance mode of the storage\n        6. Start the VMs.\n        7. Migrate both the VMs and their volumes\n        8. Detach all data disks from VM1 and VM2, create VM3, attach all the data disks to VM3 and then migrate vm and its volumes\n\n        After each storage migration step, following validation is done\n        a) Create VM snapshots to check data integrity - @method used : VmSnapshotToCheckDataIntegrity(self, vm)\n        b) Login to the Host/storage pool and check for the VMDK and VMX files for VM and its volumes - @method used : check_files(self, vm, destinationHost)\n        c) Check for VM accessibility by sshing to the VM - @method used : check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1)\n        '
+    storage_scope = 'within_cluster'
+    storage_type = 'VMFS'
+    vm = 'virtual_machine2'
+    virtual_machine_1 = VirtualMachine.create(self.apiclient, self.testdata[vm], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id, hostid=self.hosts[0].id)
+    self.cleanup.append(virtual_machine_1)
+    virtual_machine_1.getState(self.apiclient, 'Running')
+    vm = 'virtual_machine3'
+    virtual_machine_2 = VirtualMachine.create(self.apiclient, self.testdata[vm], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id, hostid=virtual_machine_1.hostid)
+    self.cleanup.append(virtual_machine_2)
+    virtual_machine_2.getState(self.apiclient, 'Running')
+    data_disk_1 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    data_disk_2 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    virtual_machine_1.attach_volume(self.apiclient, data_disk_1)
+    virtual_machine_2.attach_volume(self.apiclient, data_disk_2)
+    '\n        Storage maintenance\n        '
+    root_vol_1 = list_volumes(self.apiclient, virtualmachineid=virtual_machine_1.id, type='ROOT', listall=True)[0]
+    maintenance_pool_id = root_vol_1.storageid
+    cmd = enableStorageMaintenance.enableStorageMaintenanceCmd()
+    cmd.id = maintenance_pool_id
+    self.apiclient.enableStorageMaintenance(cmd)
+    StoragePool.getState(self.apiclient, maintenance_pool_id, 'Maintenance')
+    virtual_machine_1.getState(self.apiclient, 'Stopped')
+    ssvm_list = list_ssvms(self.apiclient, listall=True)
+    for ssvm in ssvm_list:
+        self.get_ssvm_state(self.apiclient, ssvm.id, 'Running')
+    root_vol_2 = list_volumes(self.apiclient, virtualmachineid=virtual_machine_2.id, type='ROOT', listall=True)[0]
+    if (root_vol_2.storageid == maintenance_pool_id):
+        virtual_machine_2.getState(self.apiclient, 'Stopped')
+    else:
+        destinationPool = list_storage_pools(self.apiclient, id=maintenance_pool_id, listall=True)[0]
+        islive = True
+        MigrateDataVolume(self, root_vol_2, destinationPool, islive)
+    cmd = cancelStorageMaintenance.cancelStorageMaintenanceCmd()
+    cmd.id = maintenance_pool_id
+    self.apiclient.cancelStorageMaintenance(cmd)
+    StoragePool.getState(self.apiclient, maintenance_pool_id, 'Up')
+    list_vm_1 = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    self.debug(('...............................................Print state of the VM.....................%s.............' % list_vm_1.state))
+    if (list_vm_1.state == 'Stopped'):
+        virtual_machine_1.start(self.apiclient)
+    virtual_machine_1.getState(self.apiclient, 'Running')
+    list_vm_2 = list_virtual_machines(self.apiclient, id=virtual_machine_2.id, listall=True)[0]
+    if (list_vm_2.state == 'Stopped'):
+        virtual_machine_2.start(self.apiclient)
+    virtual_machine_2.getState(self.apiclient, 'Running')
+    list_vm1 = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    list_vm2 = list_virtual_machines(self.apiclient, id=virtual_machine_2.id, listall=True)[0]
+    (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, list_vm1, storage_scope, storage_type)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1)
+    (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, list_vm2, storage_scope, storage_type)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2)
+    self.testdata['virtual_machine3']['name'] = 'TestVM'
+    self.testdata['virtual_machine3']['displayname'] = 'TestVM'
+    virtual_machine_3 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine3'], accountid=self.account.name, zoneid=self.zone.id, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, templateid=self.template.id, hostid=self.hosts[0].id)
+    self.cleanup.append(virtual_machine_3)
+    virtual_machine_3.getState(self.apiclient, 'Running')
+    virtual_machine_2.detach_volume(self.apiclient, data_disk_2)
+    virtual_machine_1.detach_volume(self.apiclient, data_disk_1)
+    virtual_machine_3.attach_volume(self.apiclient, data_disk_2)
+    virtual_machine_3.attach_volume(self.apiclient, data_disk_1)
+    (destinationHost, destinationPools, vol_list) = get_destination_pools_hosts(self, virtual_machine_3, storage_scope, storage_type)
+    vm = MigrateVmWithVolume(self, virtual_machine_3, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_files(self, vm, destinationHost)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_3)

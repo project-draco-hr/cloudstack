@@ -1,0 +1,122 @@
+@data(('within_cluster', 'linux'), ('within_cluster', 'windows'), ('across_cluster', 'linux'), ('across_cluster', 'windows'))
+@unpack
+@attr(tags=['advanced', 'basic', 'vmware', 'vmfs', 'local'], required_hardware='true')
+def test_02_vm_and_volumes_live_migration_for_vmware_vmfs_local_storage(self, first_value, second_value):
+    '\n        This Test Path tests vMotion for VM in local storage within cluster,\n        across cluster and for both windows and linux VMs using DATA DRIVEN TESTING\n        1. Migrate VM from one host to another\n        2. Migrate VMs ROOT volume from one storage to another\n        3. Migrate VM to another Host and ROOT volume to another storage\n        4. Attach a data disk to VM, migrate VM to a different host and its volumes to different pools.\n        5. Upload a volume, attach it to VM, migrate VM to a different host and its volumes to different pools.\n        6. Create volume snapshots on all volumes , migrate VM to a different host and its volumes to different pools.\n        7. Resize the data disk, migrate VM to a different host and its volumes to different pools.\n        8. Restore the VM, migrate VM to a different host and its volumes to different pools.\n        9. Detach the data disk, create another VM, attach the data disk to that VM and then migrate that VM and its volumes.\n        10. Detach upload volume, attach it to the 2nd VM, and then migrate that VM and its volumes.\n        11. Create snapshots for all volumes of 2nd vM, then migrate VM and its volumes.\n\n        After each storage migration step, following validation is done\n        a) Create VM snapshots to check data integrity - @method used : VmSnapshotToCheckDataIntegrity(self, vm)\n        c) Check for VM accessibility by sshing to the VM - @method used : check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1)\n        '
+    if (not self.zone.localstorageenabled):
+        raise self.skipTest("The setup doesn't have local storage enabled")
+    scope = first_value
+    ostype = second_value
+    if ((ostype == 'windows') and (not self.windows_template)):
+        self.skipTest('Windows template is not present, so skipping this test')
+    elif (ostype == 'windows'):
+        template_id = self.windows_template.id
+    else:
+        template_id = self.template.id
+    count_host = 0
+    count_pool = 0
+    pool_local = []
+    if (len(self.list_vmware_clusters) < 2):
+        if (scope == 'across_cluster'):
+            raise self.skipTest("The setup doesn't have more than one cluster, so can't execute these set of tests")
+    if (len(self.list_vmware_clusters) >= 2):
+        for cluster in self.list_vmware_clusters:
+            if (len(list_hosts(self.apiclient, clusterid=cluster.id)) >= 1):
+                count_host += 1
+            pools = list_storage_pools(self.apiclient, clusterid=cluster.id)
+            for pool in pools:
+                if (pool.scope == 'HOST'):
+                    pool_local.append(pool)
+            if (len(pool_local) >= 1):
+                count_pool += 1
+            pool_local = []
+    if (scope == 'across_cluster'):
+        if (count_host < 2):
+            raise self.skipTest("The setup doesn't have enough pools or enough hosts. To run these tests the setup must have atleast 2 clusters, each having min 2 hosts ")
+    self.debug('---------------This is the test no 1--------------')
+    '\n        Create a VM, live migrate the VM\n        '
+    vm = 'virtual_machine2'
+    virtual_machine_1 = self.deploy_virtual_machine(self.service_offering_local1.id, vm, template_id)
+    self.cleanup.append(virtual_machine_1)
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_1.id, listall=True)[0]
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, virtual_machine_1, scope)
+    vol_list = []
+    destinationPools = []
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 2--------------')
+    '\n        Add a data disk and migrate vm\n        '
+    data_disk_1 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering_local1.id)
+    self.debug(('Created volume with ID: % s' % data_disk_1.id))
+    virtual_machine_1.attach_volume(self.apiclient, data_disk_1)
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 3--------------')
+    '\n        Upload a Volume, Attach it to the VM, Migrate all the volumes and VM.\n        '
+    self.testdata['configurableData']['upload_volume']['format'] = 'OVA'
+    self.testdata['configurableData']['upload_volume']['url'] = 'http://nfs1.lab.vmops.com/templates/burbank-systemvm-08012012.ova'
+    upload_volume = Volume.upload(self.apiclient, self.testdata['configurableData']['upload_volume'], account=self.account.name, domainid=self.domain.id, zoneid=self.zone.id)
+    upload_volume.wait_for_upload(self.apiclient)
+    virtual_machine_1.attach_volume(self.apiclient, upload_volume)
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 6--------------')
+    '\n        Create snapshots on all the volumes, Migrate VM.\n        '
+    vol_for_snap = list_volumes(self.apiclient, virtualmachineid=vm.id, listall=True)
+    for vol in vol_for_snap:
+        snapshot = Snapshot.create(self.apiclient, volume_id=vol.id)
+        snapshot.validateState(self.apiclient, snapshotstate='backedup')
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 7--------------')
+    '\n        Resize the data volume , Migrate all the volumes and VM.\n        '
+    data_disk_1.resize(self.apiclient, diskofferingid=self.resized_disk_offering.id)
+    destinationHost = self.GetDestinationHostLocal(virtual_machine_1.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 8--------------')
+    '\n        Restore the VM , Migrate all the volumes and VM.\n        '
+    virtual_machine_1.restore(self.apiclient)
+    virtual_machine_1.getState(self.apiclient, 'Running')
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_1, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_1, ostype)
+    self.debug('---------------This is the test no 9--------------')
+    '\n        Detach the Data disk, Deploy another VM, attach the data disk and migrate.\n        '
+    virtual_machine_1.detach_volume(self.apiclient, data_disk_1)
+    vm = 'virtual_machine3'
+    virtual_machine_2 = self.deploy_virtual_machine(self.service_offering_local1.id, vm, self.template.id)
+    self.cleanup.append(virtual_machine_2)
+    virtual_machine_2.attach_volume(self.apiclient, data_disk_1)
+    vm = list_virtual_machines(self.apiclient, id=virtual_machine_2.id, listall=True)[0]
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)
+    self.debug('---------------This is the test no 10--------------')
+    '\n        Detach the uploaded volume, attach it to another vm and migrate.\n        '
+    virtual_machine_1.detach_volume(self.apiclient, upload_volume)
+    virtual_machine_2.attach_volume(self.apiclient, upload_volume)
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)
+    self.debug('---------------This is the test no 11--------------')
+    '\n        Create snapshots on all the volumes, Migrate all the volumes and VM.\n        '
+    vol_for_snap = list_volumes(self.apiclient, virtualmachineid=vm.id, listall=True)
+    for vol in vol_for_snap:
+        snapshot = Snapshot.create(self.apiclient, volume_id=vol.id)
+        snapshot.validateState(self.apiclient, snapshotstate='backedup')
+    destinationHost = self.GetDestinationHostLocal(vm.hostid, vm, scope)
+    vm = MigrateVmWithVolume(self, virtual_machine_2, destinationHost, vol_list, destinationPools)
+    VmSnapshotToCheckDataIntegrity(self, vm)
+    check_for_vm_access_by_ssh_using_nat(self, virtual_machine_2, ostype)
