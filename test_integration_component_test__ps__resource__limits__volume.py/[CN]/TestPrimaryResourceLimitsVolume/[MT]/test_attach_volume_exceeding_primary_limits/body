@@ -1,0 +1,23 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_attach_volume_exceeding_primary_limits(self):
+    '\n        # do\n        # 1. create a normal user account and update primary store limits to the current resource count\n        # 2. Upload a volume of any size\n        # 3. Verify that upload volume succeeds\n        # 4. Verify that primary storage count doesnt change\n        # 6. Try attaching volume to VM and verify that the attach fails (as the resource limits exceed)\n        # 7. Verify that primary storage count doesnt change\n        # done\n        '
+    response = self.setupNormalAccount()
+    self.assertEqual(response[0], PASS, response[1])
+    volume = Volume.upload(self.apiclient, self.services['configurableData']['upload_volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, url='http://people.apache.org/~sanjeev/rajani-thin-volume.vhd')
+    volume.wait_for_upload(self.apiclient)
+    volumes = Volume.list(self.apiclient, id=volume.id, zoneid=self.zone.id, listall=True)
+    validationresult = validateList(volumes)
+    assert (validationresult[0] == PASS), ('volumes list validation failed: %s' % validationresult[2])
+    assert (str(volumes[0].state).lower() == 'uploaded'), ("Volume state should be 'uploaded' but it is %s" % volumes[0].state)
+    response = matchResourceCount(self.apiclient, self.initialResourceCount, RESOURCE_PRIMARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    try:
+        self.virtualMachine.attach_volume(self.apiclient, volume=volume)
+    except Exception as e:
+        if (("Maximum number of resources of type 'primary_storage' for account name=" + self.account.name) in e.message):
+            self.assertTrue(True, 'there should be primary store resource limit reached exception')
+        else:
+            self.fail('only resource limit reached exception is expected. some other exception occurred. Failing the test case.')
+    response = matchResourceCount(self.apiclient, self.initialResourceCount, RESOURCE_PRIMARY_STORAGE, accountid=self.account.id)
+    self.assertEqual(response[0], PASS, response[1])
+    return
