@@ -1,0 +1,46 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestSystemVmLocalStorage, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.dbclient = cls.testClient.getDbConnection()
+    cls.mgtSvrDetails = cls.config.__dict__['mgtSvr'][0].__dict__
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient)
+    cls.testdata['mode'] = cls.zone.networktype
+    cls.hypervisor = testClient.getHypervisorInfo()
+    cls._cleanup = []
+    list_local_storage_pool = StoragePool.list(cls.apiclient, scope='HOST', zoneid=cls.zone.id)
+    if (list_local_storage_pool is None):
+        Configurations.update(cls.apiclient, value='true', name='system.vm.use.local.storage', zoneid=cls.zone.id)
+        sshClient = SshClient(cls.mgtSvrDetails['mgtSvrIp'], 22, cls.mgtSvrDetails['user'], cls.mgtSvrDetails['passwd'])
+        command = 'service cloudstack-management restart'
+        ms_restart_response = sshClient.execute(command)
+        if (validateList(ms_restart_response)[0] != PASS):
+            raise Exception('Check the MS restart response')
+        if (ms_restart_response[0] != 'Stopping cloudstack-management:[  OK  ]'):
+            raise Exception('MS i not stopped')
+        if (ms_restart_response[1] != 'Starting cloudstack-management: [  OK  ]'):
+            raise Exception('MS not started')
+        timeout = cls.testdata['timeout']
+        while True:
+            try:
+                list_response = Zone.list(cls.apiclient)
+                if (validateList(list_response)[0] == PASS):
+                    break
+            except ConnectionError as e:
+                cls.debug(('list zone response is not available due to  %s' % e))
+            if (timeout == 0):
+                raise Exception('Ms is not comming up !')
+            time.sleep(cls.testdata['sleep'])
+            timeout = (timeout - 1)
+        list_local_storage_pool = StoragePool.list(cls.apiclient, scope='HOST', zoneid=cls.zone.id)
+        if (list_local_storage_pool is None):
+            raise Exception('Could not discover local storage pool')
+    try:
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
+        cls._cleanup.append(cls.account)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return
