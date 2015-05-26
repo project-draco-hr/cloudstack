@@ -1,0 +1,45 @@
+@classmethod
+def setUpClass(cls):
+    testClient = super(TestHardening, cls).getClsTestClient()
+    cls.apiclient = testClient.getApiClient()
+    cls.testdata = testClient.getParsedTestDataConfig()
+    cls.hypervisor = cls.testClient.getHypervisorInfo()
+    cls.domain = get_domain(cls.apiclient)
+    cls.zone = get_zone(cls.apiclient, testClient.getZoneForTests())
+    cls.template = get_template(cls.apiclient, cls.zone.id, cls.testdata['ostype'])
+    cls._cleanup = []
+    clusterid_tag_mapping = {}
+    cwps_no = 0
+    if (cls.hypervisor.lower() not in ['vmware', 'kvm', 'xenserver', 'hyper-v']):
+        raise unittest.SkipTest(('Storage migration not supported on %s' % cls.hypervisor))
+    try:
+        cls.pools = StoragePool.list(cls.apiclient, zoneid=cls.zone.id, scope='CLUSTER')
+        for storagePool in cls.pools:
+            if (storagePool.state.lower() == UP):
+                if (storagePool.clusterid not in clusterid_tag_mapping):
+                    cwps_no += 1
+                    StoragePool.update(cls.apiclient, id=storagePool.id, tags=[('cwps' + repr(cwps_no))])
+                    clusterid_tag_mapping[storagePool.clusterid] = [cwps_no]
+                else:
+                    cwps_no = clusterid_tag_mapping[storagePool.clusterid][0]
+                    StoragePool.update(cls.apiclient, id=storagePool.id, tags=[('cwps' + repr(cwps_no))])
+                    clusterid_tag_mapping[storagePool.clusterid].append(cwps_no)
+        cls.pools = StoragePool.list(cls.apiclient, zoneid=cls.zone.id, scope='CLUSTER')
+        assert ((len(clusterid_tag_mapping) >= 2) and ((len(tags) for tags in clusterid_tag_mapping.itervalues()) >= 2)), 'There must be atleast two Clusters and                each must have atleast two cluster wide storage pools in                Up state in the setup'
+    except Exception as e:
+        raise unittest.SkipTest(e)
+    try:
+        cls.account = Account.create(cls.apiclient, cls.testdata['account'], domainid=cls.domain.id)
+        cls._cleanup.append(cls.account)
+        cls.userapiclient = testClient.getUserApiClient(UserName=cls.account.name, DomainName=cls.account.domain)
+        cls.service_offering_cluster1 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'], tags=CLUSTERTAG1)
+        cls._cleanup.append(cls.service_offering_cluster1)
+        cls.service_offering_cluster2 = ServiceOffering.create(cls.apiclient, cls.testdata['service_offering'], tags=CLUSTERTAG2)
+        cls._cleanup.append(cls.service_offering_cluster1)
+        cls.disk_offering_cluster1 = DiskOffering.create(cls.apiclient, cls.testdata['disk_offering'], tags=CLUSTERTAG1)
+        cls._cleanup.append(cls.disk_offering_cluster1)
+        cls.vm = VirtualMachine.create(cls.apiclient, cls.testdata['small'], templateid=cls.template.id, accountid=cls.account.name, domainid=cls.account.domainid, serviceofferingid=cls.service_offering_cluster1.id, zoneid=cls.zone.id, mode=cls.zone.networktype)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return
