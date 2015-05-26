@@ -1,0 +1,48 @@
+{
+  SR sr=getSRByNameLabelandHost(conn,_configDriveSRName + _host.getIp());
+  if (sr != null) {
+    s_logger.debug("Config drive SR already exist, returing it");
+    return sr;
+  }
+  try {
+    Map<String,String> deviceConfig=new HashMap<String,String>();
+    com.trilead.ssh2.Connection sshConnection=new com.trilead.ssh2.Connection(_host.getIp(),22);
+    try {
+      sshConnection.connect(null,60000,60000);
+      if (!sshConnection.authenticateWithPassword(_username,_password.peek())) {
+        throw new CloudRuntimeException("Unable to authenticate");
+      }
+      String cmd="mkdir -p " + _configDriveIsopath;
+      if (!SSHCmdHelper.sshExecuteCmd(sshConnection,cmd)) {
+        throw new CloudRuntimeException("Cannot create directory configdrive_iso on XenServer hosts");
+      }
+    }
+ catch (    IOException e) {
+      throw new CloudRuntimeException("Unable to create iso folder",e);
+    }
+ finally {
+      sshConnection.close();
+    }
+    s_logger.debug("Created the config drive SR " + srName + " folder path "+ _configDriveIsopath);
+    deviceConfig.put("location",_configDriveIsopath);
+    deviceConfig.put("legacy_mode","true");
+    Host host=Host.getByUuid(conn,_host.getUuid());
+    String type=SRType.ISO.toString();
+    sr=SR.create(conn,host,deviceConfig,new Long(0),_configDriveIsopath,"iso",type,"iso",false,new HashMap<String,String>());
+    sr.setNameLabel(conn,srName);
+    sr.setNameDescription(conn,deviceConfig.get("location"));
+    sr.scan(conn);
+    s_logger.debug("Config drive ISO SR at the path " + _configDriveIsopath + " got created in host "+ _host);
+    return sr;
+  }
+ catch (  XenAPIException e) {
+    String msg="createLocalIsoSR failed! mountpoint " + e.toString();
+    s_logger.warn(msg,e);
+    throw new CloudRuntimeException(msg,e);
+  }
+catch (  Exception e) {
+    String msg="createLocalIsoSR failed! mountpoint:  due to " + e.getMessage();
+    s_logger.warn(msg,e);
+    throw new CloudRuntimeException(msg,e);
+  }
+}
