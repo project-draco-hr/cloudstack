@@ -1,0 +1,105 @@
+@unittest.skip('Requires setup with 2 pods - Each pod having 2 clusters.             Yet to be tested')
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_02_migration_live_different_pods(self):
+    ' Test migrate Volume (root and data disk)\n\n        # 1. Deploy a VM on cluster wide primary storage.\n        # 2. Migrate root and data volume to two different storage pools\n             in same cluster.\n\n        '
+    try:
+        self.pools = StoragePool.list(self.apiclient, zoneid=self.zone.id)
+        assert (len(list((storagePool for storagePool in self.pools if (storagePool.scope == 'ZONE')))) >= 2), 'There must be at least two zone wide                 storage pools available in the setup'
+        assert (len(list((storagePool for storagePool in self.pools if (storagePool.scope == 'CLUSTER')))) >= 3), 'There must be at least two cluster wide                storage pools available in the setup'
+    except Exception as e:
+        self.skipTest(e)
+    storagePools_to_avoid = []
+    cluster_no = 1
+    zone_no = 1
+    self.debug(('Storage Pools: %s' % self.pools))
+    for storagePool in self.pools:
+        if (storagePool.scope == 'ZONE'):
+            StoragePool.update(self.apiclient, id=storagePool.id, tags=[('zwps' + repr(zone_no))])
+            zone_no += 1
+        elif (storagePool.scope == 'CLUSTER'):
+            StoragePool.update(self.apiclient, id=storagePool.id, tags=[('cwps' + repr(cluster_no))])
+            cluster_no += 1
+    vm_cluster = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_cluster1.id, zoneid=self.zone.id, mode=self.zone.networktype)
+    root_volumes_cluster_list = list_volumes(self.apiclient, virtualmachineid=vm_cluster.id, type='ROOT', listall=True)
+    root_volume_cluster = root_volumes_cluster_list[0]
+    data_volume_clust_1 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering_cluster1.id)
+    self.debug(('Created volume with ID: %s' % data_volume_clust_1.id))
+    vm_cluster.attach_volume(self.userapiclient, data_volume_clust_1)
+    data_disk_1_volumes_cluster_list = Volume.list(self.userapiclient, listall=self.testdata['listall'], id=data_volume_clust_1.id)
+    data_volume_1_cluster = data_disk_1_volumes_cluster_list[0]
+    checksum_random_root_cluster = createChecksum(service=self.testdata, virtual_machine=vm_cluster, disk=root_volume_cluster, disk_type='rootdiskdevice')
+    storagePools_to_avoid = [root_volume_cluster.storage]
+    destinationPool_for_root_disk = GetDestinationPool(self, storagePools_to_avoid, 'CLUSTER')
+    MigrateDataVolume(self, root_volume_cluster, destinationPool_for_root_disk, islive=True)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_root_cluster, disk_type='rootdiskdevice', virt_machine=vm_cluster)
+    checksum_random_data_cluster = createChecksum(service=self.testdata, virtual_machine=vm_cluster, disk=data_volume_1_cluster, disk_type='datadiskdevice_1')
+    storagePools_to_avoid = [data_volume_1_cluster.storage, destinationPool_for_root_disk.name]
+    destinationPool_for_data_disk1 = GetDestinationPool(self, storagePools_to_avoid, 'CLUSTER')
+    MigrateDataVolume(self, data_volume_1_cluster, destinationPool_for_data_disk1, islive=True)
+    self.assertEqual(vm_cluster.state, 'Running', 'Check VM State is running or not.')
+    vm_cluster.detach_volume(self.userapiclient, data_volume_clust_1)
+    self.new_virtual_machine.attach_volume(self.apiclient, data_volume_1_cluster)
+    self.new_virtual_machine.reboot(self.apiclient)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_data_cluster, disk_type='datadiskdevice_1', virt_machine=self.new_virtual_machine)
+    self.new_virtual_machine.detach_volume(self.apiclient, data_volume_1_cluster)
+    self.new_virtual_machine.reboot(self.apiclient)
+    data_volume_clust_2 = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering_cluster1.id)
+    self.debug(('Created volume with ID: %s' % data_volume_clust_2.id))
+    vm_cluster.attach_volume(self.userapiclient, data_volume_clust_2)
+    data_disk_2_volumes_cluster_list = Volume.list(self.userapiclient, listall=self.testdata['listall'], id=data_volume_clust_2.id)
+    data_volume_2_cluster = data_disk_2_volumes_cluster_list[0]
+    checksum_random_data_cluster = createChecksum(service=self.testdata, virtual_machine=vm_cluster, disk=data_volume_2_cluster, disk_type='datadiskdevice_2')
+    self.new_virtual_machine.attach_volume(self.apiclient, data_volume_2_cluster)
+    self.new_virtual_machine.reboot(self.apiclient)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_data_cluster, disk_type='datadiskdevice_2', virt_machine=self.new_virtual_machine)
+    self.new_virtual_machine.detach_volume(self.apiclient, data_volume_2_cluster)
+    self.new_virtual_machine.reboot(self.apiclient)
+    vm_zone = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_zone1.id, zoneid=self.zone.id, mode=self.zone.networktype)
+    root_volumes_zone_list = list_volumes(self.apiclient, virtualmachineid=vm_zone.id, type='ROOT', listall=True)
+    root_volume_zone = root_volumes_zone_list[0]
+    data_volume_zone = Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering_zone1.id)
+    self.debug(('Created volume with ID: %s' % data_volume_zone.id))
+    data_volumes_zone_list = Volume.list(self.userapiclient, listall=self.testdata['listall'], id=data_volume_zone.id)
+    vm_zone.attach_volume(self.userapiclient, data_volumes_zone_list[0])
+    checksum_random_root_zone = createChecksum(service=self.testdata, virtual_machine=vm_zone, disk=root_volume_zone, disk_type='rootdiskdevice')
+    destinationPool = GetDestinationPool(self, root_volume_zone, 'ZONE')
+    MigrateRootVolume(self, vm_zone, destinationPool)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_root_zone, disk_type='rootdiskdevice', virt_machine=vm_zone)
+    destinationPool = GetDestinationPool(self, root_volume_zone, 'CLUSTER')
+    MigrateRootVolume(self, vm_zone, destinationPool, expectexception=True)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_root_zone, disk_type='rootdiskdevice', virt_machine=vm_cluster)
+    checksum_random_data_zone = createChecksum(service=self.testdata, virtual_machine=vm_zone, disk=data_volumes_zone_list[0], disk_type='datadiskdevice_1')
+    destinationPool = GetDestinationPool(self, data_volumes_zone_list[0], 'ZONE')
+    MigrateDataVolume(self, data_volumes_zone_list[0], destinationPool)
+    self.new_virtual_machine.attach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_data_zone, disk_type='datadiskdevice_1', virt_machine=self.new_virtual_machine)
+    self.new_virtual_machine.detach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    destinationPool = GetDestinationPool(self, data_volume_zone, 'CLUSTER')
+    MigrateDataVolume(self, data_volume_zone, destinationPool, expectexception=True)
+    self.new_virtual_machine.attach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_data_zone, disk_type='datadiskdevice_1', virt_machine=self.new_virtual_machine)
+    self.new_virtual_machine.detach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    destinationPool = GetDestinationPool(self, data_volume_zone, 'CLUSTER')
+    MigrateDataVolume(self, data_volume_zone, destinationPool, expectexception=True)
+    self.new_virtual_machine.attach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    compareChecksum(self.apiclient, service=self.testdata, original_checksum=checksum_random_data_zone, disk_type='datadiskdevice_1', virt_machine=self.new_virtual_machine)
+    self.new_virtual_machine.detach_volume(self.apiclient, data_volumes_zone_list[0])
+    self.new_virtual_machine.reboot(self.apiclient)
+    vm_zone.delete(self.apiclient)
+    self.assertEqual(VirtualMachine.list(self.apiclient, id=vm_cluster.id), None, 'VM list should be empty')
+    data_volume_zone.delete(self.apiclient)
+    self.assertEqual(Volume.list(self.apiclient, id=data_volume_zone.id), None, 'Volume list should be empty')
+    self.assertEqual(Volume.list(self.apiclient, id=root_volume_zone.id), None, 'Volume list should be empty')
+    vm_cluster.delete(self.apiclient)
+    self.assertEqual(VirtualMachine.list(self.apiclient, id=vm_cluster.id), None, 'VM list should be empty')
+    data_volume_clust_1.delete(self.apiclient)
+    data_volume_clust_2.delete(self.apiclient)
+    self.assertEqual(Volume.list(self.apiclient, id=data_volume_clust_1.id), None, 'Volume list should be empty')
+    self.assertEqual(Volume.list(self.apiclient, id=data_volume_clust_2.id), None, 'Volume list should be empty')
+    self.assertEqual(Volume.list(self.apiclient, id=root_volume_cluster.id), None, 'Volume list should be empty')
+    return
