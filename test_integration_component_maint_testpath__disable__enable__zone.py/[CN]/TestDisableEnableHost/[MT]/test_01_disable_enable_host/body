@@ -1,0 +1,44 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_01_disable_enable_host(self):
+    'disable enable host\n            1. Disable host and verify following things:\n                For admin user:\n                    1. Should be create to start/stop exsiting vms\n                    2. Should be create to deploy new vm,\n                    snapshot on the same host\n                For Non-admin user:\n                    1. Should be create to start/stop exsiting vms\n                    2. Should not be create to deploy new vm,\n                    snapshot on the same host\n            2. Enable the above disabled host and verify that:\n                -All users should be create to deploy new vm,\n                snapshot on the same host\n            3. Try to reconnect the host :\n                -Host should get reconnected successfully\n        '
+    vm_root = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    hostid = vm_root.hostid
+    vm_user = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    cmd = updateHost.updateHostCmd()
+    cmd.id = hostid
+    cmd.resourcestate = DISABLED
+    cmd.allocationstate = DISABLE
+    self.apiclient.updateHost(cmd)
+    hostList = Host.list(self.apiclient, id=hostid)
+    self.assertEqual(hostList[0].resourcestate, DISABLED, 'Check if the host is in disabled state')
+    self.assertEqual(vm_user.state.lower(), 'running', 'Verify that the user vm is running')
+    self.assertEqual(vm_root.state.lower(), 'running', 'Verify that the root vm is running')
+    vm_root.stop(self.apiclient)
+    vm_user.stop(self.apiclient)
+    root_state = self.dbclient.execute(("select state from vm_instance where name='%s'" % vm_root.name))[0][0]
+    user_state = self.dbclient.execute(("select state from vm_instance where name='%s'" % vm_user.name))[0][0]
+    self.assertEqual(root_state.lower(), 'stopped', 'verify that vm should stop')
+    self.assertEqual(user_state.lower(), 'stopped', 'verify that vm should stop')
+    VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
+    root_volume = list_volumes(self.apiclient, virtualmachineid=vm_root.id, type='ROOT', listall=True)
+    Snapshot.create(self.apiclient, root_volume[0].id)
+    with self.assertRaises(Exception):
+        Snapshot.create(self.userapiclient, root_volume[0].id)
+    cmd.resourcestate = ENABLED
+    cmd.allocationstate = ENABLE
+    self.apiclient.updateHost(cmd)
+    hostList = Host.list(self.apiclient, id=hostid)
+    self.assertEqual(hostList[0].resourcestate, ENABLED, 'Check if the host is in enabled state')
+    root_vm_new = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
+    self.assertNotEqual(root_vm_new.state.lower(), 'running', 'Verify that admin should create new VM in running state')
+    Snapshot.create(self.apiclient, root_volume[0].id)
+    user_vm_new = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    self.assertNotEqual(user_vm_new.state.lower(), 'running', 'Verify that admin should create new VM')
+    Snapshot.create(self.userapiclient, root_volume[0].id)
+    cmd = reconnectHost.reconnectHostCmd()
+    cmd.id = hostid
+    self.apiclient.reconnectHost(cmd)
+    time.sleep(90)
+    hostList = Host.list(self.apiclient, id=hostid)
+    self.assertEqual(hostList[0].state.lower(), 'up', 'Check if the host get reconnected successfully')
+    return
