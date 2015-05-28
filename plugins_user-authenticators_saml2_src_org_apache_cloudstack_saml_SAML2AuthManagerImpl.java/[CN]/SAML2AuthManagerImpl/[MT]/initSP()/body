@@ -1,0 +1,70 @@
+{
+  KeystoreVO keyStoreVO=_ksDao.findByName(SAMLPluginConstants.SAMLSP_KEYPAIR);
+  if (keyStoreVO == null) {
+    try {
+      KeyPair keyPair=SAMLUtils.generateRandomKeyPair();
+      _ksDao.save(SAMLPluginConstants.SAMLSP_KEYPAIR,SAMLUtils.savePrivateKey(keyPair.getPrivate()),SAMLUtils.savePublicKey(keyPair.getPublic()),"samlsp-keypair");
+      keyStoreVO=_ksDao.findByName(SAMLPluginConstants.SAMLSP_KEYPAIR);
+      s_logger.info("No SAML keystore found, created and saved a new Service Provider keypair");
+    }
+ catch (    NoSuchProviderException|NoSuchAlgorithmException e) {
+      s_logger.error("Unable to create and save SAML keypair: " + e.toString());
+    }
+  }
+  String spId=SAMLServiceProviderID.value();
+  String spSsoUrl=SAMLServiceProviderSingleSignOnURL.value();
+  String spSloUrl=SAMLServiceProviderSingleLogOutURL.value();
+  String spOrgName=SAMLServiceProviderOrgName.value();
+  String spOrgUrl=SAMLServiceProviderOrgUrl.value();
+  String spContactPersonName=SAMLServiceProviderContactPersonName.value();
+  String spContactPersonEmail=SAMLServiceProviderContactEmail.value();
+  KeyPair spKeyPair=null;
+  X509Certificate spX509Key=null;
+  if (keyStoreVO != null) {
+    PrivateKey privateKey=SAMLUtils.loadPrivateKey(keyStoreVO.getCertificate());
+    PublicKey publicKey=SAMLUtils.loadPublicKey(keyStoreVO.getKey());
+    if (privateKey != null && publicKey != null) {
+      spKeyPair=new KeyPair(publicKey,privateKey);
+      KeystoreVO x509VO=_ksDao.findByName(SAMLPluginConstants.SAMLSP_X509CERT);
+      if (x509VO == null) {
+        try {
+          spX509Key=SAMLUtils.generateRandomX509Certificate(spKeyPair);
+          ByteArrayOutputStream bos=new ByteArrayOutputStream();
+          ObjectOutput out=new ObjectOutputStream(bos);
+          out.writeObject(spX509Key);
+          out.flush();
+          _ksDao.save(SAMLPluginConstants.SAMLSP_X509CERT,Base64.encodeBase64String(bos.toByteArray()),"","samlsp-x509cert");
+          bos.close();
+        }
+ catch (        NoSuchAlgorithmException|NoSuchProviderException|CertificateEncodingException|SignatureException|InvalidKeyException|IOException e) {
+          s_logger.error("SAML Plugin won't be able to use X509 signed authentication");
+        }
+      }
+ else {
+        try {
+          ByteArrayInputStream bi=new ByteArrayInputStream(Base64.decodeBase64(x509VO.getCertificate()));
+          ObjectInputStream si=new ObjectInputStream(bi);
+          spX509Key=(X509Certificate)si.readObject();
+          bi.close();
+        }
+ catch (        IOException|ClassNotFoundException ignored) {
+          s_logger.error("SAML Plugin won't be able to use X509 signed authentication. Failed to load X509 Certificate from Database.");
+        }
+      }
+    }
+  }
+  if (spKeyPair != null && spX509Key != null && spId != null && spSsoUrl != null && spSloUrl != null && spOrgName != null && spOrgUrl != null && spContactPersonName != null && spContactPersonEmail != null) {
+    _spMetadata.setEntityId(spId);
+    _spMetadata.setOrganizationName(spOrgName);
+    _spMetadata.setOrganizationUrl(spOrgUrl);
+    _spMetadata.setContactPersonName(spContactPersonName);
+    _spMetadata.setContactPersonEmail(spContactPersonEmail);
+    _spMetadata.setSsoUrl(spSsoUrl);
+    _spMetadata.setSloUrl(spSloUrl);
+    _spMetadata.setKeyPair(spKeyPair);
+    _spMetadata.setSigningCertificate(spX509Key);
+    _spMetadata.setEncryptionCertificate(spX509Key);
+    return true;
+  }
+  return false;
+}

@@ -6,7 +6,7 @@
   String responseString=ApiResponseSerializer.toSerializedString(response,responseType);
   if (session == null) {
     try {
-      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+      resp.sendRedirect(SAML2AuthManager.SAMLCloudStackRedirectionUrl.value());
     }
  catch (    IOException ignored) {
     }
@@ -21,7 +21,7 @@
   }
   if (params != null && params.containsKey("SAMLResponse")) {
     try {
-      final String samlResponse=((String[])params.get(SAMLUtils.SAML_RESPONSE))[0];
+      final String samlResponse=((String[])params.get(SAMLPluginConstants.SAML_RESPONSE))[0];
       Response processedSAMLResponse=SAMLUtils.decodeSAMLResponse(samlResponse);
       String statusCode=processedSAMLResponse.getStatus().getStatusCode().getValue();
       if (!statusCode.equals(StatusCode.SUCCESS_URI)) {
@@ -32,25 +32,26 @@
       s_logger.error("SAMLResponse processing error: " + e.getMessage());
     }
     try {
-      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+      resp.sendRedirect(SAML2AuthManager.SAMLCloudStackRedirectionUrl.value());
     }
  catch (    IOException ignored) {
     }
     return responseString;
   }
-  NameID nameId=(NameID)session.getAttribute(SAMLUtils.SAML_NAMEID);
-  String sessionIndex=(String)session.getAttribute(SAMLUtils.SAML_SESSION);
-  if (nameId == null || sessionIndex == null) {
+  String idpId=(String)session.getAttribute(SAMLPluginConstants.SAML_IDPID);
+  SAMLProviderMetadata idpMetadata=_samlAuthManager.getIdPMetadata(idpId);
+  String nameId=(String)session.getAttribute(SAMLPluginConstants.SAML_NAMEID);
+  if (idpMetadata == null || nameId == null || nameId.isEmpty()) {
     try {
-      resp.sendRedirect(_configDao.getValue(Config.SAMLCloudStackRedirectionUrl.key()));
+      resp.sendRedirect(SAML2AuthManager.SAMLCloudStackRedirectionUrl.value());
     }
  catch (    IOException ignored) {
     }
     return responseString;
   }
-  LogoutRequest logoutRequest=SAMLUtils.buildLogoutRequest(_samlAuthManager.getIdpSingleLogOutUrl(),_samlAuthManager.getServiceProviderId(),nameId,sessionIndex);
+  LogoutRequest logoutRequest=SAMLUtils.buildLogoutRequest(idpMetadata.getSloUrl(),_samlAuthManager.getSPMetadata().getEntityId(),nameId);
   try {
-    String redirectUrl=_samlAuthManager.getIdpSingleLogOutUrl() + "?SAMLRequest=" + SAMLUtils.encodeSAMLRequest(logoutRequest);
+    String redirectUrl=idpMetadata.getSloUrl() + "?SAMLRequest=" + SAMLUtils.encodeSAMLRequest(logoutRequest);
     resp.sendRedirect(redirectUrl);
   }
  catch (  MarshallingException|IOException e) {

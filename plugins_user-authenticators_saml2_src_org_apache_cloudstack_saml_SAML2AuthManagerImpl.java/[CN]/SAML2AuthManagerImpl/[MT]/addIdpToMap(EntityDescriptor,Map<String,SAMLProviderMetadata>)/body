@@ -1,0 +1,105 @@
+{
+  SAMLProviderMetadata idpMetadata=new SAMLProviderMetadata();
+  idpMetadata.setEntityId(descriptor.getEntityID());
+  s_logger.debug("Adding IdP to the list of discovered IdPs: " + descriptor.getEntityID());
+  if (descriptor.getOrganization() != null) {
+    if (descriptor.getOrganization().getDisplayNames() != null) {
+      for (      OrganizationDisplayName orgName : descriptor.getOrganization().getDisplayNames()) {
+        if (orgName != null && orgName.getName() != null) {
+          idpMetadata.setOrganizationName(orgName.getName().getLocalString());
+          break;
+        }
+      }
+    }
+    if (idpMetadata.getOrganizationName() == null && descriptor.getOrganization().getOrganizationNames() != null) {
+      for (      OrganizationName orgName : descriptor.getOrganization().getOrganizationNames()) {
+        if (orgName != null && orgName.getName() != null) {
+          idpMetadata.setOrganizationName(orgName.getName().getLocalString());
+          break;
+        }
+      }
+    }
+    if (descriptor.getOrganization().getURLs() != null) {
+      for (      OrganizationURL organizationURL : descriptor.getOrganization().getURLs()) {
+        if (organizationURL != null && organizationURL.getURL() != null) {
+          idpMetadata.setOrganizationUrl(organizationURL.getURL().getLocalString());
+          break;
+        }
+      }
+    }
+  }
+  if (descriptor.getContactPersons() != null) {
+    for (    ContactPerson person : descriptor.getContactPersons()) {
+      if (person == null || (person.getGivenName() == null && person.getSurName() == null) || person.getEmailAddresses() == null) {
+        continue;
+      }
+      if (person.getGivenName() != null) {
+        idpMetadata.setContactPersonName(person.getGivenName().getName());
+      }
+ else       if (person.getSurName() != null) {
+        idpMetadata.setContactPersonName(person.getSurName().getName());
+      }
+      for (      EmailAddress emailAddress : person.getEmailAddresses()) {
+        if (emailAddress != null && emailAddress.getAddress() != null) {
+          idpMetadata.setContactPersonEmail(emailAddress.getAddress());
+        }
+      }
+      if (idpMetadata.getContactPersonName() != null && idpMetadata.getContactPersonEmail() != null) {
+        break;
+      }
+    }
+  }
+  IDPSSODescriptor idpDescriptor=descriptor.getIDPSSODescriptor(SAMLConstants.SAML20P_NS);
+  if (idpDescriptor != null) {
+    if (idpDescriptor.getSingleSignOnServices() != null) {
+      for (      SingleSignOnService ssos : idpDescriptor.getSingleSignOnServices()) {
+        if (ssos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
+          idpMetadata.setSsoUrl(ssos.getLocation());
+        }
+      }
+    }
+    if (idpDescriptor.getSingleLogoutServices() != null) {
+      for (      SingleLogoutService slos : idpDescriptor.getSingleLogoutServices()) {
+        if (slos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
+          idpMetadata.setSloUrl(slos.getLocation());
+        }
+      }
+    }
+    X509Certificate unspecifiedKey=null;
+    if (idpDescriptor.getKeyDescriptors() != null) {
+      for (      KeyDescriptor kd : idpDescriptor.getKeyDescriptors()) {
+        if (kd.getUse() == UsageType.SIGNING) {
+          try {
+            idpMetadata.setSigningCertificate(KeyInfoHelper.getCertificates(kd.getKeyInfo()).get(0));
+          }
+ catch (          CertificateException ignored) {
+          }
+        }
+        if (kd.getUse() == UsageType.ENCRYPTION) {
+          try {
+            idpMetadata.setEncryptionCertificate(KeyInfoHelper.getCertificates(kd.getKeyInfo()).get(0));
+          }
+ catch (          CertificateException ignored) {
+          }
+        }
+        if (kd.getUse() == UsageType.UNSPECIFIED) {
+          try {
+            unspecifiedKey=KeyInfoHelper.getCertificates(kd.getKeyInfo()).get(0);
+          }
+ catch (          CertificateException ignored) {
+          }
+        }
+      }
+    }
+    if (idpMetadata.getSigningCertificate() == null && unspecifiedKey != null) {
+      idpMetadata.setSigningCertificate(unspecifiedKey);
+    }
+    if (idpMetadata.getEncryptionCertificate() == null && unspecifiedKey != null) {
+      idpMetadata.setEncryptionCertificate(unspecifiedKey);
+    }
+    if (idpMap.containsKey(idpMetadata.getEntityId())) {
+      s_logger.warn("Duplicate IdP metadata found with entity Id: " + idpMetadata.getEntityId());
+    }
+    idpMap.put(idpMetadata.getEntityId(),idpMetadata);
+  }
+}

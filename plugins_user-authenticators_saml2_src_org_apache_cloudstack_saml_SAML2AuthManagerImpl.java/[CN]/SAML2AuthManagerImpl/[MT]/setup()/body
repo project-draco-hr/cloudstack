@@ -1,97 +1,28 @@
 {
-  KeystoreVO keyStoreVO=_ksDao.findByName(SAMLUtils.SAMLSP_KEYPAIR);
-  if (keyStoreVO == null) {
-    try {
-      KeyPair keyPair=SAMLUtils.generateRandomKeyPair();
-      _ksDao.save(SAMLUtils.SAMLSP_KEYPAIR,SAMLUtils.savePrivateKey(keyPair.getPrivate()),SAMLUtils.savePublicKey(keyPair.getPublic()),"samlsp-keypair");
-      keyStoreVO=_ksDao.findByName(SAMLUtils.SAMLSP_KEYPAIR);
-    }
- catch (    NoSuchProviderException|NoSuchAlgorithmException e) {
-      s_logger.error("Unable to create and save SAML keypair");
-    }
+  if (!initSP()) {
+    s_logger.error("SAML Plugin failed to initialize, please fix the configuration and restart management server");
+    return false;
   }
-  if (keyStoreVO != null) {
-    PrivateKey privateKey=SAMLUtils.loadPrivateKey(keyStoreVO.getCertificate());
-    PublicKey publicKey=SAMLUtils.loadPublicKey(keyStoreVO.getKey());
-    if (privateKey != null && publicKey != null) {
-      spKeyPair=new KeyPair(publicKey,privateKey);
-      KeystoreVO x509VO=_ksDao.findByName(SAMLUtils.SAMLSP_X509CERT);
-      if (x509VO == null) {
-        try {
-          spX509Key=SAMLUtils.generateRandomX509Certificate(spKeyPair);
-          ByteArrayOutputStream bos=new ByteArrayOutputStream();
-          ObjectOutput out=new ObjectOutputStream(bos);
-          out.writeObject(spX509Key);
-          out.flush();
-          _ksDao.save(SAMLUtils.SAMLSP_X509CERT,Base64.encodeBase64String(bos.toByteArray()),"","samlsp-x509cert");
-          bos.close();
-        }
- catch (        NoSuchAlgorithmException|NoSuchProviderException|CertificateEncodingException|SignatureException|InvalidKeyException|IOException e) {
-          s_logger.error("SAML Plugin won't be able to use X509 signed authentication");
-        }
-      }
- else {
-        try {
-          ByteArrayInputStream bi=new ByteArrayInputStream(Base64.decodeBase64(x509VO.getCertificate()));
-          ObjectInputStream si=new ObjectInputStream(bi);
-          spX509Key=(X509Certificate)si.readObject();
-          bi.close();
-        }
- catch (        IOException|ClassNotFoundException ignored) {
-          s_logger.error("SAML Plugin won't be able to use X509 signed authentication. Failed to load X509 Certificate from Database.");
-        }
-      }
-    }
-  }
-  this.serviceProviderId=_configDao.getValue(Config.SAMLServiceProviderID.key());
-  this.identityProviderId=_configDao.getValue(Config.SAMLIdentityProviderID.key());
-  this.spSingleSignOnUrl=_configDao.getValue(Config.SAMLServiceProviderSingleSignOnURL.key());
-  this.spSingleLogOutUrl=_configDao.getValue(Config.SAMLServiceProviderSingleLogOutURL.key());
-  String idpMetaDataUrl=_configDao.getValue(Config.SAMLIdentityProviderMetadataURL.key());
-  int tolerance=30000;
-  String timeout=_configDao.getValue(Config.SAMLTimeout.key());
-  if (timeout != null) {
-    tolerance=Integer.parseInt(timeout);
+  _timer=new Timer();
+  final HttpClient client=new HttpClient();
+  final String idpMetaDataUrl=SAMLIdentityProviderMetadataURL.value();
+  if (SAMLTimeout.value() != null && SAMLTimeout.value() > SAMLPluginConstants.SAML_REFRESH_INTERVAL) {
+    _refreshInterval=SAMLTimeout.value();
   }
   try {
     DefaultBootstrap.bootstrap();
-    idpMetaDataProvider=new HTTPMetadataProvider(idpMetaDataUrl,tolerance);
-    idpMetaDataProvider.setRequireValidMetadata(true);
-    idpMetaDataProvider.setParserPool(new BasicParserPool());
-    idpMetaDataProvider.initialize();
-    EntityDescriptor idpEntityDescriptor=idpMetaDataProvider.getEntityDescriptor(this.identityProviderId);
-    IDPSSODescriptor idpssoDescriptor=idpEntityDescriptor.getIDPSSODescriptor(SAMLConstants.SAML20P_NS);
-    if (idpssoDescriptor != null) {
-      for (      SingleSignOnService ssos : idpssoDescriptor.getSingleSignOnServices()) {
-        if (ssos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
-          this.idpSingleSignOnUrl=ssos.getLocation();
-        }
-      }
-      for (      SingleLogoutService slos : idpssoDescriptor.getSingleLogoutServices()) {
-        if (slos.getBinding().equals(SAMLConstants.SAML2_REDIRECT_BINDING_URI)) {
-          this.idpSingleLogOutUrl=slos.getLocation();
-        }
-      }
-      for (      KeyDescriptor kd : idpssoDescriptor.getKeyDescriptors()) {
-        if (kd.getUse() == UsageType.SIGNING) {
-          try {
-            this.idpSigningKey=KeyInfoHelper.getCertificates(kd.getKeyInfo()).get(0);
-          }
- catch (          CertificateException ignored) {
-          }
-        }
-        if (kd.getUse() == UsageType.ENCRYPTION) {
-          try {
-            this.idpEncryptionKey=KeyInfoHelper.getCertificates(kd.getKeyInfo()).get(0);
-          }
- catch (          CertificateException ignored) {
-          }
-        }
-      }
+    if (idpMetaDataUrl.startsWith("http")) {
+      _idpMetaDataProvider=new HTTPMetadataProvider(_timer,client,idpMetaDataUrl);
     }
  else {
-      s_logger.warn("Provided IDP XML Metadata does not contain IDPSSODescriptor, SAML authentication may not work");
+      File metadataFile=PropertiesUtil.findConfigFile(idpMetaDataUrl);
+      s_logger.debug("Provided Metadata is not a URL, trying to read metadata file from local path: " + metadataFile.getAbsolutePath());
+      _idpMetaDataProvider=new FilesystemMetadataProvider(_timer,metadataFile);
     }
+    _idpMetaDataProvider.setRequireValidMetadata(true);
+    _idpMetaDataProvider.setParserPool(new BasicParserPool());
+    _idpMetaDataProvider.initialize();
+    _timer.scheduleAtFixedRate(new MetadataRefreshTask(),0,_refreshInterval * 1000);
   }
  catch (  MetadataProviderException e) {
     s_logger.error("Unable to read SAML2 IDP MetaData URL, error:" + e.getMessage());
@@ -101,10 +32,7 @@ catch (  ConfigurationException|FactoryConfigurationError e) {
     s_logger.error("OpenSAML bootstrapping failed: error: " + e.getMessage());
   }
 catch (  NullPointerException e) {
-    s_logger.error("Unable to setup SAML Auth Plugin due to NullPointerException" + " please check the SAML IDP metadata URL and entity ID in global settings: " + e.getMessage());
-  }
-  if (this.idpSingleLogOutUrl == null || this.idpSingleSignOnUrl == null) {
-    s_logger.error("SAML based authentication won't work");
+    s_logger.error("Unable to setup SAML Auth Plugin due to NullPointerException" + " please check the SAML global settings: " + e.getMessage());
   }
   return true;
 }
