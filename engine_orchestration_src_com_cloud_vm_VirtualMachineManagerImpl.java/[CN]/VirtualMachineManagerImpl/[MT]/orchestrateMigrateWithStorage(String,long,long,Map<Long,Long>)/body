@@ -32,6 +32,35 @@
   moveVmToMigratingState(vm,destHostId,work);
   boolean migrated=false;
   try {
+    Nic defaultNic=_networkModel.getDefaultNic(vm.getId());
+    List<String[]> vmData=null;
+    if (defaultNic != null) {
+      UserVmVO userVm=_userVmDao.findById(vm.getId());
+      Map<String,String> details=_vmDetailsDao.listDetailsKeyPairs(vm.getId());
+      vm.setDetails(details);
+      Network network=_networkModel.getNetwork(defaultNic.getNetworkId());
+      if (_networkModel.isSharedNetworkWithoutServices(network.getId())) {
+        final String serviceOffering=_serviceOfferingDao.findByIdIncludingRemoved(vm.getId(),vm.getServiceOfferingId()).getDisplayText();
+        final String zoneName=_dcDao.findById(vm.getDataCenterId()).getName();
+        boolean isWindows=_guestOSCategoryDao.findById(_guestOSDao.findById(vm.getGuestOSId()).getCategoryId()).getName().equalsIgnoreCase("Windows");
+        vmData=_networkModel.generateVmData(userVm.getUserData(),serviceOffering,zoneName,vm.getInstanceName(),vm.getId(),(String)profile.getParameter(VirtualMachineProfile.Param.VmSshPubKey),(String)profile.getParameter(VirtualMachineProfile.Param.VmPassword),isWindows);
+        String vmName=vm.getInstanceName();
+        String configDriveIsoRootFolder="/tmp";
+        String isoFile=configDriveIsoRootFolder + "/" + vmName+ "/configDrive/"+ vmName+ ".iso";
+        profile.setVmData(vmData);
+        profile.setConfigDriveLabel(VmConfigDriveLabel.value());
+        profile.setConfigDriveIsoRootFolder(configDriveIsoRootFolder);
+        profile.setConfigDriveIsoFile(isoFile);
+        AttachOrDettachConfigDriveCommand dettachCommand=new AttachOrDettachConfigDriveCommand(vm.getInstanceName(),vmData,VmConfigDriveLabel.value(),false);
+        try {
+          _agentMgr.send(srcHost.getId(),dettachCommand);
+          s_logger.debug("Deleted config drive ISO for  vm " + vm.getInstanceName() + " In host "+ srcHost);
+        }
+ catch (        OperationTimedoutException e) {
+          s_logger.debug("TIme out occured while exeuting command AttachOrDettachConfigDrive " + e.getMessage());
+        }
+      }
+    }
     volumeMgr.migrateVolumes(vm,to,srcHost,destHost,volumeToPoolMap);
     moveVmOutofMigratingStateOnSuccess(vm,destHost.getId(),work);
     try {
