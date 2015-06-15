@@ -50,6 +50,10 @@
           destFile=new QemuImgFile(destPath,destFormat);
           try {
             qemu.convert(srcFile,destFile);
+            Map<String,String> destInfo=qemu.info(destFile);
+            Long virtualSize=Long.parseLong(destInfo.get(new String("virtual_size")));
+            newDisk.setVirtualSize(virtualSize);
+            newDisk.setSize(virtualSize);
           }
  catch (          QemuImgException e) {
             s_logger.error("Failed to convert " + srcFile.getFileName() + " to "+ destFile.getFileName()+ " the error was: "+ e.getMessage());
@@ -67,11 +71,12 @@
     s_logger.debug("The source image is not RBD, but the destination is. We will convert into RBD format 2");
     try {
       srcFile=new QemuImgFile(sourcePath,sourceFormat);
-      String rbdDestFile=KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),destPool.getSourceDir() + "/" + name);
+      String rbdDestPath=destPool.getSourceDir() + "/" + name;
+      String rbdDestFile=KVMPhysicalDisk.RBDStringBuilder(destPool.getSourceHost(),destPool.getSourcePort(),destPool.getAuthUserName(),destPool.getAuthSecret(),rbdDestPath);
       destFile=new QemuImgFile(rbdDestFile,destFormat);
-      s_logger.debug("Starting copy from source image " + srcFile.getFileName() + " to RBD image "+ destPool.getSourceDir()+ "/"+ name);
+      s_logger.debug("Starting copy from source image " + srcFile.getFileName() + " to RBD image "+ rbdDestPath);
       qemu.convert(srcFile,destFile);
-      s_logger.debug("Succesfully converted source image " + srcFile.getFileName() + " to RBD image "+ destPool.getSourceDir()+ "/"+ name);
+      s_logger.debug("Succesfully converted source image " + srcFile.getFileName() + " to RBD image "+ rbdDestPath);
       Rados r=new Rados(destPool.getAuthUserName());
       r.confSet("mon_host",destPool.getSourceHost() + ":" + destPool.getSourcePort());
       r.confSet("key",destPool.getAuthSecret());
@@ -81,6 +86,10 @@
       IoCTX io=r.ioCtxCreate(destPool.getSourceDir());
       Rbd rbd=new Rbd(io);
       RbdImage image=rbd.open(name);
+      RbdImageInfo rbdInfo=image.stat();
+      newDisk.setSize(rbdInfo.size);
+      newDisk.setVirtualSize(rbdInfo.size);
+      s_logger.debug("After copy the resulting RBD image " + rbdDestPath + " is "+ rbdInfo.size+ " bytes long");
       rbd.close(image);
       r.ioCtxDestroy(io);
     }
