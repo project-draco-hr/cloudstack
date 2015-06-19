@@ -1,7 +1,7 @@
 @data('host', 'CLUSTER', 'ZONE')
-@attr(tags=['advanced', 'advancedsg', 'basic', 'debug'], required_hardware='false')
+@attr(tags=['advanced', 'advancedsg', 'basic'], required_hardware='false')
 def test_02_vm_operations_on_disabled_pool(self, value):
-    '\n        Test Steps:\n        =========\n\n        1. Deploy a VM and attach volume\n        2. Create Template from root volume of the VM\n        3. Deploy a VM using the template\n        4. Disable the storage pool\n        5. Attach a new volume - should fail\n        6. Resize DATA disk to a higher value\n        7. Take VM Snapshot of the VM (for supported hypervisors)\n        8. Destroy the VM and immediately restore the VM\n        9. Enable a new storage pool\n        10. Re-install the VM with same template\n        11. Re-install the VM with the new template created earlier\n        12. Repeat tests with enabled pool, Attach new Volume to VM2\n        13. Resize disk to a higher value\n        14. Reboot the VM\n        15. Take VM Snapshot of the VM\n        16. Destroy the VM and immediately restore the VM\n\n        '
+    '\n        Test Steps:\n        =========\n\n        1. Deploy a VM and attach volume\n        2. Disable Storage\n        3. Create Template from root volume of the VM\n        4. Attach a new volume - should fail\n        5. Resize DATA disk to a higher value\n        6. Take VM Snapshot of the VM (for supported hypervisors)\n        7. Destroy the VM and immediately restore the VM\n        8. Enable a new storage pool\n        9. Re-install the VM with same template\n        10. Re-install the VM with the new template created earlier\n        11. Repeat tests with enabled pool, Attach new Volume to VM2\n        12. Resize disk to a higher value\n        13. Reboot the VM\n        14. Take VM Snapshot of the VM\n        15. Destroy the VM and immediately restore the VM\n\n        '
     self.disabled_list = []
     if (value == 'CLUSTER'):
         other_scope = 'ZONE'
@@ -11,13 +11,22 @@ def test_02_vm_operations_on_disabled_pool(self, value):
         other_scope = 'CLUSTER'
         self.service_offering = self.service_offering_shared
         self.disk_offering = self.disk_offering_shared
-    else:
+    elif (value == 'host'):
         other_scope = None
-        self.service_offering = self.service_offering_local
-        self.disk_offering = self.disk_offering_local
+        if self.zone.localstorageenabled:
+            self.service_offering = self.service_offering_local
+            self.disk_offering = self.disk_offering_local
+        else:
+            self.skipTest('Local storage not enabled')
+    if (self.hypervisor.lower() == 'lxc'):
+        self.skipTest('Not running rest of tests in lxc')
     try:
         self.list_storage = StoragePool.list(self.userapiclient, scope=value)
-        count_st_pools = len(self.list_storage)
+        if self.list_storage:
+            count_st_pools = len(self.list_storage)
+        else:
+            count_st_pools = 0
+        self.disabled_pool_1 = None
         if (count_st_pools > 1):
             self.debug(('Found % s storage pools, keeping one and disabling rest' % count_st_pools))
             for pool in self.list_storage[1:]:
@@ -33,7 +42,7 @@ def test_02_vm_operations_on_disabled_pool(self, value):
         elif (count_st_pools == 1):
             self.debug(('Only one % s wide storage found - will not be able to complete all tests' % value))
         else:
-            self.fail(('No % s wide storage pools found' % value))
+            self.skipTest(('No % s wide storage pools found' % value))
     except Exception as e:
         raise e
     if (value != 'host'):
@@ -60,49 +69,47 @@ def test_02_vm_operations_on_disabled_pool(self, value):
     list_volume = Volume.list(self.userapiclient, id=self.volume_1.id)
     self.assertEqual(list_volume[0].virtualmachineid, self.virtual_machine_1.id, 'Check if volume state (attached) is reflected')
     self.debug(('Step 1: volume id:%s successfully attached to vm id%s' % (self.volume_1.id, self.virtual_machine_1.id)))
+    self.storage_pools_list = StoragePool.list(self.userapiclient, scope=value, state='Up')
+    self.storage_pool_1 = self.storage_pools_list[0]
+    try:
+        self.debug(('Step 2: Disabling Storage Pool: %s' % self.storage_pool_1.id))
+        StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=False)
+        self.disabled_list.append(self.storage_pool_1.id)
+    except Exception as e:
+        self.debug(("Step 2: Couldn't disable pool %s" % e))
+    verify_pool_state(self, self.storage_pool_1.id, 'Disabled')
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
     root_volume_1 = Volume.list(self.userapiclient, virtualmachineid=self.virtual_machine_1.id, type='ROOT')[0]
     self.virtual_machine_1.stop(self.userapiclient)
     try:
         template_2 = Template.create(self.userapiclient, self.testdata['template_2'], volumeid=root_volume_1.id, account=self.account.name, domainid=self.account.domainid)
         self.cleanup.append(template_2)
-        self.debug(('Step 2: Created template with ID: %s' % template_2.id))
+        self.debug(('Step 3: Created template with ID: %s' % template_2.id))
         list_template = Template.list(self.userapiclient, templatefilter='self', id=template_2.id)
     except Exception as e:
-        self.fail('Step 2: Template from volume failed')
-    self.debug('Step 3: Deploying VM using template created')
-    self.virtual_machine_2 = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=template_2.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
-    verify_vm_state(self, self.virtual_machine_2.id, 'Running')
-    self.storage_pools_list = StoragePool.list(self.userapiclient, scope=value, state='Up')
-    self.storage_pool_1 = self.storage_pools_list[0]
-    try:
-        self.debug(('Step 4: Disabling Storage Pool: %s' % self.storage_pool_1.id))
-        StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=False)
-        self.disabled_list.append(self.storage_pool_1.id)
-    except Exception as e:
-        self.debug(("Step 4: Couldn't disable pool %s" % e))
-    verify_pool_state(self, self.storage_pool_1.id, 'Disabled')
-    verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
-    verify_vm_state(self, self.virtual_machine_2.id, 'Running')
+        self.fail('Step 3: Template from volume failed')
     self.volume_2 = Volume.create(self.userapiclient, services=self.testdata['volume'], diskofferingid=self.disk_offering.id, zoneid=self.zone.id)
-    self.debug('Step 5: Trying to attach new volume to VM on disabled storage - should fail')
+    self.debug('Step 4: Trying to attach new volume to VM on disabled storage - should fail')
     with self.assertRaises(Exception):
-        self.virtual_machine_2.attach_volume(self.userapiclient, self.volume_2)
-    if (self.hypervisor.lower() not in 'hyperv'):
-        try:
-            self.volume_1.resize(self.userapiclient, diskofferingid=self.resized_disk_offering.id)
-            list_volume_1 = Volume.list(self.userapiclient, id=self.volume_1.id)
-            self.assertEqual(list_volume_1[0].diskofferingid, self.resized_disk_offering.id, ('check list volume response for volume id:  %s' % self.volume_1.id))
-            self.debug(('Step 6: volume id %s got resized successfully' % list_volume_1[0].id))
-        except Exception as e:
-            self.fail(('Step 6: Volume resize on disabled pool failed: % s' % e))
+        self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_2)
+    try:
+        self.volume_1.resize(self.userapiclient, diskofferingid=self.resized_disk_offering.id)
+        list_volume_1 = Volume.list(self.userapiclient, id=self.volume_1.id)
+        self.assertEqual(list_volume_1[0].diskofferingid, self.resized_disk_offering.id, ('check list volume response for volume id:  %s' % self.volume_1.id))
+        self.debug(('Step 5: volume id %s got resized successfully' % list_volume_1[0].id))
+    except Exception as e:
+        self.fail(('Step 5: Volume resize on disabled pool failed: % s' % e))
     if (self.hypervisor.lower() not in ('kvm', 'hyperv', 'lxc')):
         try:
-            self.debug(('Step 7: Taking VM Snapshot for vm id % s' % self.virtual_machine_1.id))
+            self.debug(('Step 6: Taking VM Snapshot for vm id % s' % self.virtual_machine_1.id))
             vm_snapshot = VmSnapshot.create(self.userapiclient, self.virtual_machine_1.id, 'false', 'TestSnapshot', 'Display Text')
             self.assertEqual(vm_snapshot.state, 'Ready', 'Check VM snapshot is ready')
         except Exception as e:
-            self.fail(('Step 7: VM Snapshot on disabled pool failed: % s' % e))
-    self.debug('Step 8: Deleting and restoring the VM, should continue to run from same storage pool')
+            self.fail(('Step 6: VM Snapshot on disabled pool failed: % s' % e))
+    if vm_snapshot:
+        self.debug('Step 6: Deleting Vm Snapshot')
+        VmSnapshot.deleteVMSnapshot(self.userapiclient, vm_snapshot.id)
+    self.debug('Step 7: Deleting and restoring the VM, should continue to run from same storage pool')
     self.virtual_machine_1.delete(self.userapiclient, expunge=False)
     self.virtual_machine_1.recover(self.userapiclient)
     verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
@@ -113,56 +120,55 @@ def test_02_vm_operations_on_disabled_pool(self, value):
         try:
             newpoolid = self.disabled_pool_1.id
             StoragePool.update(self.userapiclient, id=newpoolid, enabled=True)
-            self.debug(('Step 9: Enabling new pool % s ' % newpoolid))
+            self.debug(('Step 8: Enabling new pool % s ' % newpoolid))
             if (newpoolid in self.disabled_list):
                 self.disabled_list.remove(newpoolid)
         except Exception as e:
-            self.fail(('Step 9: Enable storage pool %s' % e), 'failed')
+            self.fail(('Step 8: Enable storage pool %s' % e), 'failed')
     else:
-        self.debug('Step 9: Could not find a second storage pool, so enabling the first storage pool and running the tests')
+        self.debug('Step 8: Could not find a second storage pool, so enabling the first storage pool and running the tests')
         try:
-            self.debug(('Step 9: Enabling Storage Pool: %s' % self.storage_pool_1.id))
+            self.debug(('Step 8: Enabling Storage Pool: %s' % self.storage_pool_1.id))
             StoragePool.update(self.userapiclient, id=self.storage_pool_1.id, enabled=True)
             if (self.storage_pool_1.id in self.disabled_list):
                 self.disabled_list.remove(self.storage_pool_1.id)
             newpoolid = self.storage_pool_1.id
         except Exception as e:
-            self.fail(("Step 9: Couldn't enable pool %s" % e))
+            self.fail(("Step 8: Couldn't enable pool %s" % e))
     verify_pool_state(self, newpoolid, 'Up')
-    self.debug('Step 10: Re-installing VM 1')
-    vm_restore = self.virtual_machine_1.restore(self.userapiclient, templateid=self.template.id)
-    verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
-    self.debug('Step 11: re-installing VM with different template')
-    vm_restore = self.virtual_machine_1.restore(self.userapiclient, templateid=template_2.id)
-    verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
-    self.debug('Step 12: Attach volume to VM')
-    self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_2)
-    list_volume_2 = Volume.list(self.userapiclient, id=self.volume_2.id)
-    self.assertEqual(list_volume_2[0].virtualmachineid, self.virtual_machine_1.id, 'Check if volume state (attached) is reflected')
-    self.debug(('Step 12: volume id:% s successfully attached to vm id % s' % (self.volume_2.id, self.virtual_machine_1.id)))
-    if (self.hypervisor.lower() not in 'hyperv'):
+    if (value != 'host'):
+        self.debug('Step 9: Re-installing VM 1')
+        vm_restore = self.virtual_machine_1.restore(self.userapiclient, templateid=self.template.id)
+        verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
+        self.debug('Step 10: re-installing VM with different template')
+        vm_restore = self.virtual_machine_1.restore(self.userapiclient, templateid=template_2.id)
+        verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
+    if (value != 'host'):
+        self.debug('Step 11: Attach volume to VM')
+        self.virtual_machine_1.attach_volume(self.userapiclient, self.volume_2)
+        list_volume_2 = Volume.list(self.userapiclient, id=self.volume_2.id)
+        self.assertEqual(list_volume_2[0].virtualmachineid, self.virtual_machine_1.id, 'Check if volume state (attached) is reflected')
+        self.debug(('Step 11: volume id:% s successfully attached to vm id % s' % (self.volume_2.id, self.virtual_machine_1.id)))
         try:
             self.virtual_machine_1.stop(self.userapiclient)
             self.volume_2.resize(self.userapiclient, diskofferingid=self.resized_disk_offering.id)
             list_volume_2 = Volume.list(self.userapiclient, id=self.volume_2.id)
             self.assertEqual(list_volume_2[0].diskofferingid, self.resized_disk_offering.id, ('check list volume response for volume id:  %s' % self.volume_2.id))
-            self.debug(('Step 13: volume id %s got resized successfully' % list_volume_2[0].id))
+            self.debug(('Step 12: volume id %s got resized successfully' % list_volume_2[0].id))
         except Exception as e:
-            self.fail(('Step 13: Failed to resize volume % s ' % e))
-    self.virtual_machine_1.start(self.userapiclient)
+            self.fail(('Step 12: Failed to resize volume % s ' % e))
+        self.virtual_machine_1.start(self.userapiclient)
     self.virtual_machine_1.reboot(self.userapiclient)
-    verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
+    verify_vm_state(self, self.virtual_machine_1.id, 'Running')
     if (self.hypervisor.lower() not in ('kvm', 'hyperv', 'lxc')):
         try:
             vm_snapshot = VmSnapshot.create(self.userapiclient, self.virtual_machine_1.id, 'false', 'TestSnapshot2', 'Display Text')
             self.assertEqual(vm_snapshot.state, 'Ready', 'Check the snapshot of vm is ready!')
         except Exception as e:
-            self.fail('Step 15: Snapshot failed post enabling new storage pool')
-    verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
-    self.debug('Step 16: Deleting and recovering VM')
+            self.fail('Step 14: Snapshot failed post enabling new storage pool')
+    self.debug('Step 15: Deleting and recovering VM')
     self.virtual_machine_1.delete(self.userapiclient, expunge=False)
     self.virtual_machine_1.recover(self.userapiclient)
     verify_vm_state(self, self.virtual_machine_1.id, 'Stopped')
     self.virtual_machine_1.start(self.userapiclient)
     verify_vm_state(self, self.virtual_machine_1.id, 'Running')
-    verify_vm_storage_pool(self, self.virtual_machine_1.id, newpoolid)
