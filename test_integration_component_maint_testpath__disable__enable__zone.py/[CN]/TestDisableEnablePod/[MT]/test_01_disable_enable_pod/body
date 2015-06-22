@@ -2,7 +2,7 @@
 def test_01_disable_enable_pod(self):
     'disable enable Pod\n            1. Disable pod and verify following things:\n                For admin user:\n                    -- Should be able to create new vm, snapshot,\n                            volume,template,iso in the same pod\n                For Non-admin user:\n                    -- Should not be able to create new vm, snapshot,\n                            volume,template,iso in the same pod\n            2. Enable the above disabled pod and verify that:\n                -All users should be able to create new vm, snapshot,\n                volume,template,iso in the same pod\n            3. Try to delete the pod and it should fail with error message:\n                - "The pod is not deletable because there are servers\n                running in this pod"\n\n        '
     vm_user = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
-    vm_root = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    vm_root = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     cmd = updatePod.updatePodCmd()
     cmd.id = self.pod.id
     cmd.allocationstate = DISABLED
@@ -11,49 +11,50 @@ def test_01_disable_enable_pod(self):
     self.assertEqual(podList[0].allocationstate, DISABLED, 'Check if the pod is in disabled state')
     self.assertEqual(vm_user.state.lower(), 'running', 'Verify that the user vm is running')
     self.assertEqual(vm_root.state.lower(), 'running', 'Verify that the admin vm is running')
-    VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
-    root_volume = list_volumes(self.userapiclient, virtualmachineid=vm_root.id, type='ROOT', listall=True)
+    VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    root_volume = list_volumes(self.apiclient, virtualmachineid=vm_root.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list snapshot  is empty for volume id %s' % vm_root.id))
     if self.snapshotSupported:
         Snapshot.create(self.apiclient, root_volume[0].id)
         snapshots = list_snapshots(self.apiclient, volumeid=root_volume[0].id, listall=True)
+        self.assertEqual(validateList(snapshots)[0], PASS, ('list snapshot  is empty for volume id %s' % root_volume[0].id))
         Template.create_from_snapshot(self.apiclient, snapshots[0], self.testdata['privatetemplate'])
     builtin_info = get_builtin_template_info(self.apiclient, self.zone.id)
     self.testdata['privatetemplate']['url'] = builtin_info[0]
     self.testdata['privatetemplate']['hypervisor'] = builtin_info[1]
     self.testdata['privatetemplate']['format'] = builtin_info[2]
     Template.register(self.apiclient, self.testdata['privatetemplate'], zoneid=self.zone.id)
-    Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
-    Iso.create(self.apiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+    Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.admin_account.name, domainid=self.admin_account.domainid, diskofferingid=self.disk_offering.id)
+    Iso.create(self.apiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.admin_account.name, domainid=self.admin_account.domainid)
     with self.assertRaises(Exception):
         VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     root_volume = list_volumes(self.userapiclient, virtualmachineid=vm_user.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list volume  is empty for volume id %s' % vm_user.id))
     if self.snapshotSupported:
-        with self.assertRaises(Exception):
-            Snapshot.create(self.userapiclient, root_volume[0].id)
-    with self.assertRaises(Exception):
-        Template.register(self.userapiclient, self.testdata['privatetemplate'], zoneid=self.zone.id)
-    with self.assertRaises(Exception):
-        Volume.create(self.userapiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
-    with self.assertRaises(Exception):
-        Iso.create(self.userapiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+        Snapshot.create(self.userapiclient, root_volume[0].id)
+    Template.register(self.userapiclient, self.testdata['privatetemplate'], zoneid=self.zone.id)
+    Volume.create(self.userapiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    Iso.create(self.userapiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
     cmd.allocationstate = ENABLED
     self.apiclient.updatePod(cmd)
     podList = Pod.list(self.apiclient, id=self.pod.id)
     self.assertEqual(podList[0].allocationstate, ENABLED, 'Check if the pod is in enabled state')
-    root_vm_new = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    root_vm_new = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     self.assertEqual(root_vm_new.state.lower(), 'running', 'Verify that admin should be able                                     to create new VM')
     if self.snapshotSupported:
         Snapshot.create(self.apiclient, root_volume[0].id)
         snapshots = list_snapshots(self.apiclient, volumeid=root_volume[0].id, listall=True)
+        self.assertEqual(validateList(snapshots)[0], PASS, ('list snapshot  is empty for volume id %s' % root_volume[0].id))
         Template.create_from_snapshot(self.apiclient, snapshots[0], self.testdata['privatetemplate'])
     Template.register(self.apiclient, self.testdata['privatetemplate'], zoneid=self.zone.id)
-    Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
-    Iso.create(self.apiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+    Volume.create(self.apiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.admin_account.name, domainid=self.admin_account.domainid, diskofferingid=self.disk_offering.id)
+    Iso.create(self.apiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.admin_account.name, domainid=self.admin_account.domainid)
     user_vm_new = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     self.assertEqual(user_vm_new.state.lower(), 'running', 'Verify that admin should create new VM')
     if self.snapshotSupported:
         Snapshot.create(self.userapiclient, root_volume[0].id)
         snapshots = list_snapshots(self.userapiclient, volumeid=root_volume[0].id, listall=True)
+        self.assertEqual(validateList(snapshots)[0], PASS, ('list snapshot  is empty for volume id %s' % root_volume[0].id))
     Template.register(self.userapiclient, self.testdata['privatetemplate'], zoneid=self.zone.id)
     Volume.create(self.userapiclient, self.testdata['volume'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
     Iso.create(self.userapiclient, self.testdata['iso2'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)

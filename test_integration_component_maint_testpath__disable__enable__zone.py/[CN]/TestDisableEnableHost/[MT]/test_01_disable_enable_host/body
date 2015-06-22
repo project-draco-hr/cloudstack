@@ -1,7 +1,7 @@
 @attr(tags=['advanced', 'basic'], required_hardware='true')
 def test_01_disable_enable_host(self):
-    'disable enable host\n            1. Disable host and verify following things:\n                For admin user:\n                    1. Should be create to start/stop exsiting vms\n                    2. Should be create to deploy new vm,\n                    snapshot on the same host\n                For Non-admin user:\n                    1. Should be create to start/stop exsiting vms\n                    2. Should not be create to deploy new vm,\n                    snapshot on the same host\n            2. Enable the above disabled host and verify that:\n                -All users should be create to deploy new vm,\n                snapshot on the same host\n            3. Try to reconnect the host :\n                -Host should get reconnected successfully\n        '
-    vm_root = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
+    'disable enable host\n            1. Disable host and verify following things:\n                For admin user:\n                    1. Should be able to  stop exsiting vms but can not start.\n                    2. Should not be able to  deploy new vm,\n                       and create snapshot on the same host\n                For Non-admin user:\n                    1. Should not be able to stop exsiting vms but\n                       cant not start\n                    2. Should not be create to deploy new vm,\n                    snapshot on the same host\n            2. Enable the above disabled host and verify that:\n                -All users should be create to deploy new vm,\n                snapshot on the same host\n            3. Try to reconnect the host :\n                -Host should get reconnected successfully\n        '
+    vm_root = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     hostid = vm_root.hostid
     vm_user = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     cmd = updateHost.updateHostCmd()
@@ -21,10 +21,16 @@ def test_01_disable_enable_host(self):
     self.assertEqual(root_state.lower(), 'stopped', 'verify that vm should stop')
     self.assertEqual(user_state.lower(), 'stopped', 'verify that vm should stop')
     with self.assertRaises(Exception):
-        VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
+        VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
     root_volume = list_volumes(self.apiclient, virtualmachineid=vm_root.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list root volume response is empty for volume id %s' % vm_root.id))
     if self.snapshotSupported:
-        Snapshot.create(self.apiclient, root_volume[0].id)
+        with self.assertRaises(Exception):
+            Snapshot.create(self.apiclient, root_volume[0].id)
+    with self.assertRaises(Exception):
+        VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
+    root_volume = list_volumes(self.apiclient, virtualmachineid=vm_user.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list root volume response is empty for volume id %s' % vm_user.id))
     if self.snapshotSupported:
         with self.assertRaises(Exception):
             Snapshot.create(self.userapiclient, root_volume[0].id)
@@ -33,12 +39,16 @@ def test_01_disable_enable_host(self):
     self.apiclient.updateHost(cmd)
     hostList = Host.list(self.apiclient, id=hostid)
     self.assertEqual(hostList[0].resourcestate, ENABLED, 'Check if the host is in enabled state')
-    root_vm_new = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
+    root_vm_new = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.admin_account.name, domainid=self.admin_account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, hostid=hostid)
     self.assertEqual(root_vm_new.state.lower(), 'running', 'Verify that admin should create new VM in running state')
+    root_volume = list_volumes(self.apiclient, virtualmachineid=vm_root.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list root volume response is empty for volume id %s' % vm_root.id))
     if self.snapshotSupported:
         Snapshot.create(self.apiclient, root_volume[0].id)
     user_vm_new = VirtualMachine.create(self.userapiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, zoneid=self.zone.id)
     self.assertEqual(user_vm_new.state.lower(), 'running', 'Verify that admin should create new VM')
+    root_volume = list_volumes(self.apiclient, virtualmachineid=vm_user.id, type='ROOT', listall=True)
+    self.assertEqual(validateList(root_volume)[0], PASS, ('list root volume response is empty for volume id %s' % vm_user.id))
     if self.snapshotSupported:
         Snapshot.create(self.userapiclient, root_volume[0].id)
     cmd = reconnectHost.reconnectHostCmd()
