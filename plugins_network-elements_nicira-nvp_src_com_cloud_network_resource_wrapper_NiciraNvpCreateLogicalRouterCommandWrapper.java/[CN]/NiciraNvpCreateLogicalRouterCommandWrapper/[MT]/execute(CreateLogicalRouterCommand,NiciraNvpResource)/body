@@ -1,16 +1,17 @@
 {
-  final String routerName=cmd.getName();
-  final String gatewayServiceUuid=cmd.getGatewayServiceUuid();
-  final String logicalSwitchUuid=cmd.getLogicalSwitchUuid();
+  final String routerName=command.getName();
+  final String gatewayServiceUuid=command.getGatewayServiceUuid();
+  final String logicalSwitchUuid=command.getLogicalSwitchUuid();
   final List<NiciraNvpTag> tags=new ArrayList<NiciraNvpTag>();
-  tags.add(new NiciraNvpTag("cs_account",cmd.getOwnerName()));
-  final String publicNetworkNextHopIp=cmd.getPublicNextHop();
-  final String publicNetworkIpAddress=cmd.getPublicIpCidr();
-  final String internalNetworkAddress=cmd.getInternalIpCidr();
+  tags.add(new NiciraNvpTag("cs_account",command.getOwnerName()));
+  final String publicNetworkNextHopIp=command.getPublicNextHop();
+  final String publicNetworkIpAddress=command.getPublicIpCidr();
+  final String internalNetworkAddress=command.getInternalIpCidr();
   s_logger.debug("Creating a logical router with external ip " + publicNetworkIpAddress + " and internal ip "+ internalNetworkAddress+ "on gateway service "+ gatewayServiceUuid);
+  final NiciraNvpApi niciraNvpApi=niciraNvpResource.getNiciraNvpApi();
   try {
     LogicalRouter lrc=new LogicalRouter();
-    lrc.setDisplayName(truncate(routerName,NAME_MAX_LEN));
+    lrc.setDisplayName(niciraNvpResource.truncate(routerName,NAME_MAX_LEN));
     lrc.setTags(tags);
     lrc.setRoutingConfig(new SingleDefaultRouteImplicitRoutingConfig(new RouterNextHop(publicNetworkNextHopIp)));
     lrc=niciraNvpApi.createLogicalRouter(lrc);
@@ -18,26 +19,26 @@
     try {
       LogicalRouterPort lrpo=new LogicalRouterPort();
       lrpo.setAdminStatusEnabled(true);
-      lrpo.setDisplayName(truncate(routerName + "-outside-port",NAME_MAX_LEN));
+      lrpo.setDisplayName(niciraNvpResource.truncate(routerName + "-outside-port",NAME_MAX_LEN));
       lrpo.setTags(tags);
       final List<String> outsideIpAddresses=new ArrayList<String>();
       outsideIpAddresses.add(publicNetworkIpAddress);
       lrpo.setIpAddresses(outsideIpAddresses);
       lrpo=niciraNvpApi.createLogicalRouterPort(lrc.getUuid(),lrpo);
       final L3GatewayAttachment attachment=new L3GatewayAttachment(gatewayServiceUuid);
-      if (cmd.getVlanId() != 0) {
-        attachment.setVlanId(cmd.getVlanId());
+      if (command.getVlanId() != 0) {
+        attachment.setVlanId(command.getVlanId());
       }
       niciraNvpApi.updateLogicalRouterPortAttachment(lrc.getUuid(),lrpo.getUuid(),attachment);
       LogicalRouterPort lrpi=new LogicalRouterPort();
       lrpi.setAdminStatusEnabled(true);
-      lrpi.setDisplayName(truncate(routerName + "-inside-port",NAME_MAX_LEN));
+      lrpi.setDisplayName(niciraNvpResource.truncate(routerName + "-inside-port",NAME_MAX_LEN));
       lrpi.setTags(tags);
       final List<String> insideIpAddresses=new ArrayList<String>();
       insideIpAddresses.add(internalNetworkAddress);
       lrpi.setIpAddresses(insideIpAddresses);
       lrpi=niciraNvpApi.createLogicalRouterPort(lrc.getUuid(),lrpi);
-      lsp=new LogicalSwitchPort(truncate(routerName + "-inside-port",NAME_MAX_LEN),tags,true);
+      lsp=new LogicalSwitchPort(niciraNvpResource.truncate(routerName + "-inside-port",NAME_MAX_LEN),tags,true);
       lsp=niciraNvpApi.createLogicalSwitchPort(logicalSwitchUuid,lsp);
       niciraNvpApi.updateLogicalRouterPortAttachment(lrc.getUuid(),lrpi.getUuid(),new PatchAttachment(lsp.getUuid()));
       niciraNvpApi.updateLogicalSwitchPortAttachment(logicalSwitchUuid,lsp.getUuid(),new PatchAttachment(lrpi.getUuid()));
@@ -61,10 +62,11 @@
       }
       throw e;
     }
-    return new CreateLogicalRouterAnswer(cmd,true,"Logical Router created (uuid " + lrc.getUuid() + ")",lrc.getUuid());
+    return new CreateLogicalRouterAnswer(command,true,"Logical Router created (uuid " + lrc.getUuid() + ")",lrc.getUuid());
   }
  catch (  final NiciraNvpApiException e) {
-    retryUtility.addRetry(cmd,NUM_RETRIES);
-    return retryUtility.retry(cmd,CreateLogicalRouterAnswer.class,e);
+    final CommandRetryUtility retryUtility=niciraNvpResource.getRetryUtility();
+    retryUtility.addRetry(command,NUM_RETRIES);
+    return retryUtility.retry(command,CreateLogicalRouterAnswer.class,e);
   }
 }
