@@ -18,56 +18,54 @@
     String destFileFullPath=destFile.getAbsolutePath() + File.separator + fileName;
     s_logger.debug("copy snapshot " + srcFile.getAbsolutePath() + " to template "+ destFileFullPath);
     Script.runSimpleBashScript("cp " + srcFile.getAbsolutePath() + " "+ destFileFullPath);
+    String metaFileName=destFile.getAbsolutePath() + File.separator + "template.properties";
+    File metaFile=new File(metaFileName);
     try {
-      String metaFileName=destFile.getAbsolutePath() + File.separator + "template.properties";
       _storage.create(destFile.getAbsolutePath(),"template.properties");
-      File metaFile=new File(metaFileName);
-      FileWriter writer=new FileWriter(metaFile);
-      BufferedWriter bufferWriter=new BufferedWriter(writer);
-      bufferWriter.write("uniquename=" + destData.getName());
-      bufferWriter.write("\n");
-      bufferWriter.write("filename=" + fileName);
-      bufferWriter.write("\n");
-      long size=_storage.getSize(destFileFullPath);
-      bufferWriter.write("size=" + size);
-      bufferWriter.close();
-      writer.close();
-      Processor processor=null;
-      if (srcFormat == ImageFormat.QCOW2) {
-        processor=new QCOW2Processor();
-      }
- else       if (srcFormat == ImageFormat.RAW) {
-        processor=new RawImageProcessor();
-      }
+      try (FileWriter writer=new FileWriter(metaFile);BufferedWriter bufferWriter=new BufferedWriter(writer)){
+        bufferWriter.write("uniquename=" + destData.getName());
+        bufferWriter.write("\n");
+        bufferWriter.write("filename=" + fileName);
+        bufferWriter.write("\n");
+        long size=_storage.getSize(destFileFullPath);
+        bufferWriter.write("size=" + size);
+        Processor processor=null;
+        if (srcFormat == ImageFormat.QCOW2) {
+          processor=new QCOW2Processor();
+        }
+ else         if (srcFormat == ImageFormat.RAW) {
+          processor=new RawImageProcessor();
+        }
  else {
-        throw new ConfigurationException("Unknown image format " + srcFormat.toString());
+          throw new ConfigurationException("Unknown image format " + srcFormat.toString());
+        }
+        Map<String,Object> params=new HashMap<String,Object>();
+        params.put(StorageLayer.InstanceConfigKey,_storage);
+        processor.configure("template processor",params);
+        String destPath=destFile.getAbsolutePath();
+        FormatInfo info=processor.process(destPath,null,templateName);
+        TemplateLocation loc=new TemplateLocation(_storage,destPath);
+        loc.create(1,true,destData.getName());
+        loc.addFormat(info);
+        loc.save();
+        TemplateProp prop=loc.getTemplateInfo();
+        TemplateObjectTO newTemplate=new TemplateObjectTO();
+        newTemplate.setPath(destData.getPath() + File.separator + fileName);
+        newTemplate.setFormat(srcFormat);
+        newTemplate.setSize(prop.getSize());
+        newTemplate.setPhysicalSize(prop.getPhysicalSize());
+        return new CopyCmdAnswer(newTemplate);
       }
-      Map<String,Object> params=new HashMap<String,Object>();
-      params.put(StorageLayer.InstanceConfigKey,_storage);
-      processor.configure("template processor",params);
-      String destPath=destFile.getAbsolutePath();
-      FormatInfo info=processor.process(destPath,null,templateName);
-      TemplateLocation loc=new TemplateLocation(_storage,destPath);
-      loc.create(1,true,destData.getName());
-      loc.addFormat(info);
-      loc.save();
-      TemplateProp prop=loc.getTemplateInfo();
-      TemplateObjectTO newTemplate=new TemplateObjectTO();
-      newTemplate.setPath(destData.getPath() + File.separator + fileName);
-      newTemplate.setFormat(srcFormat);
-      newTemplate.setSize(prop.getSize());
-      newTemplate.setPhysicalSize(prop.getPhysicalSize());
-      return new CopyCmdAnswer(newTemplate);
+ catch (      ConfigurationException e) {
+        s_logger.debug("Failed to create template:" + e.toString());
+        return new CopyCmdAnswer(e.toString());
+      }
+catch (      InternalErrorException e) {
+        s_logger.debug("Failed to create template:" + e.toString());
+        return new CopyCmdAnswer(e.toString());
+      }
     }
- catch (    ConfigurationException e) {
-      s_logger.debug("Failed to create template:" + e.toString());
-      return new CopyCmdAnswer(e.toString());
-    }
-catch (    IOException e) {
-      s_logger.debug("Failed to create template:" + e.toString());
-      return new CopyCmdAnswer(e.toString());
-    }
-catch (    InternalErrorException e) {
+ catch (    IOException e) {
       s_logger.debug("Failed to create template:" + e.toString());
       return new CopyCmdAnswer(e.toString());
     }
