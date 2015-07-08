@@ -1,0 +1,38 @@
+@attr(tags=['advanced'], required_hardware='True')
+def test_19_reset_sshkeys_verify_after_vm_restartTC37(self):
+    '\n        1.Create shared network without any services\n        2.Deploy vm with ssh key reset script enabled template\n        3.Reset keys\n        4.Verify vm access with new keys\n        5.Stop/start vm and repeat step4\n        '
+    self.generate_ssh_keys()
+    self.vm = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.pwd_template.id, accountid='admin', domainid=1, serviceofferingid=self.service_offering.id, diskofferingid=self.disk_offering.id, zoneid=self.zone.id, networkids=[self.shared_network.id], keypair=self.keypair.name)
+    self.assertIsNotNone(self.vm, 'Failed to create vm with ssh key pair')
+    self.cleanup.append(self.vm)
+    try:
+        self.vm.stop(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to stop virtual machine %s with error %s' % (self.vm.id, e)))
+    self.debug('Creating a new SSH keypair')
+    new_pvt_key = self.generate_ssh_keys()
+    try:
+        self.vm.resetSshKey(self.apiclient, keypair=self.keypair.name, name=self.keypair.name, account='admin', domainid=1)
+    except Exception as e:
+        self.fail(('Failed to reset SSH key: %s, %s' % (self.vm.name, e)))
+    self.debug('Starting the virtual machine after resetting the keypair')
+    try:
+        self.vm.start(self.apiclient)
+    except Exception as e:
+        self.fail(('Failed to start virtual machine: %s, %s' % (self.vm.name, e)))
+    (ip_status, ip_addr) = self.getVMIPAddress(self.vm.id)
+    self.assertEqual(ip_status, 1, 'Failed to retrieve vm ip address')
+    try:
+        self.debug(('SSHing into VM: %s' % ip_addr))
+        self.vm.get_ssh_client(ipaddress=ip_addr, reconnect=True, keyPairFileLocation=str(new_pvt_key))
+    except Exception as e:
+        self.fail(('SSH into VM: %s failed with ssh key pair with error: %s' % (self.vm.ssh_ip, e)))
+    self.vm.stop(self.apiclient)
+    self.vm.start(self.apiclient)
+    (ip_status, ip_addr) = self.getVMIPAddress(self.vm.id)
+    try:
+        self.debug('SSH into vm after vm stop/start')
+        self.vm.get_ssh_client(ipaddress=ip_addr, reconnect=True, keyPairFileLocation=str(new_pvt_key))
+    except Exception as e:
+        self.fail('SSH into vm failed with new ssh keypair after vm stop start')
+    return

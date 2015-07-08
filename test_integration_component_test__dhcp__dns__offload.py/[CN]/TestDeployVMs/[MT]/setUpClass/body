@@ -1,0 +1,40 @@
+@classmethod
+def setUpClass(cls):
+    cls.testClient = super(TestDeployVMs, cls).getClsTestClient()
+    cls.api_client = cls.testClient.getApiClient()
+    cls.services = cls.testClient.getParsedTestDataConfig()
+    cls.hypervisor = get_hypervisor_type(cls.api_client).lower()
+    cls._cleanup = []
+    cls.unsupportedHypervisor = False
+    if (cls.hypervisor not in ['xenserver', 'kvm']):
+        cls.unsupportedHypervisor = True
+        return
+    cls.zone = get_zone(cls.api_client, cls.testClient.getZoneForTests())
+    cls.domain = get_domain(cls.api_client)
+    cls.services['mode'] = cls.zone.networktype
+    cls.userdata = 'Deploy vm with userdata in shared network'
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['virtual_machine']['zoneid'] = cls.zone.id
+    cls.services['virtual_machine']['template'] = cls.template.id
+    try:
+        cls.service_offering = ServiceOffering.create(cls.api_client, cls.services['service_offering'])
+        cls._cleanup.append(cls.service_offering)
+        cls.disk_offering = DiskOffering.create(cls.api_client, cls.services['disk_offering'])
+        cls._cleanup.append(cls.disk_offering)
+        cls.network_offering1 = NetworkOffering.create(cls.api_client, cls.services['nw_off_no_services'])
+        cls._cleanup.append(cls.network_offering1)
+        cls.network_offering1.update(cls.api_client, state='Enabled')
+        cls.network_offering3 = NetworkOffering.create(cls.api_client, cls.services['network_offering_shared'])
+        cls._cleanup.append(cls.network_offering3)
+        cls.network_offering3.update(cls.api_client, state='Enabled')
+        cls.shared_network = Network.create(cls.api_client, cls.services['network2'], networkofferingid=cls.network_offering1.id, zoneid=cls.zone.id)
+        cls._cleanup.append(cls.shared_network)
+        assert TestDeployVMs.list_nw_services(cls.shared_network.id, cls.network_offering1.id), 'Network Services does not match with the offering services'
+        template = ('ssh-password-template-xen' if (cls.hypervisor == 'xenserver') else 'ssh-password-template-kvm')
+        cls.pwd_template = Template.register(cls.api_client, cls.services[template], zoneid=cls.zone.id)
+        cls.pwd_template.download(cls.api_client)
+        cls._cleanup.append(cls.pwd_template)
+    except Exception as e:
+        cls.tearDownClass()
+        raise e
+    return

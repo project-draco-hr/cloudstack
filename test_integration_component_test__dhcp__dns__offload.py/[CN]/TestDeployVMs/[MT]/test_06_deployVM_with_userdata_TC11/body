@@ -1,0 +1,19 @@
+@attr(tags=['advanced'], required_hardware='True')
+def test_06_deployVM_with_userdata_TC11(self):
+    '\n        1.Create shared network with DHCP,DNS and userdata services provided by VR\n        2.Deploy vm in that network\n        3.Verify vm deployment\n        4.Verify IP address retrieval\n        '
+    vlan = self.services['network2']['vlan']
+    self.services['network2']['vlan'] += 1
+    self.shared_network = Network.create(self.apiclient, self.services['network2'], networkofferingid=self.network_offering3.id, zoneid=self.zone.id)
+    self.cleanup.append(self.shared_network)
+    self.services['network2']['vlan'] = vlan
+    self.services['virtual_machine']['userdata'] = self.userdata
+    self.vm = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.template.id, accountid='admin', domainid=1, serviceofferingid=self.service_offering.id, zoneid=self.zone.id, networkids=[self.shared_network.id])
+    self.assertIsNotNone(self.vm, 'Failed to create vm with in a shared network with DHCP and userdata services provided by VR')
+    self.cleanup.append(self.vm)
+    (ip_status, ip_addr) = self.getVMIPAddress(self.vm.id)
+    self.assertEqual(ip_status, 1, 'Failed to retrieve vm ip address')
+    self.list_nics(self.vm.id)
+    qresultset = self.dbclient.execute(("select allocated from user_ip_address where public_ip_address='%s' and removed is null;" % self.vm.nic[0].ipaddress))
+    self.assertEqual(validateList(qresultset)[0], PASS, 'sql query returned invalid response')
+    self.assertNotEqual(qresultset[0], 'NULL', "VM didn't get ip address as part of CS IP allocation process                        It might have got from external dhcp server in that network")
+    return

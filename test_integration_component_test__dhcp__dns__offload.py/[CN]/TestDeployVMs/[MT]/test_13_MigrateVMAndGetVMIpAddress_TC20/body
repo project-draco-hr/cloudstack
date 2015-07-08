@@ -1,0 +1,27 @@
+@attr(tags=['advanced'], required_hardware='True')
+def test_13_MigrateVMAndGetVMIpAddress_TC20(self):
+    '\n        1.Create shared network without any services\n        2.Deploy vm with default cent os template and pass user data\n        3.Verify vm deployment\n        4.Verify IP address retrieval and userdata\n        5.Live Migrate vm to another host in the cluster and repeat step4\n        '
+    self.services['virtual_machine']['userdata'] = self.userdata
+    self.vm = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], templateid=self.template.id, accountid='admin', domainid=1, serviceofferingid=self.service_offering.id, diskofferingid=self.disk_offering.id, zoneid=self.zone.id, networkids=[self.shared_network.id])
+    self.assertIsNotNone(self.vm, 'Failed to create vm in a shared network without any services')
+    self.cleanup.append(self.vm)
+    (ip_status, ip_addr) = self.getVMIPAddress(self.vm.id)
+    self.assertEqual(ip_status, 1, 'Failed to retrieve vm ip address')
+    self.list_nics(self.vm.id)
+    configDrive_iso = self.isConfigDriveIsoAttached(ip_addr)
+    self.assertNotEqual(configDrive_iso, False, 'Config drive iso is not attached to vm before live migrate')
+    self.assertEqual(self.verifyUserData(ip_addr, configDrive_iso), True, 'Userdata is not matching with the data passed while deploying')
+    self.umountConfigDrive(ip_addr, configDrive_iso)
+    hosts = Host.listForMigration(self.apiclient, virtualmachineid=self.vm.id)
+    self.assertEqual(validateList(hosts)[0], PASS, 'Find hosts for migration returned invalid response')
+    if (len(hosts) < 1):
+        self.skipTest('No suitable hosts found for vm migration..so skipping test')
+    hostid = hosts[0].id
+    self.vm.migrate(self.apiclient, hostid=hostid)
+    (ip_status, ip_addr) = self.getVMIPAddress(self.vm.id)
+    self.assertEqual(ip_status, 1, 'Failed to retrieve vm ip address after vm live migrate')
+    self.list_nics(self.vm.id)
+    configDrive_iso = self.isConfigDriveIsoAttached(ip_addr)
+    self.assertNotEqual(configDrive_iso, False, 'Config drive iso is not attached to vm after vm live migrate')
+    self.assertEqual(self.verifyUserData(ip_addr, configDrive_iso), True, 'Userdata is not matching after vm live migrate')
+    return
