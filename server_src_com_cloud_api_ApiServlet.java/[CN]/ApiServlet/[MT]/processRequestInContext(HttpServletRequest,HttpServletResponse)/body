@@ -43,7 +43,7 @@
           }
           session=req.getSession(true);
           if (ApiServer.isSecureSessionCookieEnabled()) {
-            resp.setHeader("SET-COOKIE","JSESSIONID=" + session.getId() + ";Secure;Path=/client");
+            resp.setHeader("SET-COOKIE",String.format("JSESSIONID=%s;Secure;HttpOnly;Path=/client",session.getId()));
             if (s_logger.isDebugEnabled()) {
               if (s_logger.isDebugEnabled()) {
                 s_logger.debug("Session cookie is marked secure!");
@@ -53,6 +53,9 @@
         }
         try {
           responseString=apiAuthenticator.authenticate(command,params,session,InetAddress.getByName(remoteAddress),responseType,auditTrailSb,req,resp);
+          if (session != null && session.getAttribute(ApiConstants.SESSIONKEY) != null) {
+            resp.addHeader("SET-COOKIE",String.format("%s=%s;HttpOnly",ApiConstants.SESSIONKEY,session.getAttribute(ApiConstants.SESSIONKEY)));
+          }
         }
  catch (        ServerApiException e) {
           httpResponseCode=e.getErrorCode().getHttpCode();
@@ -77,6 +80,9 @@
  catch (            final IllegalStateException ignored) {
             }
           }
+          Cookie sessionKeyCookie=new Cookie(ApiConstants.SESSIONKEY,"");
+          sessionKeyCookie.setMaxAge(0);
+          resp.addCookie(sessionKeyCookie);
         }
         HttpUtils.writeHttpResponse(resp,responseString,httpResponseCode,responseType,ApiServer.getJSONContentType());
         return;
@@ -90,8 +96,9 @@
       final String account=(String)session.getAttribute("account");
       final Object accountObj=session.getAttribute("accountobj");
       final String sessionKey=(String)session.getAttribute(ApiConstants.SESSIONKEY);
-      final String[] sessionKeyParam=(String[])params.get(ApiConstants.SESSIONKEY);
-      if ((sessionKeyParam == null) || (sessionKey == null) || !sessionKey.equals(sessionKeyParam[0])) {
+      final String sessionKeyFromCookie=HttpUtils.findCookie(req.getCookies(),ApiConstants.SESSIONKEY);
+      final String[] sessionKeyFromParams=(String[])params.get(ApiConstants.SESSIONKEY);
+      if ((sessionKey == null) || (sessionKeyFromParams == null && sessionKeyFromCookie == null) || (sessionKeyFromParams != null && !sessionKey.equals(sessionKeyFromParams[0]))|| (sessionKeyFromCookie != null && !sessionKey.equals(sessionKeyFromCookie))) {
         try {
           session.invalidate();
         }
