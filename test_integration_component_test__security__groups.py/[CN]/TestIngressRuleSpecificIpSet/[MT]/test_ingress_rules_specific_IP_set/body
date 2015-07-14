@@ -11,26 +11,39 @@ def test_ingress_rules_specific_IP_set(self):
     cmd.endport = 22
     cmd.cidrlist = '0.0.0.0/0'
     ingress_rule = self.apiclient.authorizeSecurityGroupIngress(cmd)
-    virtual_machine_1 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id])
-    virtual_machine_2 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id])
+    virtual_machine_1 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id], mode=self.testdata['mode'])
+    self.cleanup.append(virtual_machine_1)
+    virtual_machine_2 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id], mode=self.testdata['mode'])
+    self.cleanup.append(virtual_machine_2)
     try:
         SshClient(virtual_machine_1.ssh_ip, virtual_machine_1.ssh_port, virtual_machine_1.username, virtual_machine_1.password)
     except Exception as e:
+        self.revokeSGRule(ingress_rule.ingressrule[0].ruleid)
         self.fail(('SSH Access failed for %s: %s' % (virtual_machine_1.ipaddress, e)))
     try:
         SshClient(virtual_machine_2.ssh_ip, virtual_machine_2.ssh_port, virtual_machine_2.username, virtual_machine_2.password)
     except Exception as e:
+        self.revokeSGRule(ingress_rule.ingressrule[0].ruleid)
         self.fail(('SSH Access failed for %s: %s' % (virtual_machine_2.ipaddress, e)))
-    sshClient = SshClient(self.mgtSvrDetails['mgtSvrIp'], 22, self.mgtSvrDetails['user'], self.mgtSvrDetails['passwd'])
+    try:
+        sshClient = SshClient(self.mgtSvrDetails['mgtSvrIp'], 22, self.mgtSvrDetails['user'], self.mgtSvrDetails['passwd'])
+    except Exception as e:
+        self.revokeSGRule(ingress_rule.ingressrule[0].ruleid)
+        self.fail(('SSH Access failed for %s: %s' % (self.mgtSvrDetails['mgtSvrIp'], e)))
     response = sshClient.execute(('ssh %s@%s -v' % (virtual_machine_1.username, virtual_machine_1.ssh_ip)))
     self.debug(('Response is :%s' % response))
     self.assertTrue(('connection established' in str(response).lower()), ('SSH to VM at %s failed from external machine ip %s other than test machine' % (virtual_machine_1.ssh_ip, self.mgtSvrDetails['mgtSvrIp'])))
     response = sshClient.execute(('ssh %s@%s -v' % (virtual_machine_2.username, virtual_machine_2.ssh_ip)))
     self.debug(('Response is :%s' % response))
     self.assertTrue(('connection established' in str(response).lower()), ('SSH to VM at %s failed from external machine ip %s other than test machine' % (virtual_machine_2.ssh_ip, self.mgtSvrDetails['mgtSvrIp'])))
-    cmd = revokeSecurityGroupIngress.revokeSecurityGroupIngressCmd()
-    cmd.id = ingress_rule.ingressrule[0].ruleid
-    self.apiclient.revokeSecurityGroupIngress(cmd)
+    virtual_machine_3 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id], mode=self.testdata['mode'])
+    self.cleanup.append(virtual_machine_3)
+    security_groups = SecurityGroup.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True)
+    self.assertEqual(validateList(security_groups)[0], PASS, 'Security groups list validation failed')
+    for sg in security_groups:
+        if (not sg.ingressrule):
+            continue
+        self.revokeSGRule(sg.ingressrule[0].ruleid)
     localMachineIpAddress = self.getLocalMachineIpAddress()
     cidr = (localMachineIpAddress + '/32')
     cmd = authorizeSecurityGroupIngress.authorizeSecurityGroupIngressCmd()
@@ -40,7 +53,6 @@ def test_ingress_rules_specific_IP_set(self):
     cmd.endport = 22
     cmd.cidrlist = cidr
     ingress_rule = self.apiclient.authorizeSecurityGroupIngress(cmd)
-    virtual_machine_3 = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, securitygroupids=[defaultSecurityGroup.id])
     if self.testdata['configurableData']['setHostConfigurationForIngressRule']:
         self.setHostConfiguration()
         time.sleep(180)
