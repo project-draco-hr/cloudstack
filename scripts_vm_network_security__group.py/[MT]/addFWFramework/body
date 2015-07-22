@@ -1,0 +1,45 @@
+def addFWFramework(brname):
+    try:
+        cfo = configFileOps('/etc/sysctl.conf')
+        cfo.addEntry('net.bridge.bridge-nf-call-arptables', '1')
+        cfo.addEntry('net.bridge.bridge-nf-call-iptables', '1')
+        cfo.addEntry('net.bridge.bridge-nf-call-ip6tables', '1')
+        cfo.save()
+        execute('sysctl -p /etc/sysctl.conf')
+    except:
+        logging.debug('failed to turn on bridge netfilter')
+        return False
+    brfw = getBrfw(brname)
+    try:
+        execute(('iptables -L ' + brfw))
+    except:
+        execute(('iptables -N ' + brfw))
+    brfwout = (brfw + '-OUT')
+    try:
+        execute(('iptables -L ' + brfwout))
+    except:
+        execute(('iptables -N ' + brfwout))
+    brfwin = (brfw + '-IN')
+    try:
+        execute(('iptables -L ' + brfwin))
+    except:
+        execute(('iptables -N ' + brfwin))
+    try:
+        refs = execute(('iptables -n -L %s | awk \'/%s(.*)references/ {gsub(/\\(/, "") ;print $3}\'' % (brfw, brfw))).strip()
+        if (refs == '0'):
+            execute((('iptables -I FORWARD -i ' + brname) + ' -j DROP'))
+            execute((('iptables -I FORWARD -o ' + brname) + ' -j DROP'))
+            execute(((('iptables -I FORWARD -i ' + brname) + ' -m physdev --physdev-is-bridged -j ') + brfw))
+            execute(((('iptables -I FORWARD -o ' + brname) + ' -m physdev --physdev-is-bridged -j ') + brfw))
+            phydev = execute(("brctl show | awk '/^%s[ \t]/ {print $4}'" % brname)).strip()
+            execute((('iptables -A ' + brfw) + ' -m state --state RELATED,ESTABLISHED -j ACCEPT'))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-in -j ') + brfwin))
+            execute(((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-is-out -j ') + brfwout))
+            execute((((('iptables -A ' + brfw) + ' -m physdev --physdev-is-bridged --physdev-out ') + phydev) + ' -j ACCEPT'))
+        return True
+    except:
+        try:
+            execute(('iptables -F ' + brfw))
+        except:
+            return False
+        return False
