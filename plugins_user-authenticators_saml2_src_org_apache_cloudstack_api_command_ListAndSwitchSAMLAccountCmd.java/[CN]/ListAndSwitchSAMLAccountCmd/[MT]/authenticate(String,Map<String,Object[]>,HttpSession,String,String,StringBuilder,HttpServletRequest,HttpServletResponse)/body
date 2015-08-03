@@ -1,0 +1,62 @@
+{
+  if (session == null || session.isNew()) {
+    throw new ServerApiException(ApiErrorCode.UNAUTHORIZED,_apiServer.getSerializedApiError(ApiErrorCode.UNAUTHORIZED.getHttpCode(),"Only authenticated saml users can request this API",params,responseType));
+  }
+  if (!HttpUtils.validateSessionKey(session,params,req.getCookies(),ApiConstants.SESSIONKEY)) {
+    throw new ServerApiException(ApiErrorCode.UNAUTHORIZED,_apiServer.getSerializedApiError(ApiErrorCode.UNAUTHORIZED.getHttpCode(),"Unauthorized session, please re-login",params,responseType));
+  }
+  final long currentUserId=(Long)session.getAttribute("userid");
+  final UserAccount currentUserAccount=_accountService.getUserAccountById(currentUserId);
+  if (currentUserAccount == null || currentUserAccount.getSource() != User.Source.SAML2) {
+    throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Only authenticated saml users can request this API",params,responseType));
+  }
+  String userUuid=null;
+  String domainUuid=null;
+  if (params.containsKey(ApiConstants.USER_ID)) {
+    userUuid=((String[])params.get(ApiConstants.USER_ID))[0];
+  }
+  if (params.containsKey(ApiConstants.DOMAIN_ID)) {
+    domainUuid=((String[])params.get(ApiConstants.DOMAIN_ID))[0];
+  }
+  if (userUuid != null && domainUuid != null) {
+    final User user=_userDao.findByUuid(userUuid);
+    final Domain domain=_domainDao.findByUuid(domainUuid);
+    final UserAccount nextUserAccount=_accountService.getUserAccountById(user.getId());
+    if (!nextUserAccount.getUsername().equals(currentUserAccount.getUsername()) || !nextUserAccount.getExternalEntity().equals(currentUserAccount.getExternalEntity()) || (nextUserAccount.getDomainId() != domain.getId())|| (nextUserAccount.getSource() != User.Source.SAML2)) {
+      throw new ServerApiException(ApiErrorCode.PARAM_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.PARAM_ERROR.getHttpCode(),"User account is not allowed to switch to the requested account",params,responseType));
+    }
+    try {
+      if (_apiServer.verifyUser(nextUserAccount.getId())) {
+        final LoginCmdResponse loginResponse=(LoginCmdResponse)_apiServer.loginUser(session,nextUserAccount.getUsername(),nextUserAccount.getUsername() + nextUserAccount.getSource().toString(),nextUserAccount.getDomainId(),null,remoteAddress,params);
+        SAMLUtils.setupSamlUserCookies(loginResponse,resp);
+        resp.sendRedirect(SAML2AuthManager.SAMLCloudStackRedirectionUrl.value());
+        return ApiResponseSerializer.toSerializedString(loginResponse,responseType);
+      }
+    }
+ catch (    final Exception ignored) {
+    }
+  }
+ else {
+    List<UserAccountVO> switchableAccounts=_userAccountDao.getAllUsersByNameAndEntity(currentUserAccount.getUsername(),currentUserAccount.getExternalEntity());
+    if (switchableAccounts != null && switchableAccounts.size() > 0 && currentUserId != User.UID_SYSTEM) {
+      List<SamlUserAccountResponse> accountResponses=new ArrayList<SamlUserAccountResponse>();
+      for (      UserAccountVO userAccount : switchableAccounts) {
+        User user=_userDao.getUser(userAccount.getId());
+        Domain domain=_domainService.getDomain(userAccount.getDomainId());
+        SamlUserAccountResponse accountResponse=new SamlUserAccountResponse();
+        accountResponse.setUserId(user.getUuid());
+        accountResponse.setUserName(user.getUsername());
+        accountResponse.setDomainId(domain.getUuid());
+        accountResponse.setDomainName(domain.getName());
+        accountResponse.setAccountName(userAccount.getAccountName());
+        accountResponse.setIdpId(user.getExternalEntity());
+        accountResponses.add(accountResponse);
+      }
+      ListResponse<SamlUserAccountResponse> response=new ListResponse<SamlUserAccountResponse>();
+      response.setResponses(accountResponses);
+      response.setResponseName(getCommandName());
+      return ApiResponseSerializer.toSerializedString(response,responseType);
+    }
+  }
+  throw new ServerApiException(ApiErrorCode.ACCOUNT_ERROR,_apiServer.getSerializedApiError(ApiErrorCode.ACCOUNT_ERROR.getHttpCode(),"Unable to switch to requested SAML account. Please make sure your user/account is enabled. Please contact your administrator.",params,responseType));
+}
