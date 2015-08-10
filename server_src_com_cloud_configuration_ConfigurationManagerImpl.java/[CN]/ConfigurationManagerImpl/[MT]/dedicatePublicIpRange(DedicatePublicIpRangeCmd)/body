@@ -14,14 +14,21 @@
     }
     vlanOwner=_accountMgr.getAccount(project.getProjectAccountId());
   }
+  Domain domain=null;
   if (accountName != null && domainId != null) {
     vlanOwner=_accountDao.findActiveAccount(accountName,domainId);
+    if (vlanOwner == null) {
+      throw new InvalidParameterValueException("Unable to find account by name " + accountName);
+    }
+ else     if (vlanOwner.getId() == Account.ACCOUNT_ID_SYSTEM) {
+      throw new InvalidParameterValueException("Please specify a valid account. Cannot dedicate IP range to system account");
+    }
   }
-  if (vlanOwner == null) {
-    throw new InvalidParameterValueException("Unable to find account by name " + accountName);
-  }
- else   if (vlanOwner.getId() == Account.ACCOUNT_ID_SYSTEM) {
-    throw new InvalidParameterValueException("Please specify a valid account. Cannot dedicate IP range to system account");
+ else   if (domainId != null) {
+    domain=_domainDao.findById(domainId);
+    if (domain == null) {
+      throw new InvalidParameterValueException("Please specify a valid domain id");
+    }
   }
   final VlanVO vlan=_vlanDao.findById(vlanDbId);
   if (vlan == null) {
@@ -31,6 +38,10 @@
   if (maps != null && !maps.isEmpty()) {
     throw new InvalidParameterValueException("Specified Public IP range has already been dedicated");
   }
+  List<DomainVlanMapVO> domainmaps=_domainVlanMapDao.listDomainVlanMapsByVlan(vlanDbId);
+  if (domainmaps != null && !domainmaps.isEmpty()) {
+    throw new InvalidParameterValueException("Specified Public IP range has already been dedicated to a domain");
+  }
   final Long zoneId=vlan.getDataCenterId();
   final DataCenterVO zone=_zoneDao.findById(zoneId);
   if (zone == null) {
@@ -39,8 +50,10 @@
   if (zone.getNetworkType() == NetworkType.Basic) {
     throw new InvalidParameterValueException("Public IP range can be dedicated to an account only in the zone of type " + NetworkType.Advanced);
   }
-  final int accountPublicIpRange=_publicIpAddressDao.countIPs(zoneId,vlanDbId,false);
-  _resourceLimitMgr.checkResourceLimit(vlanOwner,ResourceType.public_ip,accountPublicIpRange);
+  if (vlanOwner != null) {
+    final int accountPublicIpRange=_publicIpAddressDao.countIPs(zoneId,vlanDbId,false);
+    _resourceLimitMgr.checkResourceLimit(vlanOwner,ResourceType.public_ip,accountPublicIpRange);
+  }
   final List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlanDbId);
   for (  final IPAddressVO ip : ips) {
     final Long allocatedToAccountId=ip.getAllocatedToAccountId();
@@ -49,13 +62,24 @@
       if (!accountAllocatedTo.getAccountName().equalsIgnoreCase(accountName)) {
         throw new InvalidParameterValueException(ip.getAddress() + " Public IP address in range is allocated to another account ");
       }
+      if (vlanOwner == null && domain != null && domain.getId() != accountAllocatedTo.getDomainId()) {
+        throw new InvalidParameterValueException(ip.getAddress() + " Public IP address in range is allocated to another domain/account ");
+      }
     }
   }
-  final AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(vlanOwner.getId(),vlan.getId());
-  _accountVlanMapDao.persist(accountVlanMapVO);
-  for (  final IPAddressVO ip : ips) {
-    UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_ASSIGN,vlanOwner.getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
+  if (vlanOwner != null) {
+    final AccountVlanMapVO accountVlanMapVO=new AccountVlanMapVO(vlanOwner.getId(),vlan.getId());
+    _accountVlanMapDao.persist(accountVlanMapVO);
+    for (    final IPAddressVO ip : ips) {
+      UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_ASSIGN,vlanOwner.getId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
+    }
   }
-  _resourceLimitMgr.incrementResourceCount(vlanOwner.getId(),ResourceType.public_ip,new Long(ips.size()));
+ else   if (domain != null) {
+    DomainVlanMapVO domainVlanMapVO=new DomainVlanMapVO(domain.getId(),vlan.getId());
+    _domainVlanMapDao.persist(domainVlanMapVO);
+  }
+  if (vlanOwner != null) {
+    _resourceLimitMgr.incrementResourceCount(vlanOwner.getId(),ResourceType.public_ip,new Long(ips.size()));
+  }
   return vlan;
 }

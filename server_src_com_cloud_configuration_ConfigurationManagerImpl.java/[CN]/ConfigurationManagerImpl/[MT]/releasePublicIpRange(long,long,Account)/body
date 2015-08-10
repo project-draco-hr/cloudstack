@@ -1,8 +1,17 @@
 {
   VlanVO vlan=_vlanDao.findById(vlanDbId);
+  boolean isAccountSpecific=false;
   final List<AccountVlanMapVO> acctVln=_accountVlanMapDao.listAccountVlanMapsByVlan(vlanDbId);
-  if (acctVln == null || acctVln.isEmpty()) {
-    throw new InvalidParameterValueException("Can't release Public IP range " + vlanDbId + " as it not dedicated to any account");
+  if (acctVln != null && !acctVln.isEmpty()) {
+    isAccountSpecific=true;
+  }
+  boolean isDomainSpecific=false;
+  final List<DomainVlanMapVO> domainVln=_domainVlanMapDao.listDomainVlanMapsByVlan(vlanDbId);
+  if (domainVln != null && !domainVln.isEmpty()) {
+    isDomainSpecific=true;
+  }
+  if (!isAccountSpecific && !isDomainSpecific) {
+    throw new InvalidParameterValueException("Can't release Public IP range " + vlanDbId + " as it not dedicated to any domain and any account");
   }
   final long allocIpCount=_publicIpAddressDao.countIPs(vlan.getDataCenterId(),vlanDbId,true);
   final List<IPAddressVO> ips=_publicIpAddressDao.listByVlanId(vlanDbId);
@@ -36,13 +45,17 @@
       _vlanDao.releaseFromLockTable(vlanDbId);
     }
   }
-  if (_accountVlanMapDao.remove(acctVln.get(0).getId())) {
+  if (isAccountSpecific && _accountVlanMapDao.remove(acctVln.get(0).getId())) {
     for (    final IPAddressVO ip : ips) {
       if (!ipsInUse.contains(ip)) {
         UsageEventUtils.publishUsageEvent(EventTypes.EVENT_NET_IP_RELEASE,acctVln.get(0).getAccountId(),ip.getDataCenterId(),ip.getId(),ip.getAddress().toString(),ip.isSourceNat(),vlan.getVlanType().toString(),ip.getSystem(),ip.getClass().getName(),ip.getUuid());
       }
     }
     _resourceLimitMgr.decrementResourceCount(acctVln.get(0).getAccountId(),ResourceType.public_ip,new Long(ips.size()));
+    return true;
+  }
+ else   if (isDomainSpecific && _domainVlanMapDao.remove(domainVln.get(0).getId())) {
+    s_logger.debug("Remove the vlan from domain_vlan_map successfully.");
     return true;
   }
  else {
