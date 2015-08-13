@@ -1,0 +1,59 @@
+{
+  if (quotaUsage == null || quotaUsage.isEmpty()) {
+    throw new InvalidParameterValueException("There is no usage data found for period mentioned.");
+  }
+  QuotaStatementResponse statement=new QuotaStatementResponse();
+  HashMap<Integer,QuotaTypes> quotaTariffMap=new HashMap<Integer,QuotaTypes>();
+  Collection<QuotaTypes> result=QuotaTypes.listQuotaTypes().values();
+  for (  QuotaTypes quotaTariff : result) {
+    quotaTariffMap.put(quotaTariff.getQuotaType(),quotaTariff);
+    QuotaUsageVO dummy=new QuotaUsageVO(quotaUsage.get(0));
+    dummy.setUsageType(quotaTariff.getQuotaType());
+    dummy.setQuotaUsed(new BigDecimal(0));
+    quotaUsage.add(dummy);
+  }
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("createQuotaStatementResponse Type=" + quotaUsage.get(0).getUsageType() + " usage="+ quotaUsage.get(0).getQuotaUsed().setScale(2,RoundingMode.HALF_EVEN)+ " rec.id="+ quotaUsage.get(0).getUsageItemId()+ " SD="+ quotaUsage.get(0).getStartDate()+ " ED="+ quotaUsage.get(0).getEndDate());
+  }
+  Collections.sort(quotaUsage,new Comparator<QuotaUsageVO>(){
+    public int compare(    QuotaUsageVO o1,    QuotaUsageVO o2){
+      if (o1.getUsageType() == o2.getUsageType())       return 0;
+      return o1.getUsageType() < o2.getUsageType() ? -1 : 1;
+    }
+  }
+);
+  List<QuotaStatementItemResponse> items=new ArrayList<QuotaStatementItemResponse>();
+  QuotaStatementItemResponse lineitem;
+  int type=-1;
+  BigDecimal usage=new BigDecimal(0);
+  BigDecimal totalUsage=new BigDecimal(0);
+  quotaUsage.add(new QuotaUsageVO());
+  QuotaUsageVO prev=quotaUsage.get(0);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("createQuotaStatementResponse record count=" + quotaUsage.size());
+  }
+  for (  final QuotaUsageVO quotaRecord : quotaUsage) {
+    if (type != quotaRecord.getUsageType()) {
+      if (type != -1) {
+        lineitem=new QuotaStatementItemResponse(type);
+        lineitem.setQuotaUsed(usage);
+        lineitem.setAccountId(prev.getAccountId());
+        lineitem.setDomainId(prev.getDomainId());
+        lineitem.setUsageUnit(quotaTariffMap.get(type).getQuotaUnit());
+        lineitem.setUsageName(quotaTariffMap.get(type).getQuotaName());
+        lineitem.setObjectName("quotausage");
+        items.add(lineitem);
+        totalUsage=totalUsage.add(usage);
+        usage=new BigDecimal(0);
+      }
+      type=quotaRecord.getUsageType();
+    }
+    prev=quotaRecord;
+    usage=usage.add(quotaRecord.getQuotaUsed());
+  }
+  statement.setLineItem(items);
+  statement.setTotalQuota(totalUsage);
+  statement.setCurrency(QuotaConfig.QuotaCurrencySymbol.value());
+  statement.setObjectName("statement");
+  return statement;
+}
