@@ -1,19 +1,8 @@
 {
-  PreparedStatement storeInsert=null;
-  PreparedStatement storeDetailInsert=null;
-  PreparedStatement storeQuery=null;
-  PreparedStatement swiftQuery=null;
-  ResultSet rs=null;
-  ResultSet storeInfo=null;
   Long storeId=null;
   Map<Long,Long> swift_store_id_map=new HashMap<Long,Long>();
   s_logger.debug("Migrating Swift to image store");
-  try {
-    storeQuery=conn.prepareStatement("select id from `cloud`.`image_store` where uuid = ?");
-    storeDetailInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store_details` (store_id, name, value) values(?, ?, ?)");
-    storeInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store` (uuid, name, image_provider_name, protocol, url, scope, role, created) values(?, ?, 'Swift', 'http', ?, 'REGION', 'Image', ?)");
-    swiftQuery=conn.prepareStatement("select id, uuid, url, account, username, swift.key, created from `cloud`.`swift`");
-    rs=swiftQuery.executeQuery();
+  try (PreparedStatement storeQuery=conn.prepareStatement("select id from `cloud`.`image_store` where uuid = ?");PreparedStatement storeDetailInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store_details` (store_id, name, value) values(?, ?, ?)");PreparedStatement storeInsert=conn.prepareStatement("INSERT INTO `cloud`.`image_store` (uuid, name, image_provider_name, protocol, url, scope, role, created) values(?, ?, 'Swift', 'http', ?, 'REGION', 'Image', ?)");PreparedStatement swiftQuery=conn.prepareStatement("select id, uuid, url, account, username, swift.key, created from `cloud`.`swift`");ResultSet rs=swiftQuery.executeQuery()){
     while (rs.next()) {
       Long swift_id=rs.getLong("id");
       String swift_uuid=rs.getString("uuid");
@@ -28,11 +17,12 @@
       storeInsert.setDate(4,swift_created);
       storeInsert.executeUpdate();
       storeQuery.setString(1,swift_uuid);
-      storeInfo=storeQuery.executeQuery();
-      if (storeInfo.next()) {
-        storeId=storeInfo.getLong("id");
+      try (ResultSet storeInfo=storeQuery.executeQuery()){
+        if (storeInfo.next()) {
+          storeId=storeInfo.getLong("id");
+        }
       }
-      Map<String,String> detailMap=new HashMap<String,String>();
+       Map<String,String> detailMap=new HashMap<String,String>();
       detailMap.put(ApiConstants.ACCOUNT,swift_account);
       detailMap.put(ApiConstants.USERNAME,swift_username);
       detailMap.put(ApiConstants.KEY,swift_key);
@@ -52,30 +42,6 @@
     String msg="Unable to migrate swift secondary storages." + e.getMessage();
     s_logger.error(msg);
     throw new CloudRuntimeException(msg,e);
-  }
- finally {
-    try {
-      if (rs != null) {
-        rs.close();
-      }
-      if (storeInfo != null) {
-        storeInfo.close();
-      }
-      if (storeInsert != null) {
-        storeInsert.close();
-      }
-      if (storeDetailInsert != null) {
-        storeDetailInsert.close();
-      }
-      if (storeQuery != null) {
-        storeQuery.close();
-      }
-      if (swiftQuery != null) {
-        swiftQuery.close();
-      }
-    }
- catch (    SQLException e) {
-    }
   }
   s_logger.debug("Migrating template_swift_ref to template_store_ref");
   migrateTemplateSwiftRef(conn,swift_store_id_map);
