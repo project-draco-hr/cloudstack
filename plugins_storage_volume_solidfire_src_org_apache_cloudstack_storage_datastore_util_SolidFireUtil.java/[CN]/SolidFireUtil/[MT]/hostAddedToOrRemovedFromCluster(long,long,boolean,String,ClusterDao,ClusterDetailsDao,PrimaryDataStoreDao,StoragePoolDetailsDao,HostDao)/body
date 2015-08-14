@@ -1,0 +1,35 @@
+{
+  ClusterVO cluster=clusterDao.findById(clusterId);
+  GlobalLock lock=GlobalLock.getInternLock(cluster.getUuid());
+  if (!lock.lock(s_lockTimeInSeconds)) {
+    String errMsg="Couldn't lock the DB on the following string: " + cluster.getUuid();
+    s_logger.debug(errMsg);
+    throw new CloudRuntimeException(errMsg);
+  }
+  try {
+    List<StoragePoolVO> storagePools=storagePoolDao.findPoolsByProvider(storageProvider);
+    if (storagePools != null && storagePools.size() > 0) {
+      List<SolidFireUtil.SolidFireConnection> sfConnections=new ArrayList<SolidFireUtil.SolidFireConnection>();
+      for (      StoragePoolVO storagePool : storagePools) {
+        ClusterDetailsVO clusterDetail=clusterDetailsDao.findDetail(clusterId,SolidFireUtil.getVagKey(storagePool.getId()));
+        String vagId=clusterDetail != null ? clusterDetail.getValue() : null;
+        if (vagId != null) {
+          SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePool.getId(),storagePoolDetailsDao);
+          if (!sfConnections.contains(sfConnection)) {
+            sfConnections.add(sfConnection);
+            SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection,Long.parseLong(vagId));
+            List<HostVO> hostsToAddOrRemove=new ArrayList<>();
+            HostVO hostToAddOrRemove=hostDao.findByIdIncludingRemoved(hostId);
+            hostsToAddOrRemove.add(hostToAddOrRemove);
+            String[] hostIqns=SolidFireUtil.getNewHostIqns(sfVag.getInitiators(),SolidFireUtil.getIqnsFromHosts(hostsToAddOrRemove),added);
+            SolidFireUtil.modifySolidFireVag(sfConnection,sfVag.getId(),hostIqns,sfVag.getVolumeIds());
+          }
+        }
+      }
+    }
+  }
+  finally {
+    lock.unlock();
+    lock.releaseRef();
+  }
+}
