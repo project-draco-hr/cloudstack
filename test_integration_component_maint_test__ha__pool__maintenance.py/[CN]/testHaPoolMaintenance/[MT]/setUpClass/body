@@ -1,0 +1,40 @@
+@classmethod
+def setUpClass(cls):
+    try:
+        cls._cleanup = []
+        cls.testClient = super(testHaPoolMaintenance, cls).getClsTestClient()
+        cls.api_client = cls.testClient.getApiClient()
+        cls.services = cls.testClient.getParsedTestDataConfig()
+        cls.domain = get_domain(cls.api_client)
+        cls.zone = get_zone(cls.api_client, cls.testClient.getZoneForTests())
+        cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+        cls.hypervisor = cls.testClient.getHypervisorInfo()
+        cls.services['mode'] = cls.zone.networktype
+        cls.hypervisor = cls.testClient.getHypervisorInfo()
+        cls.services['virtual_machine']['zoneid'] = cls.zone.id
+        cls.services['virtual_machine']['template'] = cls.template.id
+        cls.clusterWithSufficientPool = None
+        cls.listResponse = None
+        clusters = Cluster.list(cls.api_client, zoneid=cls.zone.id)
+        if (not validateList(clusters)[0]):
+            cls.debug(('check list cluster response for zone id %s' % cls.zone.id))
+            cls.listResponse = True
+            return
+        for cluster in clusters:
+            cls.pool = StoragePool.list(cls.api_client, clusterid=cluster.id, keyword='NetworkFilesystem')
+            if (not validateList(cls.pool)[0]):
+                cls.debug(('check list cluster response for zone id %s' % cls.zone.id))
+                cls.listResponse = True
+                return
+            if (len(cls.pool) >= 2):
+                cls.clusterWithSufficientPool = cluster
+                break
+        if (not cls.clusterWithSufficientPool):
+            return
+        cls.services['service_offerings']['tiny']['offerha'] = 'True'
+        cls.services_off = ServiceOffering.create(cls.api_client, cls.services['service_offerings']['tiny'])
+        cls._cleanup.append(cls.services_off)
+    except Exception as e:
+        cls.tearDownClass()
+        raise Exception(('Warning: Exception in setup : %s' % e))
+    return
