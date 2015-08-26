@@ -1,0 +1,35 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_01_FTPModulesInVR(self):
+    '\n        @desc: Verify FTP modules are loaded in VR of advance zone\n        step1 : create a VR in advance zone\n        step2: Verify FTP modules are there in created VR\n        '
+    if (self.zone.networktype == 'Basic'):
+        self.skipTest('This test can be run only in advance zone')
+    vm = VirtualMachine.create(self.api_client, self.services['small'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.small_offering.id, mode=self.services['mode'])
+    self.assertIsNotNone(vm, 'Failed to deploy virtual machine')
+    self.cleanup.append(vm)
+    response = VirtualMachine.list(self.api_client, id=vm.id)
+    status = validateList(response)
+    self.assertEqual(status[0], PASS, 'list vm response returned invalid list')
+    list_router_response = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    status = validateList(list_router_response)
+    self.assertEqual(status[0], PASS, 'Check list response returns a valid list')
+    router = list_router_response[0]
+    self.debug(('Router ID: %s, state: %s' % (router.id, router.state)))
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    if (self.hypervisor.lower() in ('vmware', 'hyperv')):
+        result = get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, router.linklocalip, 'lsmod | grep ftp', hypervisor=self.hypervisor)
+    else:
+        try:
+            hosts = list_hosts(self.apiclient, zoneid=router.zoneid, type='Routing', state='Up', id=router.hostid)
+            self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+            host = hosts[0]
+            result = get_process_status(host.ipaddress, 22, self.services['configurableData']['host']['username'], self.services['configurableData']['host']['password'], router.linklocalip, 'lsmod | grep ftp')
+        except Exception as e:
+            raise Exception(('Exception raised in getting host                        credentials: %s ' % e))
+    res = str(result)
+    self.debug(('lsmod | grep ftp: %s' % res))
+    if (('nf_nat_ftp' in res) and ('nf_conntrack_ftp' in res)):
+        ismoduleinstalled = True
+    else:
+        ismoduleinstalled = False
+    self.assertEqual(ismoduleinstalled, True, 'nf_conntrack_ftp and nf_nat_ftp modules not installed on routers')
+    return
