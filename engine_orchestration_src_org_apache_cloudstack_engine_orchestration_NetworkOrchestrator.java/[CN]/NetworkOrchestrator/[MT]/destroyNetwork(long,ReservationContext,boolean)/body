@@ -2,69 +2,69 @@
   final Account callerAccount=context.getAccount();
   NetworkVO network=_networksDao.findById(networkId);
   if (network == null) {
-    s_logger.debug("Unable to find network with id: " + networkId);
+    logger.debug("Unable to find network with id: " + networkId);
     return false;
   }
   List<UserVmVO> userVms=_userVmDao.listByNetworkIdAndStates(networkId);
   for (  UserVmVO vm : userVms) {
     if (!(vm.getState() == VirtualMachine.State.Expunging && vm.getRemoved() != null)) {
-      s_logger.warn("Can't delete the network, not all user vms are expunged. Vm " + vm + " is in "+ vm.getState()+ " state");
+      logger.warn("Can't delete the network, not all user vms are expunged. Vm " + vm + " is in "+ vm.getState()+ " state");
       return false;
     }
   }
   int nicCount=getActiveNicsInNetwork(networkId);
   if (nicCount > 0) {
-    s_logger.debug("The network id=" + networkId + " has active Nics, but shouldn't.");
+    logger.debug("The network id=" + networkId + " has active Nics, but shouldn't.");
     _networksDao.changeActiveNicsBy(networkId,(-1 * nicCount));
   }
   DataCenter zone=_entityMgr.findById(DataCenter.class,network.getDataCenterId());
   if (zone.getNetworkType() == NetworkType.Basic) {
     List<VMInstanceVO> systemVms=_vmDao.listNonRemovedVmsByTypeAndNetwork(network.getId(),Type.ConsoleProxy,Type.SecondaryStorageVm);
     if (systemVms != null && !systemVms.isEmpty()) {
-      s_logger.warn("Can't delete the network, not all consoleProxy/secondaryStorage vms are expunged");
+      logger.warn("Can't delete the network, not all consoleProxy/secondaryStorage vms are expunged");
       return false;
     }
   }
   shutdownNetwork(networkId,context,false);
   network=_networksDao.findById(networkId);
   if (network.getState() != Network.State.Allocated && network.getState() != Network.State.Setup && !forced) {
-    s_logger.debug("Network is not not in the correct state to be destroyed: " + network.getState());
+    logger.debug("Network is not not in the correct state to be destroyed: " + network.getState());
     return false;
   }
   boolean success=true;
   if (!cleanupNetworkResources(networkId,callerAccount,context.getCaller().getId())) {
-    s_logger.warn("Unable to delete network id=" + networkId + ": failed to cleanup network resources");
+    logger.warn("Unable to delete network id=" + networkId + ": failed to cleanup network resources");
     return false;
   }
   List<Provider> providersToDestroy=getNetworkProviders(network.getId());
   for (  NetworkElement element : networkElements) {
     if (providersToDestroy.contains(element.getProvider())) {
       try {
-        if (s_logger.isDebugEnabled()) {
-          s_logger.debug("Sending destroy to " + element);
+        if (logger.isDebugEnabled()) {
+          logger.debug("Sending destroy to " + element);
         }
         if (!element.destroy(network,context)) {
           success=false;
-          s_logger.warn("Unable to complete destroy of the network: failed to destroy network element " + element.getName());
+          logger.warn("Unable to complete destroy of the network: failed to destroy network element " + element.getName());
         }
       }
  catch (      ResourceUnavailableException e) {
-        s_logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
+        logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
         success=false;
       }
 catch (      ConcurrentOperationException e) {
-        s_logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
+        logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
         success=false;
       }
 catch (      Exception e) {
-        s_logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
+        logger.warn("Unable to complete destroy of the network due to element: " + element.getName(),e);
         success=false;
       }
     }
   }
   if (success) {
-    if (s_logger.isDebugEnabled()) {
-      s_logger.debug("Network id=" + networkId + " is destroyed successfully, cleaning up corresponding resources now.");
+    if (logger.isDebugEnabled()) {
+      logger.debug("Network id=" + networkId + " is destroyed successfully, cleaning up corresponding resources now.");
     }
     final NetworkVO networkFinal=network;
     try {
@@ -73,7 +73,7 @@ catch (      Exception e) {
           NetworkGuru guru=AdapterBase.getAdapterByName(networkGurus,networkFinal.getGuruName());
           guru.trash(networkFinal,_networkOfferingDao.findById(networkFinal.getNetworkOfferingId()));
           if (!deleteVlansInNetwork(networkFinal.getId(),context.getCaller().getId(),callerAccount)) {
-            s_logger.warn("Failed to delete network " + networkFinal + "; was unable to cleanup corresponding ip ranges");
+            logger.warn("Failed to delete network " + networkFinal + "; was unable to cleanup corresponding ip ranges");
             throw new CloudRuntimeException("Failed to delete network " + networkFinal + "; was unable to cleanup corresponding ip ranges");
           }
  else {
@@ -81,7 +81,7 @@ catch (      Exception e) {
               stateTransitTo(networkFinal,Event.DestroyNetwork);
             }
  catch (            NoTransitionException e) {
-              s_logger.debug(e.getMessage());
+              logger.debug(e.getMessage());
             }
             if (_networksDao.remove(networkFinal.getId())) {
               NetworkDomainVO networkDomain=_networkDomainDao.getDomainNetworkMapByNetworkId(networkFinal.getId());
@@ -105,7 +105,7 @@ catch (      Exception e) {
       return true;
     }
  catch (    CloudRuntimeException e) {
-      s_logger.error("Failed to delete network",e);
+      logger.error("Failed to delete network",e);
       return false;
     }
   }
