@@ -1,24 +1,24 @@
 {
-  logger.info("Migrating " + vm + " to "+ dest);
+  s_logger.info("Migrating " + vm + " to "+ dest);
   final long dstHostId=dest.getHost().getId();
   final Host fromHost=_hostDao.findById(srcHostId);
   if (fromHost == null) {
-    logger.info("Unable to find the host to migrate from: " + srcHostId);
+    s_logger.info("Unable to find the host to migrate from: " + srcHostId);
     throw new CloudRuntimeException("Unable to find the host to migrate from: " + srcHostId);
   }
   if (fromHost.getClusterId().longValue() != dest.getCluster().getId()) {
     final List<VolumeVO> volumes=_volsDao.findCreatedByInstance(vm.getId());
     for (    final VolumeVO volume : volumes) {
       if (!_storagePoolDao.findById(volume.getPoolId()).getScope().equals(ScopeType.ZONE)) {
-        logger.info("Source and destination host are not in same cluster and all volumes are not on zone wide primary store, unable to migrate to host: " + dest.getHost().getId());
+        s_logger.info("Source and destination host are not in same cluster and all volumes are not on zone wide primary store, unable to migrate to host: " + dest.getHost().getId());
         throw new CloudRuntimeException("Source and destination host are not in same cluster and all volumes are not on zone wide primary store, unable to migrate to host: " + dest.getHost().getId());
       }
     }
   }
   final VirtualMachineGuru vmGuru=getVmGuru(vm);
   if (vm.getState() != State.Running) {
-    if (logger.isDebugEnabled()) {
-      logger.debug("VM is not Running, unable to migrate the vm " + vm);
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("VM is not Running, unable to migrate the vm " + vm);
     }
     throw new CloudRuntimeException("VM is not Running, unable to migrate the vm currently " + vm + " , current state: "+ vm.getState().toString());
   }
@@ -68,13 +68,13 @@
   try {
     if (vm == null || vm.getHostId() == null || vm.getHostId() != srcHostId || !changeState(vm,Event.MigrationRequested,dstHostId,work,Step.Migrating)) {
       _networkMgr.rollbackNicForMigration(vmSrc,profile);
-      logger.info("Migration cancelled because state has changed: " + vm);
+      s_logger.info("Migration cancelled because state has changed: " + vm);
       throw new ConcurrentOperationException("Migration cancelled because state has changed: " + vm);
     }
   }
  catch (  final NoTransitionException e1) {
     _networkMgr.rollbackNicForMigration(vmSrc,profile);
-    logger.info("Migration cancelled because " + e1.getMessage());
+    s_logger.info("Migration cancelled because " + e1.getMessage());
     throw new ConcurrentOperationException("Migration cancelled because " + e1.getMessage());
   }
   boolean migrated=false;
@@ -91,7 +91,7 @@
     }
  catch (    final OperationTimedoutException e) {
       if (e.isActive()) {
-        logger.warn("Active migration command so scheduling a restart for " + vm);
+        s_logger.warn("Active migration command so scheduling a restart for " + vm);
         _haMgr.scheduleRestart(vm,true);
       }
       throw new AgentUnavailableException("Operation timed out on migrating " + vm,dstHostId);
@@ -106,38 +106,38 @@
     }
     try {
       if (!checkVmOnHost(vm,dstHostId)) {
-        logger.error("Unable to complete migration for " + vm);
+        s_logger.error("Unable to complete migration for " + vm);
         try {
           _agentMgr.send(srcHostId,new Commands(cleanup(vm)),null);
         }
  catch (        final AgentUnavailableException e) {
-          logger.error("AgentUnavailableException while cleanup on source host: " + srcHostId);
+          s_logger.error("AgentUnavailableException while cleanup on source host: " + srcHostId);
         }
         cleanup(vmGuru,new VirtualMachineProfileImpl(vm),work,Event.AgentReportStopped,true);
         throw new CloudRuntimeException("Unable to complete migration for " + vm);
       }
     }
  catch (    final OperationTimedoutException e) {
-      logger.debug("Error while checking the vm " + vm + " on host "+ dstHostId,e);
+      s_logger.debug("Error while checking the vm " + vm + " on host "+ dstHostId,e);
     }
     migrated=true;
   }
   finally {
     if (!migrated) {
-      logger.info("Migration was unsuccessful.  Cleaning up: " + vm);
+      s_logger.info("Migration was unsuccessful.  Cleaning up: " + vm);
       _networkMgr.rollbackNicForMigration(vmSrc,profile);
       _alertMgr.sendAlert(alertType,fromHost.getDataCenterId(),fromHost.getPodId(),"Unable to migrate vm " + vm.getInstanceName() + " from host "+ fromHost.getName()+ " in zone "+ dest.getDataCenter().getName()+ " and pod "+ dest.getPod().getName(),"Migrate Command failed.  Please check logs.");
       try {
         _agentMgr.send(dstHostId,new Commands(cleanup(vm)),null);
       }
  catch (      final AgentUnavailableException ae) {
-        logger.info("Looks like the destination Host is unavailable for cleanup");
+        s_logger.info("Looks like the destination Host is unavailable for cleanup");
       }
       try {
         stateTransitTo(vm,Event.OperationFailed,srcHostId);
       }
  catch (      final NoTransitionException e) {
-        logger.warn(e.getMessage());
+        s_logger.warn(e.getMessage());
       }
     }
  else {
