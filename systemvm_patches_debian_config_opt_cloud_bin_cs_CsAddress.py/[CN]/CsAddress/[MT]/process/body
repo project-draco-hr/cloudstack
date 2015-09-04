@@ -1,12 +1,15 @@
 def process(self):
     route = CsRoute()
-    found_defaultroute = False
     for dev in self.dbag:
         if (dev == 'id'):
             continue
         ip = CsIP(dev, self.config)
         for address in self.dbag[dev]:
-            gateway = str(address['gateway'])
+            if (address['nw_type'] != 'public'):
+                continue
+            if (not self.check_if_link_up(dev)):
+                cmd = ('ip link set %s up' % dev)
+                CsHelper.execute(cmd)
             network = str(address['network'])
             ip.setAddress(address)
             if ip.configured():
@@ -16,9 +19,7 @@ def process(self):
                 logging.info('Address %s on device %s not configured', ip.ip(), dev)
                 if CsDevice(dev, self.config).waitfordevice():
                     ip.configure()
-            if (address['nw_type'] != 'control'):
-                route.add_route(dev, network)
-            if ((address['nw_type'] == 'public') and (not found_defaultroute)):
-                if (not route.defaultroute_exists()):
-                    if route.add_defaultroute(gateway):
-                        found_defaultroute = True
+            route.add_route(dev, network)
+    if (not route.defaultroute_exists()):
+        cmdline = self.config.get_cmdline_instance()
+        route.add_defaultroute(cmdline.get_gateway())
