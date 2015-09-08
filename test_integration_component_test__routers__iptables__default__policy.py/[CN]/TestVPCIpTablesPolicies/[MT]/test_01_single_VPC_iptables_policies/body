@@ -1,0 +1,27 @@
+@attr(tags=['advanced', 'intervlan'], required_hardware='true')
+def test_01_single_VPC_iptables_policies(self):
+    ' Test iptables default INPUT/FORWARD policies on VPC router '
+    self.logger.debug('Starting test_01_single_VPC_iptables_policies')
+    routers = self.entity_manager.query_routers()
+    self.assertEqual(isinstance(routers, list), True, 'Check for list routers response return valid data')
+    self.entity_manager.create_network(self.services['vpc_network_offering'], self.vpc.id, '10.1.1.1')
+    self.entity_manager.create_network(self.services['vpc_network_offering_no_lb'], self.vpc.id, '10.1.2.1')
+    self.entity_manager.add_nat_rules(self.vpc.id)
+    self.entity_manager.do_vpc_test()
+    for router in routers:
+        if ((not router.isredundantrouter) and router.vpcid):
+            hosts = list_hosts(self.apiclient, id=router.hostid)
+            self.assertEqual(isinstance(hosts, list), True, 'Check for list hosts response return valid data')
+            host = hosts[0]
+            host.user = self.services['configurableData']['host']['username']
+            host.passwd = self.services['configurableData']['host']['password']
+            host.port = self.services['configurableData']['host']['port']
+            tables = [self.services['configurableData']['input'], self.services['configurableData']['forward']]
+            for table in tables:
+                try:
+                    result = get_process_status(host.ipaddress, host.port, host.user, host.passwd, router.linklocalip, ('iptables -L %s' % table))
+                except KeyError:
+                    self.skipTest(('Provide a marvin config file with host                                    credentials to run %s' % self._testMethodName))
+                self.logger.debug(('iptables -L %s: %s' % (table, result)))
+                res = str(result)
+                self.assertEqual(res.count('DROP'), 1, ('%s Default Policy should be DROP' % table))
