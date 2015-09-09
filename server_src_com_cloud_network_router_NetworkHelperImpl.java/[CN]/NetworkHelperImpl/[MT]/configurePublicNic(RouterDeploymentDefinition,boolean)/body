@@ -1,0 +1,37 @@
+{
+  final LinkedHashMap<Network,List<? extends NicProfile>> publicConfig=new LinkedHashMap<Network,List<? extends NicProfile>>(3);
+  if (routerDeploymentDefinition.isPublicNetwork()) {
+    s_logger.debug("Adding nic for Virtual Router in Public network ");
+    final NicProfile defaultNic=new NicProfile();
+    defaultNic.setDefaultNic(true);
+    final PublicIp sourceNatIp=routerDeploymentDefinition.getSourceNatIP();
+    defaultNic.setIPv4Address(sourceNatIp.getAddress().addr());
+    defaultNic.setIPv4Gateway(sourceNatIp.getGateway());
+    defaultNic.setIPv4Netmask(sourceNatIp.getNetmask());
+    defaultNic.setMacAddress(sourceNatIp.getMacAddress());
+    final Network pubNet=_networkDao.findById(sourceNatIp.getNetworkId());
+    if (pubNet.getBroadcastDomainType() == BroadcastDomainType.Vxlan) {
+      defaultNic.setBroadcastType(BroadcastDomainType.Vxlan);
+      defaultNic.setBroadcastUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setIsolationUri(BroadcastDomainType.Vxlan.toUri(sourceNatIp.getVlanTag()));
+    }
+ else {
+      defaultNic.setBroadcastType(BroadcastDomainType.Vlan);
+      defaultNic.setBroadcastUri(BroadcastDomainType.Vlan.toUri(sourceNatIp.getVlanTag()));
+      defaultNic.setIsolationUri(IsolationType.Vlan.toUri(sourceNatIp.getVlanTag()));
+    }
+    if (hasGuestNic) {
+      defaultNic.setDeviceId(2);
+    }
+    final NetworkOffering publicOffering=_networkModel.getSystemAccountNetworkOfferings(NetworkOffering.SystemPublicNetwork).get(0);
+    final List<? extends Network> publicNetworks=_networkMgr.setupNetwork(s_systemAccount,publicOffering,routerDeploymentDefinition.getPlan(),null,null,false);
+    final String publicIp=defaultNic.getIPv4Address();
+    final NicVO peerNic=_nicDao.findByIp4AddressAndNetworkId(publicIp,publicNetworks.get(0).getId());
+    if (peerNic != null) {
+      s_logger.info("Use same MAC as previous RvR, the MAC is " + peerNic.getMacAddress());
+      defaultNic.setMacAddress(peerNic.getMacAddress());
+    }
+    publicConfig.put(publicNetworks.get(0),new ArrayList<NicProfile>(Arrays.asList(defaultNic)));
+  }
+  return publicConfig;
+}
