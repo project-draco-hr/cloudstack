@@ -1,35 +1,35 @@
 {
-  TransactionLegacy txn=TransactionLegacy.open(TransactionLegacy.CLOUD_DB);
+  final TransactionLegacy txn=TransactionLegacy.open(TransactionLegacy.CLOUD_DB);
   try {
     if (task.getType() != Task.Type.DATA) {
       super.doTask(task);
       return;
     }
     final byte[] data=task.getData();
-    Version ver=Request.getVersion(data);
+    final Version ver=Request.getVersion(data);
     if (ver.ordinal() != Version.v1.ordinal() && ver.ordinal() != Version.v3.ordinal()) {
       s_logger.warn("Wrong version for clustered agent request");
       super.doTask(task);
       return;
     }
-    long hostId=Request.getAgentId(data);
-    Link link=task.getLink();
+    final long hostId=Request.getAgentId(data);
+    final Link link=task.getLink();
     if (Request.fromServer(data)) {
-      AgentAttache agent=findAttache(hostId);
+      final AgentAttache agent=findAttache(hostId);
       if (Request.isControl(data)) {
         if (agent == null) {
           logD(data,"No attache to process cancellation");
           return;
         }
-        Request req=Request.parse(data);
-        Command[] cmds=req.getCommands();
-        CancelCommand cancel=(CancelCommand)cmds[0];
+        final Request req=Request.parse(data);
+        final Command[] cmds=req.getCommands();
+        final CancelCommand cancel=(CancelCommand)cmds[0];
         if (s_logger.isDebugEnabled()) {
           logD(data,"Cancel request received");
         }
         agent.cancel(cancel.getSequence());
         final Long current=agent._currentSequence;
-        if (req.executeInSequence() && (current != null && current == Request.getSequence(data))) {
+        if (req.executeInSequence() && current != null && current == Request.getSequence(data)) {
           agent.sendNext(Request.getSequence(data));
         }
         return;
@@ -39,13 +39,13 @@
           throw new AgentUnavailableException("Unable to route to agent ",hostId);
         }
         if (Request.isRequest(data) && Request.requiresSequentialExecution(data)) {
-          Request req=Request.parse(data);
+          final Request req=Request.parse(data);
           agent.send(req,null);
           return;
         }
  else {
           if (agent instanceof Routable) {
-            Routable cluster=(Routable)agent;
+            final Routable cluster=(Routable)agent;
             cluster.routeToAgent(data);
           }
  else {
@@ -54,17 +54,17 @@
           return;
         }
       }
- catch (      AgentUnavailableException e) {
+ catch (      final AgentUnavailableException e) {
         logD(data,e.getMessage());
         cancel(Long.toString(Request.getManagementServerId(data)),hostId,Request.getSequence(data),e.getMessage());
       }
     }
  else {
-      long mgmtId=Request.getManagementServerId(data);
+      final long mgmtId=Request.getManagementServerId(data);
       if (mgmtId != -1 && mgmtId != _nodeId) {
         routeToPeer(Long.toString(mgmtId),data);
         if (Request.requiresSequentialExecution(data)) {
-          AgentAttache attache=(AgentAttache)link.attachment();
+          final AgentAttache attache=(AgentAttache)link.attachment();
           if (attache != null) {
             attache.sendNext(Request.getSequence(data));
           }
@@ -80,7 +80,7 @@
         }
  else {
           final Response response=Response.parse(data);
-          AgentAttache attache=findAttache(response.getAgentId());
+          final AgentAttache attache=findAttache(response.getAgentId());
           if (attache == null) {
             s_logger.info("SeqA " + response.getAgentId() + "-"+ response.getSequence()+ "Unable to find attache to forward "+ response.toString());
             return;
@@ -93,7 +93,17 @@
       }
     }
   }
-  finally {
+ catch (  final ClassNotFoundException e) {
+    final String message=String.format("ClassNotFoundException occured when executing taks! Error '%s'",e.getMessage());
+    s_logger.error(message);
+    throw new TaskExecutionException(message,e);
+  }
+catch (  final UnsupportedVersionException e) {
+    final String message=String.format("UnsupportedVersionException occured when executing taks! Error '%s'",e.getMessage());
+    s_logger.error(message);
+    throw new TaskExecutionException(message,e);
+  }
+ finally {
     txn.close();
   }
 }
