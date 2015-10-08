@@ -1,0 +1,38 @@
+@attr(tags=['advanced', 'advancedns'], required_hardware='true')
+def test_01_CreatePFOnStoppedRouter(self):
+    'Stop existing router, add a PF rule and check we can access the VM '
+    routers = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(routers, list), True, 'Check for list routers response return valid data')
+    self.assertNotEqual(len(routers), 0, 'Check list router response')
+    router = routers[0]
+    self.logger.debug(('Stopping router ID: %s' % router.id))
+    cmd = stopRouter.stopRouterCmd()
+    cmd.id = router.id
+    self.apiclient.stopRouter(cmd)
+    routers = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(routers, list), True, 'Check for list routers response return valid data')
+    router = routers[0]
+    self.assertEqual(router.state, 'Stopped', 'Check list router response for router state')
+    public_ips = list_publicIP(self.apiclient, account=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id)
+    self.assertEqual(isinstance(public_ips, list), True, 'Check for list public IPs response return valid data')
+    public_ip = public_ips[0]
+    FireWallRule.create(self.apiclient, ipaddressid=public_ip.id, protocol=self.services['natrule']['protocol'], cidrlist=['0.0.0.0/0'], startport=self.services['natrule']['publicport'], endport=self.services['natrule']['publicport'])
+    self.logger.debug(('Creating NAT rule for VM ID: %s' % self.vm_1.id))
+    nat_rule = NATRule.create(self.apiclient, self.vm_1, self.services['natrule'], public_ip.id)
+    self.logger.debug(('Starting router ID: %s' % router.id))
+    cmd = startRouter.startRouterCmd()
+    cmd.id = router.id
+    self.apiclient.startRouter(cmd)
+    routers = list_routers(self.apiclient, account=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id)
+    self.assertEqual(isinstance(routers, list), True, 'Check for list routers response return valid data')
+    router = routers[0]
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    nat_rules = list_nat_rules(self.apiclient, id=nat_rule.id)
+    self.assertEqual(isinstance(nat_rules, list), True, 'Check for list NAT rules response return valid data')
+    self.assertEqual(nat_rules[0].state, 'Active', 'Check list port forwarding rules')
+    try:
+        self.logger.debug(('SSH into VM with ID: %s' % nat_rule.ipaddress))
+        self.vm_1.get_ssh_client(ipaddress=nat_rule.ipaddress, port=self.services['natrule']['publicport'])
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (nat_rule.ipaddress, e)))
+    return
