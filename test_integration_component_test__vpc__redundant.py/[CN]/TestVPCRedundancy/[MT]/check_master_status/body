@@ -1,9 +1,22 @@
 def check_master_status(self, count=2, showall=False):
     vals = ['MASTER', 'BACKUP', 'UNKNOWN']
     cnts = [0, 0, 0]
+    result = 'UNKNOWN'
     self.query_routers(count, showall)
     for router in self.routers:
         if (router.state == 'Running'):
-            cnts[vals.index(router.redundantstate)] += 1
+            hosts = list_hosts(self.apiclient, zoneid=router.zoneid, type='Routing', state='Up', id=router.hostid)
+            self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+            host = hosts[0]
+            if (self.hypervisor.lower() in ('vmware', 'hyperv')):
+                result = str(get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, router.linklocalip, 'sh /opt/cloud/bin/checkrouter.sh ', hypervisor=self.hypervisor))
+            else:
+                try:
+                    (host.user, host.passwd) = get_host_credentials(self.config, host.ipaddress)
+                    result = str(get_process_status(host.ipaddress, 22, host.user, host.passwd, router.linklocalip, 'sh /opt/cloud/bin/checkrouter.sh '))
+                except KeyError:
+                    self.skipTest('Marvin configuration has no host credentials to                                    check router services')
+            if (result.count(vals[0]) == 1):
+                cnts[vals.index(vals[0])] += 1
     if (cnts[vals.index('MASTER')] != 1):
         self.fail(('No Master or too many master routers found %s' % cnts[vals.index('MASTER')]))
