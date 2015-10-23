@@ -1,61 +1,52 @@
 {
-  try {
-    PreparedStatement pstmt=conn.prepareStatement("select h.id, sum(s.ram_size) from host h, vm_instance v, service_offering s where h.type='Routing' and v.state='Running' and v.`type`='User' and v.host_id=h.id  and v.service_offering_id = s.id group by h.id");
-    ResultSet rs=pstmt.executeQuery();
-    Map<Long,Long> hostUsedMemoryInfo=new HashMap<Long,Long>();
+  Map<Long,Long> hostUsedMemoryInfo=new HashMap<Long,Long>();
+  try (PreparedStatement pstmt=conn.prepareStatement("select h.id, sum(s.ram_size) from host h, vm_instance v, service_offering s where h.type='Routing' and v.state='Running' and v.`type`='User' and v.host_id=h.id  and v.service_offering_id = s.id group by h.id");ResultSet rs=pstmt.executeQuery()){
     while (rs.next()) {
       hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2));
     }
-    rs.close();
-    pstmt.close();
     int proxyRamSize=NumbersUtil.parseInt(getConfigValue(conn,"consoleproxy.ram.size"),1024);
     int domrRamSize=NumbersUtil.parseInt(getConfigValue(conn,"router.ram.size"),128);
     int ssvmRamSize=NumbersUtil.parseInt(getConfigValue(conn,"secstorage.vm.ram.size"),256);
-    pstmt=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='ConsoleProxy' and v.host_id=h.id group by h.id");
-    rs=pstmt.executeQuery();
-    while (rs.next()) {
-      if (hostUsedMemoryInfo.get(rs.getLong(1)) != null) {
-        Long usedMem=hostUsedMemoryInfo.get(rs.getLong(1));
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * proxyRamSize + usedMem);
-      }
+    try (PreparedStatement selectConsoleProxyHostInfo=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='ConsoleProxy' and v.host_id=h.id group by h.id");ResultSet consoleProxyHostInfo=selectConsoleProxyHostInfo.executeQuery()){
+      while (consoleProxyHostInfo.next()) {
+        if (hostUsedMemoryInfo.get(consoleProxyHostInfo.getLong(1)) != null) {
+          Long usedMem=hostUsedMemoryInfo.get(consoleProxyHostInfo.getLong(1));
+          hostUsedMemoryInfo.put(consoleProxyHostInfo.getLong(1),consoleProxyHostInfo.getLong(2) * proxyRamSize + usedMem);
+        }
  else {
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * proxyRamSize);
+          hostUsedMemoryInfo.put(consoleProxyHostInfo.getLong(1),consoleProxyHostInfo.getLong(2) * proxyRamSize);
+        }
       }
     }
-    rs.close();
-    pstmt.close();
-    pstmt=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='DomainRouter' and v.host_id=h.id group by h.id");
-    rs=pstmt.executeQuery();
-    while (rs.next()) {
-      if (hostUsedMemoryInfo.get(rs.getLong(1)) != null) {
-        Long usedMem=hostUsedMemoryInfo.get(rs.getLong(1));
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * domrRamSize + usedMem);
-      }
+     try (PreparedStatement selectDomainRouterHostInfo=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='DomainRouter' and v.host_id=h.id group by h.id");ResultSet domainrouterHostInfo=selectDomainRouterHostInfo.executeQuery()){
+      while (domainrouterHostInfo.next()) {
+        if (hostUsedMemoryInfo.get(domainrouterHostInfo.getLong(1)) != null) {
+          Long usedMem=hostUsedMemoryInfo.get(domainrouterHostInfo.getLong(1));
+          hostUsedMemoryInfo.put(domainrouterHostInfo.getLong(1),domainrouterHostInfo.getLong(2) * domrRamSize + usedMem);
+        }
  else {
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * domrRamSize);
+          hostUsedMemoryInfo.put(domainrouterHostInfo.getLong(1),domainrouterHostInfo.getLong(2) * domrRamSize);
+        }
       }
     }
-    rs.close();
-    pstmt.close();
-    pstmt=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='SecondaryStorageVm' and v.host_id=h.id group by h.id");
-    rs=pstmt.executeQuery();
-    while (rs.next()) {
-      if (hostUsedMemoryInfo.get(rs.getLong(1)) != null) {
-        Long usedMem=hostUsedMemoryInfo.get(rs.getLong(1));
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * ssvmRamSize + usedMem);
-      }
+     try (PreparedStatement selectSsvmHostInfo=conn.prepareStatement("select h.id, count(v.id) from host h, vm_instance v where h.type='Routing' and v.state='Running' and v.`type`='SecondaryStorageVm' and v.host_id=h.id group by h.id");ResultSet ssvmHostInfo=selectSsvmHostInfo.executeQuery()){
+      while (ssvmHostInfo.next()) {
+        if (hostUsedMemoryInfo.get(ssvmHostInfo.getLong(1)) != null) {
+          Long usedMem=hostUsedMemoryInfo.get(ssvmHostInfo.getLong(1));
+          hostUsedMemoryInfo.put(ssvmHostInfo.getLong(1),ssvmHostInfo.getLong(2) * ssvmRamSize + usedMem);
+        }
  else {
-        hostUsedMemoryInfo.put(rs.getLong(1),rs.getLong(2) * ssvmRamSize);
+          hostUsedMemoryInfo.put(ssvmHostInfo.getLong(1),ssvmHostInfo.getLong(2) * ssvmRamSize);
+        }
       }
     }
-    rs.close();
-    pstmt.close();
-    for (    Map.Entry<Long,Long> entry : hostUsedMemoryInfo.entrySet()) {
-      pstmt=conn.prepareStatement("update op_host_capacity set used_capacity=? where host_id=? and capacity_type=0");
-      pstmt.setLong(1,entry.getValue() * 1024 * 1024);
-      pstmt.setLong(2,entry.getKey());
-      pstmt.executeUpdate();
-    }
+     for (    Map.Entry<Long,Long> entry : hostUsedMemoryInfo.entrySet()) {
+      try (PreparedStatement updateHostCapacity=conn.prepareStatement("update op_host_capacity set used_capacity=? where host_id=? and capacity_type=0")){
+        updateHostCapacity.setLong(1,entry.getValue() * 1024 * 1024);
+        updateHostCapacity.setLong(2,entry.getKey());
+        updateHostCapacity.executeUpdate();
+      }
+     }
   }
  catch (  SQLException e) {
     throw new CloudRuntimeException("Can't upgrade host capacity info ",e);

@@ -1,0 +1,73 @@
+@attr(tags=['advanced', 'basic'], required_hardware='true')
+def test_02_template_permissions(self):
+    "\n        @Desc: Test to create Public Template by registering or by snapshot and volume when\n        Global parameter 'allow.public.user.template' is set to  False\n        @steps:\n        1.Set Global parameter 'allow.public.user.template' as False. Restart Management server\n        2. Create a domain\n        3. Create a domain admin and a domain user\n        4. Create a vm as domain user\n        5. take snapshot of root disk as user vm\n        6. try to create public template from snapshot . It should fail\n        7. stop the VM\n        8. take the public template from volume. it should fail\n        9. register a public template as a domain user . it should fail\n        10. create a VM  as domain admin\n        11. create a snapshot of root disk as domain admin\n        12 create a public template of the snapshot .it should fail\n        13. Register a public template as domain admin. it should fail\n        14 Stop the vm as domain admin\n        15. Create a template from volume as domain admin . it should fail\n\n        "
+    self.updateConfigurAndRestart('allow.public.user.templates', 'false')
+    user_account = Account.create(self.apiclient, self.testdata['account2'], admin=False, domainid=self.domain.id)
+    admin_user = self.account.user[0]
+    self.admin_api_client = self.testClient.getUserApiClient(admin_user.username, self.domain.name)
+    user = user_account.user[0]
+    self.user_api_client = self.testClient.getUserApiClient(user.username, self.domain.name)
+    self.testdata['templates']['ispublic'] = True
+    try:
+        template = Template.register(self.user_api_client, self.testdata['templates'], zoneid=self.zone.id, account=user_account.name, domainid=user_account.domainid, hypervisor=self.hypervisor)
+        self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+        self.fail('Template creation passed for user')
+    except CloudstackAPIException as e:
+        self.assertRaises(('Exception Raised : %s' % e))
+    try:
+        template = Template.register(self.admin_api_client, self.testdata['templates'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, hypervisor=self.hypervisor)
+        self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+        self.fail('Template creation passed for domain admin')
+    except CloudstackAPIException as e:
+        self.assertRaises(('Exception Raised : %s' % e))
+    if (self.hypervisor.lower() in ['hyperv', 'lxc']):
+        self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+        return
+    else:
+        user_vm_created = VirtualMachine.create(self.user_api_client, self.testdata['virtual_machine'], accountid=user_account.name, domainid=user_account.domainid, serviceofferingid=self.service_offering.id)
+        self.assertIsNotNone(user_vm_created, 'VM creation failed')
+        volume = list_volumes(self.user_api_client, virtualmachineid=user_vm_created.id, type='ROOT', listall=True)
+        snapshot_created = Snapshot.create(self.user_api_client, volume[0].id, account=user_account.name, domainid=user_account.domainid)
+        self.assertIsNotNone(snapshot_created, 'Snapshot creation failed')
+        self.debug(('Creating a template from snapshot: %s' % snapshot_created.id))
+        self.testdata['template']['ispublic'] = True
+        try:
+            user_template = Template.create_from_snapshot(self.user_api_client, snapshot_created, self.testdata['template'])
+            self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+            self.fail('Template creation passed from snapshot for domain user')
+        except CloudstackAPIException as e:
+            self.assertRaises(('Exception Raised : %s' % e))
+        VirtualMachine.stop(user_vm_created, self.user_api_client)
+        list_stopped_vms_after = VirtualMachine.list(self.user_api_client, listall=self.testdata['listall'], domainid=user_account.domainid, state='Stopped')
+        status = validateList(list_stopped_vms_after)
+        self.assertEquals(PASS, status[0], 'Stopped VM is not in Stopped state')
+        try:
+            user_template = Template.create(self.user_api_client, self.testdata['template'], volume[0].id)
+            self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+            self.fail('Template creation passed from volume for domain user')
+        except CloudstackAPIException as e:
+            self.assertRaises(('Exception Raised : %s' % e))
+        admin_vm_created = VirtualMachine.create(self.admin_api_client, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id)
+        self.assertIsNotNone(admin_vm_created, 'VM creation failed')
+        volume = list_volumes(self.admin_api_client, virtualmachineid=admin_vm_created.id, type='ROOT', listall=True)
+        snapshot_created = Snapshot.create(self.admin_api_client, volume[0].id, account=self.account.name, domainid=self.account.domainid)
+        self.assertIsNotNone(snapshot_created, 'Snapshot creation failed')
+        self.debug(('Creating a template from snapshot: %s' % snapshot_created.id))
+        try:
+            admin_template = Template.create_from_snapshot(self.admin_api_client, snapshot_created, self.testdata['template'])
+            self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+            self.fail('Template creation passed from snapshot for domain admin')
+        except CloudstackAPIException as e:
+            self.assertRaises(('Exception Raised : %s' % e))
+        VirtualMachine.stop(admin_vm_created, self.admin_api_client)
+        list_stopped_vms_after = VirtualMachine.list(self.admin_api_client, listall=self.testdata['listall'], domainid=self.account.domainid, state='Stopped')
+        status = validateList(list_stopped_vms_after)
+        self.assertEquals(PASS, status[0], 'Stopped VM is not in Stopped state')
+        try:
+            admin_template = Template.create(self.admin_api_client, self.testdata['template'], volume[0].id)
+            self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+            self.fail('Template creation passed from volume for domain admin')
+        except CloudstackAPIException as e:
+            self.assertRaises(('Exception Raised : %s' % e))
+        self.updateConfigurAndRestart('allow.public.user.templates', 'true')
+    return

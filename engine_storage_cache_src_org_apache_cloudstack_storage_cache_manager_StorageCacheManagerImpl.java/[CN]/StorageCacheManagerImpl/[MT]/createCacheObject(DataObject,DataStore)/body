@@ -1,12 +1,75 @@
 {
-  DataObjectInStore obj=objectInStoreMgr.findObject(data,store);
-  if (obj != null && obj.getState() == ObjectInDataStoreStateMachine.State.Ready) {
-    s_logger.debug("there is already one in the cache store");
-    DataObject dataObj=objectInStoreMgr.get(data,store);
-    dataObj.incRefCount();
-    return dataObj;
+  DataObject objOnCacheStore=null;
+  final Object lock;
+  final DataObjectType type=data.getType();
+  final String typeName;
+  final long storeId=store.getId();
+  final long dataId=data.getId();
+  if (type == DataObjectType.TEMPLATE) {
+    lock=templateLock;
+    typeName="template";
   }
-  DataObject objOnCacheStore=store.create(data);
+ else   if (type == DataObjectType.VOLUME) {
+    lock=volumeLock;
+    typeName="volume";
+  }
+ else   if (type == DataObjectType.SNAPSHOT) {
+    lock=snapshotLock;
+    typeName="snapshot";
+  }
+ else {
+    String msg="unsupported DataObject comes, then can't acquire correct lock object";
+    throw new CloudRuntimeException(msg);
+  }
+  s_logger.debug("check " + typeName + " cache entry(id: "+ dataId+ ") on store(id: "+ storeId+ ")");
+  DataObject existingDataObj=null;
+synchronized (lock) {
+    DataObjectInStore obj=objectInStoreMgr.findObject(data,store);
+    if (obj != null) {
+      State st=obj.getState();
+      long miliSeconds=10000;
+      long timeoutSeconds=3600;
+      long timeoutMiliSeconds=timeoutSeconds * 1000;
+      Date now=new Date();
+      long expiredEpoch=now.getTime() + timeoutMiliSeconds;
+      Date expiredDate=new Date(expiredEpoch);
+      while (st == ObjectInDataStoreStateMachine.State.Allocated || st == ObjectInDataStoreStateMachine.State.Creating || st == ObjectInDataStoreStateMachine.State.Copying) {
+        s_logger.debug("waiting cache copy completion type: " + typeName + ", id: "+ obj.getObjectId()+ ", lock: "+ lock.hashCode());
+        try {
+          lock.wait(miliSeconds);
+        }
+ catch (        InterruptedException e) {
+          s_logger.debug("[ignored] interupted while waiting for cache copy completion.");
+        }
+        s_logger.debug("waken up");
+        now=new Date();
+        if (now.after(expiredDate)) {
+          String msg="Waiting time exceeds timeout limit(" + timeoutSeconds + " s)";
+          throw new CloudRuntimeException(msg);
+        }
+        obj=objectInStoreMgr.findObject(data,store);
+        st=obj.getState();
+      }
+      if (st == ObjectInDataStoreStateMachine.State.Ready) {
+        s_logger.debug("there is already one in the cache store");
+        DataObject dataObj=objectInStoreMgr.get(data,store);
+        dataObj.incRefCount();
+        existingDataObj=dataObj;
+      }
+    }
+    if (existingDataObj == null) {
+      s_logger.debug("create " + typeName + " cache entry(id: "+ dataId+ ") on store(id: "+ storeId+ ")");
+      objOnCacheStore=store.create(data);
+    }
+    lock.notifyAll();
+  }
+  if (existingDataObj != null) {
+    return existingDataObj;
+  }
+  if (objOnCacheStore == null) {
+    s_logger.error("create " + typeName + " cache entry(id: "+ dataId+ ") on store(id: "+ storeId+ ") failed");
+    return null;
+  }
   AsyncCallFuture<CopyCommandResult> future=new AsyncCallFuture<CopyCommandResult>();
   CopyCommandResult result=null;
   try {
@@ -33,6 +96,10 @@ catch (  ExecutionException e) {
  finally {
     if (result == null) {
       objOnCacheStore.processEvent(Event.OperationFailed);
+    }
+synchronized (lock) {
+      s_logger.debug("wake up all waiting threads(lock: " + lock.hashCode() + ")");
+      lock.notifyAll();
     }
   }
   return null;

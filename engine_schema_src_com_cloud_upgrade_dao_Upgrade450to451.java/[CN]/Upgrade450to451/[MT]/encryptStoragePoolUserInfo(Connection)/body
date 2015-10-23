@@ -1,32 +1,26 @@
 {
   List<PreparedStatement> listOfStatements=new ArrayList<PreparedStatement>();
-  try {
-    PreparedStatement preparedStatement=conn.prepareStatement("SELECT id, user_info FROM `cloud`.`storage_pool` WHERE user_info IS NOT NULL");
-    listOfStatements.add(preparedStatement);
-    ResultSet resultSet=preparedStatement.executeQuery();
+  try (PreparedStatement selectStatement=conn.prepareStatement("SELECT id, user_info FROM `cloud`.`storage_pool` WHERE user_info IS NOT NULL");ResultSet resultSet=selectStatement.executeQuery()){
     while (resultSet.next()) {
       long id=resultSet.getLong(1);
       String userInfo=resultSet.getString(2);
       String encryptedUserInfo=DBEncryptionUtil.encrypt(userInfo);
-      preparedStatement=conn.prepareStatement("UPDATE `cloud`.`storage_pool` SET user_info=? WHERE id=?");
-      listOfStatements.add(preparedStatement);
-      if (encryptedUserInfo == null)       preparedStatement.setNull(1,12);
+      try (PreparedStatement preparedStatement=conn.prepareStatement("UPDATE `cloud`.`storage_pool` SET user_info=? WHERE id=?")){
+        listOfStatements.add(preparedStatement);
+        if (encryptedUserInfo == null)         preparedStatement.setNull(1,12);
  else {
-        preparedStatement.setBytes(1,encryptedUserInfo.getBytes("UTF-8"));
+          preparedStatement.setBytes(1,encryptedUserInfo.getBytes("UTF-8"));
+        }
+        preparedStatement.setLong(2,id);
+        preparedStatement.executeUpdate();
       }
-      preparedStatement.setLong(2,id);
-      preparedStatement.executeUpdate();
-      preparedStatement.close();
-    }
+     }
   }
  catch (  SQLException e) {
     throw new CloudRuntimeException("Unable encrypt storage pool user info ",e);
   }
 catch (  UnsupportedEncodingException e) {
     throw new CloudRuntimeException("Unable encrypt storage pool user info ",e);
-  }
- finally {
-    TransactionLegacy.closePstmts(listOfStatements);
   }
   s_logger.debug("Done encrypting storage_pool's user_info column");
 }

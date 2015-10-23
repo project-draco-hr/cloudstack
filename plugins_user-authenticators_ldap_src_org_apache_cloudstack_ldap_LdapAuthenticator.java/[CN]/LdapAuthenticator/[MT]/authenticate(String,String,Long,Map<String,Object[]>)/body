@@ -3,20 +3,52 @@
     s_logger.debug("Username or Password cannot be empty");
     return new Pair<Boolean,ActionOnFailedAuthentication>(false,null);
   }
-  final UserAccount user=_userAccountDao.getUserAccount(username,domainId);
-  if (user == null) {
-    s_logger.debug("Unable to find user with " + username + " in domain "+ domainId);
-    return new Pair<Boolean,ActionOnFailedAuthentication>(false,null);
-  }
- else   if (_ldapManager.isLdapEnabled()) {
-    boolean result=_ldapManager.canAuthenticate(username,password);
-    ActionOnFailedAuthentication action=null;
-    if (result == false) {
+  boolean result=false;
+  ActionOnFailedAuthentication action=null;
+  if (_ldapManager.isLdapEnabled()) {
+    final UserAccount user=_userAccountDao.getUserAccount(username,domainId);
+    LdapTrustMapVO ldapTrustMapVO=_ldapManager.getDomainLinkedToLdap(domainId);
+    if (ldapTrustMapVO != null) {
+      try {
+        LdapUser ldapUser=_ldapManager.getUser(username,ldapTrustMapVO.getType().toString(),ldapTrustMapVO.getName());
+        if (!ldapUser.isDisabled()) {
+          result=_ldapManager.canAuthenticate(ldapUser.getPrincipal(),password);
+          if (result) {
+            if (user == null) {
+              createCloudStackUserAccount(ldapUser,domainId,ldapTrustMapVO.getAccountType());
+            }
+ else {
+              enableUserInCloudStack(user);
+            }
+          }
+        }
+ else {
+          disableUserInCloudStack(user);
+        }
+      }
+ catch (      NoLdapUserMatchingQueryException e) {
+        s_logger.debug(e.getMessage());
+      }
+    }
+ else {
+      if (user != null) {
+        try {
+          LdapUser ldapUser=_ldapManager.getUser(username);
+          if (!ldapUser.isDisabled()) {
+            result=_ldapManager.canAuthenticate(ldapUser.getPrincipal(),password);
+          }
+ else {
+            s_logger.debug("user with principal " + ldapUser.getPrincipal() + " is disabled in ldap");
+          }
+        }
+ catch (        NoLdapUserMatchingQueryException e) {
+          s_logger.debug(e.getMessage());
+        }
+      }
+    }
+    if (!result && user != null) {
       action=ActionOnFailedAuthentication.INCREMENT_INCORRECT_LOGIN_ATTEMPT_COUNT;
     }
-    return new Pair<Boolean,ActionOnFailedAuthentication>(result,action);
   }
- else {
-    return new Pair<Boolean,ActionOnFailedAuthentication>(false,ActionOnFailedAuthentication.INCREMENT_INCORRECT_LOGIN_ATTEMPT_COUNT);
-  }
+  return new Pair<Boolean,ActionOnFailedAuthentication>(result,action);
 }

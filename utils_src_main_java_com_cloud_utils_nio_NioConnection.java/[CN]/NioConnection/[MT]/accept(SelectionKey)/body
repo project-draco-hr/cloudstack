@@ -1,0 +1,43 @@
+{
+  final ServerSocketChannel serverSocketChannel=(ServerSocketChannel)key.channel();
+  final SocketChannel socketChannel=serverSocketChannel.accept();
+  final Socket socket=socketChannel.socket();
+  socket.setKeepAlive(true);
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("Connection accepted for " + socket);
+  }
+  socketChannel.configureBlocking(true);
+  SSLEngine sslEngine=null;
+  try {
+    final SSLContext sslContext=Link.initSSLContext(false);
+    sslEngine=sslContext.createSSLEngine();
+    sslEngine.setUseClientMode(false);
+    sslEngine.setNeedClientAuth(false);
+    sslEngine.setEnabledProtocols(SSLUtils.getSupportedProtocols(sslEngine.getEnabledProtocols()));
+    Link.doHandshake(socketChannel,sslEngine,false);
+  }
+ catch (  final Exception e) {
+    if (s_logger.isTraceEnabled()) {
+      s_logger.trace("Socket " + socket + " closed on read.  Probably -1 returned: "+ e.getMessage());
+    }
+    closeAutoCloseable(socketChannel,"accepting socketChannel");
+    closeAutoCloseable(socket,"opened socket");
+    return;
+  }
+  if (s_logger.isTraceEnabled()) {
+    s_logger.trace("SSL: Handshake done");
+  }
+  socketChannel.configureBlocking(false);
+  final InetSocketAddress saddr=(InetSocketAddress)socket.getRemoteSocketAddress();
+  final Link link=new Link(saddr,this);
+  link.setSSLEngine(sslEngine);
+  link.setKey(socketChannel.register(key.selector(),SelectionKey.OP_READ,link));
+  final Task task=_factory.create(Task.Type.CONNECT,link,null);
+  registerLink(saddr,link);
+  try {
+    _executor.submit(task);
+  }
+ catch (  final Exception e) {
+    s_logger.warn("Exception occurred when submitting the task",e);
+  }
+}

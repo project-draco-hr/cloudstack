@@ -1,63 +1,69 @@
 {
-  try {
-    PreparedStatement pstmt=conn.prepareStatement("UPDATE user_statistics SET device_type='DomainRouter'");
+  try (PreparedStatement pstmt=conn.prepareStatement("UPDATE user_statistics SET device_type='DomainRouter'")){
     pstmt.executeUpdate();
-    pstmt.close();
     s_logger.debug("Upgraded userStatistcis with device_type=DomainRouter");
-    pstmt=conn.prepareStatement("SELECT id, account_id, data_center_id FROM user_statistics");
-    ResultSet rs=pstmt.executeQuery();
-    while (rs.next()) {
-      Long id=rs.getLong(1);
-      Long accountId=rs.getLong(2);
-      Long dataCenterId=rs.getLong(3);
-      pstmt=conn.prepareStatement("SELECT networktype from data_center where id=?");
-      pstmt.setLong(1,dataCenterId);
-      ResultSet dcSet=pstmt.executeQuery();
-      if (!dcSet.next()) {
-        s_logger.error("Unable to get data_center information as a part of user_statistics update");
-        throw new CloudRuntimeException("Unable to get data_center information as a part of user_statistics update");
-      }
-      String dataCenterType=dcSet.getString(1);
-      if (dataCenterType.equalsIgnoreCase("basic")) {
-        accountId=1L;
-      }
-      pstmt=conn.prepareStatement("SELECT id from vm_instance where account_id=? AND data_center_id=? AND type='DomainRouter'");
-      pstmt.setLong(1,accountId);
-      pstmt.setLong(2,dataCenterId);
-      ResultSet rs1=pstmt.executeQuery();
-      Long deviceId=0L;
-      if (!rs1.next()) {
-        pstmt=conn.prepareStatement("SELECT * from vm_instance where account_id=? AND data_center_id=? AND removed IS NULL");
-        pstmt.setLong(1,accountId);
-        pstmt.setLong(2,dataCenterId);
-        ResultSet nonRemovedVms=pstmt.executeQuery();
-        if (nonRemovedVms.next()) {
-          s_logger.warn("Failed to find domR for for account id=" + accountId + " in zone id="+ dataCenterId+ "; will try to locate domR based on user_vm info");
-          pstmt=conn.prepareStatement("SELECT u.domain_router_id from user_vm u, vm_instance v where u.account_id=? AND v.data_center_id=? AND v.removed IS NULL AND u.domain_router_id is NOT NULL");
-          pstmt.setLong(1,accountId);
-          pstmt.setLong(2,dataCenterId);
-          ResultSet userVmSet=pstmt.executeQuery();
-          if (!userVmSet.next()) {
-            s_logger.warn("Skipping user_statistics upgrade for account id=" + accountId + " in datacenter id="+ dataCenterId);
-            continue;
+    try (PreparedStatement selectUserStatistics=conn.prepareStatement("SELECT id, account_id, data_center_id FROM user_statistics");ResultSet rs=selectUserStatistics.executeQuery()){
+      while (rs.next()) {
+        Long id=rs.getLong(1);
+        Long accountId=rs.getLong(2);
+        Long dataCenterId=rs.getLong(3);
+        try (PreparedStatement selectNetworkType=conn.prepareStatement("SELECT networktype from data_center where id=?")){
+          selectNetworkType.setLong(1,dataCenterId);
+          try (ResultSet dcSet=selectNetworkType.executeQuery()){
+            if (!dcSet.next()) {
+              s_logger.error("Unable to get data_center information as a part of user_statistics update");
+              throw new CloudRuntimeException("Unable to get data_center information as a part of user_statistics update");
+            }
+            String dataCenterType=dcSet.getString(1);
+            if (dataCenterType.equalsIgnoreCase("basic")) {
+              accountId=1L;
+            }
           }
-          deviceId=userVmSet.getLong(1);
-        }
+         }
+         try (PreparedStatement selectDomainRouterIds=conn.prepareStatement("SELECT id from vm_instance where account_id=? AND data_center_id=? AND type='DomainRouter'")){
+          selectDomainRouterIds.setLong(1,accountId);
+          selectDomainRouterIds.setLong(2,dataCenterId);
+          try (ResultSet domainRouterIdResult=selectDomainRouterIds.executeQuery()){
+            Long deviceId=0L;
+            if (!domainRouterIdResult.next()) {
+              try (PreparedStatement selectnonRemovedVms=conn.prepareStatement("SELECT * from vm_instance where account_id=? AND data_center_id=? AND removed IS NULL")){
+                selectnonRemovedVms.setLong(1,accountId);
+                selectnonRemovedVms.setLong(2,dataCenterId);
+                try (ResultSet nonRemovedVms=selectnonRemovedVms.executeQuery()){
+                  if (nonRemovedVms.next()) {
+                    s_logger.warn("Failed to find domR for for account id=" + accountId + " in zone id="+ dataCenterId+ "; will try to locate domR based on user_vm info");
+                    try (PreparedStatement selectNetworkType=conn.prepareStatement("SELECT u.domain_router_id from user_vm u, vm_instance v where u.account_id=? AND v.data_center_id=? AND v.removed IS NULL AND u.domain_router_id is NOT NULL")){
+                      selectNetworkType.setLong(1,accountId);
+                      selectNetworkType.setLong(2,dataCenterId);
+                      try (ResultSet userVmSet=selectNetworkType.executeQuery()){
+                        if (!userVmSet.next()) {
+                          s_logger.warn("Skipping user_statistics upgrade for account id=" + accountId + " in datacenter id="+ dataCenterId);
+                          continue;
+                        }
+                        deviceId=userVmSet.getLong(1);
+                      }
+                     }
+                   }
  else {
-          s_logger.debug("Account id=" + accountId + " doesn't own any user vms and domRs, so skipping user_statistics update");
-          continue;
-        }
-      }
+                    s_logger.debug("Account id=" + accountId + " doesn't own any user vms and domRs, so skipping user_statistics update");
+                    continue;
+                  }
+                }
+               }
+             }
  else {
-        deviceId=rs1.getLong(1);
-      }
-      pstmt=conn.prepareStatement("UPDATE user_statistics SET device_id=? where id=?");
-      pstmt.setLong(1,deviceId);
-      pstmt.setLong(2,id);
-      pstmt.executeUpdate();
-      pstmt=conn.prepareStatement("");
+              deviceId=domainRouterIdResult.getLong(1);
+            }
+            try (PreparedStatement updateUserStatistics=conn.prepareStatement("UPDATE user_statistics SET device_id=? where id=?")){
+              updateUserStatistics.setLong(1,deviceId);
+              updateUserStatistics.setLong(2,id);
+              updateUserStatistics.executeUpdate();
+            }
+           }
+         }
+       }
     }
-    s_logger.debug("Upgraded userStatistcis with deviceId(s)");
+     s_logger.debug("Upgraded userStatistcis with deviceId(s)");
   }
  catch (  Exception e) {
     throw new CloudRuntimeException("Failed to migrate usage events: ",e);
