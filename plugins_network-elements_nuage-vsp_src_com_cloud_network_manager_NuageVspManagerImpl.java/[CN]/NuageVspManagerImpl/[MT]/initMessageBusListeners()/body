@@ -1,0 +1,33 @@
+{
+  _messageBus.subscribe(DomainManager.MESSAGE_ADD_DOMAIN_EVENT,new MessageSubscriber(){
+    @Override public void onPublishMessage(    String senderAddress,    String subject,    Object args){
+      Long domainId=(Long)args;
+      Domain domain=_domainDao.findById(domainId);
+      try {
+        _domainDao.acquireInLockTable(domain.getId());
+        List<NuageVspDeviceVO> nuageVspDevices=_nuageVspDao.listAll();
+        for (        NuageVspDeviceVO nuageVspDevice : nuageVspDevices) {
+          HostVO host=findNuageVspHost(nuageVspDevice.getHostId());
+          SyncDomainCommand cmd=new SyncDomainCommand(domain.getUuid(),domain.getName(),domain.getPath(),true,false);
+          _agentMgr.easySend(host.getId(),cmd);
+        }
+      }
+  finally {
+        _domainDao.releaseFromLockTable(domain.getId());
+      }
+    }
+  }
+);
+  _messageBus.subscribe(DomainManager.MESSAGE_REMOVE_DOMAIN_EVENT,new MessageSubscriber(){
+    @Override public void onPublishMessage(    String senderAddress,    String subject,    Object args){
+      DomainVO domain=(DomainVO)args;
+      List<NuageVspDeviceVO> nuageVspDevices=_nuageVspDao.listAll();
+      for (      NuageVspDeviceVO nuageVspDevice : nuageVspDevices) {
+        HostVO host=findNuageVspHost(nuageVspDevice.getHostId());
+        SyncDomainCommand cmd=new SyncDomainCommand(domain.getUuid(),domain.getName(),domain.getPath(),false,true);
+        _agentMgr.easySend(host.getId(),cmd);
+      }
+    }
+  }
+);
+}

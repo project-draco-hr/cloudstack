@@ -1,0 +1,23 @@
+{
+  _hostDao.loadDetails(host);
+  boolean validateDomains=true;
+  List<NuageVspDeviceVO> nuageVspDevices=_nuageVspDao.listByHost(host.getId());
+  if (!CollectionUtils.isEmpty(nuageVspDevices)) {
+    for (    NuageVspDeviceVO nuageVspDevice : nuageVspDevices) {
+      ConfigurationVO cmsIdConfig=_configDao.findByName("nuagevsp.cms.id");
+      String nuageVspCmsId=findNuageVspCmsIdForDevice(nuageVspDevice.getId(),cmsIdConfig);
+      SyncNuageVspCmsIdCommand syncCmd=new SyncNuageVspCmsIdCommand(SyncType.AUDIT,nuageVspCmsId);
+      SyncNuageVspCmsIdAnswer answer=(SyncNuageVspCmsIdAnswer)_agentMgr.easySend(nuageVspDevice.getHostId(),syncCmd);
+      if (answer != null && !answer.getSuccess()) {
+        s_logger.error("Nuage VSP Device with ID " + nuageVspDevice.getId() + " is configured with an unknown CMS ID!");
+        validateDomains=false;
+      }
+ else       if (answer != null && answer.getSyncType() == SyncType.REGISTER) {
+        registerNewNuageVspDevice(cmsIdConfig,nuageVspDevice.getId() + ":" + answer.getNuageVspCmsId());
+      }
+    }
+  }
+  if (validateDomains) {
+    auditDomainsOnVsp(host,true,false);
+  }
+}

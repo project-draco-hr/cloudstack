@@ -1,0 +1,95 @@
+{
+  NuageVspResource resource=new NuageVspResource();
+  final String deviceName=Network.Provider.NuageVsp.getName();
+  ExternalNetworkDeviceManager.NetworkDevice networkDevice=ExternalNetworkDeviceManager.NetworkDevice.getNetworkDevice(deviceName);
+  final Long physicalNetworkId=command.getPhysicalNetworkId();
+  PhysicalNetworkVO physicalNetwork=_physicalNetworkDao.findById(physicalNetworkId);
+  if (physicalNetwork == null) {
+    throw new InvalidParameterValueException("Could not find phyical network with ID: " + physicalNetworkId);
+  }
+  final PhysicalNetworkServiceProviderVO ntwkSvcProvider=_physicalNetworkServiceProviderDao.findByServiceProvider(physicalNetwork.getId(),networkDevice.getNetworkServiceProvder());
+  if (ntwkSvcProvider == null) {
+    throw new CloudRuntimeException("Network Service Provider: " + networkDevice.getNetworkServiceProvder() + " is not enabled in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  if (ntwkSvcProvider.getState() == PhysicalNetworkServiceProvider.State.Shutdown) {
+    throw new CloudRuntimeException("Network Service Provider: " + ntwkSvcProvider.getProviderName() + " is in shutdown state in the physical network: "+ physicalNetworkId+ "to add this device");
+  }
+  HostVO nuageVspHost=null;
+  NuageVspDeviceVO nuageVspDevice=null;
+  List<NuageVspDeviceVO> nuageVspDevices=_nuageVspDao.listByPhysicalNetwork(physicalNetworkId);
+  if (nuageVspDevices == null || nuageVspDevices.isEmpty()) {
+    throw new CloudRuntimeException("Nuage VSD is not configured on physical network " + physicalNetworkId);
+  }
+ else {
+    nuageVspDevice=nuageVspDevices.iterator().next();
+    nuageVspHost=_hostDao.findById(nuageVspDevice.getHostId());
+    _hostDao.loadDetails(nuageVspHost);
+  }
+  boolean updateRequired=false;
+  NuageVspResource.Configuration resourceConfiguration=NuageVspResource.Configuration.fromConfiguration(nuageVspHost.getDetails());
+  if (!Strings.isNullOrEmpty(command.getHostName()) && !command.getHostName().equals(resourceConfiguration.hostName())) {
+    resourceConfiguration.name("Nuage VSD - " + command.getHostName());
+    resourceConfiguration.hostName(command.getHostName());
+    updateRequired=true;
+  }
+  if (!Strings.isNullOrEmpty(command.getUserName()) && !command.getUserName().equals(resourceConfiguration.cmsUser())) {
+    resourceConfiguration.cmsUser(command.getUserName());
+    updateRequired=true;
+  }
+  if (!Strings.isNullOrEmpty(command.getPassword())) {
+    String encodedNewPassword=org.apache.commons.codec.binary.StringUtils.newStringUtf8(Base64.encodeBase64(command.getPassword().getBytes()));
+    if (!encodedNewPassword.equals(resourceConfiguration.cmsUserPassword())) {
+      resourceConfiguration.cmsUserPassword(encodedNewPassword);
+      updateRequired=true;
+    }
+  }
+  if (command.getPort() != null && command.getPort() != Integer.parseInt(resourceConfiguration.port())) {
+    resourceConfiguration.port(String.valueOf(command.getPort()));
+    updateRequired=true;
+  }
+  GetClientDefaultsCommand getClientDefaultsCmd=new GetClientDefaultsCommand();
+  GetClientDefaultsAnswer getClientDefaultsAnswer=(GetClientDefaultsAnswer)_agentMgr.easySend(nuageVspHost.getId(),getClientDefaultsCmd);
+  String apiVersion=MoreObjects.firstNonNull(command.getApiVersion(),resourceConfiguration.apiVersion());
+  SupportedApiVersionCommand supportedApiVersionCmd=new SupportedApiVersionCommand(apiVersion);
+  Answer supportedApiVersionAnswer=_agentMgr.easySend(nuageVspHost.getId(),supportedApiVersionCmd);
+  if (!supportedApiVersionAnswer.getResult()) {
+    throw new CloudRuntimeException("Incorrect API version: Nuage plugin only supports " + getClientDefaultsAnswer.getCurrentApiVersion());
+  }
+  String apiRelativePath="/nuage/api/" + apiVersion;
+  if (!apiRelativePath.equals(resourceConfiguration.apiRelativePath())) {
+    resourceConfiguration.apiVersion(apiVersion);
+    resourceConfiguration.apiRelativePath(apiRelativePath);
+    updateRequired=true;
+  }
+  if (command.getApiRetryCount() != null && resourceConfiguration.retryCount() != null) {
+    final int retryCount=Integer.parseInt(resourceConfiguration.retryCount());
+    if (command.getApiRetryCount() != retryCount) {
+      resourceConfiguration.retryCount(String.valueOf(command.getApiRetryCount()));
+      updateRequired=true;
+    }
+  }
+  if (command.getApiRetryInterval() != null && resourceConfiguration.retryInterval() != null) {
+    final int apiRetryInterval=Integer.parseInt(resourceConfiguration.retryInterval());
+    if (command.getApiRetryInterval() != apiRetryInterval) {
+      resourceConfiguration.retryInterval(String.valueOf(command.getApiRetryInterval()));
+      updateRequired=true;
+    }
+  }
+  if (!updateRequired) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("No change in the NuageVsp device parameters. None of the NuageVsp device parameters are modified");
+    }
+    return nuageVspDevice;
+  }
+  Map<String,String> config=resourceConfiguration.build();
+  String updateParameters="{" + Joiner.on(", ").withKeyValueSeparator(": ").join(config) + "}";
+  Map<String,Object> hostDetails=Maps.<String,Object>newHashMap(config);
+  try {
+    resource.configure(resourceConfiguration.hostName(),hostDetails);
+    _hostDetailsDao.persist(nuageVspDevice.getHostId(),config);
+  }
+ catch (  ConfigurationException e) {
+    throw new CloudRuntimeException("Failed to update Nuage VSP device " + nuageVspDevice.getId() + " with parameters "+ updateParameters,e);
+  }
+  return nuageVspDevice;
+}
