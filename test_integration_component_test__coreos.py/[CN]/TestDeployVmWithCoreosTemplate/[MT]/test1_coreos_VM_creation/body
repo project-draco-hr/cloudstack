@@ -1,0 +1,67 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test1_coreos_VM_creation(self):
+    self.hypervisor = str(get_hypervisor_type(self.api_client)).lower()
+    self.services['virtual_machine']['hypervisor'] = self.hypervisor.upper()
+    if (self.hypervisor == 'vmware'):
+        self.services['coreos']['url'] = self.services['coreos']['urlvmware']
+        self.services['coreos']['format'] = 'OVA'
+    elif (self.hypervisor == 'xenserver'):
+        self.services['coreos']['url'] = self.services['coreos']['urlxen']
+        self.services['coreos']['format'] = 'VHD'
+    elif (self.hypervisor == 'kvm'):
+        self.services['coreos']['url'] = self.services['coreos']['urlkvm']
+        self.services['coreos']['format'] = 'QCOW2'
+    elif (self.hypervisor == 'hyperv'):
+        self.services['coreos']['url'] = self.services['coreos']['urlxen']
+        self.services['coreos']['format'] = 'VHD'
+    template_created = Template.register(self.api_client, self.services['coreos'], self.zone.id, account=self.account.name, domainid=self.account.domainid)
+    self.assertIsNotNone(template_created, 'Template creation failed')
+    template_created.download(self.api_client)
+    self.cleanup.append(template_created)
+    time.sleep(self.services['sleep'])
+    self.debug(('Deploying instance in the account: %s' % self.account.name))
+    virtual_machine = VirtualMachine.create(self.api_client, self.services['virtual_machine'], templateid=template_created.id, accountid=self.account.name, domainid=self.account.domainid, zoneid=self.zone.id, serviceofferingid=self.service_offering.id, keypair=self.keypair.name, hypervisor=self.hypervisor, mode=self.zone.networktype, method='POST')
+    self.debug('Check if the VM is properly deployed or not?')
+    vms = VirtualMachine.list(self.api_client, id=virtual_machine.id, listall=True)
+    self.assertEqual(isinstance(vms, list), True, 'List VMs should return the valid list')
+    vm = vms[0]
+    self.assertEqual(vm.state, 'Running', 'VM state should be running after deployment')
+    virtual_machine.stop(self.api_client)
+    virtual_machine.update(self.api_client, userdata=base64.b64encode(self.userdata))
+    virtual_machine.start(self.api_client)
+    self.assertEqual(vm.state, 'Running', 'VM state should be running')
+    time.sleep(300)
+    try:
+        self.debug(('SSH into VM: %s' % virtual_machine.ssh_ip))
+        cmd = 'docker ps'
+        ssh = SshClient(virtual_machine.ssh_ip, 22, 'core', '', keyPairFiles=self.keyPairFilePath)
+        result = ssh.execute(cmd)
+    except Exception as e:
+        self.fail(('SSH Access failed for %s: %s' % (virtual_machine.ssh_ip, e)))
+    res = str(result)
+    self.assertEqual(res.__contains__('httpd'), True, 'docker web service not started in coreos vm ')
+    if (self.zone.networktype == 'Basic'):
+        list_router_response = list_routers(self.api_client, listall='true')
+    else:
+        list_router_response = list_routers(self.api_Client, account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(isinstance(list_router_response, list), True, 'Check list response returns a valid list')
+    router = list_router_response[0]
+    hosts = Host.list(self.api_client, id=router.hostid)
+    self.assertEqual(isinstance(hosts, list), True, 'Check list host returns a valid list')
+    host = hosts[0]
+    self.debug(('Router ID: %s, state: %s' % (router.id, router.state)))
+    self.assertEqual(router.state, 'Running', 'Check list router response for router state')
+    cmd = (('cat /var/www/html/userdata/' + virtual_machine.ipaddress) + '/user-data')
+    if (self.hypervisor.lower() in ('vmware', 'hyperv')):
+        try:
+            result = get_process_status(self.api_client.connection.mgtSvr, 22, self.api_client.connection.user, self.api_client.connection.passwd, router.linklocalip, cmd, hypervisor=self.hypervisor)
+        except KeyError:
+            self.skipTest('Marvin configuration has no host credentials to check USERDATA')
+    else:
+        try:
+            result = get_process_status(host.ipaddress, 22, self.services['configurableData']['host']['username'], self.services['configurableData']['host']['password'], router.linklocalip, cmd)
+        except KeyError:
+            self.skipTest('Marvin configuration has no host credentials to check router user data')
+    res = str(result)
+    self.assertEqual(res.__contains__('name: docker.service'), True, 'Userdata Not applied Check the failures')
+    return
