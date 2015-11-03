@@ -1,9 +1,9 @@
 @attr(tags=['advanced', 'advancedns', 'ssh'], required_hardware='true')
-def test_RVR_Network_FW_PF_SSH_default_routes(self):
+def test_02_RVR_Network_FW_PF_SSH_default_routes_egress_false(self):
     ' Test redundant router internals '
-    self.logger.debug('Starting test_RVR_Network_FW_PF_SSH_default_routes...')
-    self.logger.debug(('Creating network with network offering: %s' % self.network_offering.id))
-    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id)
+    self.logger.debug('Starting test_02_RVR_Network_FW_PF_SSH_default_routes_egress_false...')
+    self.logger.debug(('Creating network with network offering: %s' % self.network_offering_egress_false.id))
+    network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.network_offering_egress_false.id, zoneid=self.zone.id)
     self.logger.debug(('Created network with ID: %s' % network.id))
     networks = Network.list(self.apiclient, id=network.id, listall=True)
     self.assertEqual(isinstance(networks, list), True, 'List networks should return a valid response for created network')
@@ -31,14 +31,20 @@ def test_RVR_Network_FW_PF_SSH_default_routes(self):
     nat_rule = NATRule.create(self.apiclient, virtual_machine, self.services['natrule'], public_ip_1.id)
     self.cleanup.insert(0, network)
     self.cleanup.insert(0, virtual_machine)
-    result = 'failed'
-    try:
-        ssh_command = 'ping -c 3 8.8.8.8'
-        ssh = virtual_machine.get_ssh_client(ipaddress=public_ip.ipaddress.ipaddress, retries=5)
-        self.logger.debug('Ping to google.com from VM')
-        result = str(ssh.execute(ssh_command))
-        self.logger.debug(('SSH result: %s; COUNT is ==> %s' % (result, result.count('3 packets received'))))
-    except:
-        self.fail(('Failed to SSH into VM - %s' % public_ip.ipaddress.ipaddress))
-    self.assertEqual(result.count('3 packets received'), 1, 'Ping to outside world from VM should be successful')
+    expected = 0
+    ssh_command = 'ping -c 3 8.8.8.8'
+    check_string = '3 packets received'
+    result = check_router_command(virtual_machine, public_ip.ipaddress.ipaddress, ssh_command, check_string)
+    self.assertEqual(result, expected, 'Ping to outside world from VM should NOT be successful')
+    expected = 1
+    ssh_command = 'wget -t 1 -T 1 www.google.com'
+    check_string = 'Giving up.'
+    result = check_router_command(virtual_machine, public_ip.ipaddress.ipaddress, ssh_command, check_string)
+    self.assertEqual(result, expected, 'Attempt to retrieve google.com index page should NOT be successful')
+    EgressFireWallRule.create(self.apiclient, networkid=network.id, protocol=self.services['egress_80']['protocol'], startport=self.services['egress_80']['startport'], endport=self.services['egress_80']['endport'], cidrlist=self.services['egress_80']['cidrlist'])
+    expected = 1
+    ssh_command = 'wget -t 1 -T 5 www.google.com'
+    check_string = 'HTTP request sent, awaiting response... 200 OK'
+    result = check_router_command(virtual_machine, public_ip.ipaddress.ipaddress, ssh_command, check_string)
+    self.assertEqual(result, expected, 'Attempt to retrieve google.com index page should be successful once rule is added!')
     return
