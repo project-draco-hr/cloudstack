@@ -1,0 +1,76 @@
+{
+  Long nicId=cmd.getNicId();
+  String ipaddr=cmd.getIpaddress();
+  Account caller=CallContext.current().getCallingAccount();
+  NicVO nicVO=_nicDao.findById(nicId);
+  if (nicVO == null) {
+    throw new InvalidParameterValueException("There is no nic for the " + nicId);
+  }
+  if (nicVO.getVmType() != VirtualMachine.Type.User) {
+    throw new InvalidParameterValueException("The nic is not belongs to user vm");
+  }
+  UserVm vm=_vmDao.findById(nicVO.getInstanceId());
+  if (vm == null) {
+    throw new InvalidParameterValueException("There is no vm with the nic");
+  }
+  if (vm.getState() != State.Stopped) {
+    throw new InvalidParameterValueException("The vm is not Stopped, please stop it before update Vm nic Ip");
+  }
+  if (!_networkModel.listNetworkOfferingServices(nicVO.getNetworkId()).isEmpty() && vm.getState() != State.Stopped) {
+    InvalidParameterValueException ex=new InvalidParameterValueException("VM is not Stopped, unable to update the vm nic having the specified id");
+    ex.addProxyObject(vm.getUuid(),"vmId");
+    throw ex;
+  }
+  _accountMgr.checkAccess(caller,null,true,vm);
+  Account ipOwner=_accountDao.findByIdIncludingRemoved(vm.getAccountId());
+  s_logger.debug("Calling the ip allocation ...");
+  Network network=_networkDao.findById(nicVO.getNetworkId());
+  DataCenter dc=_dcDao.findById(network.getDataCenterId());
+  if (dc.getNetworkType() == NetworkType.Advanced && network.getGuestType() == Network.GuestType.Isolated) {
+    try {
+      ipaddr=_ipAddrMgr.allocateGuestIP(network,ipaddr);
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      throw new InvalidParameterValueException("Allocating ip to guest nic " + nicVO.getUuid() + " failed, for insufficient address capacity");
+    }
+    if (ipaddr == null) {
+      throw new InvalidParameterValueException("Allocating ip to guest nic " + nicVO.getUuid() + " failed, please choose another ip");
+    }
+  }
+ else   if (dc.getNetworkType() == NetworkType.Basic || network.getGuestType() == Network.GuestType.Shared) {
+    Long podId=null;
+    if (dc.getNetworkType() == NetworkType.Basic) {
+      podId=vm.getPodIdToDeployIn();
+      if (podId == null) {
+        throw new InvalidParameterValueException("vm pod id is null in Basic zone; can't decide the range for ip allocation");
+      }
+    }
+    try {
+      ipaddr=_ipAddrMgr.allocatePublicIpForGuestNic(network,podId,ipOwner,ipaddr);
+      if (ipaddr == null) {
+        throw new InvalidParameterValueException("Allocating ip to guest nic " + nicVO.getUuid() + " failed, please choose another ip");
+      }
+      final IPAddressVO ip=_ipAddressDao.findByIpAndSourceNetworkId(nicVO.getNetworkId(),nicVO.getIPv4Address());
+      if (ip != null) {
+        Transaction.execute(new TransactionCallbackNoReturn(){
+          @Override public void doInTransactionWithoutResult(          TransactionStatus status){
+            _ipAddrMgr.markIpAsUnavailable(ip.getId());
+            _ipAddressDao.unassignIpAddress(ip.getId());
+          }
+        }
+);
+      }
+    }
+ catch (    InsufficientAddressCapacityException e) {
+      s_logger.error("Allocating ip to guest nic " + nicVO.getUuid() + " failed, for insufficient address capacity");
+      return null;
+    }
+  }
+ else {
+    s_logger.error("UpdateVmNicIpCmd is not supported in this network...");
+    return null;
+  }
+  nicVO.setIPv4Address(ipaddr);
+  _nicDao.persist(nicVO);
+  return vm;
+}
