@@ -1,0 +1,34 @@
+{
+  PrimaryDataStore destPrimaryDataStore=dataStoreMgr.getPrimaryDataStore(destDataStoreId);
+  Host destHost=_hostDao.findById(destHostId);
+  if (destHost == null) {
+    throw new CloudRuntimeException("Destination host should not be null.");
+  }
+  Boolean storageCanCloneVolume=new Boolean(destPrimaryDataStore.getDriver().getCapabilities().get(DataStoreCapabilities.CAN_CREATE_VOLUME_FROM_VOLUME.toString()));
+  boolean computeZoneSupportsResign=computeZoneSupportsResign(destHost.getDataCenterId(),destHost.getHypervisorType());
+  AsyncCallFuture<VolumeApiResult> future=new AsyncCallFuture<>();
+  if (storageCanCloneVolume && computeZoneSupportsResign) {
+    s_logger.debug("Storage " + destDataStoreId + " can support cloning using a cached template and host cluster can perform UUID resigning.");
+    TemplateInfo templateOnPrimary=destPrimaryDataStore.getTemplate(srcTemplateInfo.getId());
+    if (templateOnPrimary == null) {
+      templateOnPrimary=createManagedTemplateVolume(srcTemplateInfo,destPrimaryDataStore);
+      if (templateOnPrimary == null) {
+        throw new CloudRuntimeException("Failed to create template " + srcTemplateInfo.getUniqueName() + " on primary storage: "+ destDataStoreId);
+      }
+    }
+    VMTemplateStoragePoolVO templatePoolRef=_tmpltPoolDao.findByPoolTemplate(destPrimaryDataStore.getId(),templateOnPrimary.getId());
+    if (templatePoolRef == null) {
+      throw new CloudRuntimeException("Failed to find template " + srcTemplateInfo.getUniqueName() + " in storage pool "+ destPrimaryDataStore.getId());
+    }
+    if (templatePoolRef.getDownloadState() == Status.NOT_DOWNLOADED) {
+      copyTemplateToManagedTemplateVolume(srcTemplateInfo,templateOnPrimary,templatePoolRef,destPrimaryDataStore,destHost);
+    }
+    s_logger.debug("Creating a clone from template on primary storage " + destDataStoreId);
+    createManagedVolumeCloneTemplateAsync(volumeInfo,templateOnPrimary,destPrimaryDataStore,future);
+  }
+ else {
+    s_logger.debug("Primary storage does not support cloning or no support for UUID resigning on the host side; copying the template normally");
+    createManagedVolumeCopyTemplateAsync(volumeInfo,destPrimaryDataStore,srcTemplateInfo,destHost,future);
+  }
+  return future;
+}

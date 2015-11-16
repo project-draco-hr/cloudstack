@@ -1,0 +1,65 @@
+{
+  if (volumes == null || volumes.isEmpty()) {
+    return false;
+  }
+  if (!checkUsagedSpace(pool)) {
+    return false;
+  }
+  StoragePoolVO poolVO=_storagePoolDao.findById(pool.getId());
+  long allocatedSizeWithTemplate=_capacityMgr.getAllocatedPoolCapacity(poolVO,null);
+  long totalAskingSize=0;
+  for (  Volume volume : volumes) {
+    VolumeVO volumeVO=_volumeDao.findById(volume.getId());
+    if (volumeVO.getHypervisorSnapshotReserve() == null) {
+      volService.updateHypervisorSnapshotReserveForVolume(getDiskOfferingVO(volumeVO),volumeVO.getId(),getHypervisorType(volumeVO));
+      volumeVO=_volumeDao.findById(volume.getId());
+    }
+    if (volume.getTemplateId() != null) {
+      VMTemplateVO tmpl=_templateDao.findByIdIncludingRemoved(volume.getTemplateId());
+      if (tmpl != null && !ImageFormat.ISO.equals(tmpl.getFormat())) {
+        allocatedSizeWithTemplate=_capacityMgr.getAllocatedPoolCapacity(poolVO,tmpl);
+      }
+    }
+    if (volumeVO.getState() != Volume.State.Ready) {
+      totalAskingSize+=getDataObjectSizeIncludingHypervisorSnapshotReserve(volumeVO,pool);
+      if (ScopeType.ZONE.equals(poolVO.getScope()) && volumeVO.getTemplateId() != null) {
+        VMTemplateVO tmpl=_templateDao.findByIdIncludingRemoved(volumeVO.getTemplateId());
+        if (tmpl != null && !ImageFormat.ISO.equals(tmpl.getFormat())) {
+          if (clusterId != null && _clusterDao.computeWhetherClusterSupportsResigning(clusterId)) {
+            totalAskingSize+=getBytesRequiredForTemplate(tmpl,pool);
+          }
+        }
+      }
+    }
+  }
+  long totalOverProvCapacity;
+  if (pool.getPoolType() == StoragePoolType.NetworkFilesystem || pool.getPoolType() == StoragePoolType.VMFS || pool.getPoolType() == StoragePoolType.Filesystem) {
+    BigDecimal overProvFactor=getStorageOverProvisioningFactor(pool.getId());
+    totalOverProvCapacity=overProvFactor.multiply(new BigDecimal(pool.getCapacityBytes())).longValue();
+    s_logger.debug("Found storage pool " + poolVO.getName() + " of type "+ pool.getPoolType().toString()+ " with overprovisioning factor "+ overProvFactor.toString());
+    s_logger.debug("Total over provisioned capacity calculated is " + overProvFactor + " * "+ pool.getCapacityBytes());
+  }
+ else {
+    totalOverProvCapacity=pool.getCapacityBytes();
+    s_logger.debug("Found storage pool " + poolVO.getName() + " of type "+ pool.getPoolType().toString());
+  }
+  s_logger.debug("Total capacity of the pool " + poolVO.getName() + " id: "+ pool.getId()+ " is "+ totalOverProvCapacity);
+  double storageAllocatedThreshold=CapacityManager.StorageAllocatedCapacityDisableThreshold.valueIn(pool.getDataCenterId());
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Checking pool: " + pool.getId() + " for volume allocation "+ volumes.toString()+ ", maxSize : "+ totalOverProvCapacity+ ", totalAllocatedSize : "+ allocatedSizeWithTemplate+ ", askingSize : "+ totalAskingSize+ ", allocated disable threshold: "+ storageAllocatedThreshold);
+  }
+  double usedPercentage=(allocatedSizeWithTemplate + totalAskingSize) / (double)(totalOverProvCapacity);
+  if (usedPercentage > storageAllocatedThreshold) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Insufficient un-allocated capacity on: " + pool.getId() + " for volume allocation: "+ volumes.toString()+ " since its allocated percentage: "+ usedPercentage+ " has crossed the allocated pool.storage.allocated.capacity.disablethreshold: "+ storageAllocatedThreshold+ ", skipping this pool");
+    }
+    return false;
+  }
+  if (totalOverProvCapacity < (allocatedSizeWithTemplate + totalAskingSize)) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Insufficient un-allocated capacity on: " + pool.getId() + " for volume allocation: "+ volumes.toString()+ ", not enough storage, maxSize : "+ totalOverProvCapacity+ ", totalAllocatedSize : "+ allocatedSizeWithTemplate+ ", askingSize : "+ totalAskingSize);
+    }
+    return false;
+  }
+  return true;
+}

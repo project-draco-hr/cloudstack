@@ -1,41 +1,31 @@
 {
   String iqn=null;
   String errMsg=null;
-  if (dataObject.getType() == DataObjectType.VOLUME) {
-    VolumeInfo volumeInfo=(VolumeInfo)dataObject;
-    long storagePoolId=dataStore.getId();
-    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
-    AccountDetailVO accountDetail=SolidFireUtil.getAccountDetail(volumeInfo.getAccountId(),storagePoolId,_accountDetailsDao);
-    if (accountDetail == null || accountDetail.getValue() == null) {
-      AccountVO account=_accountDao.findById(volumeInfo.getAccountId());
-      String sfAccountName=SolidFireUtil.getSolidFireAccountName(account.getUuid(),account.getAccountId());
-      SolidFireUtil.SolidFireAccount sfAccount=SolidFireUtil.getSolidFireAccount(sfConnection,sfAccountName);
-      if (sfAccount == null) {
-        sfAccount=createSolidFireAccount(sfConnection,sfAccountName);
-      }
-      SolidFireUtil.updateCsDbWithSolidFireAccountInfo(account.getId(),sfAccount,storagePoolId,_accountDetailsDao);
-      accountDetail=SolidFireUtil.getAccountDetail(volumeInfo.getAccountId(),storagePoolId,_accountDetailsDao);
+  try {
+    if (dataObject.getType() == DataObjectType.VOLUME) {
+      iqn=createVolume((VolumeInfo)dataObject,dataStore.getId());
     }
-    long sfAccountId=Long.parseLong(accountDetail.getValue());
-    SolidFireUtil.SolidFireVolume sfVolume=createSolidFireVolume(sfConnection,volumeInfo,sfAccountId);
-    iqn=sfVolume.getIqn();
-    VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
-    volume.set_iScsiName(iqn);
-    volume.setFolder(String.valueOf(sfVolume.getId()));
-    volume.setPoolType(StoragePoolType.IscsiLUN);
-    volume.setPoolId(storagePoolId);
-    _volumeDao.update(volume.getId(),volume);
-    updateVolumeDetails(volume.getId(),sfVolume.getTotalSize());
-    StoragePoolVO storagePool=_storagePoolDao.findById(dataStore.getId());
-    long capacityBytes=storagePool.getCapacityBytes();
-    long usedBytes=getUsedBytes(storagePool);
-    storagePool.setUsedBytes(usedBytes > capacityBytes ? capacityBytes : usedBytes);
-    _storagePoolDao.update(storagePoolId,storagePool);
-  }
+ else     if (dataObject.getType() == DataObjectType.SNAPSHOT) {
+      createTempVolume((SnapshotInfo)dataObject,dataStore.getId());
+    }
+ else     if (dataObject.getType() == DataObjectType.TEMPLATE) {
+      iqn=createTemplateVolume((TemplateInfo)dataObject,dataStore.getId());
+    }
  else {
-    errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to createAsync";
+      errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to createAsync";
+      LOGGER.error(errMsg);
+    }
   }
-  CreateCmdResult result=new CreateCmdResult(iqn,new Answer(null,errMsg == null,errMsg));
-  result.setResult(errMsg);
-  callback.complete(result);
+ catch (  Exception ex) {
+    errMsg=ex.getMessage();
+    LOGGER.error(errMsg);
+    if (callback == null) {
+      throw ex;
+    }
+  }
+  if (callback != null) {
+    CreateCmdResult result=new CreateCmdResult(iqn,new Answer(null,errMsg == null,errMsg));
+    result.setResult(errMsg);
+    callback.complete(result);
+  }
 }

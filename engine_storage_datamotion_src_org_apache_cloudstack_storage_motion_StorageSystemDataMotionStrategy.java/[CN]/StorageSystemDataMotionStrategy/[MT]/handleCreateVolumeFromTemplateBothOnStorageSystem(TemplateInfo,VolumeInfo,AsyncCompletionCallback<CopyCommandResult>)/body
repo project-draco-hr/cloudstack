@@ -1,0 +1,48 @@
+{
+  Preconditions.checkArgument(templateInfo != null,"Passing 'null' to templateInfo of handleCreateVolumeFromTemplateBothOnStorageSystem is not supported.");
+  Preconditions.checkArgument(volumeInfo != null,"Passing 'null' to volumeInfo of handleCreateVolumeFromTemplateBothOnStorageSystem is not supported.");
+  CopyCmdAnswer copyCmdAnswer=null;
+  String errMsg=null;
+  HostVO hostVO=getHost(volumeInfo.getDataCenterId(),true);
+  if (hostVO == null) {
+    throw new CloudRuntimeException("Unable to locate a host capable of resigning in the zone with the following ID: " + volumeInfo.getDataCenterId());
+  }
+  boolean computeClusterSupportsResign=clusterDao.computeWhetherClusterSupportsResigning(hostVO.getClusterId());
+  if (!computeClusterSupportsResign) {
+    String noSupportForResignErrMsg="Unable to locate an applicable host with which to perform a resignature operation : Cluster ID = " + hostVO.getClusterId();
+    LOGGER.warn(noSupportForResignErrMsg);
+    throw new CloudRuntimeException(noSupportForResignErrMsg);
+  }
+  try {
+    VolumeDetailVO volumeDetail=new VolumeDetailVO(volumeInfo.getId(),"cloneOfTemplate",String.valueOf(templateInfo.getId()),false);
+    volumeDetail=volumeDetailsDao.persist(volumeDetail);
+    AsyncCallFuture<VolumeApiResult> future=_volumeService.createVolumeAsync(volumeInfo,volumeInfo.getDataStore());
+    VolumeApiResult result=future.get();
+    if (volumeDetail != null) {
+      volumeDetailsDao.remove(volumeDetail.getId());
+    }
+    if (result.isFailed()) {
+      LOGGER.warn("Failed to create a volume: " + result.getResult());
+      throw new CloudRuntimeException(result.getResult());
+    }
+    volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+    volumeInfo.processEvent(Event.MigrationRequested);
+    volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+    copyCmdAnswer=performResignature(volumeInfo,hostVO);
+    if (copyCmdAnswer == null || !copyCmdAnswer.getResult()) {
+      if (copyCmdAnswer != null && !StringUtils.isEmpty(copyCmdAnswer.getDetails())) {
+        throw new CloudRuntimeException(copyCmdAnswer.getDetails());
+      }
+ else {
+        throw new CloudRuntimeException("Unable to create a volume from a template");
+      }
+    }
+  }
+ catch (  InterruptedException|ExecutionException ex) {
+    volumeInfo.getDataStore().getDriver().deleteAsync(volumeInfo.getDataStore(),volumeInfo,null);
+    throw new CloudRuntimeException("Create volume from template (ID = " + templateInfo.getId() + ") failed "+ ex.getMessage());
+  }
+  CopyCommandResult result=new CopyCommandResult(null,copyCmdAnswer);
+  result.setResult(errMsg);
+  callback.complete(result);
+}

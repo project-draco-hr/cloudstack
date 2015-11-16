@@ -7,15 +7,35 @@
     long storagePoolId=volumeInfo.getPoolId();
     long sfVolumeId=Long.parseLong(volumeInfo.getFolder());
     ResizeVolumePayload payload=(ResizeVolumePayload)volumeInfo.getpayload();
-    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,storagePoolDetailsDao);
     SolidFireUtil.SolidFireVolume sfVolume=SolidFireUtil.getSolidFireVolume(sfConnection,sfVolumeId);
     verifySufficientIopsForStoragePool(storagePoolId,volumeInfo.getId(),payload.newMinIops);
-    SolidFireUtil.modifySolidFireVolume(sfConnection,sfVolumeId,sfVolume.getTotalSize(),NumberFormat.getInstance().format(payload.newSize),payload.newMinIops,payload.newMaxIops,getDefaultBurstIops(storagePoolId,payload.newMaxIops));
-    VolumeVO volume=_volumeDao.findById(volumeInfo.getId());
+    verifySufficientBytesForStoragePool(storagePoolId,volumeInfo.getId(),payload.newSize,payload.newHypervisorSnapshotReserve);
+    long sfNewVolumeSize=sfVolume.getTotalSize();
+    Integer hsr=volumeInfo.getHypervisorSnapshotReserve();
+    if (payload.newSize != null || payload.newHypervisorSnapshotReserve != null) {
+      if (payload.newHypervisorSnapshotReserve != null) {
+        if (hsr != null) {
+          if (payload.newHypervisorSnapshotReserve > hsr) {
+            hsr=payload.newHypervisorSnapshotReserve;
+          }
+        }
+ else {
+          hsr=payload.newHypervisorSnapshotReserve;
+        }
+      }
+      sfNewVolumeSize=getVolumeSizeIncludingHypervisorSnapshotReserve(payload.newSize,hsr);
+    }
+    Map<String,String> mapAttributes=new HashMap<>();
+    mapAttributes.put(SolidFireUtil.CloudStackVolumeId,String.valueOf(volumeInfo.getId()));
+    mapAttributes.put(SolidFireUtil.CloudStackVolumeSize,NumberFormat.getInstance().format(payload.newSize));
+    SolidFireUtil.modifySolidFireVolume(sfConnection,sfVolumeId,sfNewVolumeSize,mapAttributes,payload.newMinIops,payload.newMaxIops,getDefaultBurstIops(storagePoolId,payload.newMaxIops));
+    VolumeVO volume=volumeDao.findById(volumeInfo.getId());
     volume.setMinIops(payload.newMinIops);
     volume.setMaxIops(payload.newMaxIops);
-    _volumeDao.update(volume.getId(),volume);
-    updateVolumeDetails(volume.getId(),sfVolume.getTotalSize());
+    volume.setHypervisorSnapshotReserve(hsr);
+    volumeDao.update(volume.getId(),volume);
+    updateVolumeDetails(volume.getId(),sfNewVolumeSize);
   }
  else {
     errMsg="Invalid DataObjectType (" + dataObject.getType() + ") passed to resize";

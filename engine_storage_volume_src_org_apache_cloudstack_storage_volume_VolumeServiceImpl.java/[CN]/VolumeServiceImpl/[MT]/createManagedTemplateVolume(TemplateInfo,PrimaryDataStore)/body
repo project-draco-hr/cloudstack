@@ -1,0 +1,39 @@
+{
+  AsyncCallFuture<VolumeApiResult> createTemplateFuture=new AsyncCallFuture<>();
+  TemplateInfo templateOnPrimary=(TemplateInfo)destPrimaryDataStore.create(srcTemplateInfo);
+  VMTemplateStoragePoolVO templatePoolRef=_tmpltPoolDao.findByPoolTemplate(destPrimaryDataStore.getId(),templateOnPrimary.getId());
+  if (templatePoolRef == null) {
+    throw new CloudRuntimeException("Failed to find template " + srcTemplateInfo.getUniqueName() + " in storage pool "+ destPrimaryDataStore.getId());
+  }
+  int storagePoolMaxWaitSeconds=NumbersUtil.parseInt(configDao.getValue(Config.StoragePoolMaxWaitSeconds.key()),3600);
+  long templatePoolRefId=templatePoolRef.getId();
+  templatePoolRef=_tmpltPoolDao.acquireInLockTable(templatePoolRefId,storagePoolMaxWaitSeconds);
+  if (templatePoolRef == null) {
+    throw new CloudRuntimeException("Unable to acquire lock on VMTemplateStoragePool: " + templatePoolRefId);
+  }
+  if (templatePoolRef.getState() == ObjectInDataStoreStateMachine.State.Ready) {
+    _tmpltPoolDao.releaseFromLockTable(templatePoolRefId);
+    return templateOnPrimary;
+  }
+  try {
+    templateOnPrimary.processEvent(Event.CreateOnlyRequested);
+    CreateVolumeContext<CreateCmdResult> createContext=new CreateVolumeContext<>(null,templateOnPrimary,createTemplateFuture);
+    AsyncCallbackDispatcher<VolumeServiceImpl,CreateCmdResult> createCaller=AsyncCallbackDispatcher.create(this);
+    createCaller.setCallback(createCaller.getTarget().createManagedTemplateImageCallback(null,null)).setContext(createContext);
+    destPrimaryDataStore.getDriver().createAsync(destPrimaryDataStore,templateOnPrimary,createCaller);
+    VolumeApiResult result=createTemplateFuture.get();
+    if (result.isFailed()) {
+      String errMesg=result.getResult();
+      throw new CloudRuntimeException("Unable to create template " + templateOnPrimary.getId() + " on primary storage "+ destPrimaryDataStore.getId()+ ":"+ errMesg);
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.debug("Failed to create template volume on storage",e);
+    templateOnPrimary.processEvent(Event.OperationFailed);
+    throw new CloudRuntimeException(e.getMessage());
+  }
+ finally {
+    _tmpltPoolDao.releaseFromLockTable(templatePoolRefId);
+  }
+  return templateOnPrimary;
+}

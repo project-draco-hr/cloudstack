@@ -1,0 +1,25 @@
+{
+  long csSnapshotId=snapshotInfo.getId();
+  SnapshotDetailsVO snapshotDetails=snapshotDetailsDao.findDetail(csSnapshotId,SolidFireUtil.SNAPSHOT_ID);
+  if (snapshotDetails == null || snapshotDetails.getValue() == null) {
+    throw new CloudRuntimeException("'createTempVolume(SnapshotInfo, long)' should not be invoked unless " + SolidFireUtil.SNAPSHOT_ID + " exists.");
+  }
+  SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,storagePoolDetailsDao);
+  snapshotDetails=snapshotDetailsDao.findDetail(csSnapshotId,"tempVolume");
+  if (snapshotDetails != null && snapshotDetails.getValue() != null && snapshotDetails.getValue().equalsIgnoreCase("create")) {
+    long sfAccountId=getCreateSolidFireAccountId(sfConnection,snapshotInfo.getAccountId(),storagePoolId);
+    SolidFireUtil.SolidFireVolume sfVolume=createCloneFromSnapshot(sfConnection,csSnapshotId,sfAccountId);
+    addTempVolumeId(csSnapshotId,String.valueOf(sfVolume.getId()));
+    handleSnapshotDetails(csSnapshotId,DiskTO.IQN,sfVolume.getIqn());
+  }
+ else   if (snapshotDetails != null && snapshotDetails.getValue() != null && snapshotDetails.getValue().equalsIgnoreCase("delete")) {
+    snapshotDetails=snapshotDetailsDao.findDetail(csSnapshotId,SolidFireUtil.VOLUME_ID);
+    SolidFireUtil.deleteSolidFireVolume(sfConnection,Long.parseLong(snapshotDetails.getValue()));
+    removeTempVolumeId(csSnapshotId);
+    snapshotDetails=snapshotDetailsDao.findDetail(csSnapshotId,DiskTO.IQN);
+    snapshotDetailsDao.remove(snapshotDetails.getId());
+  }
+ else {
+    throw new CloudRuntimeException("Invalid state in 'createTempVolume(SnapshotInfo, long)'");
+  }
+}

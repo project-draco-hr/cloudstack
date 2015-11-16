@@ -1,0 +1,55 @@
+{
+  AsyncCallFuture<VolumeApiResult> copyTemplateFuture=new AsyncCallFuture<>();
+  int storagePoolMaxWaitSeconds=NumbersUtil.parseInt(configDao.getValue(Config.StoragePoolMaxWaitSeconds.key()),3600);
+  long templatePoolRefId=templatePoolRef.getId();
+  templatePoolRef=_tmpltPoolDao.acquireInLockTable(templatePoolRefId,storagePoolMaxWaitSeconds);
+  if (templatePoolRef == null) {
+    throw new CloudRuntimeException("Unable to acquire lock on VMTemplateStoragePool: " + templatePoolRefId);
+  }
+  if (templatePoolRef.getDownloadState() == Status.DOWNLOADED) {
+    s_logger.debug("Template already downloaded, nothing to do");
+    return;
+  }
+  try {
+    CreateBaseImageContext<CreateCmdResult> copyContext=new CreateBaseImageContext<>(null,null,destPrimaryDataStore,srcTemplateInfo,copyTemplateFuture,templateOnPrimary,templatePoolRefId);
+    AsyncCallbackDispatcher<VolumeServiceImpl,CopyCommandResult> copyCaller=AsyncCallbackDispatcher.create(this);
+    copyCaller.setCallback(copyCaller.getTarget().copyManagedTemplateCallback(null,null)).setContext(copyContext);
+    Map<String,String> details=new HashMap<String,String>();
+    details.put(PrimaryDataStore.MANAGED,Boolean.TRUE.toString());
+    details.put(PrimaryDataStore.STORAGE_HOST,destPrimaryDataStore.getHostAddress());
+    details.put(PrimaryDataStore.STORAGE_PORT,String.valueOf(destPrimaryDataStore.getPort()));
+    details.put(PrimaryDataStore.MANAGED_STORE_TARGET,((TemplateObject)templateOnPrimary).getInstallPath());
+    details.put(PrimaryDataStore.MANAGED_STORE_TARGET_ROOT_VOLUME,srcTemplateInfo.getUniqueName());
+    details.put(PrimaryDataStore.REMOVE_AFTER_COPY,Boolean.TRUE.toString());
+    details.put(PrimaryDataStore.VOLUME_SIZE,String.valueOf(templateOnPrimary.getSize()));
+    ChapInfo chapInfo=getChapInfo(templateOnPrimary,destPrimaryDataStore);
+    if (chapInfo != null) {
+      details.put(PrimaryDataStore.CHAP_INITIATOR_USERNAME,chapInfo.getInitiatorUsername());
+      details.put(PrimaryDataStore.CHAP_INITIATOR_SECRET,chapInfo.getInitiatorSecret());
+      details.put(PrimaryDataStore.CHAP_TARGET_USERNAME,chapInfo.getTargetUsername());
+      details.put(PrimaryDataStore.CHAP_TARGET_SECRET,chapInfo.getTargetSecret());
+    }
+    templateOnPrimary.processEvent(Event.CopyingRequested);
+    destPrimaryDataStore.setDetails(details);
+    grantAccess(templateOnPrimary,destHost,destPrimaryDataStore);
+    VolumeApiResult result=null;
+    try {
+      motionSrv.copyAsync(srcTemplateInfo,templateOnPrimary,destHost,copyCaller);
+      result=copyTemplateFuture.get();
+    }
+  finally {
+      revokeAccess(templateOnPrimary,destHost,destPrimaryDataStore);
+    }
+    if (result.isFailed()) {
+      throw new CloudRuntimeException("Failed to copy template " + templateOnPrimary.getId() + " to primary storage "+ destPrimaryDataStore.getId()+ ": "+ result.getResult());
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.debug("Failed to create a template on primary storage",e);
+    templateOnPrimary.processEvent(Event.OperationFailed);
+    throw new CloudRuntimeException(e.getMessage());
+  }
+ finally {
+    _tmpltPoolDao.releaseFromLockTable(templatePoolRefId);
+  }
+}

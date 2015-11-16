@@ -1,8 +1,8 @@
 {
   Map<String,String> sourceDetails=null;
-  VolumeVO volumeVO=_volumeDao.findById(volumeInfo.getId());
+  VolumeVO volumeVO=volumeDao.findById(volumeInfo.getId());
   Long vmInstanceId=volumeVO.getInstanceId();
-  VMInstanceVO vmInstanceVO=_vmInstanceDao.findById(vmInstanceId);
+  VMInstanceVO vmInstanceVO=vmInstanceDao.findById(vmInstanceId);
   Long hostId=null;
   if (vmInstanceVO != null) {
     hostId=vmInstanceVO.getHostId();
@@ -16,28 +16,42 @@
  else {
     sourceDetails=getSourceDetails(volumeInfo);
   }
-  HostVO hostVO=getHost(hostId,volumeVO);
+  HostVO hostVO=null;
+  if (hostId != null) {
+    hostVO=hostDao.findById(hostId);
+  }
+ else {
+    Optional<HostVO> optHostVO=getHost(volumeInfo.getDataCenterId(),false);
+    if (optHostVO.isPresent()) {
+      hostVO=optHostVO.get();
+    }
+  }
+  if (hostVO == null) {
+    final String errMsg="Unable to locate an applicable host";
+    s_logger.error("performSnapshotAndCopyOnHostSide: " + errMsg);
+    throw new CloudRuntimeException(errMsg);
+  }
   long storagePoolId=volumeVO.getPoolId();
-  StoragePoolVO storagePoolVO=_storagePoolDao.findById(storagePoolId);
-  DataStore dataStore=_dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
+  StoragePoolVO storagePoolVO=storagePoolDao.findById(storagePoolId);
+  DataStore dataStore=dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
   Map<String,String> destDetails=getDestDetails(storagePoolVO,snapshotInfo);
   SnapshotAndCopyCommand snapshotAndCopyCommand=new SnapshotAndCopyCommand(volumeInfo.getPath(),sourceDetails,destDetails);
   SnapshotAndCopyAnswer snapshotAndCopyAnswer=null;
   try {
     if (sourceDetails != null) {
-      _volService.grantAccess(volumeInfo,hostVO,dataStore);
+      volService.grantAccess(volumeInfo,hostVO,dataStore);
     }
-    _volService.grantAccess(snapshotInfo,hostVO,dataStore);
-    snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)_agentMgr.send(hostVO.getId(),snapshotAndCopyCommand);
+    volService.grantAccess(snapshotInfo,hostVO,dataStore);
+    snapshotAndCopyAnswer=(SnapshotAndCopyAnswer)agentMgr.send(hostVO.getId(),snapshotAndCopyCommand);
   }
  catch (  Exception ex) {
     throw new CloudRuntimeException(ex.getMessage());
   }
  finally {
     try {
-      _volService.revokeAccess(snapshotInfo,hostVO,dataStore);
+      volService.revokeAccess(snapshotInfo,hostVO,dataStore);
       if (sourceDetails != null) {
-        _volService.revokeAccess(volumeInfo,hostVO,dataStore);
+        volService.revokeAccess(volumeInfo,hostVO,dataStore);
       }
     }
  catch (    Exception ex) {
@@ -56,5 +70,5 @@
   }
   String path=snapshotAndCopyAnswer.getPath();
   SnapshotDetailsVO snapshotDetail=new SnapshotDetailsVO(snapshotInfo.getId(),DiskTO.PATH,path,false);
-  _snapshotDetailsDao.persist(snapshotDetail);
+  snapshotDetailsDao.persist(snapshotDetail);
 }

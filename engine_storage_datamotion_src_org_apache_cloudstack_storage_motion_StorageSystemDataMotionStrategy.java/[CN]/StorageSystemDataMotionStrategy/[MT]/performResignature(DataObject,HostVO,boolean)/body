@@ -1,0 +1,37 @@
+{
+  long storagePoolId=dataObj.getDataStore().getId();
+  DataStore dataStore=dataStoreMgr.getDataStore(storagePoolId,DataStoreRole.Primary);
+  Map<String,String> details=getDetails(dataObj);
+  ResignatureCommand command=new ResignatureCommand(details);
+  ResignatureAnswer answer=null;
+  try {
+    _volumeService.grantAccess(dataObj,hostVO,dataStore);
+    answer=(ResignatureAnswer)_agentMgr.send(hostVO.getId(),command);
+  }
+ catch (  CloudRuntimeException|AgentUnavailableException|OperationTimedoutException ex) {
+    keepGrantedAccess=false;
+    String msg="Failed to resign the DataObject with the following ID: " + dataObj.getId();
+    LOGGER.warn(msg,ex);
+    throw new CloudRuntimeException(msg + ex.getMessage());
+  }
+ finally {
+    if (keepGrantedAccess == false) {
+      _volumeService.revokeAccess(dataObj,hostVO,dataStore);
+    }
+  }
+  if (answer == null || !answer.getResult()) {
+    final String errMsg;
+    if (answer != null && answer.getDetails() != null && !answer.getDetails().isEmpty()) {
+      errMsg=answer.getDetails();
+    }
+ else {
+      errMsg="Unable to perform resignature operation in 'StorageSystemDataMotionStrategy.performResignature'";
+    }
+    throw new CloudRuntimeException(errMsg);
+  }
+  VolumeObjectTO newVolume=new VolumeObjectTO();
+  newVolume.setSize(answer.getSize());
+  newVolume.setPath(answer.getPath());
+  newVolume.setFormat(answer.getFormat());
+  return new CopyCmdAnswer(newVolume);
+}

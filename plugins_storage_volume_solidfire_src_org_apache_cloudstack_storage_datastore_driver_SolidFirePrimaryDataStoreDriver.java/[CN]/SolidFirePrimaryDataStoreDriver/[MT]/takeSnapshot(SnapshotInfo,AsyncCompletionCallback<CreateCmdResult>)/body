@@ -2,12 +2,12 @@
   CreateCmdResult result=null;
   try {
     VolumeInfo volumeInfo=snapshotInfo.getBaseVolume();
-    VolumeVO volumeVO=_volumeDao.findById(volumeInfo.getId());
+    VolumeVO volumeVO=volumeDao.findById(volumeInfo.getId());
     long sfVolumeId=Long.parseLong(volumeVO.getFolder());
     long storagePoolId=volumeVO.getPoolId();
-    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,storagePoolDetailsDao);
     SolidFireUtil.SolidFireVolume sfVolume=SolidFireUtil.getSolidFireVolume(sfConnection,sfVolumeId);
-    StoragePoolVO storagePool=_storagePoolDao.findById(storagePoolId);
+    StoragePoolVO storagePool=storagePoolDao.findById(storagePoolId);
     long capacityBytes=storagePool.getCapacityBytes();
     long usedBytes=getUsedBytes(storagePool);
     long sfVolumeSize=sfVolume.getTotalSize();
@@ -16,19 +16,28 @@
       throw new CloudRuntimeException("Insufficient amount of space remains in this primary storage to take a snapshot");
     }
     storagePool.setUsedBytes(usedBytes);
-    String volumeName=volumeInfo.getName() + "-" + snapshotInfo.getUuid();
-    long sfNewVolumeId=SolidFireUtil.createSolidFireVolume(sfConnection,volumeName,sfVolume.getAccountId(),sfVolumeSize,sfVolume.isEnable512e(),NumberFormat.getInstance().format(volumeInfo.getSize()),sfVolume.getMinIops(),50000,75000);
-    _storagePoolDao.update(storagePoolId,storagePool);
-    SolidFireUtil.SolidFireVolume sfNewVolume=SolidFireUtil.getSolidFireVolume(sfConnection,sfNewVolumeId);
-    updateSnapshotDetails(snapshotInfo.getId(),sfNewVolumeId,storagePoolId,sfVolumeSize,sfNewVolume.getIqn());
     SnapshotObjectTO snapshotObjectTo=(SnapshotObjectTO)snapshotInfo.getTO();
-    snapshotObjectTo.setPath(String.valueOf(sfNewVolumeId));
+    if (shouldTakeSnapshot(snapshotInfo.getId())) {
+      String sfNewSnapshotName=volumeInfo.getName() + "-" + snapshotInfo.getUuid();
+      long sfNewSnapshotId=SolidFireUtil.createSolidFireSnapshot(sfConnection,sfVolumeId,sfNewSnapshotName,getSnapshotAttributes(snapshotInfo));
+      updateSnapshotDetails(snapshotInfo.getId(),sfVolumeId,sfNewSnapshotId,storagePoolId,sfVolumeSize);
+      snapshotObjectTo.setPath("SfSnapshotId=" + sfNewSnapshotId);
+    }
+ else {
+      String sfNewVolumeName=volumeInfo.getName() + "-" + snapshotInfo.getUuid();
+      final Iops iops=getIops(MIN_IOPS_FOR_SNAPSHOT_VOLUME,MAX_IOPS_FOR_SNAPSHOT_VOLUME,storagePoolId);
+      long sfNewVolumeId=SolidFireUtil.createSolidFireVolume(sfConnection,sfNewVolumeName,sfVolume.getAccountId(),sfVolumeSize,sfVolume.isEnable512e(),getSnapshotAttributes(snapshotInfo),iops.getMinIops(),iops.getMaxIops(),iops.getBurstIops());
+      SolidFireUtil.SolidFireVolume sfNewVolume=SolidFireUtil.getSolidFireVolume(sfConnection,sfNewVolumeId);
+      updateSnapshotDetails(snapshotInfo.getId(),sfNewVolumeId,storagePoolId,sfVolumeSize,sfNewVolume.getIqn());
+      snapshotObjectTo.setPath("SfVolumeId=" + sfNewVolumeId);
+    }
+    storagePoolDao.update(storagePoolId,storagePool);
     CreateObjectAnswer createObjectAnswer=new CreateObjectAnswer(snapshotObjectTo);
     result=new CreateCmdResult(null,createObjectAnswer);
     result.setResult(null);
   }
  catch (  Exception ex) {
-    s_logger.debug(SolidFireUtil.LOG_PREFIX + "Failed to take CloudStack snapshot: " + snapshotInfo.getId(),ex);
+    LOGGER.debug(SolidFireUtil.LOG_PREFIX + "Failed to take CloudStack snapshot: " + snapshotInfo.getId(),ex);
     result=new CreateCmdResult(null,new CreateObjectAnswer(ex.toString()));
     result.setResult(ex.toString());
   }
