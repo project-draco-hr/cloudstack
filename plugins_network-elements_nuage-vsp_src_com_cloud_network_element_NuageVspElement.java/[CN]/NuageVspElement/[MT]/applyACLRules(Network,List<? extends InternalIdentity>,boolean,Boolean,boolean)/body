@@ -1,0 +1,30 @@
+{
+  Domain networksDomain=_domainDao.findById(network.getDomainId());
+  NetworkOfferingVO networkOfferingVO=_ntwkOfferingDao.findById(network.getNetworkOfferingId());
+  Long vpcId=network.getVpcId();
+  String vpcOrSubnetUuid=null;
+  if (vpcId != null) {
+    Vpc vpcObj=_vpcDao.findById(vpcId);
+    vpcOrSubnetUuid=vpcObj.getUuid();
+  }
+ else {
+    vpcOrSubnetUuid=network.getUuid();
+  }
+  boolean egressDefaultPolicy=networkOfferingVO.getEgressDefaultPolicy();
+  List<Map<String,Object>> aclRules=new ArrayList<Map<String,Object>>();
+  for (  InternalIdentity acl : rules) {
+    aclRules.add(getACLRuleDetails(acl,egressDefaultPolicy));
+  }
+  boolean isL3Network=isL3Network(network.getNetworkOfferingId());
+  HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
+  String preConfiguredDomainTemplateName=NuageVspUtil.getPreConfiguredDomainTemplateName(_configDao,network,networkOfferingVO);
+  ApplyAclRuleVspCommand.Builder cmdBuilder=new ApplyAclRuleVspCommand.Builder().networkAcl(isNetworkAcl).networkUuid(network.getUuid()).networkDomainUuid(networksDomain.getUuid()).vpcOrSubnetUuid(vpcOrSubnetUuid).networkName(network.getName()).isL2Network(!isL3Network).aclRules(aclRules).networkId(network.getId()).egressDefaultPolicy(networkOfferingVO.getEgressDefaultPolicy()).acsIngressAcl(isAcsIngressAcl).networkReset(networkReset).domainTemplateName(preConfiguredDomainTemplateName);
+  Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
+  if (answer == null || !answer.getResult()) {
+    s_logger.error("ApplyAclRuleNuageVspCommand for network " + network.getUuid() + " failed on Nuage VSD "+ nuageVspHost.getDetail("hostname"));
+    if ((null != answer) && (null != answer.getDetails())) {
+      throw new ResourceUnavailableException(answer.getDetails(),Network.class,network.getId());
+    }
+  }
+  return true;
+}

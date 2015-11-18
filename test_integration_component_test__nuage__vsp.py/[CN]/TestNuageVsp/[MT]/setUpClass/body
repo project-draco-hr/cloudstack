@@ -1,5 +1,6 @@
 @classmethod
 def setUpClass(cls):
+    print 'In setup class'
     cls._cleanup = []
     cls.testClient = super(TestNuageVsp, cls).getClsTestClient()
     cls.api_client = cls.testClient.getApiClient()
@@ -10,10 +11,12 @@ def setUpClass(cls):
     cls.nuage_services = cls.services['nuage_vsp_device']
     try:
         resp = listPhysicalNetworks.listPhysicalNetworksCmd()
+        print ('in cls.setupClass- resp: %s' % resp)
         resp.zoneid = cls.zone.id
         physical_networks = cls.api_client.listPhysicalNetworks(resp)
-        if isinstance(physical_networks, list):
-            physical_network = physical_networks[0]
+        for pn in physical_networks:
+            if (pn.isolationmethods == 'VSP'):
+                physical_network = pn
         resp = listNetworkServiceProviders.listNetworkServiceProvidersCmd()
         resp.name = 'NuageVsp'
         resp.physicalnetworkid = physical_network.id
@@ -23,15 +26,23 @@ def setUpClass(cls):
             resp_add_nsp.name = 'NuageVsp'
             resp_add_nsp.physicalnetworkid = physical_network.id
             cls.api_client.addNetworkServiceProvider(resp_add_nsp)
+            nw_service_providers = cls.api_client.listNetworkServiceProviders(resp)
+            cls.debug(('NuageVsp NSP ID: %s' % nw_service_providers[0].id))
             resp_add_device = addNuageVspDevice.addNuageVspDeviceCmd()
             resp_add_device.physicalnetworkid = physical_network.id
             resp_add_device.username = cls.nuage_services['username']
             resp_add_device.password = cls.nuage_services['password']
             resp_add_device.hostname = cls.nuage_services['hostname']
+            resp_add_device.port = cls.nuage_services['port']
             resp_add_device.apiversion = cls.nuage_services['apiversion']
             resp_add_device.retrycount = cls.nuage_services['retrycount']
             resp_add_device.retryinterval = cls.nuage_services['retryinterval']
             cls.nuage = cls.api_client.addNuageVspDevice(resp_add_device)
+            cls.debug(('NuageVsp NSP ID : %s' % nw_service_providers[0].id))
+            resp_up_nsp = updateNetworkServiceProvider.updateNetworkServiceProviderCmd()
+            resp_up_nsp.id = nw_service_providers[0].id
+            resp_up_nsp.state = 'Enabled'
+            cls.api_client.updateNetworkServiceProvider(resp_up_nsp)
         cls.network_offering = NetworkOffering.create(cls.api_client, cls.services['network_offering'], conservemode=True)
         cls._cleanup.append(cls.network_offering)
         cls.network_offering.update(cls.api_client, state='Enabled')
@@ -41,5 +52,5 @@ def setUpClass(cls):
         cls._cleanup.append(cls.service_offering)
     except Exception as e:
         cls.tearDownClass()
-        raise Exception(('Warning: Exception in setUpClass: %s' % e))
+        raise unittest.SkipTest('Unable to add VSP device')
     return

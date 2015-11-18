@@ -1,9 +1,18 @@
 {
+  boolean lockedNetwork=lockNetworkForUserVm(network,vm);
+  if (lockedNetwork && s_logger.isDebugEnabled()) {
+    s_logger.debug("Locked network " + network.getId() + " for deallocation of user VM "+ vm.getInstanceName());
+  }
   try {
-    s_logger.debug("Handling deallocate() call back, which is called when a VM is destroyed or interface is removed, " + "to delete VM Interface with IP " + nic.getIPv4Address() + " from a VM "+ vm.getInstanceName()+ " with state "+ vm.getVirtualMachine().getState());
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("Handling deallocate() call back, which is called when a VM is destroyed or interface is removed, " + "to delete VM Interface with IP " + nic.getIPv4Address() + " from a VM "+ vm.getInstanceName()+ " with state "+ vm.getVirtualMachine().getState());
+    }
     DomainVO networksDomain=_domainDao.findById(network.getDomainId());
     NicVO nicFrmDd=_nicDao.findById(nic.getId());
-    long networkOfferingId=_ntwkOfferingDao.findById(network.getNetworkOfferingId()).getId();
+    NetworkOffering networkOffering=_ntwkOfferingDao.findById(network.getNetworkOfferingId());
+    boolean isL3Network=isL3Network(network);
+    boolean isSharedNetwork=networkOffering.getGuestType() == GuestType.Shared;
+    boolean isExpunging=vm.getVirtualMachine().getState() == VirtualMachine.State.Expunging;
     Long vpcId=network.getVpcId();
     String vpcUuid=null;
     if (vpcId != null) {
@@ -11,17 +20,22 @@
       vpcUuid=vpcObj.getUuid();
     }
     HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
-    DeallocateVmVspCommand cmd=new DeallocateVmVspCommand(network.getUuid(),nicFrmDd.getUuid(),nic.getMacAddress(),nic.getIPv4Address(),isL3Network(networkOfferingId),vpcUuid,networksDomain.getUuid(),vm.getInstanceName(),vm.getUuid());
-    DeallocateVmVspAnswer answer=(DeallocateVmVspAnswer)_agentMgr.easySend(nuageVspHost.getId(),cmd);
+    DeallocateVmVspCommand.Builder cmdBuilder=new DeallocateVmVspCommand.Builder().networkUuid(network.getUuid()).nicFromDbUuid(nicFrmDd.getUuid()).nicMacAddress(nic.getMacAddress()).nicIp4Address(nic.getIPv4Address()).isL3Network(isL3Network).isSharedNetwork(isSharedNetwork).vpcUuid(vpcUuid).networksDomainUuid(networksDomain.getUuid()).vmInstanceName(vm.getInstanceName()).vmUuid(vm.getUuid()).isExpungingState(isExpunging);
+    Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
     if (answer == null || !answer.getResult()) {
-      s_logger.error("DeallocateVmNuageVspCommand for VM " + vm.getUuid() + " failed");
+      s_logger.error("DeallocateVmNuageVspCommand for VM " + vm.getUuid() + " failed on Nuage VSD "+ nuageVspHost.getDetail("hostname"));
       if ((null != answer) && (null != answer.getDetails())) {
         s_logger.error(answer.getDetails());
       }
     }
   }
- catch (  InsufficientVirtualNetworkCapacityException e) {
-    s_logger.error("Handling deallocate(). VM " + vm.getInstanceName() + " with NIC IP "+ nic.getIPv4Address()+ " is getting destroyed. REST API failed to update the VM state in NuageVsp",e);
+  finally {
+    if (network != null && lockedNetwork) {
+      _networkDao.releaseFromLockTable(network.getId());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("Unlocked network " + network.getId() + " for deallocation of user VM "+ vm.getInstanceName());
+      }
+    }
   }
   super.deallocate(network,nic,vm);
 }
