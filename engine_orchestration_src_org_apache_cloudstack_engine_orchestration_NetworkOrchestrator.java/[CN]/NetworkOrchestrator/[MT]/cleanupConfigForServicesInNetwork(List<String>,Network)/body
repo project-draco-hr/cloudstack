@@ -1,0 +1,75 @@
+{
+  long networkId=network.getId();
+  Account caller=_accountDao.findById(Account.ACCOUNT_ID_SYSTEM);
+  long userId=User.UID_SYSTEM;
+  s_logger.info("Services:" + services + " are no longer supported in network:"+ network.getUuid()+ " after applying new network offering:"+ network.getNetworkOfferingId()+ " removing the related configuration");
+  if (services.contains(Service.StaticNat.getName()) || services.contains(Service.PortForwarding.getName())) {
+    try {
+      if (_rulesMgr.revokeAllPFStaticNatRulesForNetwork(networkId,userId,caller)) {
+        s_logger.debug("Successfully cleaned up portForwarding/staticNat rules for network id=" + networkId);
+      }
+ else {
+        s_logger.warn("Failed to release portForwarding/StaticNat rules as a part of network id=" + networkId + " cleanup");
+      }
+      if (services.contains(Service.StaticNat.getName())) {
+        Transaction.execute(new TransactionCallbackNoReturn(){
+          @Override public void doInTransactionWithoutResult(          TransactionStatus status){
+            List<IPAddressVO> ips=_ipAddressDao.listStaticNatPublicIps(network.getId());
+            for (            IPAddressVO ip : ips) {
+              ip.setOneToOneNat(false);
+              ip.setAssociatedWithVmId(null);
+              ip.setVmIp(null);
+              _ipAddressDao.update(ip.getId(),ip);
+            }
+          }
+        }
+);
+      }
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to release portForwarding/StaticNat rules as a part of network id=" + networkId + " cleanup due to resourceUnavailable ",ex);
+    }
+  }
+  if (services.contains(Service.SourceNat.getName())) {
+    Transaction.execute(new TransactionCallbackNoReturn(){
+      @Override public void doInTransactionWithoutResult(      TransactionStatus status){
+        List<IPAddressVO> ips=_ipAddressDao.listByAssociatedNetwork(network.getId(),true);
+        for (        IPAddressVO ip : ips) {
+          ip.setSourceNat(false);
+          _ipAddressDao.update(ip.getId(),ip);
+        }
+      }
+    }
+);
+  }
+  if (services.contains(Service.Lb.getName())) {
+    if (_lbMgr.removeAllLoadBalanacersForNetwork(networkId,caller,userId)) {
+      s_logger.debug("Successfully cleaned up load balancing rules for network id=" + networkId);
+    }
+ else {
+      s_logger.warn("Failed to cleanup LB rules as a part of network id=" + networkId + " cleanup");
+    }
+  }
+  if (services.contains(Service.Firewall.getName())) {
+    try {
+      if (_firewallMgr.revokeAllFirewallRulesForNetwork(networkId,userId,caller)) {
+        s_logger.debug("Successfully cleaned up firewallRules rules for network id=" + networkId);
+      }
+ else {
+        s_logger.warn("Failed to cleanup Firewall rules as a part of network id=" + networkId + " cleanup");
+      }
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to cleanup Firewall rules as a part of network id=" + networkId + " cleanup due to resourceUnavailable ",ex);
+    }
+  }
+  if (services.contains(Service.Vpn.getName()) && network.getVpcId() == null) {
+    RemoteAccessVpnVO vpn=_remoteAccessVpnDao.findByAccountAndNetwork(network.getAccountId(),networkId);
+    try {
+      _vpnMgr.destroyRemoteAccessVpnForIp(vpn.getServerAddressId(),caller,true);
+    }
+ catch (    ResourceUnavailableException ex) {
+      s_logger.warn("Failed to cleanup remote access vpn resources of network:" + network.getUuid() + " due to Exception: ",ex);
+    }
+  }
+}

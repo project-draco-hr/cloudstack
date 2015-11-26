@@ -169,14 +169,35 @@
     s_logger.info("IP Reservation has been applied. The new CIDR for Guests Vms is " + guestVmCidr);
   }
   ReservationContext context=new ReservationContextImpl(null,null,callerUser,callerAccount);
-  List<DomainRouterVO> routers=null;
   int resourceCount=1;
-  if (updateInSequence && restartNetwork && _networkOfferingDao.findById(network.getNetworkOfferingId()).getRedundantRouter()&& networkOfferingId != null && _networkOfferingDao.findById(networkOfferingId).getRedundantRouter() && network.getVpcId() == null) {
+  if (updateInSequence && restartNetwork && _networkOfferingDao.findById(network.getNetworkOfferingId()).getRedundantRouter()&& (networkOfferingId == null || _networkOfferingDao.findById(networkOfferingId).getRedundantRouter())&& network.getVpcId() == null) {
     _networkMgr.canUpdateInSequence(network);
     NetworkDetailVO networkDetail=new NetworkDetailVO(network.getId(),Network.updatingInSequence,"true",true);
     _networkDetailsDao.persist(networkDetail);
     _networkMgr.configureUpdateInSequence(network);
     resourceCount=_networkMgr.getResourceCount(network);
+    List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(networkId,VirtualRouter.Role.VIRTUAL_ROUTER);
+    for (    DomainRouterVO router : routers) {
+      if (router.getRedundantState() == VirtualRouter.RedundantState.UNKNOWN) {
+        if (!forced) {
+          throw new CloudRuntimeException("Domain router: " + router.getInstanceName() + " is in unknown state, Cannot update network. set parameter forced to true for forcing an update");
+        }
+      }
+    }
+  }
+  List<String> servicesNotInNewOffering=null;
+  if (networkOfferingId != null)   servicesNotInNewOffering=_networkMgr.getServicesNotSupportedInNewOffering(network,networkOfferingId);
+  if (!forced && servicesNotInNewOffering != null && !servicesNotInNewOffering.isEmpty()) {
+    NetworkOfferingVO newOffering=_networkOfferingDao.findById(networkOfferingId);
+    throw new CloudRuntimeException("The new offering:" + newOffering.getUniqueName() + " will remove the following services "+ servicesNotInNewOffering+ "along with all the related configuration currently in use. will not proceed with the network update."+ "set forced parameter to true for forcing an update.");
+  }
+  try {
+    if (servicesNotInNewOffering != null && !servicesNotInNewOffering.isEmpty()) {
+      _networkMgr.cleanupConfigForServicesInNetwork(servicesNotInNewOffering,network);
+    }
+  }
+ catch (  Throwable e) {
+    s_logger.debug("failed to cleanup config related to unused services error:" + e.getMessage());
   }
   boolean validStateToShutdown=(network.getState() == Network.State.Implemented || network.getState() == Network.State.Setup || network.getState() == Network.State.Allocated);
   try {
