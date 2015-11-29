@@ -1,26 +1,20 @@
 {
   final Connection connection=xenServer610Resource.getConnection();
   final VirtualMachineTO vmSpec=command.getVirtualMachine();
-  final Map<VolumeTO,Object> volumeToSr=command.getVolumeToSr();
-  final Map<NicTO,Object> nicToNetwork=command.getNicToNetwork();
+  final Map<VolumeTO,String> volumeToSr=command.getVolumeToSr();
+  final Map<NicTO,String> nicToNetwork=command.getNicToNetwork();
   final Map<String,String> token=command.getToken();
   final String vmName=vmSpec.getName();
   Task task=null;
   try {
+    Gson gson=new Gson();
     final Map<String,String> other=new HashMap<String,String>();
     other.put("live","true");
     final Map<VDI,SR> vdiMap=new HashMap<VDI,SR>();
-    for (    final Map.Entry<VolumeTO,Object> entry : volumeToSr.entrySet()) {
-      final Object srObj=entry.getValue();
-      if (srObj instanceof SR) {
-        final SR sr=(SR)srObj;
-        final VolumeTO volume=entry.getKey();
-        final VDI vdi=xenServer610Resource.getVDIbyUuid(connection,volume.getPath());
-        vdiMap.put(vdi,sr);
-      }
- else {
-        throw new CloudRuntimeException("The object " + srObj + " passed is not of type SR.");
-      }
+    for (    final Map.Entry<VolumeTO,String> entry : volumeToSr.entrySet()) {
+      SR sr=gson.fromJson(entry.getValue(),SR.class);
+      VDI vdi=xenServer610Resource.getVDIbyUuid(connection,entry.getKey().getPath());
+      vdiMap.put(vdi,sr);
     }
     final Set<VM> vms=VM.getByNameLabel(connection,vmSpec.getName());
     VM vmToMigrate=null;
@@ -28,17 +22,10 @@
       vmToMigrate=vms.iterator().next();
     }
     final Map<VIF,Network> vifMap=new HashMap<VIF,Network>();
-    for (    final Map.Entry<NicTO,Object> entry : nicToNetwork.entrySet()) {
-      final Object networkObj=entry.getValue();
-      if (networkObj instanceof Network) {
-        final Network network=(Network)networkObj;
-        final NicTO nic=entry.getKey();
-        final VIF vif=xenServer610Resource.getVifByMac(connection,vmToMigrate,nic.getMac());
-        vifMap.put(vif,network);
-      }
- else {
-        throw new CloudRuntimeException("The object " + networkObj + " passed is not of type Network.");
-      }
+    for (    final Map.Entry<NicTO,String> entry : nicToNetwork.entrySet()) {
+      Network network=gson.fromJson(entry.getValue(),Network.class);
+      VIF vif=xenServer610Resource.getVifByMac(connection,vmToMigrate,entry.getKey().getMac());
+      vifMap.put(vif,network);
     }
     task=vmToMigrate.assertCanMigrateAsync(connection,token,true,vdiMap,vifMap,other);
     try {
