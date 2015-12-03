@@ -1,0 +1,61 @@
+{
+  final Long affinityGroupId=cmd.getId();
+  final String affinityGroupName=cmd.getAffinityGroupName();
+  final String affinityGroupType=cmd.getAffinityGroupType();
+  final Long vmId=cmd.getVirtualMachineId();
+  final String accountName=cmd.getAccountName();
+  Long domainId=cmd.getDomainId();
+  final Long projectId=cmd.getProjectId();
+  Boolean isRecursive=cmd.isRecursive();
+  final Boolean listAll=cmd.listAll();
+  final Long startIndex=cmd.getStartIndex();
+  final Long pageSize=cmd.getPageSizeVal();
+  final String keyword=cmd.getKeyword();
+  Account caller=CallContext.current().getCallingAccount();
+  if (vmId != null) {
+    UserVmVO userVM=_userVmDao.findById(vmId);
+    if (userVM == null) {
+      throw new InvalidParameterValueException("Unable to list affinity groups for virtual machine instance " + vmId + "; instance not found.");
+    }
+    _accountMgr.checkAccess(caller,null,true,userVM);
+    return listAffinityGroupsByVM(vmId.longValue(),startIndex,pageSize);
+  }
+  List<Long> permittedAccounts=new ArrayList<Long>();
+  Ternary<Long,Boolean,ListProjectResourcesCriteria> ternary=new Ternary<Long,Boolean,ListProjectResourcesCriteria>(domainId,isRecursive,null);
+  _accountMgr.buildACLSearchParameters(caller,affinityGroupId,accountName,projectId,permittedAccounts,ternary,listAll,false);
+  domainId=ternary.first();
+  isRecursive=ternary.second();
+  ListProjectResourcesCriteria listProjectResourcesCriteria=ternary.third();
+  Filter searchFilter=new Filter(AffinityGroupJoinVO.class,ID_FIELD,true,startIndex,pageSize);
+  SearchCriteria<AffinityGroupJoinVO> sc=buildAffinityGroupSearchCriteria(domainId,isRecursive,permittedAccounts,listProjectResourcesCriteria,affinityGroupId,affinityGroupName,affinityGroupType,keyword);
+  Pair<List<AffinityGroupJoinVO>,Integer> uniqueGroupsPair=_affinityGroupJoinDao.searchAndCount(sc,searchFilter);
+  List<AffinityGroupJoinVO> affinityGroups=new ArrayList<AffinityGroupJoinVO>();
+  Integer count=uniqueGroupsPair.second();
+  if (count.intValue() != 0) {
+    List<AffinityGroupJoinVO> uniqueGroups=uniqueGroupsPair.first();
+    Long[] vrIds=new Long[uniqueGroups.size()];
+    int i=0;
+    for (    AffinityGroupJoinVO v : uniqueGroups) {
+      vrIds[i++]=v.getId();
+    }
+    affinityGroups=_affinityGroupJoinDao.searchByIds(vrIds);
+  }
+  if (!permittedAccounts.isEmpty()) {
+    if (domainId != null) {
+      SearchCriteria<AffinityGroupJoinVO> scDomain=buildAffinityGroupSearchCriteria(null,isRecursive,new ArrayList<Long>(),listProjectResourcesCriteria,affinityGroupId,affinityGroupName,affinityGroupType,keyword);
+      affinityGroups.addAll(listDomainLevelAffinityGroups(scDomain,searchFilter,domainId));
+    }
+ else {
+      for (      Long permAcctId : permittedAccounts) {
+        Account permittedAcct=_accountDao.findById(permAcctId);
+        SearchCriteria<AffinityGroupJoinVO> scDomain=buildAffinityGroupSearchCriteria(null,isRecursive,new ArrayList<Long>(),listProjectResourcesCriteria,affinityGroupId,affinityGroupName,affinityGroupType,keyword);
+        affinityGroups.addAll(listDomainLevelAffinityGroups(scDomain,searchFilter,permittedAcct.getDomainId()));
+      }
+    }
+  }
+ else   if (((permittedAccounts.isEmpty()) && (domainId != null) && isRecursive)) {
+    SearchCriteria<AffinityGroupJoinVO> scDomain=buildAffinityGroupSearchCriteria(null,isRecursive,new ArrayList<Long>(),listProjectResourcesCriteria,affinityGroupId,affinityGroupName,affinityGroupType,keyword);
+    affinityGroups.addAll(listDomainLevelAffinityGroups(scDomain,searchFilter,domainId));
+  }
+  return new Pair<List<AffinityGroupJoinVO>,Integer>(affinityGroups,affinityGroups.size());
+}

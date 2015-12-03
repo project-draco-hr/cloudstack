@@ -1,0 +1,36 @@
+{
+  Map<String,AffinityGroupProcessor> typeProcessorMap=getAffinityTypeToProcessorMap();
+  if (typeProcessorMap == null || typeProcessorMap.isEmpty()) {
+    throw new InvalidParameterValueException("Unable to create affinity group, no Affinity Group Types configured");
+  }
+  AffinityGroupProcessor processor=typeProcessorMap.get(affinityGroupType);
+  if (processor == null) {
+    throw new InvalidParameterValueException("Unable to create affinity group, invalid affinity group type" + affinityGroupType);
+  }
+  Account caller=CallContext.current().getCallingAccount();
+  if (processor.isAdminControlledGroup() && !_accountMgr.isRootAdmin(caller.getId())) {
+    throw new PermissionDeniedException("Cannot create the affinity group");
+  }
+  ControlledEntity.ACLType aclType=null;
+  Account owner=null;
+  boolean domainLevel=false;
+  if (projectId == null && domainId != null && accountName == null) {
+    verifyAccessToDomainWideProcessor(caller,processor);
+    DomainVO domain=getDomain(domainId);
+    _accountMgr.checkAccess(caller,domain);
+    owner=_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM);
+    aclType=ControlledEntity.ACLType.Domain;
+    domainLevel=true;
+  }
+ else {
+    owner=_accountMgr.finalizeOwner(caller,accountName,domainId,projectId);
+    aclType=ControlledEntity.ACLType.Account;
+  }
+  verifyAffinityGroupNameInUse(owner.getAccountId(),owner.getDomainId(),affinityGroupName);
+  verifyDomainLevelAffinityGroupName(domainLevel,owner.getDomainId(),affinityGroupName);
+  AffinityGroupVO group=createAffinityGroup(processor,owner,aclType,affinityGroupName,affinityGroupType,description);
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("Created affinity group =" + affinityGroupName);
+  }
+  return group;
+}
