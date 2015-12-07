@@ -1,0 +1,44 @@
+{
+  List<DeferredQuotaEmail> deferredQuotaEmailList=new ArrayList<DeferredQuotaEmail>();
+  final BigDecimal zeroBalance=new BigDecimal(0);
+  for (  final QuotaAccountVO quotaAccount : _quotaAcc.listAllQuotaAccount()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("checkAndSendQuotaAlertEmails accId=" + quotaAccount.getId());
+    }
+    BigDecimal accountBalance=quotaAccount.getQuotaBalance();
+    Date balanceDate=quotaAccount.getQuotaBalanceDate();
+    Date alertDate=quotaAccount.getQuotaAlertDate();
+    int lockable=quotaAccount.getQuotaEnforce();
+    BigDecimal thresholdBalance=quotaAccount.getQuotaMinBalance();
+    if (accountBalance != null) {
+      AccountVO account=_accountDao.findById(quotaAccount.getId());
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("checkAndSendQuotaAlertEmails: Check id=" + account.getId() + " bal="+ accountBalance+ ", alertDate="+ alertDate+ ", lockable="+ lockable);
+      }
+      if (accountBalance.compareTo(zeroBalance) < 0) {
+        if (_lockAccountEnforcement && (lockable == 1)) {
+          if (account.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+            s_logger.info("Locking account " + account.getAccountName() + " due to quota < 0.");
+            lockAccount(account.getId());
+          }
+        }
+        if (alertDate == null || (balanceDate.after(alertDate) && getDifferenceDays(alertDate,new Date()) > 1)) {
+          s_logger.info("Sending alert " + account.getAccountName() + " due to quota < 0.");
+          deferredQuotaEmailList.add(new DeferredQuotaEmail(account,quotaAccount,QuotaConfig.QuotaEmailTemplateTypes.QUOTA_EMPTY));
+        }
+      }
+ else       if (accountBalance.compareTo(thresholdBalance) < 0) {
+        if (alertDate == null || (balanceDate.after(alertDate) && getDifferenceDays(alertDate,new Date()) > 1)) {
+          s_logger.info("Sending alert " + account.getAccountName() + " due to quota below threshold.");
+          deferredQuotaEmailList.add(new DeferredQuotaEmail(account,quotaAccount,QuotaConfig.QuotaEmailTemplateTypes.QUOTA_LOW));
+        }
+      }
+    }
+  }
+  for (  DeferredQuotaEmail emailToBeSent : deferredQuotaEmailList) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("checkAndSendQuotaAlertEmails: Attempting to send quota alert email to users of account: " + emailToBeSent.getAccount().getAccountName());
+    }
+    sendQuotaAlert(emailToBeSent);
+  }
+}

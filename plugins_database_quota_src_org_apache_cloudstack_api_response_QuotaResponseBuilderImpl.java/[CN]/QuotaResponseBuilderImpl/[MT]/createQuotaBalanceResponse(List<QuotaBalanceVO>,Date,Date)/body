@@ -1,0 +1,81 @@
+{
+  if (quotaBalance == null || quotaBalance.isEmpty()) {
+    new InvalidParameterValueException("The request period does not contain balance entries.");
+  }
+  Collections.sort(quotaBalance,new Comparator<QuotaBalanceVO>(){
+    public int compare(    QuotaBalanceVO o1,    QuotaBalanceVO o2){
+      return o2.getUpdatedOn().compareTo(o1.getUpdatedOn());
+    }
+  }
+);
+  boolean have_balance_entries=false;
+  for (Iterator<QuotaBalanceVO> it=quotaBalance.iterator(); it.hasNext(); ) {
+    QuotaBalanceVO entry=it.next();
+    if (entry.getCreditsId() > 0) {
+      have_balance_entries=true;
+      break;
+    }
+  }
+  if (have_balance_entries) {
+    ListIterator<QuotaBalanceVO> li=quotaBalance.listIterator(quotaBalance.size());
+    while (li.hasPrevious()) {
+      QuotaBalanceVO entry=li.previous();
+      if (s_logger.isDebugEnabled()) {
+        s_logger.debug("createQuotaBalanceResponse: Entry=" + entry);
+      }
+      if (entry.getCreditsId() > 0) {
+        li.remove();
+      }
+ else {
+        break;
+      }
+    }
+  }
+  int quota_activity=quotaBalance.size();
+  QuotaBalanceResponse resp=new QuotaBalanceResponse();
+  BigDecimal lastCredits=new BigDecimal(0);
+  boolean consecutive=true;
+  for (Iterator<QuotaBalanceVO> it=quotaBalance.iterator(); it.hasNext(); ) {
+    QuotaBalanceVO entry=it.next();
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("createQuotaBalanceResponse: All Credit Entry=" + entry);
+    }
+    if (entry.getCreditsId() > 0) {
+      if (consecutive) {
+        lastCredits=lastCredits.add(entry.getCreditBalance());
+      }
+      resp.addCredits(entry);
+      it.remove();
+    }
+ else {
+      consecutive=false;
+    }
+  }
+  if (quota_activity > 0 && quotaBalance.size() > 0) {
+    QuotaBalanceVO startItem=quotaBalance.get(quotaBalance.size() - 1);
+    QuotaBalanceVO endItem=quotaBalance.get(0);
+    resp.setStartDate(startItem.getUpdatedOn());
+    resp.setStartQuota(startItem.getCreditBalance());
+    resp.setEndDate(endItem.getUpdatedOn());
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("createQuotaBalanceResponse: Start Entry=" + startItem);
+      s_logger.debug("createQuotaBalanceResponse: End Entry=" + endItem);
+    }
+    resp.setEndQuota(endItem.getCreditBalance().add(lastCredits));
+  }
+ else   if (quota_activity > 0) {
+    resp.setStartDate(startDate);
+    resp.setStartQuota(new BigDecimal(0));
+    resp.setEndDate(endDate);
+    resp.setEndQuota(new BigDecimal(0).add(lastCredits));
+  }
+ else {
+    resp.setStartDate(startDate);
+    resp.setEndDate(endDate);
+    resp.setStartQuota(new BigDecimal(0));
+    resp.setEndQuota(new BigDecimal(0));
+  }
+  resp.setCurrency(QuotaConfig.QuotaCurrencySymbol.value());
+  resp.setObjectName("balance");
+  return resp;
+}
