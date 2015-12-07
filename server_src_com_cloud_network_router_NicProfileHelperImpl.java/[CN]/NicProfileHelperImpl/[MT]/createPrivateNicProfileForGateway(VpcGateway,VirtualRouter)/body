@@ -1,0 +1,29 @@
+{
+  final Network privateNetwork=_networkModel.getNetwork(privateGateway.getNetworkId());
+  PrivateIpVO ipVO=_privateIpDao.allocateIpAddress(privateNetwork.getDataCenterId(),privateNetwork.getId(),privateGateway.getIp4Address());
+  final Long vpcId=privateGateway.getVpcId();
+  final Vpc activeVpc=_vpcMgr.getActiveVpc(vpcId);
+  if (activeVpc.isRedundant() && ipVO == null) {
+    ipVO=_privateIpDao.findByIpAndVpcId(vpcId,privateGateway.getIp4Address());
+  }
+  final Nic privateNic=_nicDao.findByIp4AddressAndNetworkId(ipVO.getIpAddress(),privateNetwork.getId());
+  NicProfile privateNicProfile=new NicProfile();
+  if (privateNic != null) {
+    privateNicProfile=new NicProfile(privateNic,privateNetwork,privateNic.getBroadcastUri(),privateNic.getIsolationUri(),_networkModel.getNetworkRate(privateNetwork.getId(),router.getId()),_networkModel.isSecurityGroupSupportedInNetwork(privateNetwork),_networkModel.getNetworkTag(router.getHypervisorType(),privateNetwork));
+  }
+ else {
+    final String netmask=NetUtils.getCidrNetmask(privateNetwork.getCidr());
+    final PrivateIpAddress ip=new PrivateIpAddress(ipVO,privateNetwork.getBroadcastUri().toString(),privateNetwork.getGateway(),netmask,NetUtils.long2Mac(NetUtils.createSequenceBasedMacAddress(ipVO.getMacAddress())));
+    final URI netUri=BroadcastDomainType.fromString(ip.getBroadcastUri());
+    privateNicProfile.setIPv4Address(ip.getIpAddress());
+    privateNicProfile.setIPv4Gateway(ip.getGateway());
+    privateNicProfile.setIPv4Netmask(ip.getNetmask());
+    privateNicProfile.setIsolationUri(netUri);
+    privateNicProfile.setBroadcastUri(netUri);
+    privateNicProfile.setBroadcastType(BroadcastDomainType.getSchemeValue(netUri));
+    privateNicProfile.setFormat(AddressFormat.Ip4);
+    privateNicProfile.setReservationId(String.valueOf(ip.getBroadcastUri()));
+    privateNicProfile.setMacAddress(ip.getMacAddress());
+  }
+  return privateNicProfile;
+}
