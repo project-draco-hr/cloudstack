@@ -1,0 +1,44 @@
+def execute_internallb_roundrobin_tests(self, vpc_offering):
+    max_http_requests = 30
+    algorithm = 'roundrobin'
+    public_lb_port = 80
+    private_http_port = 80
+    public_ssh_start_port = 2000
+    num_app_vms = 3
+    self.logger.debug('Starting test_01_internallb_roundrobin_1VPC_3VM_HTTP_port80')
+    network_offering_guestnet = self.create_and_enable_network_serviceoffering(self.services['network_offering'])
+    network_offering_intlb = self.create_and_enable_network_serviceoffering(self.services['network_offering_internal_lb'])
+    vpc = self.create_vpc(vpc_offering)
+    network_guestnet = self.create_network_tier('guestnet_test01', vpc.id, '10.1.1.1', network_offering_guestnet)
+    network_internal_lb = self.create_network_tier('intlb_test01', vpc.id, '10.1.2.1', network_offering_intlb)
+    client_vm = self.deployvm_in_network(vpc, network_guestnet.id)
+    app_vms = []
+    for x in range(0, num_app_vms):
+        vm = None
+        vm = self.deployvm_in_network(vpc, network_internal_lb.id)
+        app_vms.append(vm)
+    guestnet_public_ip = self.acquire_publicip(vpc, network_guestnet)
+    intlb_public_ip = self.acquire_publicip(vpc, network_internal_lb)
+    self.create_natrule(vpc, client_vm, public_ssh_start_port, 22, guestnet_public_ip, network_guestnet)
+    public_port = (public_ssh_start_port + 1)
+    for vm in app_vms:
+        self.create_natrule(vpc, vm, public_port, 22, intlb_public_ip, network_internal_lb)
+        public_port += 1
+        time.sleep(10)
+        self.setup_http_daemon(vm)
+    applb = self.create_internal_loadbalancer(private_http_port, public_lb_port, algorithm, network_internal_lb.id)
+    time.sleep(10)
+    self.logger.debug(('Assigning virtual machines to LB: %s' % applb.id))
+    try:
+        applb.assign(self.apiclient, vms=app_vms)
+    except Exception as e:
+        self.fail(('Failed to assign virtual machine(s) to loadbalancer: %s' % e))
+    time.sleep(120)
+    results = self.run_ssh_test_accross_hosts(client_vm, applb.sourceipaddress, max_http_requests)
+    success = self.evaluate_http_responses(results, algorithm)
+    self.assertTrue(success, ('Test failed on algorithm: %s' % algorithm))
+    self.logger.debug('Removing virtual machines and networks for test_01_internallb_roundrobin_2VM_port80')
+    self.logger.debug(('Remove virtual machines from LB: %s' % applb.id))
+    applb.remove(self.apiclient, vms=app_vms)
+    self.logger.debug(('Deleting LB: %s' % applb.id))
+    applb.delete(self.apiclient)
