@@ -1,0 +1,94 @@
+{
+  VolumeObjectTO volumeTO=(VolumeObjectTO)disk.getData();
+  DataStoreTO primaryStore=volumeTO.getDataStore();
+  try {
+    VmwareContext context=hostService.getServiceContext(null);
+    VmwareHypervisorHost hyperHost=hostService.getHyperHost(context,null);
+    VirtualMachineMO vmMo=hyperHost.findVmOnHyperHost(vmName);
+    if (vmMo == null) {
+      String msg="Unable to find the VM to execute AttachCommand, vmName: " + vmName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    vmName=vmMo.getName();
+    ManagedObjectReference morDs=null;
+    String diskUuid=volumeTO.getUuid().replace("-","");
+    if (isAttach && isManaged) {
+      Map<String,String> details=disk.getDetails();
+      morDs=prepareManagedStorage(context,hyperHost,diskUuid,iScsiName,storageHost,storagePort,null,details.get(DiskTO.CHAP_INITIATOR_USERNAME),details.get(DiskTO.CHAP_INITIATOR_SECRET),details.get(DiskTO.CHAP_TARGET_USERNAME),details.get(DiskTO.CHAP_TARGET_SECRET),volumeTO.getSize(),cmd);
+    }
+ else {
+      if (storagePort == DEFAULT_NFS_PORT) {
+        morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,isManaged ? VmwareResource.getDatastoreName(diskUuid) : primaryStore.getUuid());
+      }
+ else {
+        morDs=HypervisorHostHelper.findDatastoreWithBackwardsCompatibility(hyperHost,isManaged ? VmwareResource.getDatastoreName(iScsiName) : primaryStore.getUuid());
+      }
+    }
+    if (morDs == null) {
+      String msg="Unable to find the mounted datastore to execute AttachCommand, vmName: " + vmName;
+      s_logger.error(msg);
+      throw new Exception(msg);
+    }
+    DatastoreMO dsMo=new DatastoreMO(context,morDs);
+    String datastoreVolumePath;
+    if (isAttach) {
+      if (isManaged) {
+        datastoreVolumePath=dsMo.getDatastorePath(dsMo.getName() + ".vmdk");
+      }
+ else {
+        datastoreVolumePath=VmwareStorageLayoutHelper.syncVolumeToVmDefaultFolder(dsMo.getOwnerDatacenter().first(),vmName,dsMo,volumeTO.getPath());
+      }
+    }
+ else {
+      if (isManaged) {
+        datastoreVolumePath=dsMo.getDatastorePath(dsMo.getName() + ".vmdk");
+      }
+ else {
+        datastoreVolumePath=VmwareStorageLayoutHelper.getLegacyDatastorePathFromVmdkFileName(dsMo,volumeTO.getPath() + ".vmdk");
+        if (!dsMo.fileExists(datastoreVolumePath)) {
+          datastoreVolumePath=VmwareStorageLayoutHelper.getVmwareDatastorePathFromVmdkFileName(dsMo,vmName,volumeTO.getPath() + ".vmdk");
+        }
+      }
+    }
+    disk.setPath(datastoreVolumePath);
+    AttachAnswer answer=new AttachAnswer(disk);
+    if (isAttach) {
+      String dataDiskController=controllerInfo.get(VmDetailConstants.DATA_DISK_CONTROLLER);
+      String rootDiskController=controllerInfo.get(VmDetailConstants.ROOK_DISK_CONTROLLER);
+      DiskControllerType rootDiskControllerType=DiskControllerType.getType(rootDiskController);
+      if (dataDiskController == null) {
+        dataDiskController=getLegacyVmDataDiskController();
+      }
+ else       if ((rootDiskControllerType == DiskControllerType.lsilogic) || (rootDiskControllerType == DiskControllerType.lsisas1068) || (rootDiskControllerType == DiskControllerType.pvscsi)|| (rootDiskControllerType == DiskControllerType.buslogic)) {
+        dataDiskController=rootDiskController;
+      }
+ else       if (DiskControllerType.getType(dataDiskController) == DiskControllerType.osdefault) {
+        dataDiskController=vmMo.getRecommendedDiskController(null);
+      }
+      vmMo.attachDisk(new String[]{datastoreVolumePath},morDs,dataDiskController);
+    }
+ else {
+      vmMo.removeAllSnapshots();
+      vmMo.detachDisk(datastoreVolumePath,false);
+      if (isManaged) {
+        handleDatastoreAndVmdkDetachManaged(diskUuid,iScsiName,storageHost,storagePort);
+      }
+ else {
+        VmwareStorageLayoutHelper.syncVolumeToRootFolder(dsMo.getOwnerDatacenter().first(),dsMo,volumeTO.getPath(),vmName);
+      }
+    }
+    return answer;
+  }
+ catch (  Throwable e) {
+    if (e instanceof RemoteException) {
+      s_logger.warn("Encounter remote exception to vCenter, invalidate VMware session context");
+      hostService.invalidateServiceContext(null);
+    }
+    String msg="";
+    if (isAttach)     msg+="Failed to attach volume: " + e.getMessage();
+ else     msg+="Failed to detach volume: " + e.getMessage();
+    s_logger.error(msg,e);
+    return new AttachAnswer(msg);
+  }
+}
