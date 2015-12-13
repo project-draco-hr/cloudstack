@@ -1,9 +1,44 @@
 {
-  Date depositDate=new Date();
-  Date adjustedStartDate=_quotaService.computeAdjustedTime(depositDate);
-  QuotaBalanceVO qb=_quotaBalanceDao.findLaterBalanceEntry(accountId,domainId,adjustedStartDate);
+  Date despositedOn=_quotaService.computeAdjustedTime(new Date());
+  QuotaBalanceVO qb=_quotaBalanceDao.findLaterBalanceEntry(accountId,domainId,despositedOn);
   if (qb != null) {
-    throw new InvalidParameterValueException("Incorrect deposit date: " + adjustedStartDate + " there are balance entries after this date");
+    throw new InvalidParameterValueException("Incorrect deposit date: " + despositedOn + " there are balance entries after this date");
   }
-  return addQuotaCredits(accountId,domainId,amount,updatedBy,adjustedStartDate);
+  QuotaCreditsVO credits=new QuotaCreditsVO(accountId,domainId,new BigDecimal(amount),updatedBy);
+  credits.setUpdatedOn(despositedOn);
+  QuotaCreditsVO result=_quotaCreditsDao.saveCredits(credits);
+  final AccountVO account=_accountDao.findById(accountId);
+  final boolean lockAccountEnforcement="true".equalsIgnoreCase(QuotaConfig.QuotaEnableEnforcement.value());
+  final BigDecimal currentAccountBalance=_quotaBalanceDao.lastQuotaBalance(accountId,domainId,startOfNextDay(new Date(despositedOn.getTime())));
+  if (s_logger.isDebugEnabled()) {
+    s_logger.debug("AddQuotaCredits: Depositing " + amount + " on adjusted date "+ despositedOn+ ", current balance "+ currentAccountBalance);
+  }
+  _quotaService.saveQuotaAccount(account,currentAccountBalance,despositedOn);
+  if (lockAccountEnforcement) {
+    if (currentAccountBalance.compareTo(new BigDecimal(0)) >= 0) {
+      if (account.getType() == Account.ACCOUNT_TYPE_NORMAL) {
+        if (account.getState() == Account.State.locked) {
+          s_logger.info("UnLocking account " + account.getAccountName() + " , due to positive balance "+ currentAccountBalance);
+          _accountMgr.enableAccount(account.getAccountName(),domainId,accountId);
+        }
+      }
+ else {
+        s_logger.warn("Only normal accounts will get locked " + account.getAccountName() + " even if they have run out of quota "+ currentAccountBalance);
+      }
+    }
+ else {
+      if (account.getState() == Account.State.enabled) {
+        s_logger.info("Locking account " + account.getAccountName() + " , due to negative balance "+ currentAccountBalance);
+        _accountMgr.lockAccount(account.getAccountName(),domainId,accountId);
+      }
+    }
+  }
+  String creditor=String.valueOf(Account.ACCOUNT_ID_SYSTEM);
+  User creditorUser=_userDao.getUser(updatedBy);
+  if (creditorUser != null) {
+    creditor=creditorUser.getUsername();
+  }
+  QuotaCreditsResponse response=new QuotaCreditsResponse(result,creditor);
+  response.setCurrency(QuotaConfig.QuotaCurrencySymbol.value());
+  return response;
 }
