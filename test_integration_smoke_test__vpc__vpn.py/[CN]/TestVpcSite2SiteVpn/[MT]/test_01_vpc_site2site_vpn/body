@@ -1,27 +1,32 @@
 @attr(tags=['advanced'], required_hardware='true')
-def test_vpc_site2site_vpn(self):
-    'Test VPN in VPC'
+def test_01_vpc_site2site_vpn(self):
+    'Test Site 2 Site VPN Across VPCs'
+    self.logger.debug('Starting test: test_01_vpc_site2site_vpn')
     networkOffering = NetworkOffering.list(self.apiclient, name='DefaultIsolatedNetworkOfferingForVpcNetworks')
     self.assert_(((networkOffering is not None) and (len(networkOffering) > 0)), 'No VPC based network offering')
-    vpcOffering = VpcOffering.list(self.apiclient, isdefault=True)
-    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    vpc_offering = self._create_vpc_offering('vpc_offering')
+    self.assert_((vpc_offering is not None), 'Failed to create VPC Offering')
+    vpc_offering.update(self.apiclient, state='Enabled')
+    vpc1 = None
     try:
         try:
-            vpc1 = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc1.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+            vpc1 = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc1.vpn', vpcofferingid=vpc_offering.id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
         except Exception as e:
             self.fail(e)
     finally:
         self.assert_((vpc1 is not None), 'VPC1 creation failed')
     self.logger.debug(('VPC1 %s created' % vpc1.id))
+    vpc2 = None
     try:
         try:
-            vpc2 = VPC.create(apiclient=self.apiclient, services=self.services['vpc2'], networkDomain='vpc2.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+            vpc2 = VPC.create(apiclient=self.apiclient, services=self.services['vpc2'], networkDomain='vpc2.vpn', vpcofferingid=vpc_offering.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
         except Exception as e:
             self.fail(e)
     finally:
         self.assert_((vpc2 is not None), 'VPC2 creation failed')
     self.logger.debug(('VPC2 %s created' % vpc2.id))
     default_acl = NetworkACLList.list(self.apiclient, name='default_allow')[0]
+    ntwk1 = None
     try:
         try:
             ntwk1 = Network.create(apiclient=self.apiclient, services=self.services['network_1'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc1.id, aclid=default_acl.id)
@@ -30,6 +35,7 @@ def test_vpc_site2site_vpn(self):
     finally:
         self.assertIsNotNone(ntwk1, 'Network failed to create')
     self.logger.debug(('Network %s created in VPC %s' % (ntwk1.id, vpc1.id)))
+    ntwk2 = None
     try:
         try:
             ntwk2 = Network.create(apiclient=self.apiclient, services=self.services['network_2'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc2.id, aclid=default_acl.id)
@@ -38,18 +44,20 @@ def test_vpc_site2site_vpn(self):
     finally:
         self.assertIsNotNone(ntwk2, 'Network failed to create')
     self.logger.debug(('Network %s created in VPC %s' % (ntwk2.id, vpc2.id)))
+    vm1 = None
     try:
         try:
-            vm1 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=ntwk1.id, hypervisor=self.services['virtual_machine']['hypervisor'])
+            vm1 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.compute_offering.id, networkids=ntwk1.id, hypervisor=self.hypervisor)
         except Exception as e:
             self.fail(e)
     finally:
         self.assert_((vm1 is not None), 'VM failed to deploy')
         self.assert_((vm1.state == 'Running'), 'VM is not running')
     self.logger.debug(('VM %s deployed in VPC %s' % (vm1.id, vpc1.id)))
+    vm2 = None
     try:
         try:
-            vm2 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=ntwk2.id, hypervisor=self.services['virtual_machine']['hypervisor'])
+            vm2 = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.compute_offering.id, networkids=ntwk2.id, hypervisor=self.hypervisor)
         except Exception as e:
             self.fail(e)
     finally:
@@ -85,15 +93,16 @@ def test_vpc_site2site_vpn(self):
             self.fail(e)
     finally:
         self.assert_((vm2.public_ip is not None), 'Failed to aqcuire public ip for vm2')
+    natrule = None
     try:
         try:
-            natrule = self.create_natrule(vpc2, vm2, 22, 22, vm2.public_ip, ntwk2)
+            natrule = self._create_natrule(vpc2, vm2, 22, 22, vm2.public_ip, ntwk2)
         except Exception as e:
             self.fail(e)
     finally:
         self.assert_((natrule is not None), 'Failed to create portforward for vm2')
         time.sleep(20)
-    ssh_client = self.get_ssh_client(vm2, self.services, 10)
+    ssh_client = self._get_ssh_client(vm2, self.services, 10)
     if ssh_client:
         packet_loss = ssh_client.execute((('/bin/ping -c 3 -t 10 ' + vm1.nic[0].ipaddress) + " |grep packet|cut -d ' ' -f 7| cut -f1 -d'%'"))[0]
         self.assert_((int(packet_loss) == 0), 'Ping did not succeed')
