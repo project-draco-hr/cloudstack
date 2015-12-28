@@ -1,0 +1,40 @@
+{
+  final String logicalSwitchUuid=command.getLogicalSwitchUuid();
+  final String l2GatewayServiceUuid=command.getL2GatewayServiceUuid();
+  long vlanId=command.getVlanId();
+  final List<NiciraNvpTag> tags=new ArrayList<NiciraNvpTag>();
+  tags.add(new NiciraNvpTag("cs_account",command.getOwnerName()));
+  final long networkId=command.getNetworkId();
+  s_logger.debug("Connecting Logical Switch " + logicalSwitchUuid + " to L2 Gateway Service "+ l2GatewayServiceUuid+ ", vlan id "+ vlanId+ " network "+ networkId);
+  final NiciraNvpApi niciraNvpApi=niciraNvpResource.getNiciraNvpApi();
+  s_logger.debug("Creating Logical Switch Port in Logical Switch " + logicalSwitchUuid);
+  LogicalSwitchPort lSwitchPort=null;
+  try {
+    lSwitchPort=new LogicalSwitchPort();
+    lSwitchPort.setAdminStatusEnabled(true);
+    lSwitchPort.setDisplayName(niciraNvpResource.truncate(networkId + "-l2Gateway-port",NAME_MAX_LEN));
+    lSwitchPort.setTags(tags);
+    lSwitchPort=niciraNvpApi.createLogicalSwitchPort(logicalSwitchUuid,lSwitchPort);
+  }
+ catch (  NiciraNvpApiException e) {
+    s_logger.warn("Could not create Logical Switch Port on Logical Switch " + logicalSwitchUuid + " due to: "+ e.getMessage()+ ", retrying");
+    return handleException(e,command,niciraNvpResource);
+  }
+  s_logger.debug("Logical Switch Port " + lSwitchPort.getUuid() + " ("+ lSwitchPort.getDisplayName()+ ") successfully created in Logical Switch "+ logicalSwitchUuid);
+  s_logger.debug("Attaching Logical Switch Port " + lSwitchPort.getUuid() + " ("+ lSwitchPort.getDisplayName()+ ") on VLAN "+ command.getVlanId()+ " using L2GatewayAttachment");
+  try {
+    final L2GatewayAttachment attachment=new L2GatewayAttachment(l2GatewayServiceUuid);
+    if (command.getVlanId() != 0) {
+      attachment.setVlanId(command.getVlanId());
+    }
+    niciraNvpApi.updateLogicalSwitchPortAttachment(logicalSwitchUuid,lSwitchPort.getUuid(),attachment);
+  }
+ catch (  NiciraNvpApiException e) {
+    s_logger.warn("Could not attach Logical Switch Port " + lSwitchPort.getUuid() + " ("+ lSwitchPort.getDisplayName()+ ") to Logical Switch Port "+ lSwitchPort.getUuid()+ " ("+ lSwitchPort.getDisplayName()+ ") due to: "+ e.getMessage()+ ", errorCode: "+ e.getErrorCode());
+    cleanup(logicalSwitchUuid,lSwitchPort,niciraNvpApi);
+    return handleException(e,command,niciraNvpResource);
+  }
+  s_logger.debug("Logical Switch Port " + lSwitchPort.getUuid() + " ("+ lSwitchPort.getDisplayName()+ ") successfully attached on VLAN "+ command.getVlanId()+ " using L2GatewayAttachment");
+  s_logger.debug("Successfully connected Logical Switch " + logicalSwitchUuid + " to L2 Gateway Service "+ l2GatewayServiceUuid+ ", vlan id "+ vlanId+ ", network "+ networkId+ ", through Logical Switch Port "+ lSwitchPort.getUuid()+ " ("+ lSwitchPort.getDisplayName()+ ")");
+  return new ConfigureSharedNetworkVlanIdAnswer(command,true,"OK");
+}
