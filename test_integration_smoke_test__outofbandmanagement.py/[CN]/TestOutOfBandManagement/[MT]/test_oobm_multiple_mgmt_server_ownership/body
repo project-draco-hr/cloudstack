@@ -1,0 +1,46 @@
+@attr(tags=['devcloud', 'advanced', 'advancedns', 'smoke', 'basic', 'sg'], required_hardware='false')
+def test_oobm_multiple_mgmt_server_ownership(self):
+    '\n            Tests out-of-band management ownership expiry across multi-mgmt server\n        '
+    self.configureAndEnableOobm()
+    cloudstackVersion = Configurations.listCapabilities(self.apiclient).cloudstackversion
+    currentMsHosts = []
+    mshosts = self.dbclient.execute(("select msid from mshost where version='%s' and removed is NULL and state='Up'" % cloudstackVersion))
+    if (len(mshosts) > 0):
+        currentMsHosts = map((lambda row: row[0]), mshosts)
+    self.dbclient.execute(("insert into mshost (msid,runid,name,state,version,service_ip,service_port,last_update) values (%s,%s,'oobm-marvin-fakebox', 'Down', '%s', '127.0.0.1', '22', NOW())" % (self.getFakeMsId(), self.getFakeMsRunId(), cloudstackVersion)))
+    self.dbclient.execute(('update oobm set mgmt_server_id=%d where port=%d' % (self.getFakeMsId(), self.getIpmiServerPort())))
+    self.debug('Testing oobm background sync')
+    pingInterval = float(list_configurations(self.apiclient, name='ping.interval')[0].value)
+    pingTimeout = float(list_configurations(self.apiclient, name='ping.timeout')[0].value)
+
+    def removeFakeMgmtServer(fakeMsRunId):
+        rows = self.dbclient.execute(('select * from mshost_peer where peer_runid=%s' % fakeMsRunId))
+        if (len(rows) > 0):
+            self.debug('Mgmt server is now trying to contact the fake mgmt server')
+            self.dbclient.execute(('update mshost set removed=now() where runid=%s' % fakeMsRunId))
+            self.dbclient.execute(("update mshost_peer set peer_state='Down' where peer_runid=%s" % fakeMsRunId))
+            return (True, None)
+        return (False, None)
+
+    def checkOobmOwnershipExpiry(serverPort, fakeMsId):
+        rows = self.dbclient.execute(('select mgmt_server_id from oobm where port=%d' % serverPort))
+        if ((len(rows) > 0) and (rows[0][0] != fakeMsId)):
+            self.debug('Out-of-band management ownership expired as node was detected to be gone')
+            return (True, None)
+        return (False, None)
+    retry_interval = (1 + ((pingInterval * pingTimeout) / 10))
+    (res, _) = wait_until(retry_interval, 10, removeFakeMgmtServer, self.getFakeMsRunId())
+    if (not res):
+        self.fail('Management server failed to turn down or remove fake mgmt server')
+    (res, _) = wait_until(retry_interval, 100, checkOobmOwnershipExpiry, self.getIpmiServerPort(), self.getFakeMsId())
+    if (not res):
+        self.fail('Management server failed to expire ownership of fenced peer')
+    self.debug('Testing oobm background sync should claim new ownership')
+    interval = list_configurations(self.apiclient, name='outofbandmanagement.sync.interval')[0].value
+    self.startIpmiServer()
+    bmc = IpmiServerContext().bmc
+    bmc.powerstate = 'on'
+    self.checkSyncToState('On', interval)
+    result = self.dbclient.execute(('select mgmt_server_id from oobm where port=%d' % self.getIpmiServerPort()))
+    newOwnerId = result[0][0]
+    self.assertTrue((newOwnerId in currentMsHosts))

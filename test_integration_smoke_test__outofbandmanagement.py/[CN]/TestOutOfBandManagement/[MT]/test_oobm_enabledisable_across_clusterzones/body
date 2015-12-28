@@ -1,0 +1,48 @@
+@attr(tags=['devcloud', 'advanced', 'advancedns', 'smoke', 'basic', 'sg'], required_hardware='false')
+def test_oobm_enabledisable_across_clusterzones(self):
+    '\n            Tests out-of-band management enable/disable feature at cluster\n            and zone level sequentially Zone > Cluster > Host\n        '
+    self.configureAndEnableOobm()
+    self.startIpmiServer()
+    bmc = IpmiServerContext().bmc
+    bmc.powerstate = 'off'
+    host = self.getHost()
+    cmd = disableOutOfBandManagementForZone.disableOutOfBandManagementForZoneCmd()
+    cmd.zoneid = host.zoneid
+    response = self.apiclient.disableOutOfBandManagementForZone(cmd)
+    cmd = disableOutOfBandManagementForCluster.disableOutOfBandManagementForClusterCmd()
+    cmd.clusterid = host.clusterid
+    response = self.apiclient.disableOutOfBandManagementForCluster(cmd)
+    cmd = disableOutOfBandManagementForHost.disableOutOfBandManagementForHostCmd()
+    cmd.hostid = host.id
+    response = self.apiclient.disableOutOfBandManagementForHost(cmd)
+    try:
+        self.issuePowerActionCmd('STATUS')
+        self.fail('Exception was expected, oobm is disabled at zone level')
+    except Exception:
+        pass
+    cmd = enableOutOfBandManagementForZone.enableOutOfBandManagementForZoneCmd()
+    cmd.zoneid = host.zoneid
+    response = self.apiclient.enableOutOfBandManagementForZone(cmd)
+    try:
+        self.issuePowerActionCmd('STATUS')
+        self.fail('Exception was expected, oobm is disabled at cluster level')
+    except Exception:
+        pass
+    response = self.getHost(hostId=host.id).outofbandmanagement
+    self.assertEqual(response.powerstate, 'Disabled')
+    self.dbclient.execute(("update oobm set power_state='On' where port=%d" % self.getIpmiServerPort()))
+    interval = list_configurations(self.apiclient, name='outofbandmanagement.sync.interval')[0].value
+    self.checkSyncToState('Disabled', interval)
+    cmd = enableOutOfBandManagementForCluster.enableOutOfBandManagementForClusterCmd()
+    cmd.clusterid = host.clusterid
+    response = self.apiclient.enableOutOfBandManagementForCluster(cmd)
+    try:
+        self.issuePowerActionCmd('STATUS')
+        self.fail('Exception was expected, oobm is disabled at host level')
+    except Exception:
+        pass
+    cmd = enableOutOfBandManagementForHost.enableOutOfBandManagementForHostCmd()
+    cmd.hostid = host.id
+    response = self.apiclient.enableOutOfBandManagementForHost(cmd)
+    response = self.issuePowerActionCmd('STATUS')
+    self.assertEqual(response.powerstate, 'Off')

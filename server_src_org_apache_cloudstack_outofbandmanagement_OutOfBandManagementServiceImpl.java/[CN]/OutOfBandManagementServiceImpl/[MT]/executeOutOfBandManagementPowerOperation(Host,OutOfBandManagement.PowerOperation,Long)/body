@@ -1,0 +1,35 @@
+{
+  checkOutOfBandManagementEnabledByZoneClusterHost(host);
+  final OutOfBandManagement outOfBandManagementConfig=getConfigForHost(host);
+  final ImmutableMap<OutOfBandManagement.Option,String> options=getOptions(outOfBandManagementConfig);
+  final OutOfBandManagementDriver driver=getDriver(outOfBandManagementConfig);
+  Long actionTimeOut=timeout;
+  if (actionTimeOut == null) {
+    actionTimeOut=ActionTimeout.valueIn(host.getClusterId());
+  }
+  final OutOfBandManagementDriverPowerCommand cmd=new OutOfBandManagementDriverPowerCommand(options,actionTimeOut,powerOperation);
+  final OutOfBandManagementDriverResponse driverResponse=driver.execute(cmd);
+  if (driverResponse == null) {
+    throw new CloudRuntimeException(String.format("Out-of-band Management action (%s) on host (%s) failed due to no response from the driver",powerOperation,host.getUuid()));
+  }
+  if (powerOperation.equals(OutOfBandManagement.PowerOperation.STATUS)) {
+    transitionPowerState(driverResponse.toEvent(),outOfBandManagementConfig);
+  }
+  if (!driverResponse.isSuccess()) {
+    String errorMessage=String.format("Out-of-band Management action (%s) on host (%s) failed with error: %s",powerOperation,host.getUuid(),driverResponse.getError());
+    if (driverResponse.hasAuthFailure()) {
+      errorMessage=String.format("Out-of-band Management action (%s) on host (%s) failed due to authentication error: %s. Please check configured credentials.",powerOperation,host.getUuid(),driverResponse.getError());
+      sendAuthError(host,errorMessage);
+    }
+    if (!powerOperation.equals(OutOfBandManagement.PowerOperation.STATUS)) {
+      LOG.debug(errorMessage);
+    }
+    throw new CloudRuntimeException(errorMessage);
+  }
+  final OutOfBandManagementResponse response=new OutOfBandManagementResponse(outOfBandManagementDao.findByHost(host.getId()));
+  response.setSuccess(driverResponse.isSuccess());
+  response.setResultDescription(driverResponse.getResult());
+  response.setId(host.getUuid());
+  response.setOutOfBandManagementAction(powerOperation.toString());
+  return response;
+}
