@@ -1,3 +1,74 @@
 {
-  return null;
+  Account owner=_accountService.getActiveAccountById(cmd.getEntityOwnerId());
+  verifyDetails(cmd.getDetails());
+  Long zoneId=cmd.getZoneId();
+  DataCenter zone=_entityMgr.findById(DataCenter.class,zoneId);
+  if (zone == null) {
+    throw new InvalidParameterValueException("Unable to find zone by id=" + zoneId);
+  }
+  Long serviceOfferingId=cmd.getServiceOfferingId();
+  ServiceOffering serviceOffering=_entityMgr.findById(ServiceOffering.class,serviceOfferingId);
+  if (serviceOffering == null) {
+    throw new InvalidParameterValueException("Unable to find service offering: " + serviceOfferingId);
+  }
+  Long templateId=cmd.getTemplateId();
+  if (!serviceOffering.isDynamic()) {
+    for (    String detail : cmd.getDetails().keySet()) {
+      if (detail.equalsIgnoreCase("cpuNumber") || detail.equalsIgnoreCase("cpuSpeed") || detail.equalsIgnoreCase("memory")) {
+        throw new InvalidParameterValueException("cpuNumber or cpuSpeed or memory should not be specified for static service offering");
+      }
+    }
+  }
+  VirtualMachineTemplate template=_entityMgr.findById(VirtualMachineTemplate.class,templateId);
+  if (template == null) {
+    throw new InvalidParameterValueException("Unable to use template " + templateId);
+  }
+  Long diskOfferingId=cmd.getDiskOfferingId();
+  DiskOffering diskOffering=null;
+  if (diskOfferingId != null) {
+    diskOffering=_entityMgr.findById(DiskOffering.class,diskOfferingId);
+    if (diskOffering == null) {
+      throw new InvalidParameterValueException("Unable to find disk offering " + diskOfferingId);
+    }
+  }
+  if (!zone.isLocalStorageEnabled()) {
+    if (serviceOffering.getUseLocalStorage()) {
+      throw new InvalidParameterValueException("Zone is not configured to use local storage but service offering " + serviceOffering.getName() + " uses it");
+    }
+    if (diskOffering != null && diskOffering.getUseLocalStorage()) {
+      throw new InvalidParameterValueException("Zone is not configured to use local storage but disk offering " + diskOffering.getName() + " uses it");
+    }
+  }
+  String ipAddress=cmd.getIpAddress();
+  String ip6Address=cmd.getIp6Address();
+  String name=cmd.getName();
+  String displayName=cmd.getDisplayName();
+  UserVm vm=null;
+  IpAddresses addrs=new IpAddresses(ipAddress,ip6Address);
+  Long size=cmd.getSize();
+  String group=cmd.getGroup();
+  String userData=cmd.getUserData();
+  String sshKeyPairName=cmd.getSSHKeyPairName();
+  Boolean displayVm=cmd.getDisplayVm();
+  String keyboard=cmd.getKeyboard();
+  if (zone.getNetworkType() == NetworkType.Basic) {
+    if (cmd.getNetworkIds() != null) {
+      throw new InvalidParameterValueException("Can't specify network Ids in Basic zone");
+    }
+ else {
+      vm=createBasicSecurityGroupVirtualMachine(zone,serviceOffering,template,getSecurityGroupIdList(cmd),owner,name,displayName,diskOfferingId,size,group,cmd.getHypervisor(),cmd.getHttpMethod(),userData,sshKeyPairName,cmd.getIpToNetworkMap(),addrs,displayVm,keyboard,cmd.getAffinityGroupIdList(),cmd.getDetails(),cmd.getCustomId());
+    }
+  }
+ else {
+    if (zone.isSecurityGroupEnabled()) {
+      vm=createAdvancedSecurityGroupVirtualMachine(zone,serviceOffering,template,cmd.getNetworkIds(),getSecurityGroupIdList(cmd),owner,name,displayName,diskOfferingId,size,group,cmd.getHypervisor(),cmd.getHttpMethod(),userData,sshKeyPairName,cmd.getIpToNetworkMap(),addrs,displayVm,keyboard,cmd.getAffinityGroupIdList(),cmd.getDetails(),cmd.getCustomId());
+    }
+ else {
+      if (cmd.getSecurityGroupIdList() != null && !cmd.getSecurityGroupIdList().isEmpty()) {
+        throw new InvalidParameterValueException("Can't create vm with security groups; security group feature is not enabled per zone");
+      }
+      vm=createAdvancedVirtualMachine(zone,serviceOffering,template,cmd.getNetworkIds(),owner,name,displayName,diskOfferingId,size,group,cmd.getHypervisor(),cmd.getHttpMethod(),userData,sshKeyPairName,cmd.getIpToNetworkMap(),addrs,displayVm,keyboard,cmd.getAffinityGroupIdList(),cmd.getDetails(),cmd.getCustomId());
+    }
+  }
+  return vm;
 }
