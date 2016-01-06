@@ -1,0 +1,48 @@
+@attr(tags=['advanced', 'intervlan', 'dvs', 'test'], required_hardware='true')
+def test_01_create_tier_Vmxnet3(self):
+    '\n            Test to create vpc tier with nic type as Vmxnet3\n            #1.Set global setting parameter "vmware.systemvm.nic.device.type"\n            to "Vmxnet3"\n            #2.Create VPC\n            #3.Create one tier\n            #4.Deploy one guest vm in the tier created in step3\n        '
+    if (self.hypervisor.lower() not in ['vmware']):
+        self.skipTest('This test can only run on vmware setup')
+    nic_types = Configurations.list(self.apiclient, name='vmware.systemvm.nic.device.type')
+    self.assertEqual(validateList(nic_types)[0], PASS, 'Invalid list config')
+    nic_type = nic_types[0].value
+    reset = False
+    if (nic_type.lower() != 'vmxnet3'):
+        self.updateConfigurAndRestart('vmware.systemvm.nic.device.type', 'Vmxnet3')
+        reset = True
+    self.services['vpc']['cidr'] = '10.1.1.1/16'
+    self.debug(('creating a VPC network in the account: %s' % self.account.name))
+    try:
+        try:
+            vpc = VPC.create(self.apiclient, self.services['vpc'], vpcofferingid=self.vpc_off.id, zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid)
+            vpc_res = VPC.list(self.apiclient, id=vpc.id)
+            self.assertEqual(validateList(vpc_res)[0], PASS, 'Invalid response from listvpc')
+            self.network_offering = NetworkOffering.create(self.apiclient, self.services['network_offering'], conservemode=False)
+            self.network_offering.update(self.apiclient, state='Enabled')
+            self.cleanup.append(self.network_offering)
+            gateway = vpc.cidr.split('/')[0]
+            self.debug(('Creating network with network offering: %s' % self.network_offering.id))
+            network = Network.create(self.apiclient, self.services['network'], accountid=self.account.name, domainid=self.account.domainid, networkofferingid=self.network_offering.id, zoneid=self.zone.id, gateway=gateway, vpcid=vpc.id)
+            self.debug(('Created network with ID: %s' % network.id))
+            vm = VirtualMachine.create(self.apiclient, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering.id, networkids=[str(network.id)])
+            self.assertIsNotNone(vm, 'VM creation failed')
+            self.debug(('Deployed VM in network: %s' % network.id))
+            vm_res = VirtualMachine.list(self.apiclient, id=vm.id)
+            self.assertEqual(validateList(vm_res)[0], PASS, 'list vm returned invalid response')
+            vr_res = Router.list(self.apiclient, vpcid=vpc.id, listall='true')
+            self.assertEqual(validateList(vr_res)[0], PASS, 'list vrs failed for vpc')
+            vr_linklocal_ip = vr_res[0].linklocalip
+            result = get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, vr_linklocal_ip, 'lspci | grep "Ethernet controller"', hypervisor=self.hypervisor)
+            self.assertEqual(validateList(result)[0], PASS, "We didn't find NICS with adapter type VMXNET3")
+            reg = re.compile('VMware VMXNET3')
+            count = 0
+            for line in result:
+                if reg.search(line):
+                    count += 1
+            self.assertEqual(count, 3, 'Not all NICs on VR are of type VMXNET3')
+        except Exception as e:
+            self.fail(('NIC creation failed for vpc tier with systemvm nic                         adapter type as Vmxnet3: %s' % e))
+    finally:
+        if reset:
+            self.updateConfigurAndRestart('vmware.systemvm.nic.device.type', nic_type)
+    return
