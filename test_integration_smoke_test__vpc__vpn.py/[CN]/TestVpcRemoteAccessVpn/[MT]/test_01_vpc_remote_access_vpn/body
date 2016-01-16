@@ -1,0 +1,67 @@
+@attr(tags=['advanced'], required_hardware='true')
+def test_01_vpc_remote_access_vpn(self):
+    'Test Remote Access VPN in VPC'
+    self.logger.debug('Starting test: test_01_vpc_remote_access_vpn')
+    self.logger.debug('Retrieving default VPC offering')
+    networkOffering = NetworkOffering.list(self.apiclient, name='DefaultIsolatedNetworkOfferingForVpcNetworks')
+    self.assert_(((networkOffering is not None) and (len(networkOffering) > 0)), 'No VPC based network offering')
+    vpcOffering = VpcOffering.list(self.apiclient, isdefault=True)
+    self.assert_(((vpcOffering is not None) and (len(vpcOffering) > 0)), 'No VPC offerings found')
+    try:
+        try:
+            vpc = VPC.create(apiclient=self.apiclient, services=self.services['vpc'], networkDomain='vpc.vpn', vpcofferingid=vpcOffering[0].id, zoneid=self.zone.id, account=self.account.name, domainid=self.domain.id)
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.assert_((vpc is not None), 'VPC creation failed')
+        self.logger.debug(('VPC %s created' % vpc.id))
+    try:
+        try:
+            ntwk = Network.create(apiclient=self.apiclient, services=self.services['network_1'], accountid=self.account.name, domainid=self.domain.id, networkofferingid=networkOffering[0].id, zoneid=self.zone.id, vpcid=vpc.id)
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.assertIsNotNone(ntwk, 'Network failed to create')
+        self.logger.debug(('Network %s created in VPC %s' % (ntwk.id, vpc.id)))
+    try:
+        try:
+            vm = VirtualMachine.create(self.apiclient, services=self.services['virtual_machine'], templateid=self.template.id, zoneid=self.zone.id, accountid=self.account.name, domainid=self.domain.id, serviceofferingid=self.compute_offering.id, networkids=ntwk.id, hypervisor=self.hypervisor)
+            self.assert_((vm is not None), 'VM failed to deploy')
+            self.assert_((vm.state == 'Running'), 'VM is not running')
+            self.debug(('VM %s deployed in VPC %s' % (vm.id, vpc.id)))
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.logger.debug('Deployed virtual machine: OK')
+    try:
+        try:
+            src_nat_list = PublicIPAddress.list(self.apiclient, account=self.account.name, domainid=self.account.domainid, listall=True, issourcenat=True, vpcid=vpc.id)
+            ip = src_nat_list[0]
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.logger.debug('Acquired public ip address: OK')
+    try:
+        try:
+            vpn = Vpn.create(self.apiclient, publicipid=ip.id, account=self.account.name, domainid=self.account.domainid, iprange=self.services['vpn']['iprange'], fordisplay=self.services['vpn']['fordisplay'])
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.assertIsNotNone(vpn, 'Failed to create Remote Access VPN')
+        self.logger.debug('Created Remote Access VPN: OK')
+    vpnUser = None
+    try:
+        try:
+            vpnUser = VpnUser.create(self.apiclient, account=self.account.name, domainid=self.account.domainid, username=self.services['vpn']['vpn_user'], password=self.services['vpn']['vpn_pass'])
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.assertIsNotNone(vpnUser, 'Failed to create Remote Access VPN User')
+        self.logger.debug('Created VPN User: OK')
+    try:
+        try:
+            vpn.delete(self.apiclient)
+        except Exception as e:
+            self.fail(e)
+    finally:
+        self.logger.debug('Deleted the Remote Access VPN: OK')
