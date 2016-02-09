@@ -8,7 +8,10 @@ import xml.dom.minidom
 from optparse import OptionParser, OptionGroup, OptParseError, BadOptionError, OptionError, OptionConflictError, OptionValueError
 import re
 import libvirt
+import fcntl
+import time
 logpath = '/var/run/cloud/'
+lock_file = '/var/lock/cloudstack_security_group.lock'
 iptables = Command('iptables')
 bash = Command('/bin/bash')
 ebtables = Command('ebtables')
@@ -17,6 +20,7 @@ cfo = configFileOps('/etc/cloudstack/agent/agent.properties')
 hyper = cfo.getEntry('hypervisor.type')
 if (hyper == 'lxc'):
     driver = 'lxc:///'
+lock_handle = None
 '\ndef ipset(ipsetname, proto, start, end, ips):\n    try:\n        check_call([\'ipset\', \'-N\', ipsetname, \'iptreemap\'])\n    except:\n        logging.debug("ipset chain already exists" + ipsetname)\n\n    result = True\n    ipsettmp = \'\'.join(\'\'.join(ipsetname.split(\'-\')).split(\'_\')) + str(int(time.time()) % 1000)\n\n    try:\n        check_call([\'ipset\', \'-N\', ipsettmp, \'iptreemap\'])\n        for ip in ips:\n            try:\n                check_call([\'ipset\', \'-A\', ipsettmp, ip])\n            except CommandException, cex:\n                if cex.reason.rfind(\'already in set\') == -1:\n                   raise\n        check_call([\'ipset\', \'-W\', ipsettmp, ipsetname])\n        check_call([\'ipset\', \'-X\', ipsettmp])\n    except:\n        logging.debug("Failed to program ipset " + ipsetname)\n        result = False\n\n    return result\n'
 if (__name__ == '__main__'):
     logging.basicConfig(filename='/var/log/cloudstack/agent/security_group.log', format='%(asctime)s - %(message)s', level=logging.DEBUG)
@@ -42,6 +46,12 @@ if (__name__ == '__main__'):
         sys.exit(1)
     cmd = args[0]
     logging.debug(('Executing command: ' + str(cmd)))
+    for i in range(0, 30):
+        if (obtain_file_lock(lock_file) is False):
+            logging.warn(('Lock on %s is being held by other process. Waiting for release.' % lock_file))
+            time.sleep(0.5)
+        else:
+            break
     if (cmd == 'can_bridge_firewall'):
         can_bridge_firewall(args[1])
     elif (cmd == 'default_network_rules'):
