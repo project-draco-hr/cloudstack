@@ -1,0 +1,26 @@
+@classmethod
+def setUpClass(cls):
+    cls._cleanup = []
+    cls.testClient = super(TestDeployVmWithCoreosTemplate, cls).getClsTestClient()
+    cls.api_client = cls.testClient.getApiClient()
+    cls.services = cls.testClient.getParsedTestDataConfig()
+    cls.zone = get_zone(cls.api_client, cls.testClient.getZoneForTests())
+    cls.service_offering = ServiceOffering.create(cls.api_client, services=cls.services['service_offerings']['medium'])
+    cls.account = Account.create(cls.api_client, services=cls.services['account'])
+    cls.cleanup = [cls.account]
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.services['ostype'])
+    cls.services['coreos']['hypervisor'] = cls.testClient.getHypervisorInfo()
+    cls.userdata = '#cloud-config\n\ncoreos:\n  units:\n    - name: docker.service\n      command: start\n    - name: web.service\n      command: start\n      content: |\n        [Unit]\n        After=docker.service\n        Requires=docker.service\n        Description=Starts web server container\n        [Service]\n        TimeoutStartSec=0\n        ExecStartPre=/usr/bin/docker pull httpd:2.4\n        ExecStart=/usr/bin/docker run -d -p 8000:80 httpd:2.4'
+    cls.services['virtual_machine']['userdata'] = cls.userdata
+    cls.keypair = SSHKeyPair.create(cls.api_client, name='coreos', account=cls.account.name, domainid=cls.account.domainid)
+    cls.debug(('Created a new keypair with name: %s' % cls.keypair.name))
+    cls.debug('Writing the private key to local file')
+    cls.keyPairFilePath = ((tempfile.gettempdir() + os.sep) + cls.keypair.name)
+    cls.cleanup.append(cls.keyPairFilePath)
+    cls.debug(('File path: %s' % cls.keyPairFilePath))
+    f = open(cls.keyPairFilePath, 'w+')
+    f.write(cls.keypair.privatekey)
+    f.close()
+    os.system(('chmod 400 ' + cls.keyPairFilePath))
+    cls.mgtSvrDetails = cls.config.__dict__['mgtSvr'][0].__dict__
+    return
