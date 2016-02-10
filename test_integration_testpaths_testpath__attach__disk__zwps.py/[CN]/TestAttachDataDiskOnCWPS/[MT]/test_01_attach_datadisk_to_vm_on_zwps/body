@@ -1,0 +1,22 @@
+@attr(tags=['basic', 'advanced'], required_hardware='true')
+def test_01_attach_datadisk_to_vm_on_zwps(self):
+    ' Attach Data Disk on CWPS To VM \n            1.  Check if zwps storage pool exists.\n            2.  Adding tag to zone wide primary storage\n            3.  Launch a VM\n            4.  Attach data disk to vm.\n            5.  Verify disk is attached and in correct storage pool.\n        '
+    if (len(list(self.pools)) < 1):
+        self.skipTest('There must be at least one zone wide                 storage pools available in the setup')
+    StoragePool.update(self.apiclient, id=self.pools[0].id, tags=[CLUSTERTAG1])
+    self.vm = VirtualMachine.create(self.apiclient, self.testdata['small'], templateid=self.template.id, accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.service_offering_zone1.id, zoneid=self.zone.id)
+    self.testdata['volume']['zoneid'] = self.zone.id
+    self.testdata['volume']['customdisksize'] = 1
+    self.data_volume_created = Volume.create_custom_disk(self.userapiclient, self.testdata['volume'], account=self.account.name, domainid=self.account.domainid, diskofferingid=self.disk_offering.id)
+    self.cleanup.append(self.data_volume_created)
+    self.vm.attach_volume(self.userapiclient, self.data_volume_created)
+    data_volumes_list = Volume.list(self.userapiclient, virtualmachineid=self.vm.id, type='DATA', listall=True)
+    self.debug(('list volumes using vm id %s' % dir(data_volumes_list[0])))
+    data_volumes_list = Volume.list(self.apiclient, id=self.data_volume_created.id, listall=True)
+    data_volume = data_volumes_list[0]
+    status = validateList(data_volume)
+    self.assertEqual(status[0], PASS, 'Check: volume list is valid')
+    self.assertEqual(data_volume.state, 'Ready', 'Check: Data volume is attached to VM')
+    if (data_volume.storage != self.pools[0].name):
+        self.fail('check if volume is created in correct storage pool')
+    return
