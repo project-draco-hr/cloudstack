@@ -6,21 +6,21 @@ def set_master(self):
     self.set_lock()
     logging.debug('Setting router to master')
     dev = ''
-    ips = [ip for ip in self.address.get_ips() if ip.is_public()]
+    interfaces = [interface for interface in self.address.get_interfaces() if interface.is_public()]
     route = CsRoute()
-    for ip in ips:
-        if (dev == ip.get_device()):
+    for interface in interfaces:
+        if (dev == interface.get_device()):
             continue
-        dev = ip.get_device()
+        dev = interface.get_device()
         logging.info(('Will proceed configuring device ==> %s' % dev))
         cmd2 = ('ip link set %s up' % dev)
         if CsDevice(dev, self.config).waitfordevice():
             CsHelper.execute(cmd2)
             logging.info(('Bringing public interface %s up' % dev))
             try:
-                gateway = ip.get_gateway()
+                gateway = interface.get_gateway()
                 logging.info(('Adding gateway ==> %s to device ==> %s' % (gateway, dev)))
-                if (ip.get_device() in PUBLIC_INTERFACE):
+                if (dev == CsHelper.PUBLIC_INTERFACES[self.cl.get_type()]):
                     route.add_defaultroute(gateway)
             except:
                 logging.error(('ERROR getting gateway from device %s' % dev))
@@ -33,11 +33,13 @@ def set_master(self):
     CsHelper.execute(('%s -B' % cmd))
     CsHelper.service('ipsec', 'restart')
     CsHelper.service('xl2tpd', 'restart')
-    ads = [o for o in self.address.get_ips() if o.needs_vrrp()]
-    for o in ads:
-        CsPasswdSvc(o.get_gateway()).restart()
+    interfaces = [interface for interface in self.address.get_interfaces() if interface.needs_vrrp()]
+    for interface in interfaces:
+        CsPasswdSvc(interface.get_gateway()).restart()
     CsHelper.service('dnsmasq', 'restart')
     self.cl.set_master_state(True)
     self.cl.save()
     self.release_lock()
+    interfaces = [interface for interface in self.address.get_interfaces() if interface.is_public()]
+    CsHelper.reconfigure_interfaces(self.cl, interfaces)
     logging.info('Router switched to master mode')
