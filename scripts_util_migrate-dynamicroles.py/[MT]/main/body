@@ -1,0 +1,43 @@
+def main():
+    parser = OptionParser()
+    parser.add_option('-b', '--db', action='store', type='string', dest='db', default='cloud', help='The name of the database, default: cloud')
+    parser.add_option('-u', '--user', action='store', type='string', dest='user', default='cloud', help='User name a MySQL user with privileges on cloud database')
+    parser.add_option('-p', '--password', action='store', type='string', dest='password', default='cloud', help='Password of a MySQL user with privileges on cloud database')
+    parser.add_option('-H', '--host', action='store', type='string', dest='host', default='127.0.0.1', help='Host or IP of the MySQL server')
+    parser.add_option('-P', '--port', action='store', type='int', dest='port', default=3306, help='Host or IP of the MySQL server')
+    parser.add_option('-f', '--properties-file', action='store', type='string', dest='commandsfile', default='/etc/cloudstack/management/commands.properties', help='The commands.properties file')
+    parser.add_option('-d', '--dryrun', action='store_true', dest='dryrun', default=False, help='Dry run and debug operations this tool will perform')
+    (options, args) = parser.parse_args()
+    print 'Apache CloudStack Role Permission Migration Tool'
+    print '(c) Apache CloudStack Authors and the ASF, under the Apache License, Version 2.0\n'
+    global dryrun
+    if options.dryrun:
+        dryrun = True
+    conn = MySQLdb.connect(host=options.host, user=options.user, passwd=options.password, port=int(options.port), db=options.db)
+    if (not os.path.isfile(options.commandsfile)):
+        print 'Provided commands.properties cannot be accessed or does not exist, please check check permissions'
+        sys.exit(1)
+    while True:
+        choice = raw_input((('Running this migration tool will remove any ' + 'default-role permissions from cloud.role_permissions. ') + 'Do you want to continue? [y/N]')).lower()
+        if (choice == 'y'):
+            break
+        else:
+            print 'Aborting!'
+            sys.exit(1)
+    apiMap = {}
+    with open(options.commandsfile) as f:
+        for line in f.readlines():
+            if ((not line) or (line == '') or (line == '\n') or line.startswith('#')):
+                continue
+            (name, value) = line.split('=')
+            apiMap[name.strip()] = value.strip()
+    if (not dryrun):
+        os.rename(options.commandsfile, (options.commandsfile + '.deprecated'))
+    print (('The commands.properties file has been deprecated and moved at: ' + options.commandsfile) + '.deprecated')
+    runSql(conn, 'DELETE FROM `cloud`.`role_permissions` WHERE `role_id` in (1,2,3,4);')
+    migrateApiRolePermissions(apiMap, conn)
+    print 'Static role permissions from commands.properties have been migrated into the db'
+    runSql(conn, "UPDATE `cloud`.`configuration` SET value='true' where name='dynamic.apichecker.enabled'")
+    conn.commit()
+    conn.close()
+    print 'Dynamic role based API checker has been enabled!'

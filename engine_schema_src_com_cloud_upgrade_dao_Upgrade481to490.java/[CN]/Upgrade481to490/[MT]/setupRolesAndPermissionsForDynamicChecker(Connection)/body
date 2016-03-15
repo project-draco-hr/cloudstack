@@ -1,0 +1,34 @@
+{
+  final String alterTableSql="ALTER TABLE `cloud`.`account` " + "ADD COLUMN `role_id` bigint(20) unsigned COMMENT 'role id for this account' AFTER `type`, " + "ADD KEY `fk_account__role_id` (`role_id`), "+ "ADD CONSTRAINT `fk_account__role_id` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`);";
+  try (final PreparedStatement pstmt=conn.prepareStatement(alterTableSql)){
+    pstmt.executeUpdate();
+  }
+ catch (  SQLException e) {
+    if (e.getMessage().contains("role_id")) {
+      s_logger.warn("cloud.account table already has the role_id column, skipping altering table and migration of accounts");
+      return;
+    }
+ else {
+      throw new CloudRuntimeException("Unable to create column quota_calculated in table cloud_usage.cloud_usage",e);
+    }
+  }
+  migrateAccountsToDefaultRoles(conn);
+  final Map<String,String> apiMap=PropertiesUtil.processConfigFile(new String[]{PropertiesUtil.getDefaultApiCommandsFileName()});
+  if (apiMap == null || apiMap.isEmpty()) {
+    if (s_logger.isDebugEnabled()) {
+      s_logger.debug("The commands.properties file and default role permissions were not found. " + "Assuming new installation, configuring default role-api mappings.");
+    }
+    String script=Script.findScript("","db/create-default-role-api-mappings.sql");
+    if (script == null) {
+      s_logger.error("Unable to find default role-api mapping sql file, please configure api per role manually");
+      return;
+    }
+    try (final FileReader reader=new FileReader(new File(script))){
+      ScriptRunner runner=new ScriptRunner(conn,false,true);
+      runner.runScript(reader);
+    }
+ catch (    SQLException|IOException e) {
+      s_logger.error("Unable to insert default api-role mappings from file: " + script + ". Please configure api per role manually, giving up!",e);
+    }
+  }
+}
