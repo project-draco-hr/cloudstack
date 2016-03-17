@@ -1,0 +1,57 @@
+@classmethod
+def setUpClass(cls):
+    cls.debug('setUpClass nuageTestCase')
+    socket.setdefaulttimeout(60)
+    test_client = super(nuageTestCase, cls).getClsTestClient()
+    cls.api_client = test_client.getApiClient()
+    cls.db_client = test_client.getDbConnection()
+    cls.test_data = test_client.getParsedTestDataConfig()
+    cls.zone = get_zone(cls.api_client)
+    cls.domain = get_domain(cls.api_client)
+    cls.template = get_template(cls.api_client, cls.zone.id, cls.test_data['ostype'])
+    cls.test_data['virtual_machine']['zoneid'] = cls.zone.id
+    cls.test_data['virtual_machine']['template'] = cls.template.id
+    cls.service_offering = ServiceOffering.create(cls.api_client, cls.test_data['service_offering'])
+    cls._cleanup = [cls.service_offering]
+    try:
+        resp = listPhysicalNetworks.listPhysicalNetworksCmd()
+        resp.zoneid = cls.zone.id
+        physical_networks = cls.api_client.listPhysicalNetworks(resp)
+        for pn in physical_networks:
+            if (pn.isolationmethods == 'VSP'):
+                cls.vsp_physical_network = pn
+                break
+        cls.nuage_vsp_device = Nuage.list(cls.api_client, physicalnetworkid=cls.vsp_physical_network.id)[0]
+        pns = cls.config.zones[0].physical_networks
+        providers = filter((lambda physical_network: ('VSP' in physical_network.isolationmethods)), pns)[0].providers
+        devices = filter((lambda provider: (provider.name == 'NuageVsp')), providers)[0].devices
+        cls.nuage_vsp_device.username = devices[0].username
+        cls.nuage_vsp_device.password = devices[0].password
+        listConfigurationsCmd = listConfigurations.listConfigurationsCmd()
+        listConfigurationsCmd.name = 'nuagevsp.cms.id'
+        listConfigurationsCmd.scopename = 'global'
+        cs_config_dict = cls.api_client.listConfigurations(listConfigurationsCmd)
+        cls.cms_id = str(cs_config_dict[0].value).split(':')[1]
+    except Exception as e:
+        cls.tearDownClass()
+        raise unittest.SkipTest(("Warning: Couldn't get configured Nuage Vsp device details: %s" % e))
+    resp = listHypervisors.listHypervisorsCmd()
+    resp.zoneid = cls.zone.id
+    cls.isSimulator = (cls.api_client.listHypervisors(resp)[0].name == 'Simulator')
+    try:
+        vspk_module = (('vspk.' + cls.nuage_vsp_device.apiversion) if (int(cls.nuage_vsp_device.apiversion[1]) >= 4) else ('vspk.vsdk.' + cls.nuage_vsp_device.apiversion))
+        vsdk = importlib.import_module(vspk_module)
+        vspk_utils_module = ('vspk.utils' if (int(cls.nuage_vsp_device.apiversion[1]) >= 4) else (('vspk.vsdk.' + cls.nuage_vsp_device.apiversion) + '.utils'))
+        vsdk_utils = importlib.import_module(vspk_utils_module)
+        set_log_level = getattr(vsdk_utils, 'set_log_level')
+        from cms_vspk_wrapper.cms_vspk_wrapper import Cms_vspk_wrapper
+    except:
+        raise unittest.SkipTest('vspk (and/or) cms_vspk_wrapper import failure')
+    cls._session = vsdk.NUVSDSession(username=cls.nuage_vsp_device.username, password=cls.nuage_vsp_device.password, enterprise='csp', api_url=('https://%s:%d' % (cls.nuage_vsp_device.hostname, cls.nuage_vsp_device.port)))
+    cls._session.start()
+    cls.log_handler = logging.getLogger('CSLog').handlers[0]
+    vsd_info = cls.nuage_vsp_device.__dict__
+    vsd_info['port'] = str(vsd_info['port'])
+    cls.vsd = Cms_vspk_wrapper(vsd_info, cls.log_handler)
+    set_log_level(logging.INFO)
+    cls.debug('setUpClass nuageTestCase [DONE]')
