@@ -18,7 +18,7 @@
         throw new Exception(msg);
       }
     }
-    sess=conn.openSession();
+    sess=openConnectionSession(conn);
     sess.execCommand(command);
     InputStream stdout=sess.getStdout();
     InputStream stderr=sess.getStderr();
@@ -26,17 +26,15 @@
     StringBuffer sbResult=new StringBuffer();
     int currentReadBytes=0;
     while (true) {
+      throwSshExceptionIfStdoutOrStdeerIsNull(stdout,stderr);
       if ((stdout.available() == 0) && (stderr.available() == 0)) {
         int conditions=sess.waitForCondition(ChannelCondition.STDOUT_DATA | ChannelCondition.STDERR_DATA | ChannelCondition.EOF| ChannelCondition.EXIT_STATUS,waitResultTimeoutInMs);
-        if ((conditions & ChannelCondition.TIMEOUT) != 0) {
-          String msg="Timed out in waiting SSH execution result";
-          s_logger.error(msg);
-          throw new Exception(msg);
-        }
+        throwSshExceptionIfConditionsTimeout(conditions);
         if ((conditions & ChannelCondition.EXIT_STATUS) != 0) {
-          if ((conditions & (ChannelCondition.STDOUT_DATA | ChannelCondition.STDERR_DATA)) == 0) {
-            break;
-          }
+          break;
+        }
+        if (canEndTheSshConnection(waitResultTimeoutInMs,sess,conditions)) {
+          break;
         }
       }
       while (stdout.available() > 0) {
@@ -50,10 +48,11 @@
     }
     String result=sbResult.toString();
     if (sess.getExitStatus() == null) {
+      s_logger.error(String.format("SSH execution of command %s has no exit status set. Result output: %s",command,result));
       return new Pair<Boolean,String>(false,result);
     }
     if (sess.getExitStatus() != null && sess.getExitStatus().intValue() != 0) {
-      s_logger.error("SSH execution of command " + command + " has an error status code in return. result output: "+ result);
+      s_logger.error(String.format("SSH execution of command %s has an error status code in return. Result output: %s",command,result));
       return new Pair<Boolean,String>(false,result);
     }
     return new Pair<Boolean,String>(true,result);
