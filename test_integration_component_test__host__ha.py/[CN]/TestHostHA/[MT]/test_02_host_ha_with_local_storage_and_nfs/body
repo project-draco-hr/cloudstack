@@ -1,0 +1,43 @@
+@attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'eip', 'sg'], required_hardware='true')
+def test_02_host_ha_with_local_storage_and_nfs(self):
+    if (not self.isLocalAndNFSStorageAvailable()):
+        raise unittest.SkipTest('Skipping this test as this is for Local storage and NFS storage only.')
+        return
+    listHost = Host.list(self.apiclient, type='Routing', zoneid=self.zone.id, podid=self.pod.id)
+    for host in listHost:
+        self.logger.debug('Hypervisor = {}'.format(host.id))
+    if (len(listHost) != 2):
+        self.logger.debug(('Host HA can be tested with two host only %s, found' % len(listHost)))
+        raise unittest.SkipTest(('Host HA can be tested with two host only %s, found' % len(listHost)))
+        return
+    no_of_vms = self.noOfVMsOnHost(listHost[0].id)
+    no_of_vms = (no_of_vms + self.noOfVMsOnHost(listHost[1].id))
+    self.logger.debug(('Number of VMS on hosts = %s' % no_of_vms))
+    if (no_of_vms < 5):
+        self.logger.debug('test_02: Create VMs as there are not enough vms to check host ha')
+        no_vm_req = (5 - no_of_vms)
+        if (no_vm_req > 0):
+            self.logger.debug('Creating vms = {}'.format(no_vm_req))
+            self.vmlist = self.createVMs(listHost[0].id, no_vm_req, True)
+    ha_host = listHost[1]
+    other_host = listHost[0]
+    if (self.noOfVMsOnHost(listHost[0].id) > self.noOfVMsOnHost(listHost[1].id)):
+        ha_host = listHost[0]
+        other_host = listHost[1]
+    self.disconnectHostfromNetwork(ha_host.ipaddress, 400)
+    hostDown = wait_until(10, 10, self.checkHostDown, other_host.ipaddress, ha_host.ipaddress)
+    if (not hostDown):
+        raise unittest.SkipTest(('Host %s is not down, cannot proceed with test' % ha_host.ipaddress))
+    hostDownInCloudstack = wait_until(40, 10, self.checkHostStateInCloudstack, 'Down', ha_host.id)
+    no_of_vms = self.noOfVMsOnHost(ha_host.id)
+    no_of_vms = (no_of_vms + self.noOfVMsOnHost(other_host.id))
+    self.logger.debug(('Number of VMS on hosts = %s' % no_of_vms))
+    hostUp = wait_until(10, 10, self.checkHostUp, other_host.ipaddress, ha_host.ipaddress)
+    if (not hostUp):
+        self.logger.debug(('Host is down %s, though HA went fine, the environment is not consistent ' % ha_host.ipaddress))
+    hostUpInCloudstack = wait_until(40, 10, self.checkHostStateInCloudstack, 'Up', ha_host.id)
+    if (not hostDownInCloudstack):
+        raise self.fail(('Host is not down %s, in cloudstack so failing test ' % ha_host.ipaddress))
+    if (not hostUpInCloudstack):
+        raise self.fail(('Host is not up %s, in cloudstack so failing test ' % ha_host.ipaddress))
+    return
