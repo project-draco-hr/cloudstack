@@ -1,0 +1,39 @@
+@classmethod
+def setUpClass(cls):
+    cls.testClient = super(TestHosts, cls).getClsTestClient()
+    cls.testdata = cls.testClient.getParsedTestDataConfig()
+    cls.apiclient = cls.testClient.getApiClient()
+    cls.dbclient = cls.testClient.getDbConnection()
+    cls._cleanup = []
+    cls.zone = Zone(get_zone(cls.apiclient, cls.testClient.getZoneForTests()).__dict__)
+    cls.domain = get_domain(cls.apiclient)
+    cls.pod = get_pod(cls.apiclient, cls.zone.id)
+    cls.logger = logging.getLogger('TestHosts')
+    cls.stream_handler = logging.StreamHandler()
+    cls.logger.setLevel(logging.DEBUG)
+    cls.logger.addHandler(cls.stream_handler)
+    cls.storage_pool_db_id = None
+    hosts = list_hosts(cls.apiclient, type='Routing')
+    i = 0
+    while (i < len(hosts)):
+        host_id = hosts[i].id
+        cls.logger.debug(('Trying host id : %s' % host_id))
+        host_db_id = cls.dbclient.execute(("select id from host where uuid='%s';" % host_id))
+        if (host_db_id and host_db_id[0]):
+            cls.logger.debug(('found host db id : %s' % host_db_id))
+            storage_pool_db_id = cls.dbclient.execute(("select id from storage_pool where id='%s' and removed is null;" % host_db_id[0][0]))
+            if (storage_pool_db_id and storage_pool_db_id[0]):
+                cls.logger.debug(('Found storage_pool_db_id  : %s' % storage_pool_db_id[0][0]))
+                capacity_state = cls.dbclient.execute(("select count(capacity_state) from op_host_capacity where host_id='%s' and capacity_type in (0,1,3) and capacity_state = 'Enabled'" % host_db_id[0][0]))
+                if (capacity_state and capacity_state[0]):
+                    cls.logger.debug(('Check capacity count  : %s' % capacity_state[0][0]))
+                    if (capacity_state[0][0] == 3):
+                        cls.logger.debug(('found host id : %s, can be used for this test' % host_id))
+                        cls.my_host_id = host_id
+                        cls.host_db_id = host_db_id
+                        cls.storage_pool_db_id = storage_pool_db_id
+                        break
+        if (not cls.storage_pool_db_id):
+            i = (i + 1)
+    if (cls.storage_pool_db_id is None):
+        raise unittest.SkipTest('There is no host and storage pool available in the setup to run this test')
