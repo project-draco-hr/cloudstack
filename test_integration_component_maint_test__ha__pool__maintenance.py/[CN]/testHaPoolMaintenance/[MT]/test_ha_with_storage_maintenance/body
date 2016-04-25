@@ -1,0 +1,21 @@
+@attr(tags=['advanced', 'cl', 'advancedns', 'sg', 'basic', 'eip', 'simulator', 'multihost'])
+def test_ha_with_storage_maintenance(self):
+    'put storage in maintenance mode and start ha vm and check usage'
+    host = list_hosts(self.api_client, clusterid=self.clusterWithSufficientPool.id)
+    self.assertEqual(validateList(host)[0], PASS, ('check list host response for cluster id %s' % self.clusterWithSufficientPool.id))
+    self.virtual_machine_with_ha = VirtualMachine.create(self.api_client, self.services['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, serviceofferingid=self.services_off.id, hostid=host[0].id)
+    vms = VirtualMachine.list(self.api_client, id=self.virtual_machine_with_ha.id, listall=True)
+    self.assertEqual(validateList(vms)[0], PASS, 'List VMs should return valid response for deployed VM')
+    vm = vms[0]
+    self.debug(('Deployed VM on host: %s' % vm.hostid))
+    self.list_root_volume = Volume.list(self.api_client, virtualmachineid=vm.id, type='ROOT', account=self.account.name, domainid=self.account.domainid)
+    self.assertEqual(validateList(self.list_root_volume)[0], PASS, ('check list voume_response for vm id %s' % vm.id))
+    self.pool_id = self.dbclient.execute(("select pool_id from volumes where uuid = '%s';" % self.list_root_volume[0].id))
+    self.storageid = self.dbclient.execute(("select uuid from storage_pool where id = '%s';" % self.pool_id[0][0]))
+    StoragePool.enableMaintenance(self.api_client, id=self.storageid[0][0])
+    self.virtual_machine_with_ha.start(self.api_client)
+    self.events = self.dbclient.execute(("select type from usage_event where resource_name='%s';" % self.list_root_volume[0].name))
+    self.assertEqual(len(self.events), 3, ('check the usage event table for root disk %s' % self.list_root_volume[0].name))
+    self.assertEqual(str(self.events[0][0]), 'VOLUME.CREATE', ('check volume create events for volume %s' % self.list_root_volume[0].name))
+    self.assertEqual(str(self.events[1][0]), 'VOLUME.DELETE', ('check fvolume delete events for volume%s' % self.list_root_volume[0].name))
+    self.assertEqual(str(self.events[2][0]), 'VOLUME.CREATE', ('check volume create events for volume %s' % self.list_root_volume[0].name))
