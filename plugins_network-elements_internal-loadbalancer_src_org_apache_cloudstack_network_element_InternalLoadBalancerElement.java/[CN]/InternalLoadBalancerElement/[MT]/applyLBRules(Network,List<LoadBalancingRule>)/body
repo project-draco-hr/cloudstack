@@ -1,41 +1,41 @@
 {
-  Set<Ip> vmsToDestroy=getVmsToDestroy(rules);
+  Set<Ip> vmsToDestroy=getVmsToDestroy(network,rules);
   Map<Ip,List<LoadBalancingRule>> rulesToApply=getLbRulesToApply(rules);
   s_logger.debug("Applying " + rulesToApply.size() + " on element "+ getName());
-  for (  Ip sourceIp : rulesToApply.keySet()) {
-    if (vmsToDestroy.contains(sourceIp)) {
-      List<? extends VirtualRouter> vms=_internalLbMgr.findInternalLbVms(network.getId(),sourceIp);
-      if (vms.size() > 0) {
-        try {
-          s_logger.debug("Destroying internal lb vm for ip " + sourceIp.addr() + " as all the rules for this vm are in Revoke state");
-          return _internalLbMgr.destroyInternalLbVm(vms.get(0).getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM),_accountMgr.getUserIncludingRemoved(User.UID_SYSTEM).getId());
-        }
- catch (        ConcurrentOperationException e) {
-          s_logger.warn("Failed to apply lb rule(s) for ip " + sourceIp.addr() + " on the element "+ getName()+ " due to:",e);
-          return false;
-        }
+  for (  Ip sourceIp : vmsToDestroy) {
+    List<? extends VirtualRouter> vms=_internalLbMgr.findInternalLbVms(network.getId(),sourceIp);
+    if (vms.size() > 0) {
+      try {
+        s_logger.debug(String.format("Destroying internal lb vm for ip %s as all the rules for this vm are in Revoke state",sourceIp.addr()));
+        return _internalLbMgr.destroyInternalLbVm(vms.get(0).getId(),_accountMgr.getAccount(Account.ACCOUNT_ID_SYSTEM),_accountMgr.getUserIncludingRemoved(User.UID_SYSTEM).getId());
+      }
+ catch (      ConcurrentOperationException e) {
+        s_logger.warn(String.format("Failed to apply lb rule(s) for ip %s on the element %s due to: ",sourceIp.addr(),getName()),e);
+        return false;
       }
     }
- else {
-      List<? extends VirtualRouter> internalLbVms;
-      try {
-        DeployDestination dest=new DeployDestination(_entityMgr.findById(DataCenter.class,network.getDataCenterId()),null,null,null);
-        internalLbVms=_internalLbMgr.deployInternalLbVm(network,sourceIp,dest,_accountMgr.getAccount(network.getAccountId()),null);
-      }
- catch (      InsufficientCapacityException e) {
-        s_logger.warn("Failed to apply lb rule(s) for ip " + sourceIp.addr() + "on the element "+ getName()+ " due to:",e);
-        return false;
-      }
-catch (      ConcurrentOperationException e) {
-        s_logger.warn("Failed to apply lb rule(s) for ip " + sourceIp.addr() + "on the element "+ getName()+ " due to:",e);
-        return false;
-      }
-      if (internalLbVms == null || internalLbVms.isEmpty()) {
-        throw new ResourceUnavailableException("Can't find/deploy internal lb vm to handle LB rules",DataCenter.class,network.getDataCenterId());
-      }
-      if (!_internalLbMgr.applyLoadBalancingRules(network,rulesToApply.get(sourceIp),internalLbVms)) {
-        throw new CloudRuntimeException("Failed to apply load balancing rules for ip " + sourceIp.addr() + " in network "+ network.getId()+ " on element "+ getName());
-      }
+    rulesToApply.remove(sourceIp);
+  }
+  for (  Map.Entry<Ip,List<LoadBalancingRule>> entry : rulesToApply.entrySet()) {
+    Ip sourceIp=entry.getKey();
+    List<? extends VirtualRouter> internalLbVms;
+    try {
+      DeployDestination dest=new DeployDestination(_entityMgr.findById(DataCenter.class,network.getDataCenterId()),null,null,null);
+      internalLbVms=_internalLbMgr.deployInternalLbVm(network,sourceIp,dest,_accountMgr.getAccount(network.getAccountId()),null);
+    }
+ catch (    InsufficientCapacityException e) {
+      s_logger.warn(String.format("Failed to apply lb rule(s) for ip %s on the element %s due to: ",sourceIp.addr(),getName()),e);
+      return false;
+    }
+catch (    ConcurrentOperationException e) {
+      s_logger.warn(String.format("Failed to apply lb rule(s) for ip %s on the element %s due to: ",sourceIp.addr(),getName()),e);
+      return false;
+    }
+    if (internalLbVms == null || internalLbVms.isEmpty()) {
+      throw new ResourceUnavailableException("Can't find/deploy internal lb vm to handle LB rules",DataCenter.class,network.getDataCenterId());
+    }
+    if (!_internalLbMgr.applyLoadBalancingRules(network,entry.getValue(),internalLbVms)) {
+      throw new CloudRuntimeException("Failed to apply load balancing rules for ip " + sourceIp.addr() + " in network "+ network.getId()+ " on element "+ getName());
     }
   }
   return true;
