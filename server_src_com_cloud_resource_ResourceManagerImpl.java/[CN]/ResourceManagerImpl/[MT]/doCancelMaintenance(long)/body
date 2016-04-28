@@ -9,17 +9,18 @@
     throw new CloudRuntimeException("Cannot perform cancelMaintenance when resource state is " + host.getResourceState() + ", hostId = "+ hostId);
   }
   _haMgr.cancelScheduledMigrations(host);
+  boolean vms_migrating=false;
   final List<VMInstanceVO> vms=_haMgr.findTakenMigrationWork();
   for (  final VMInstanceVO vm : vms) {
-    if (vm != null && vm.getHostId() != null && vm.getHostId() == hostId) {
-      s_logger.info("Unable to cancel migration because the vm is being migrated: " + vm);
-      return false;
+    if (vm.getHostId() != null && vm.getHostId() == hostId) {
+      s_logger.warn("Unable to cancel migration because the vm is being migrated: " + vm + ", hostId = "+ hostId);
+      vms_migrating=true;
     }
   }
   try {
     resourceStateTransitTo(host,ResourceState.Event.AdminCancelMaintenance,_nodeId);
     _agentMgr.pullAgentOutMaintenance(hostId);
-    if (host.getHypervisorType() == HypervisorType.KVM || host.getHypervisorType() == HypervisorType.LXC) {
+    if ((host.getHypervisorType() == HypervisorType.KVM && !vms_migrating) || host.getHypervisorType() == HypervisorType.LXC) {
       final boolean sshToAgent=Boolean.parseBoolean(_configDao.getValue(Config.KvmSshToAgentEnabled.key()));
       if (!sshToAgent) {
         s_logger.info("Configuration tells us not to SSH into Agents. Please restart the Agent (" + hostId + ")  manually");
