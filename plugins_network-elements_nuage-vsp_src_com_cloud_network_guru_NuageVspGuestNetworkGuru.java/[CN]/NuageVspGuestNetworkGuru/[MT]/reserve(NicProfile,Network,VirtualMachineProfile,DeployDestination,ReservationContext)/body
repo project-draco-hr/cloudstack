@@ -7,40 +7,29 @@
     if (s_logger.isDebugEnabled()) {
       s_logger.debug("Handling reserve() call back to with Create a new VM or add an interface to existing VM in network " + network.getName());
     }
-    nic.setBroadcastUri(network.getBroadcastUri());
-    nic.setIsolationUri(network.getBroadcastUri());
     DataCenter dc=_dcDao.findById(network.getDataCenterId());
-    Account networksAccount=_accountDao.findById(network.getAccountId());
-    DomainVO networksDomain=_domainDao.findById(network.getDomainId());
-    long networkOwnedBy=network.getAccountId();
-    AccountVO neworkAccountDetails=_accountDao.findById(networkOwnedBy);
+    AccountVO neworkAccountDetails=_accountDao.findById(network.getAccountId());
     if (neworkAccountDetails.getType() == Account.ACCOUNT_TYPE_PROJECT) {
       throw new InsufficientVirtualNetworkCapacityException("CS project support is not yet implemented in NuageVsp",DataCenter.class,dc.getId());
     }
-    NicVO nicFrmDB=_nicDao.findById(nic.getId());
-    NetworkOffering networkOffering=_ntwkOfferingDao.findById(network.getNetworkOfferingId());
-    boolean isDomainRouter=vm.getType().equals(VirtualMachine.Type.DomainRouter);
-    URI broadcastUri=network.getBroadcastUri();
-    if (Strings.isNullOrEmpty(broadcastUri.getPath()) || !broadcastUri.getPath().startsWith("/")) {
+    if (Strings.isNullOrEmpty(network.getBroadcastUri().getPath()) || !network.getBroadcastUri().getPath().startsWith("/")) {
       throw new IllegalStateException("The broadcast URI path " + network.getBroadcastUri() + " is empty or in an incorrect format.");
     }
-    String domainRouterIp=network.getBroadcastUri().getPath().substring(1);
-    boolean isL3Network=isL3Network(network);
-    boolean isSharedNetwork=networkOffering.getGuestType() == GuestType.Shared;
-    Long vpcId=network.getVpcId();
-    String vpcUuid=null;
-    if (vpcId != null) {
-      Vpc vpcObj=_vpcDao.findById(vpcId);
-      vpcUuid=vpcObj.getUuid();
-    }
-    HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
+    nic.setBroadcastUri(network.getBroadcastUri());
+    nic.setIsolationUri(network.getBroadcastUri());
+    NicVO nicFromDb=_nicDao.findById(nic.getId());
     IPAddressVO staticNatIp=_ipAddressDao.findByVmIdAndNetworkId(network.getId(),vm.getId());
-    ReserveVmInterfaceVspCommand.Builder cmdBuilder=new ReserveVmInterfaceVspCommand.Builder().nicUuid(nicFrmDB.getUuid()).nicMacAddress(nic.getMacAddress()).networkUuid(network.getUuid()).isL3Network(isL3Network).isSharedNetwork(isSharedNetwork).vpcUuid(vpcUuid).networkDomainUuid(networksDomain.getUuid()).networksAccountUuid(networksAccount.getUuid()).isDomainRouter(isDomainRouter).domainRouterIp(domainRouterIp).vmInstanceName(vm.getInstanceName()).vmUuid(vm.getUuid()).vmUserName(networksDomain.getUuid()).vmUserDomainName(networksAccount.getUuid()).useStaticIp(true).staticIp(nic.getIPv4Address());
+    VspNetwork vspNetwork=_nuageVspEntityBuilder.buildVspNetwork(network,false);
+    VspVm vspVm=_nuageVspEntityBuilder.buildVspVm(vm.getVirtualMachine(),network);
+    VspNic vspNic=_nuageVspEntityBuilder.buildVspNic(nicFromDb.getUuid(),nic);
+    VspStaticNat vspStaticNat=null;
     if (staticNatIp != null) {
       VlanVO staticNatVlan=_vlanDao.findById(staticNatIp.getVlanId());
-      cmdBuilder=cmdBuilder.staticNatIpUuid(staticNatIp.getUuid()).staticNatIpAddress(staticNatIp.getAddress().addr()).isStaticNatIpAllocated(staticNatIp.getState().equals(IpAddress.State.Allocated)).isOneToOneNat(staticNatIp.isOneToOneNat()).staticNatVlanUuid(staticNatVlan.getUuid()).staticNatVlanGateway(staticNatVlan.getVlanGateway()).staticNatVlanNetmask(staticNatVlan.getVlanNetmask());
+      vspStaticNat=_nuageVspEntityBuilder.buildVspStaticNat(null,staticNatIp,staticNatVlan,null);
     }
-    Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
+    HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
+    ReserveVmInterfaceVspCommand cmd=new ReserveVmInterfaceVspCommand(vspNetwork,vspVm,vspNic,vspStaticNat);
+    Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmd);
     if (answer == null || !answer.getResult()) {
       s_logger.error("ReserveVmInterfaceNuageVspCommand failed for NIC " + nic.getId() + " attached to VM "+ vm.getId()+ " in network "+ network.getId());
       if ((null != answer) && (null != answer.getDetails())) {
@@ -48,8 +37,8 @@
       }
       throw new InsufficientVirtualNetworkCapacityException("Failed to reserve VM in Nuage VSP.",Network.class,network.getId());
     }
-    if (isDomainRouter) {
-      nic.setIPv4Address(domainRouterIp);
+    if (vspVm.getDomainRouter() == Boolean.TRUE) {
+      nic.setIPv4Address(vspVm.getDomainRouterIp());
     }
   }
   finally {
