@@ -1,0 +1,44 @@
+{
+  if (role == null || newOrder == null || newOrder.isEmpty()) {
+    return false;
+  }
+  return Transaction.execute(new TransactionCallback<Boolean>(){
+    @Override public Boolean doInTransaction(    TransactionStatus status){
+      final String failMessage="The role's rule permissions list has changed while you were making updates, aborted re-ordering of rules. Please try again.";
+      final List<RolePermissionVO> currentOrder=findAllByRoleIdSorted(role.getId());
+      if (role.getId() < 1L || newOrder.size() != currentOrder.size()) {
+        throw new CloudRuntimeException(failMessage);
+      }
+      final Set<Long> newOrderSet=new HashSet<>();
+      for (      final RolePermission permission : newOrder) {
+        if (permission == null) {
+          continue;
+        }
+        newOrderSet.add(permission.getId());
+      }
+      final Set<Long> currentOrderSet=new HashSet<>();
+      for (      final RolePermission permission : currentOrder) {
+        currentOrderSet.add(permission.getId());
+      }
+      if (!newOrderSet.equals(currentOrderSet)) {
+        throw new CloudRuntimeException(failMessage);
+      }
+      long sortOrder=0L;
+      for (      RolePermission rolePermission : newOrder) {
+        final SearchCriteria<RolePermissionVO> sc=RolePermissionsSearch.create();
+        sc.setParameters("uuid",rolePermission.getUuid());
+        sc.setParameters("roleId",role.getId());
+        sc.setParameters("sortOrder",rolePermission.getSortOrder());
+        final UpdateBuilder ub=getUpdateBuilder(rolePermission);
+        ub.set(rolePermission,sortOrderAttribute,sortOrder);
+        final int result=update(ub,sc,null);
+        if (result < 1) {
+          throw new CloudRuntimeException(failMessage);
+        }
+        sortOrder++;
+      }
+      return true;
+    }
+  }
+);
+}

@@ -1,0 +1,26 @@
+{
+  try (final PreparedStatement selectStatement=conn.prepareStatement("SELECT `id`, `type` FROM `cloud`.`account`;");final ResultSet selectResultSet=selectStatement.executeQuery()){
+    while (selectResultSet.next()) {
+      final Long accountId=selectResultSet.getLong(1);
+      final Short accountType=selectResultSet.getShort(2);
+      final Long roleId=RoleType.getByAccountType(accountType).getId();
+      if (roleId < 1L || roleId > 4L) {
+        s_logger.warn("Skipping role ID migration due to invalid role_id resolved for account id=" + accountId);
+        continue;
+      }
+      try (final PreparedStatement updateStatement=conn.prepareStatement("UPDATE `cloud`.`account` SET account.role_id = ? WHERE account.id = ? ;")){
+        updateStatement.setLong(1,roleId);
+        updateStatement.setLong(2,accountId);
+        updateStatement.executeUpdate();
+      }
+ catch (      SQLException e) {
+        s_logger.error("Failed to update cloud.account role_id for account id:" + accountId + " with exception: "+ e.getMessage());
+        throw new CloudRuntimeException("Exception while updating cloud.account role_id",e);
+      }
+    }
+  }
+ catch (  SQLException e) {
+    throw new CloudRuntimeException("Exception while migrating existing account table's role_id column to a role based on account type",e);
+  }
+  s_logger.debug("Done migrating existing accounts to use one of default roles based on account type");
+}

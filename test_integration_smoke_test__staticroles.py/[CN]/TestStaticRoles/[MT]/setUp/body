@@ -1,0 +1,39 @@
+def setUp(self):
+    self.apiclient = self.testClient.getApiClient()
+    self.dbclient = self.testClient.getDbConnection()
+    self.mgtSvrDetails = self.config.__dict__['mgtSvr'][0].__dict__
+    self.cleanup = []
+    self.testdata = {'account': {'email': 'mtu@test.cloud', 'firstname': 'Marvin', 'lastname': 'TestUser', 'username': 'staticrole_acctest-', 'password': 'password', }, }
+    feature_enabled = self.apiclient.listCapabilities(listCapabilities.listCapabilitiesCmd()).dynamicrolesenabled
+    if feature_enabled:
+        self.skipTest('Dynamic role-based API checker is enabled, skipping tests for static role-base API checker')
+    commandsProperties = []
+    try:
+        sshClient = SshClient(self.mgtSvrDetails['mgtSvrIp'], 22, self.mgtSvrDetails['user'], self.mgtSvrDetails['passwd'], retries=1, log_lvl=logging.INFO)
+        result = sshClient.runCommand('cat /etc/cloudstack/management/commands.properties')
+        if (('status' in result) and (result['status'] == 'SUCCESS') and ('stdout' in result) and (len(result['stdout']) > 0)):
+            commandsProperties = result['stdout']
+    except Exception:
+        self.debug('Failed to ssh into mgmt server host and grab commands.properties file')
+        testDir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+        localFileName = os.path.abspath((testDir + '/../../../client/tomcatconf/commands.properties.in'))
+        if os.path.isfile(localFileName):
+            self.info(("Detected that we're running in developer mode with maven, using file at:" + localFileName))
+            with open(localFileName) as f:
+                commandsProperties = f.readlines()
+    if (len(commandsProperties) < 1):
+        self.skipTest('Unable to find commands.properties, skipping this test')
+    apiMap = {}
+    for line in commandsProperties:
+        if ((not line) or (line == '') or (line == '\n') or line.startswith('#')):
+            continue
+        (name, value) = line.split('=')
+        apiMap[name.strip()] = value.strip()
+    self.roleApiMap = {}
+    octetKey = {'Admin': 1, 'DomainAdmin': 4, 'User': 8, }
+    for role in octetKey.keys():
+        for api in sorted(apiMap.keys()):
+            if ((octetKey[role] & int(apiMap[api])) > 0):
+                if (role not in self.roleApiMap):
+                    self.roleApiMap[role] = []
+                self.roleApiMap[role].append(api)
