@@ -64,7 +64,7 @@
     }
   }
  catch (  Exception ex) {
-    s_logger.info("[ignored]" + "error getting minimals iops: " + ex.getLocalizedMessage());
+    s_logger.info("[ignored] error getting Min IOPS: " + ex.getLocalizedMessage());
   }
   try {
     String maxIops=SolidFireUtil.getValue(SolidFireUtil.MAX_IOPS,url);
@@ -73,7 +73,7 @@
     }
   }
  catch (  Exception ex) {
-    s_logger.info("[ignored]" + "error getting maximal iops: " + ex.getLocalizedMessage());
+    s_logger.info("[ignored] error getting Max IOPS: " + ex.getLocalizedMessage());
   }
   try {
     String burstIops=SolidFireUtil.getValue(SolidFireUtil.BURST_IOPS,url);
@@ -82,7 +82,7 @@
     }
   }
  catch (  Exception ex) {
-    s_logger.info("[ignored]" + "error getting iops bursts: " + ex.getLocalizedMessage());
+    s_logger.info("[ignored] error getting Burst IOPS: " + ex.getLocalizedMessage());
   }
   if (lMinIops > lMaxIops) {
     throw new CloudRuntimeException("The parameter '" + SolidFireUtil.MIN_IOPS + "' must be less than or equal to the parameter '"+ SolidFireUtil.MAX_IOPS+ "'.");
@@ -121,10 +121,17 @@
     parameters.setPort(storagePort);
     parameters.setPath(iqn);
   }
-  DataStore dataStore=_primaryDataStoreHelper.createPrimaryDataStore(parameters);
+  ClusterVO cluster=_clusterDao.findById(clusterId);
+  GlobalLock lock=GlobalLock.getInternLock(cluster.getUuid());
+  if (!lock.lock(SolidFireUtil.s_lockTimeInSeconds)) {
+    String errMsg="Couldn't lock the DB on the following string: " + cluster.getUuid();
+    s_logger.debug(errMsg);
+    throw new CloudRuntimeException(errMsg);
+  }
+  DataStore dataStore=null;
   try {
+    dataStore=_primaryDataStoreHelper.createPrimaryDataStore(parameters);
     List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
-    ClusterVO cluster=_clusterDao.findById(clusterId);
     SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolume.getId(),dataStore.getId(),cluster.getUuid(),hosts,_clusterDetailsDao);
     SolidFireUtil.SolidFireAccount sfAccount=sfCreateVolume.getAccount();
     Account csAccount=CallContext.current().getCallingAccount();
@@ -133,6 +140,10 @@
  catch (  Exception ex) {
     _primaryDataStoreDao.expunge(dataStore.getId());
     throw new CloudRuntimeException(ex.getMessage());
+  }
+ finally {
+    lock.unlock();
+    lock.releaseRef();
   }
   return dataStore;
 }
