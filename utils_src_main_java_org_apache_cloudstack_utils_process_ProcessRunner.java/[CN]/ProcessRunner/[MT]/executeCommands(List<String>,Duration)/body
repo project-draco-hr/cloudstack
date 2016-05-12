@@ -1,0 +1,48 @@
+{
+  Preconditions.checkArgument(commands != null && timeOut != null && timeOut.getStandardSeconds() > 0L && (timeOut.compareTo(DEFAULT_MAX_TIMEOUT) <= 0) && executor != null);
+  int retVal=-2;
+  String stdOutput=null;
+  String stdError=null;
+  try {
+    final Process process=new ProcessBuilder().command(commands).start();
+    final Future<Integer> processFuture=executor.submit(new Callable<Integer>(){
+      @Override public Integer call() throws Exception {
+        return process.waitFor();
+      }
+    }
+);
+    try {
+      retVal=processFuture.get(timeOut.getStandardSeconds(),TimeUnit.SECONDS);
+    }
+ catch (    ExecutionException e) {
+      retVal=-2;
+      stdError=e.getMessage();
+      if (LOG.isTraceEnabled()) {
+        LOG.trace("Failed to complete the requested command due to execution error: " + e.getMessage());
+      }
+    }
+catch (    TimeoutException e) {
+      retVal=-1;
+      stdError="Operation timed out, aborted";
+      if (LOG.isTraceEnabled()) {
+        LOG.trace("Failed to complete the requested command within timeout: " + e.getMessage());
+      }
+    }
+ finally {
+      if (Strings.isNullOrEmpty(stdError)) {
+        stdOutput=CharStreams.toString(new InputStreamReader(process.getInputStream()));
+        stdError=CharStreams.toString(new InputStreamReader(process.getErrorStream()));
+      }
+      process.destroy();
+    }
+    if (LOG.isTraceEnabled()) {
+      LOG.trace("Process standard output: " + stdOutput);
+      LOG.trace("Process standard error output: " + stdError);
+    }
+  }
+ catch (  IOException|InterruptedException e) {
+    stdError=e.getMessage();
+    LOG.error("Exception caught error running commands: " + e.getMessage());
+  }
+  return new ProcessResult(stdOutput,stdError,retVal);
+}
