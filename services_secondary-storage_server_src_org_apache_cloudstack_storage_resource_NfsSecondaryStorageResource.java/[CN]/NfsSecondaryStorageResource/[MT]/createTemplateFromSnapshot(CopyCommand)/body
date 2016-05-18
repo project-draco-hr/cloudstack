@@ -17,29 +17,12 @@
         return answer;
       }
       s_logger.debug("starting copy template to swift");
-      DataTO newTemplate=answer.getNewData();
-      File templateFile=getFile(newTemplate.getPath(),((NfsTO)srcDataStore).getUrl());
-      SwiftTO swift=(SwiftTO)destDataStore;
-      String containterName=SwiftUtil.getContainerName(destData.getObjectType().toString(),destData.getId());
-      String swiftPath=SwiftUtil.putObject(swift,templateFile,containterName,templateFile.getName());
-      File properties=new File(templateFile.getParent() + File.separator + _tmpltpp);
-      if (properties.exists()) {
-        SwiftUtil.putObject(swift,properties,containterName,_tmpltpp);
-      }
-      try {
-        DeleteCommand deleteCommand=new DeleteCommand(newTemplate);
-        execute(deleteCommand);
-      }
- catch (      Exception e) {
-        s_logger.debug("Failed to clean up staging area:",e);
-      }
-      TemplateObjectTO template=new TemplateObjectTO();
-      template.setPath(swiftPath);
-      template.setSize(templateFile.length());
-      template.setPhysicalSize(template.getSize());
-      SnapshotObjectTO snapshot=(SnapshotObjectTO)srcData;
-      template.setFormat(snapshot.getVolume().getFormat());
-      return new CopyCmdAnswer(template);
+      TemplateObjectTO newTemplate=(TemplateObjectTO)answer.getNewData();
+      newTemplate.setDataStore(srcDataStore);
+      CopyCommand newCpyCmd=new CopyCommand(newTemplate,destData,cmd.getWait(),cmd.executeInSequence());
+      Answer result=copyFromNfsToSwift(newCpyCmd);
+      cleanupStagingNfs(newTemplate);
+      return result;
     }
  else     if (destDataStore instanceof S3TO) {
       CopyCmdAnswer answer=(CopyCmdAnswer)copySnapshotToTemplateFromNfsToNfs(cmd,(SnapshotObjectTO)srcData,(NfsTO)srcDataStore,(TemplateObjectTO)destData,(NfsTO)srcDataStore);
@@ -50,16 +33,10 @@
       newTemplate.setDataStore(srcDataStore);
       CopyCommand newCpyCmd=new CopyCommand(newTemplate,destData,cmd.getWait(),cmd.executeInSequence());
       Answer result=copyFromNfsToS3(newCpyCmd);
-      try {
-        DeleteCommand deleteCommand=new DeleteCommand(newTemplate);
-        execute(deleteCommand);
-      }
- catch (      Exception e) {
-        s_logger.debug("Failed to clean up staging area:",e);
-      }
+      cleanupStagingNfs(newTemplate);
       return result;
     }
   }
-  s_logger.debug("Failed to create templat from snapshot");
-  return new CopyCmdAnswer("Unsupported prototcol");
+  s_logger.debug("Failed to create template from snapshot");
+  return new CopyCmdAnswer("Unsupported protocol");
 }
