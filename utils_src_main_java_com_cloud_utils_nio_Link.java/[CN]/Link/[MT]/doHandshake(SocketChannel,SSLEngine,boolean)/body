@@ -1,104 +1,49 @@
 {
-  if (s_logger.isTraceEnabled()) {
-    s_logger.trace("SSL: begin Handshake, isClient: " + isClient);
+  if (socketChannel == null || sslEngine == null) {
+    return false;
   }
-  SSLEngineResult engResult;
-  SSLSession sslSession=sslEngine.getSession();
-  HandshakeStatus hsStatus;
-  ByteBuffer in_pkgBuf=ByteBuffer.allocate(sslSession.getPacketBufferSize() + 40);
-  ByteBuffer in_appBuf=ByteBuffer.allocate(sslSession.getApplicationBufferSize() + 40);
-  ByteBuffer out_pkgBuf=ByteBuffer.allocate(sslSession.getPacketBufferSize() + 40);
-  ByteBuffer out_appBuf=ByteBuffer.allocate(sslSession.getApplicationBufferSize() + 40);
-  int count;
-  ch.socket().setSoTimeout(60 * 1000);
-  InputStream inStream=ch.socket().getInputStream();
-  ReadableByteChannel readCh=Channels.newChannel(inStream);
-  if (isClient) {
-    hsStatus=SSLEngineResult.HandshakeStatus.NEED_WRAP;
+  final int appBufferSize=sslEngine.getSession().getApplicationBufferSize();
+  final int netBufferSize=sslEngine.getSession().getPacketBufferSize();
+  ByteBuffer myAppData=ByteBuffer.allocate(appBufferSize);
+  ByteBuffer peerAppData=ByteBuffer.allocate(appBufferSize);
+  ByteBuffer myNetData=ByteBuffer.allocate(netBufferSize);
+  ByteBuffer peerNetData=ByteBuffer.allocate(netBufferSize);
+  final long startTimeMills=System.currentTimeMillis();
+  HandshakeStatus handshakeStatus=sslEngine.getHandshakeStatus();
+  while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED && handshakeStatus != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
+    final long timeTaken=System.currentTimeMillis() - startTimeMills;
+    if (timeTaken > 15000L) {
+      s_logger.warn("SSL Handshake has taken more than 15s to connect to: " + socketChannel.getRemoteAddress() + ". Please investigate this connection.");
+      return false;
+    }
+switch (handshakeStatus) {
+case NEED_UNWRAP:
+      if (!doHandshakeUnwrap(socketChannel,sslEngine,peerAppData,peerNetData,appBufferSize)) {
+        return false;
+      }
+    break;
+case NEED_WRAP:
+  if (!doHandshakeWrap(socketChannel,sslEngine,myAppData,myNetData,peerNetData,netBufferSize)) {
+    return false;
   }
- else {
-    hsStatus=SSLEngineResult.HandshakeStatus.NEED_UNWRAP;
-  }
-  while (hsStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
-    if (s_logger.isTraceEnabled()) {
-      s_logger.trace("SSL: Handshake status " + hsStatus);
-    }
-    engResult=null;
-    if (hsStatus == SSLEngineResult.HandshakeStatus.NEED_WRAP) {
-      out_pkgBuf.clear();
-      out_appBuf.clear();
-      out_appBuf.put("Hello".getBytes());
-      engResult=sslEngine.wrap(out_appBuf,out_pkgBuf);
-      out_pkgBuf.flip();
-      int remain=out_pkgBuf.limit();
-      while (remain != 0) {
-        remain-=ch.write(out_pkgBuf);
-        if (remain < 0) {
-          throw new IOException("Too much bytes sent?");
-        }
-      }
-    }
- else     if (hsStatus == SSLEngineResult.HandshakeStatus.NEED_UNWRAP) {
-      in_appBuf.clear();
-      if (in_pkgBuf.position() == 0 || !in_pkgBuf.hasRemaining()) {
-        in_pkgBuf.clear();
-        count=0;
-        try {
-          count=readCh.read(in_pkgBuf);
-        }
- catch (        SocketTimeoutException ex) {
-          if (s_logger.isTraceEnabled()) {
-            s_logger.trace("Handshake reading time out! Cut the connection");
-          }
-          count=-1;
-        }
-        if (count == -1) {
-          throw new IOException("Connection closed with -1 on reading size.");
-        }
-        in_pkgBuf.flip();
-      }
-      engResult=sslEngine.unwrap(in_pkgBuf,in_appBuf);
-      ByteBuffer tmp_pkgBuf=ByteBuffer.allocate(sslSession.getPacketBufferSize() + 40);
-      int loop_count=0;
-      while (engResult.getStatus() == SSLEngineResult.Status.BUFFER_UNDERFLOW) {
-        if (loop_count > 10) {
-          throw new IOException("Too many times in SSL BUFFER_UNDERFLOW, disconnect guest.");
-        }
-        if (s_logger.isTraceEnabled()) {
-          s_logger.trace("SSL: Buffer underflowed, getting more packets");
-        }
-        tmp_pkgBuf.clear();
-        count=ch.read(tmp_pkgBuf);
-        if (count == -1) {
-          throw new IOException("Connection closed with -1 on reading size.");
-        }
-        tmp_pkgBuf.flip();
-        in_pkgBuf.mark();
-        in_pkgBuf.position(in_pkgBuf.limit());
-        in_pkgBuf.limit(in_pkgBuf.limit() + tmp_pkgBuf.limit());
-        in_pkgBuf.put(tmp_pkgBuf);
-        in_pkgBuf.reset();
-        in_appBuf.clear();
-        engResult=sslEngine.unwrap(in_pkgBuf,in_appBuf);
-        loop_count++;
-      }
-    }
- else     if (hsStatus == SSLEngineResult.HandshakeStatus.NEED_TASK) {
-      Runnable run;
-      while ((run=sslEngine.getDelegatedTask()) != null) {
-        if (s_logger.isTraceEnabled()) {
-          s_logger.trace("SSL: Running delegated task!");
-        }
-        run.run();
-      }
-    }
- else     if (hsStatus == SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
-      throw new IOException("NOT a handshaking!");
-    }
-    if (engResult != null && engResult.getStatus() != SSLEngineResult.Status.OK) {
-      throw new IOException("Fail to handshake! " + engResult.getStatus());
-    }
-    if (engResult != null)     hsStatus=engResult.getHandshakeStatus();
- else     hsStatus=sslEngine.getHandshakeStatus();
-  }
+break;
+case NEED_TASK:
+Runnable task;
+while ((task=sslEngine.getDelegatedTask()) != null) {
+if (s_logger.isTraceEnabled()) {
+s_logger.trace("SSL: Running delegated task!");
+}
+task.run();
+}
+break;
+case FINISHED:
+break;
+case NOT_HANDSHAKING:
+break;
+default :
+throw new IllegalStateException("Invalid SSL status: " + handshakeStatus);
+}
+handshakeStatus=sslEngine.getHandshakeStatus();
+}
+return true;
 }

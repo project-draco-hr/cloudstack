@@ -1,0 +1,50 @@
+{
+  if (socketChannel == null || sslEngine == null || peerAppData == null || peerNetData == null || appBufferSize < 0) {
+    return false;
+  }
+  if (socketChannel.read(peerNetData) < 0) {
+    if (sslEngine.isInboundDone() && sslEngine.isOutboundDone()) {
+      return false;
+    }
+    try {
+      sslEngine.closeInbound();
+    }
+ catch (    SSLException e) {
+      s_logger.warn("This SSL engine was forced to close inbound due to end of stream.");
+    }
+    sslEngine.closeOutbound();
+    return true;
+  }
+  peerNetData.flip();
+  SSLEngineResult result=null;
+  try {
+    result=sslEngine.unwrap(peerNetData,peerAppData);
+    peerNetData.compact();
+  }
+ catch (  SSLException sslException) {
+    s_logger.error("SSL error occurred while processing unwrap data: " + sslException.getMessage());
+    sslEngine.closeOutbound();
+    return true;
+  }
+switch (result.getStatus()) {
+case OK:
+    break;
+case BUFFER_OVERFLOW:
+  peerAppData=enlargeBuffer(peerAppData,appBufferSize);
+break;
+case BUFFER_UNDERFLOW:
+peerNetData=handleBufferUnderflow(sslEngine,peerNetData);
+break;
+case CLOSED:
+if (sslEngine.isOutboundDone()) {
+return false;
+}
+ else {
+sslEngine.closeOutbound();
+break;
+}
+default :
+throw new IllegalStateException("Invalid SSL status: " + result.getStatus());
+}
+return true;
+}
