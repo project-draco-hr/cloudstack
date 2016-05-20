@@ -1,0 +1,53 @@
+{
+  try {
+    TemplateInfo destTemplateInfo=(TemplateInfo)primaryDataStore.create(srcTemplateInfo,false);
+    AsyncCallFuture<VolumeApiResult> createVolumeFuture=createVolumeAsync(volumeInfo,primaryDataStore);
+    VolumeApiResult createVolumeResult=createVolumeFuture.get();
+    if (createVolumeResult.isFailed()) {
+      throw new CloudRuntimeException("Creation of a volume failed: " + createVolumeResult.getResult());
+    }
+    volumeInfo=volFactory.getVolume(volumeInfo.getId(),primaryDataStore);
+    ManagedCreateBaseImageContext<CreateCmdResult> context=new ManagedCreateBaseImageContext<CreateCmdResult>(null,volumeInfo,primaryDataStore,srcTemplateInfo,future);
+    AsyncCallbackDispatcher<VolumeServiceImpl,CopyCommandResult> caller=AsyncCallbackDispatcher.create(this);
+    caller.setCallback(caller.getTarget().managedCopyBaseImageCallback(null,null)).setContext(context);
+    Map<String,String> details=new HashMap<String,String>();
+    details.put(PrimaryDataStore.MANAGED,Boolean.TRUE.toString());
+    details.put(PrimaryDataStore.STORAGE_HOST,primaryDataStore.getHostAddress());
+    details.put(PrimaryDataStore.STORAGE_PORT,String.valueOf(primaryDataStore.getPort()));
+    details.put(PrimaryDataStore.MANAGED_STORE_TARGET,volumeInfo.get_iScsiName());
+    details.put(PrimaryDataStore.MANAGED_STORE_TARGET_ROOT_VOLUME,volumeInfo.getName());
+    details.put(PrimaryDataStore.VOLUME_SIZE,String.valueOf(volumeInfo.getSize()));
+    ChapInfo chapInfo=getChapInfo(volumeInfo,primaryDataStore);
+    if (chapInfo != null) {
+      details.put(PrimaryDataStore.CHAP_INITIATOR_USERNAME,chapInfo.getInitiatorUsername());
+      details.put(PrimaryDataStore.CHAP_INITIATOR_SECRET,chapInfo.getInitiatorSecret());
+      details.put(PrimaryDataStore.CHAP_TARGET_USERNAME,chapInfo.getTargetUsername());
+      details.put(PrimaryDataStore.CHAP_TARGET_SECRET,chapInfo.getTargetSecret());
+    }
+    primaryDataStore.setDetails(details);
+    grantAccess(volumeInfo,destHost,primaryDataStore);
+    try {
+      motionSrv.copyAsync(srcTemplateInfo,destTemplateInfo,destHost,caller);
+    }
+  finally {
+      revokeAccess(volumeInfo,destHost,primaryDataStore);
+    }
+  }
+ catch (  Throwable t) {
+    String errMsg=t.toString();
+    volumeInfo.processEvent(Event.DestroyRequested);
+    try {
+      AsyncCallFuture<VolumeApiResult> expungeVolumeFuture=expungeVolumeAsync(volumeInfo);
+      VolumeApiResult expungeVolumeResult=expungeVolumeFuture.get();
+      if (expungeVolumeResult.isFailed()) {
+        errMsg+=" : Failed to expunge a volume that was created";
+      }
+    }
+ catch (    Exception ex) {
+      errMsg+=" : " + ex.getMessage();
+    }
+    VolumeApiResult result=new VolumeApiResult(volumeInfo);
+    result.setResult(errMsg);
+    future.complete(result);
+  }
+}

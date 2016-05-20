@@ -3,19 +3,28 @@
   if (volumeInfo.getFormat() != ImageFormat.VHD) {
     throw new CloudRuntimeException("Only the " + ImageFormat.VHD.toString() + " image type is currently supported.");
   }
-  SnapshotVO snapshotVO=_snapshotDao.acquireInLockTable(snapshotInfo.getId());
+  SnapshotVO snapshotVO=snapshotDao.acquireInLockTable(snapshotInfo.getId());
   if (snapshotVO == null) {
     throw new CloudRuntimeException("Failed to acquire lock on the following snapshot: " + snapshotInfo.getId());
   }
   SnapshotResult result=null;
   try {
     volumeInfo.stateTransit(Volume.Event.SnapshotRequested);
+    HostVO hostVO=getHost(volumeInfo.getId());
+    boolean canStorageSystemCreateVolumeFromSnapshot=canStorageSystemCreateVolumeFromSnapshot(volumeInfo.getPoolId());
+    boolean computeClusterSupportsResign=clusterDao.getSupportsResigning(hostVO.getClusterId());
+    if (canStorageSystemCreateVolumeFromSnapshot && computeClusterSupportsResign) {
+      SnapshotDetailsVO snapshotDetail=new SnapshotDetailsVO(snapshotInfo.getId(),"takeSnapshot",Boolean.TRUE.toString(),false);
+      snapshotDetailsDao.persist(snapshotDetail);
+    }
     result=snapshotSvr.takeSnapshot(snapshotInfo);
     if (result.isFailed()) {
       s_logger.debug("Failed to take a snapshot: " + result.getResult());
       throw new CloudRuntimeException(result.getResult());
     }
-    performSnapshotAndCopyOnHostSide(volumeInfo,snapshotInfo);
+    if (!canStorageSystemCreateVolumeFromSnapshot || !computeClusterSupportsResign) {
+      performSnapshotAndCopyOnHostSide(volumeInfo,snapshotInfo);
+    }
     markAsBackedUp((SnapshotObject)result.getSnashot());
   }
   finally {
@@ -25,7 +34,7 @@
  else {
       volumeInfo.stateTransit(Volume.Event.OperationFailed);
     }
-    _snapshotDao.releaseFromLockTable(snapshotInfo.getId());
+    snapshotDao.releaseFromLockTable(snapshotInfo.getId());
   }
   return snapshotInfo;
 }

@@ -1,32 +1,34 @@
 {
-  if (dataObject == null || host == null || dataStore == null) {
-    return false;
-  }
+  Preconditions.checkArgument(dataObject != null,"'dataObject' should not be 'null'");
+  Preconditions.checkArgument(host != null,"'host' should not be 'null'");
+  Preconditions.checkArgument(dataStore != null,"'dataStore' should not be 'null'");
   long sfVolumeId=getSolidFireVolumeId(dataObject);
   long clusterId=host.getClusterId();
   long storagePoolId=dataStore.getId();
-  ClusterVO cluster=_clusterDao.findById(clusterId);
+  ClusterVO cluster=clusterDao.findById(clusterId);
   GlobalLock lock=GlobalLock.getInternLock(cluster.getUuid());
-  if (!lock.lock(SolidFireUtil.s_lockTimeInSeconds)) {
+  if (!lock.lock(LOCK_TIME_IN_SECONDS)) {
     String errMsg="Couldn't lock the DB (in grantAccess) on the following string: " + cluster.getUuid();
-    s_logger.debug(errMsg);
+    LOGGER.warn(errMsg);
     throw new CloudRuntimeException(errMsg);
   }
   try {
-    ClusterDetailsVO clusterDetail=_clusterDetailsDao.findDetail(clusterId,SolidFireUtil.getVagKey(storagePoolId));
+    ClusterDetailsVO clusterDetail=clusterDetailsDao.findDetail(clusterId,SolidFireUtil.getVagKey(storagePoolId));
     String vagId=clusterDetail != null ? clusterDetail.getValue() : null;
-    List<HostVO> hosts=_hostDao.findByClusterId(clusterId);
+    List<HostVO> hosts=hostDao.findByClusterId(clusterId);
     if (!SolidFireUtil.hostsSupport_iScsi(hosts)) {
-      return false;
+      String errMsg="Not all hosts in the compute cluster support iSCSI.";
+      LOGGER.warn(errMsg);
+      throw new CloudRuntimeException(errMsg);
     }
-    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+    SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,storagePoolDetailsDao);
     if (vagId != null) {
       SolidFireUtil.SolidFireVag sfVag=SolidFireUtil.getSolidFireVag(sfConnection,Long.parseLong(vagId));
       long[] volumeIds=SolidFireUtil.getNewVolumeIds(sfVag.getVolumeIds(),sfVolumeId,true);
       SolidFireUtil.modifySolidFireVag(sfConnection,sfVag.getId(),sfVag.getInitiators(),volumeIds);
     }
  else {
-      SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolumeId,storagePoolId,cluster.getUuid(),hosts,_clusterDetailsDao);
+      SolidFireUtil.placeVolumeInVolumeAccessGroup(sfConnection,sfVolumeId,storagePoolId,cluster.getUuid(),hosts,clusterDetailsDao);
     }
     return true;
   }

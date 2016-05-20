@@ -1,12 +1,31 @@
 {
+  long storagePoolId=dataStore.getId();
   List<SnapshotVO> lstSnapshots=_snapshotDao.listAll();
   if (lstSnapshots != null) {
     for (    SnapshotVO snapshot : lstSnapshots) {
       SnapshotDetailsVO snapshotDetails=_snapshotDetailsDao.findDetail(snapshot.getId(),SolidFireUtil.STORAGE_POOL_ID);
-      if (snapshotDetails != null && snapshotDetails.getValue() != null && Long.parseLong(snapshotDetails.getValue()) == store.getId()) {
+      if (snapshotDetails != null && snapshotDetails.getValue() != null && Long.parseLong(snapshotDetails.getValue()) == storagePoolId) {
         throw new CloudRuntimeException("This primary storage cannot be deleted because it currently contains one or more snapshots.");
       }
     }
   }
-  return dataStoreHelper.deletePrimaryDataStore(store);
+  List<VMTemplateStoragePoolVO> lstTemplatePoolRefs=_tmpltPoolDao.listByPoolId(storagePoolId);
+  if (lstTemplatePoolRefs != null) {
+    for (    VMTemplateStoragePoolVO templatePoolRef : lstTemplatePoolRefs) {
+      try {
+        SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,_storagePoolDetailsDao);
+        long sfTemplateVolumeId=Long.parseLong(templatePoolRef.getLocalDownloadPath());
+        SolidFireUtil.deleteSolidFireVolume(sfConnection,sfTemplateVolumeId);
+      }
+ catch (      Exception ex) {
+        s_logger.error(ex.getMessage() != null ? ex.getMessage() : "Error deleting SolidFire template volume");
+      }
+      _tmpltPoolDao.remove(templatePoolRef.getId());
+    }
+  }
+  StoragePoolVO storagePool=_storagePoolDao.findById(storagePoolId);
+  storagePool.setUsedBytes(0);
+  _storagePoolDao.update(storagePoolId,storagePool);
+  _storagePoolDetailsDao.removeDetails(storagePoolId);
+  return _dataStoreHelper.deletePrimaryDataStore(dataStore);
 }

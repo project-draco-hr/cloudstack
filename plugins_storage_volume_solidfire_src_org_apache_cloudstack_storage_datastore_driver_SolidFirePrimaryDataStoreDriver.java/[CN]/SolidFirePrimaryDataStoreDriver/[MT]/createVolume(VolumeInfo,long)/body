@@ -1,0 +1,37 @@
+{
+  verifySufficientBytesForStoragePool(volumeInfo,storagePoolId);
+  verifySufficientIopsForStoragePool(volumeInfo.getMinIops() != null ? volumeInfo.getMinIops() : getDefaultMinIops(storagePoolId),storagePoolId);
+  SolidFireUtil.SolidFireConnection sfConnection=SolidFireUtil.getSolidFireConnection(storagePoolId,storagePoolDetailsDao);
+  long sfAccountId=getCreateSolidFireAccountId(sfConnection,volumeInfo.getAccountId(),storagePoolId);
+  long csSnapshotId=getCsIdForCloning(volumeInfo.getId(),"cloneOfSnapshot");
+  long csTemplateId=getCsIdForCloning(volumeInfo.getId(),"cloneOfTemplate");
+  SolidFireUtil.SolidFireVolume sfVolume;
+  if (csSnapshotId > 0) {
+    sfVolume=createClone(sfConnection,csSnapshotId,volumeInfo,sfAccountId,storagePoolId,DataObjectType.SNAPSHOT);
+  }
+ else   if (csTemplateId > 0) {
+    sfVolume=createClone(sfConnection,csTemplateId,volumeInfo,sfAccountId,storagePoolId,DataObjectType.TEMPLATE);
+    long volumeSize=getDataObjectSizeIncludingHypervisorSnapshotReserve(volumeInfo,storagePoolDao.findById(storagePoolId));
+    if (volumeSize > sfVolume.getTotalSize()) {
+      SolidFireUtil.modifySolidFireVolume(sfConnection,sfVolume.getId(),volumeSize,getVolumeAttributes(volumeInfo),sfVolume.getMinIops(),sfVolume.getMaxIops(),sfVolume.getBurstIops());
+      sfVolume=SolidFireUtil.getSolidFireVolume(sfConnection,sfVolume.getId());
+    }
+  }
+ else {
+    sfVolume=createSolidFireVolume(sfConnection,volumeInfo,sfAccountId);
+  }
+  String iqn=sfVolume.getIqn();
+  VolumeVO volume=volumeDao.findById(volumeInfo.getId());
+  volume.set_iScsiName(iqn);
+  volume.setFolder(String.valueOf(sfVolume.getId()));
+  volume.setPoolType(StoragePoolType.IscsiLUN);
+  volume.setPoolId(storagePoolId);
+  volumeDao.update(volume.getId(),volume);
+  updateVolumeDetails(volume.getId(),sfVolume.getTotalSize());
+  StoragePoolVO storagePool=storagePoolDao.findById(storagePoolId);
+  long capacityBytes=storagePool.getCapacityBytes();
+  long usedBytes=getUsedBytes(storagePool);
+  storagePool.setUsedBytes(usedBytes > capacityBytes ? capacityBytes : usedBytes);
+  storagePoolDao.update(storagePoolId,storagePool);
+  return iqn;
+}
