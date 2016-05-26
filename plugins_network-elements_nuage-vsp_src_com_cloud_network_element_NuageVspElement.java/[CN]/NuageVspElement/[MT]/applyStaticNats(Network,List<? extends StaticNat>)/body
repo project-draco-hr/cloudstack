@@ -1,35 +1,16 @@
 {
-  Long vpcId=config.getVpcId();
-  String vpcOrSubnetUuid=null;
-  if (vpcId != null) {
-    Vpc vpcObj=_vpcDao.findById(vpcId);
-    vpcOrSubnetUuid=vpcObj.getUuid();
-  }
- else {
-    vpcOrSubnetUuid=config.getUuid();
-  }
-  Domain networkDomain=_domainDao.findById(config.getDomainId());
-  long networkOfferingId=_ntwkOfferingDao.findById(config.getNetworkOfferingId()).getId();
-  boolean isL3Network=isL3Network(networkOfferingId);
-  List<Map<String,Object>> sourceNatDetails=new ArrayList<Map<String,Object>>();
+  List<VspStaticNat> vspStaticNatDetails=new ArrayList<VspStaticNat>();
   for (  StaticNat staticNat : rules) {
-    Map<String,Object> sourceNatDetail=new HashMap<String,Object>();
     IPAddressVO sourceNatIp=_ipAddressDao.findById(staticNat.getSourceIpAddressId());
-    VlanVO sourceNatVan=_vlanDao.findById(sourceNatIp.getVlanId());
+    VlanVO sourceNatVlan=_vlanDao.findById(sourceNatIp.getVlanId());
     NicVO nicVO=_nicDao.findByIp4AddressAndNetworkId(staticNat.getDestIpAddress(),staticNat.getNetworkId());
-    sourceNatDetail.put("sourceNatIpUuid",sourceNatIp.getUuid());
-    sourceNatDetail.put("sourceNatIpAddress",sourceNatIp.getAddress().addr());
-    sourceNatDetail.put("nicUuid",nicVO == null ? null : nicVO.getUuid());
-    sourceNatDetail.put("nicMacAddress",nicVO == null ? null : nicVO.getMacAddress());
-    sourceNatDetail.put("isRevoke",staticNat.isForRevoke());
-    sourceNatDetail.put("sourceNatVlanUuid",sourceNatVan.getUuid());
-    sourceNatDetail.put("sourceNatVlanGateway",sourceNatVan.getVlanGateway());
-    sourceNatDetail.put("sourceNatVlanNetmask",sourceNatVan.getVlanNetmask());
-    sourceNatDetails.add(sourceNatDetail);
+    VspStaticNat vspStaticNat=_nuageVspEntityBuilder.buildVspStaticNat(staticNat.isForRevoke(),sourceNatIp,sourceNatVlan,nicVO);
+    vspStaticNatDetails.add(vspStaticNat);
   }
+  VspNetwork vspNetwork=_nuageVspEntityBuilder.buildVspNetwork(config,false);
   HostVO nuageVspHost=getNuageVspHost(config.getPhysicalNetworkId());
-  ApplyStaticNatVspCommand.Builder cmdBuilder=new ApplyStaticNatVspCommand.Builder().networkDomainUuid(networkDomain.getUuid()).networkUuid(config.getUuid()).vpcOrSubnetUuid(vpcOrSubnetUuid).isL3Network(isL3Network).isVpc(vpcId != null).staticNatDetails(sourceNatDetails);
-  Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
+  ApplyStaticNatVspCommand cmd=new ApplyStaticNatVspCommand(vspNetwork,vspStaticNatDetails);
+  Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmd);
   if (answer == null || !answer.getResult()) {
     s_logger.error("ApplyStaticNatNuageVspCommand for network " + config.getUuid() + " failed on Nuage VSD "+ nuageVspHost.getDetail("hostname"));
     if ((null != answer) && (null != answer.getDetails())) {

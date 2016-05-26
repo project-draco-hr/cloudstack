@@ -12,33 +12,18 @@
     s_logger.error("Nic has no broadcast Uri with the virtual router IP");
     return false;
   }
-  boolean egressDefaultPolicy=offering.getEgressDefaultPolicy();
-  Domain networkDomain=_domainDao.findById(network.getDomainId());
-  boolean isFirewallServiceSupported=_networkModel.areServicesSupportedByNetworkOffering(offering.getId(),Service.Firewall);
+  VspNetwork vspNetwork=_nuageVspEntityBuilder.buildVspNetwork(network,false);
   List<String> dnsServers=_nuageVspManager.getDnsDetails(network);
-  boolean isL2Network=false, isL3Network=false, isShared=false;
-  String subnetUuid=network.getUuid();
-  if (offering.getGuestType() == Network.GuestType.Shared) {
-    isShared=true;
-    subnetUuid=networkDomain.getUuid();
-  }
- else   if (_ntwkOfferingSrvcDao.areServicesSupportedByNetworkOffering(offering.getId(),Service.SourceNat) || _ntwkOfferingSrvcDao.areServicesSupportedByNetworkOffering(offering.getId(),Service.StaticNat) || _ntwkOfferingSrvcDao.areServicesSupportedByNetworkOffering(offering.getId(),Service.Connectivity)) {
-    isL3Network=true;
-  }
- else {
-    isL2Network=true;
-  }
-  String preConfiguredDomainTemplateName=NuageVspUtil.getPreConfiguredDomainTemplateName(_configDao,network,offering);
-  List<Map<String,Object>> ingressFirewallRules=getFirewallRulesToApply(network.getId(),FirewallRule.TrafficType.Ingress,egressDefaultPolicy);
-  List<Map<String,Object>> egressFirewallRules=getFirewallRulesToApply(network.getId(),FirewallRule.TrafficType.Egress,egressDefaultPolicy);
+  List<VspAclRule> ingressFirewallRules=getFirewallRulesToApply(network,FirewallRule.TrafficType.Ingress);
+  List<VspAclRule> egressFirewallRules=getFirewallRulesToApply(network,FirewallRule.TrafficType.Egress);
   List<IPAddressVO> ips=_ipAddressDao.listStaticNatPublicIps(network.getId());
-  List<String> acsFipUuid=new ArrayList<String>();
+  List<String> floatingIpUuids=new ArrayList<String>();
   for (  IPAddressVO ip : ips) {
-    acsFipUuid.add(ip.getUuid());
+    floatingIpUuids.add(ip.getUuid());
   }
   HostVO nuageVspHost=getNuageVspHost(network.getPhysicalNetworkId());
-  ImplementVspCommand.Builder cmdBuilder=new ImplementVspCommand.Builder().networkId(network.getId()).networkDomainUuid(networkDomain.getUuid()).networkUuid(network.getUuid()).networkName(network.getName()).vpcOrSubnetUuid(subnetUuid).isL2Network(isL2Network).isL3Network(isL3Network).isVpc(false).isShared(isShared).domainTemplateName(preConfiguredDomainTemplateName).isFirewallServiceSupported(isFirewallServiceSupported).dnsServers(dnsServers).ingressFirewallRules(ingressFirewallRules).egressFirewallRules(egressFirewallRules).acsFipUuid(acsFipUuid).egressDefaultPolicy(egressDefaultPolicy);
-  Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
+  ImplementVspCommand cmd=new ImplementVspCommand(vspNetwork,dnsServers,ingressFirewallRules,egressFirewallRules,floatingIpUuids);
+  Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmd);
   if (answer == null || !answer.getResult()) {
     s_logger.error("ImplementVspCommand for network " + network.getUuid() + " failed on Nuage VSD "+ nuageVspHost.getDetail("hostname"));
     if ((null != answer) && (null != answer.getDetails())) {

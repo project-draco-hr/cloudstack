@@ -9,57 +9,35 @@
     if (network.getState() != State.Implementing) {
       throw new IllegalStateException("Network " + networkId + " is not in expected state Implementing, but is in state "+ network.getState());
     }
-    long dcId=dest.getDataCenter().getId();
-    Long physicalNetworkId=network.getPhysicalNetworkId();
-    if (physicalNetworkId == null) {
-      physicalNetworkId=_networkModel.findPhysicalNetworkId(dcId,offering.getTags(),offering.getTrafficType());
-    }
-    implemented=new NetworkVO(network.getTrafficType(),network.getMode(),network.getBroadcastDomainType(),network.getNetworkOfferingId(),State.Allocated,network.getDataCenterId(),physicalNetworkId,offering.getRedundantRouter());
-    if (network.getGateway() != null) {
-      implemented.setGateway(network.getGateway());
-    }
-    if (network.getCidr() != null) {
-      implemented.setCidr(network.getCidr());
-    }
-    List<String[]> ipAddressRanges=new ArrayList<String[]>();
-    String virtualRouterIp=getVirtualRouterIP(network,ipAddressRanges);
-    String networkUuid=implemented.getUuid();
-    String tenantId=context.getDomain().getName() + "-" + context.getAccount().getAccountId();
-    String broadcastUriStr=networkUuid + "/" + virtualRouterIp;
-    implemented.setBroadcastUri(Networks.BroadcastDomainType.Vsp.toUri(broadcastUriStr));
-    implemented.setBroadcastDomainType(Networks.BroadcastDomainType.Vsp);
-    Long vpcId=network.getVpcId();
-    boolean isVpc=(vpcId != null);
-    Domain networksDomain=_domainDao.findById(network.getDomainId());
     AccountVO networksAccount=_accountDao.findById(network.getAccountId());
     if (networksAccount.getType() == Account.ACCOUNT_TYPE_PROJECT) {
       String errorMessage="Networks created by account " + networksAccount.getAccountName() + " of type Project ("+ Account.ACCOUNT_TYPE_PROJECT+ ") "+ "are not yet supported by NuageVsp provider";
       s_logger.error(errorMessage);
       throw new InsufficientVirtualNetworkCapacityException(errorMessage,Account.class,network.getAccountId());
     }
-    String vpcName=null;
-    String vpcUuid=null;
-    String preConfiguredDomainTemplateName=NuageVspUtil.getPreConfiguredDomainTemplateName(_configDao,network,offering);
-    boolean isSharedNetwork=offering.getGuestType() == GuestType.Shared;
-    boolean isL3Network=!isVpc && (isSharedNetwork || isL3Network(network));
-    if (isVpc) {
-      Vpc vpcObj=_vpcDao.findById(vpcId);
-      vpcName=vpcObj.getName();
-      vpcUuid=vpcObj.getUuid();
+    long dcId=dest.getDataCenter().getId();
+    Long physicalNetworkId=network.getPhysicalNetworkId();
+    if (physicalNetworkId == null) {
+      physicalNetworkId=_networkModel.findPhysicalNetworkId(dcId,offering.getTags(),offering.getTrafficType());
     }
-    if (isSharedNetwork) {
-      List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(network.getId());
-      for (      VlanVO vlan : vlans) {
-        boolean isIpv4=StringUtils.isNotBlank(vlan.getIpRange());
-        String[] range=isIpv4 ? vlan.getIpRange().split("-") : vlan.getIp6Range().split("-");
-        ipAddressRanges.add(range);
-      }
+    implemented=new NetworkVO(network.getId(),network,network.getNetworkOfferingId(),network.getGuruName(),network.getDomainId(),network.getAccountId(),network.getRelated(),network.getName(),network.getDisplayText(),network.getNetworkDomain(),network.getGuestType(),network.getDataCenterId(),physicalNetworkId,network.getAclType(),network.getSpecifyIpRanges(),network.getVpcId(),offering.getRedundantRouter());
+    implemented.setUuid(network.getUuid());
+    implemented.setState(State.Allocated);
+    if (network.getGateway() != null) {
+      implemented.setGateway(network.getGateway());
     }
+    if (network.getCidr() != null) {
+      implemented.setCidr(network.getCidr());
+    }
+    VspNetwork vspNetwork=_nuageVspEntityBuilder.buildVspNetwork(implemented,true);
+    String tenantId=context.getDomain().getName() + "-" + context.getAccount().getAccountId();
+    String broadcastUriStr=implemented.getUuid() + "/" + vspNetwork.getVirtualRouterIp();
+    implemented.setBroadcastUri(Networks.BroadcastDomainType.Vsp.toUri(broadcastUriStr));
+    implemented.setBroadcastDomainType(Networks.BroadcastDomainType.Vsp);
     HostVO nuageVspHost=getNuageVspHost(physicalNetworkId);
     List<String> dnsServers=_nuageVspManager.getDnsDetails(network);
-    List<String> gatewaySystemIds=_nuageVspManager.getGatewaySystemIds();
-    ImplementNetworkVspCommand.Builder cmdBuilder=new ImplementNetworkVspCommand.Builder().networkDomainName(networksDomain.getName()).networkDomainPath(networksDomain.getPath()).networkDomainUuid(networksDomain.getUuid()).networkAccountName(networksAccount.getAccountName()).networkAccountUuid(networksAccount.getUuid()).networkName(network.getName()).networkCidr(network.getCidr()).networkGateway(network.getGateway()).networkAclId(network.getNetworkACLId()).dnsServers(dnsServers).gatewaySystemIds(gatewaySystemIds).networkUuid(network.getUuid()).isL3Network(isL3Network).isVpc(isVpc).isSharedNetwork(isSharedNetwork).vpcName(vpcName).vpcUuid(vpcUuid).defaultEgressPolicy(offering.getEgressDefaultPolicy()).ipAddressRange(ipAddressRanges).domainTemplateName(preConfiguredDomainTemplateName);
-    Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmdBuilder.build());
+    ImplementNetworkVspCommand cmd=new ImplementNetworkVspCommand(vspNetwork,dnsServers);
+    Answer answer=_agentMgr.easySend(nuageVspHost.getId(),cmd);
     if (answer == null || !answer.getResult()) {
       s_logger.error("ImplementNetworkVspCommand for network " + network.getUuid() + " failed on Nuage VSD "+ nuageVspHost.getDetail("hostname"));
       if ((null != answer) && (null != answer.getDetails())) {
@@ -67,7 +45,17 @@
       }
       return null;
     }
-    s_logger.info("Implemented OK, network " + networkUuid + " in tenant "+ tenantId+ " linked to "+ implemented.getBroadcastUri());
+    if (StringUtils.isNotBlank(vspNetwork.getDomainTemplateName())) {
+      if (network.getVpcId() != null) {
+        VpcDetailVO vpcDetail=new VpcDetailVO(network.getVpcId(),NuageVspManager.nuageDomainTemplateDetailName,vspNetwork.getDomainTemplateName(),false);
+        _vpcDetailsDao.persist(vpcDetail);
+      }
+ else {
+        NetworkDetailVO networkDetail=new NetworkDetailVO(implemented.getId(),NuageVspManager.nuageDomainTemplateDetailName,vspNetwork.getDomainTemplateName(),false);
+        _networkDetailsDao.persist(networkDetail);
+      }
+    }
+    s_logger.info("Implemented OK, network " + implemented.getUuid() + " in tenant "+ tenantId+ " linked to "+ implemented.getBroadcastUri());
   }
   finally {
     _networkDao.releaseFromLockTable(network.getId());

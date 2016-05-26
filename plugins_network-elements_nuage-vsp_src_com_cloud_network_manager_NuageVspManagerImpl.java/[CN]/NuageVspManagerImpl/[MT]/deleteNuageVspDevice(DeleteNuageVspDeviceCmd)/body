@@ -16,25 +16,29 @@
       }
     }
   }
+  NuageVspDeviceVO matchingNuageVspDevice=findMatchingNuageVspDevice(nuageVspDevice);
   ConfigurationVO cmsIdConfig=_configDao.findByName("nuagevsp.cms.id");
   HostVO host=findNuageVspHost(nuageVspDevice.getHostId());
-  if (!auditDomainsOnVsp(host,false,true)) {
-    return false;
-  }
   String nuageVspCmsId=findNuageVspCmsIdForDevice(nuageVspDevice.getId(),cmsIdConfig);
-  SyncNuageVspCmsIdCommand syncCmd=new SyncNuageVspCmsIdCommand(SyncType.UNREGISTER,nuageVspCmsId);
-  SyncNuageVspCmsIdAnswer answer=(SyncNuageVspCmsIdAnswer)_agentMgr.easySend(nuageVspDevice.getHostId(),syncCmd);
-  if (answer != null && answer.getSuccess()) {
-    String currentValue=cmsIdConfig.getValue();
-    String newValue=currentValue.replace(nuageVspDevice.getId() + ":" + answer.getNuageVspCmsId(),"");
-    if (!Strings.isNullOrEmpty(newValue) && newValue.startsWith(";")) {
-      newValue=newValue.substring(1);
+  if (matchingNuageVspDevice == null) {
+    if (!auditDomainsOnVsp(host,false,true)) {
+      return false;
     }
-    _configDao.update("nuagevsp.cms.id",newValue);
+    SyncNuageVspCmsIdCommand syncCmd=new SyncNuageVspCmsIdCommand(SyncType.UNREGISTER,nuageVspCmsId);
+    SyncNuageVspCmsIdAnswer answer=(SyncNuageVspCmsIdAnswer)_agentMgr.easySend(nuageVspDevice.getHostId(),syncCmd);
+    if (answer == null || !answer.getSuccess()) {
+      return false;
+    }
   }
- else {
-    return false;
+  String newValue=cmsIdConfig.getValue().replace(nuageVspDevice.getId() + ":" + nuageVspCmsId,"");
+  if (newValue.startsWith(";")) {
+    newValue=newValue.substring(1);
   }
+  if (newValue.endsWith(";")) {
+    newValue=newValue.substring(0,newValue.length() - 1);
+  }
+  newValue=newValue.replaceAll(";+",";");
+  _configDao.update("nuagevsp.cms.id",newValue);
   HostVO nuageHost=_hostDao.findById(nuageVspDevice.getHostId());
   Long hostId=nuageHost.getId();
   nuageHost.setResourceState(ResourceState.Maintenance);

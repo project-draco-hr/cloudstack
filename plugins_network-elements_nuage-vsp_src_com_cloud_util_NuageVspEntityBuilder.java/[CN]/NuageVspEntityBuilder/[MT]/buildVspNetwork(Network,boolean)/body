@@ -1,0 +1,44 @@
+{
+  VspNetwork.Builder vspNetworkBuilder=new VspNetwork.Builder().id(network.getId()).uuid(network.getUuid()).name(network.getName()).cidr(network.getCidr()).gateway(network.getGateway());
+  DomainVO domain=_domainDao.findById(network.getDomainId());
+  VspDomain vspDomain=buildVspDomain(domain);
+  vspNetworkBuilder.domain(vspDomain);
+  AccountVO account=_accountDao.findById(network.getAccountId());
+  if (account != null) {
+    vspNetworkBuilder.accountUuid(account.getUuid()).accountName(account.getAccountName());
+  }
+  NetworkOfferingVO networkOffering=_networkOfferingDao.findById(network.getNetworkOfferingId());
+  vspNetworkBuilder.egressDefaultPolicy(networkOffering.getEgressDefaultPolicy());
+  if (network.getVpcId() != null) {
+    VpcVO vpc=_vpcDao.findById(network.getVpcId());
+    vspNetworkBuilder.vpcUuid(vpc.getUuid()).vpcName(vpc.getName()).networkType(VspNetwork.NetworkType.Vpc);
+  }
+ else {
+    if (networkOffering.getGuestType() == Network.GuestType.Shared) {
+      vspNetworkBuilder.networkType(VspNetwork.NetworkType.Shared);
+    }
+ else     if (_networkOfferingServiceMapDao.areServicesSupportedByNetworkOffering(network.getNetworkOfferingId(),Network.Service.SourceNat) || _networkOfferingServiceMapDao.areServicesSupportedByNetworkOffering(network.getNetworkOfferingId(),Network.Service.StaticNat)) {
+      vspNetworkBuilder.networkType(VspNetwork.NetworkType.L3);
+    }
+ else {
+      vspNetworkBuilder.networkType(VspNetwork.NetworkType.L2);
+    }
+  }
+  boolean firewallServiceSupported=_networkModel.areServicesSupportedByNetworkOffering(network.getNetworkOfferingId(),Network.Service.Firewall);
+  vspNetworkBuilder.firewallServiceSupported(firewallServiceSupported);
+  String preConfiguredDomainTemplateName=NuageVspUtil.getPreConfiguredDomainTemplateName(_configurationDao,_networkDetailsDao,network,networkOffering);
+  vspNetworkBuilder.domainTemplateName(preConfiguredDomainTemplateName);
+  if (fillAddressRange) {
+    try {
+      List<Pair<String,String>> ipAddressRanges=getIpAddressRanges(networkOffering,network);
+      vspNetworkBuilder.ipAddressRanges(ipAddressRanges);
+      String virtualRouterIp=getVirtualRouterIP(network,ipAddressRanges);
+      vspNetworkBuilder.virtualRouterIp(virtualRouterIp);
+    }
+ catch (    InsufficientVirtualNetworkCapacityException ex) {
+      s_logger.error("There is an insufficient network capacity in network " + network.getId(),ex);
+      throw new CloudRuntimeException("There is an insufficient network capacity in network " + network.getId(),ex);
+    }
+  }
+  return vspNetworkBuilder.build();
+}

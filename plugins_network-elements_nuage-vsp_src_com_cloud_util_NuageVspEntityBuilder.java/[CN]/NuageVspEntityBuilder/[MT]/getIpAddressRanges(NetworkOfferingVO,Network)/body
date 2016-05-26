@@ -1,0 +1,29 @@
+{
+  List<Pair<String,String>> ipAddressRanges=Lists.newArrayList();
+  if (networkOffering.getGuestType() == Network.GuestType.Shared) {
+    List<VlanVO> vlans=_vlanDao.listVlansByNetworkId(network.getId());
+    ipAddressRanges=Lists.newArrayList();
+    for (    VlanVO vlan : vlans) {
+      boolean isIpv4=StringUtils.isNotBlank(vlan.getIpRange());
+      String[] range=isIpv4 ? vlan.getIpRange().split("-") : vlan.getIp6Range().split("-");
+      if (range.length == 2) {
+        ipAddressRanges.add(Pair.of(range[0],range[1]));
+      }
+    }
+    return ipAddressRanges;
+  }
+  String subnet=NetUtils.getCidrSubNet(network.getCidr());
+  String netmask=NetUtils.getCidrNetmask(network.getCidr());
+  long cidrSize=NetUtils.getCidrSize(netmask);
+  Set<Long> allIPsInCidr=NetUtils.getAllIpsFromCidr(subnet,cidrSize,new HashSet<Long>());
+  if (allIPsInCidr == null || !(allIPsInCidr instanceof TreeSet)) {
+    throw new IllegalStateException("The IPs in CIDR for subnet " + subnet + " where null or returned in a non-ordered set.");
+  }
+  Iterator<Long> ipIterator=allIPsInCidr.iterator();
+  long ip=ipIterator.next();
+  if (NetUtils.ip2Long(network.getGateway()) == ip) {
+    ip=ipIterator.next();
+  }
+  ipAddressRanges.add(Pair.of(NetUtils.long2Ip(ip),NetUtils.getIpRangeEndIpFromCidr(subnet,cidrSize)));
+  return ipAddressRanges;
+}
