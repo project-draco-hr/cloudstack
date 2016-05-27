@@ -1,0 +1,24 @@
+@attr(tags=['devcloud', 'advanced', 'advancedns', 'advancedsg', 'smoke', 'basic', 'sg'], required_hardware='false')
+def login_test_saml_user(self):
+    '\n            Tests that SAML users are not allowed CloudStack local log in\n\n            Creates account across various account types and converts them to\n            a SAML user and tests that they are not able to log in; then\n            converts them back as a CloudStack user account and verifies that\n            they are allowed to log in and make API requests\n        '
+    for account_type in range(0, 3):
+        account = Account.create(self.apiclient, self.testdata['account'], admin=account_type)
+        self.cleanup.append(account)
+        username = account.user[0].username
+        password = self.testdata['account']['password']
+        user_id = self.dbclient.execute(("select id from user where uuid='%s'" % account.user[0].id))[0][0]
+        self.dbclient.execute(("update user set source='SAML2' where id=%d" % user_id))
+        (response, session) = self.login(username, password)
+        self.assertEqual(response.json()['loginresponse']['errorcode'], 531, 'SAML user should not be allowed to log in, error code 531 not returned')
+        self.assertEqual(response.json()['loginresponse']['errortext'], 'User is not allowed CloudStack login', 'Invalid error message returned, SAML user should not be allowed to log in')
+        self.dbclient.execute(("update user set source='UNKNOWN' where id=%d" % user_id))
+        (response, session) = self.login(username, password)
+        self.assertEqual(response.status_code, 200, 'Login response code was not 200')
+        self.assertTrue((len(response.json()['loginresponse']['sessionkey']) > 0), 'Invalid session key received')
+        args = {}
+        args['command'] = 'listUsers'
+        args['listall'] = 'true'
+        args['response'] = 'json'
+        response = session.get(self.server_url, params=args)
+        self.assertEqual(response.status_code, 200, 'listUsers response code was not 200')
+        self.assertTrue((len(response.json()['listusersresponse']['user']) > 0), 'listUsers list is empty or zero')
