@@ -13,6 +13,7 @@ def setUpClass(cls, zone=None):
     cls.test_data['virtual_machine']['template'] = cls.template.id
     cls.service_offering = ServiceOffering.create(cls.api_client, cls.test_data['service_offering'])
     cls._cleanup = [cls.service_offering]
+    cls.isSimulator = (Hypervisor.list(cls.api_client, zoneid=cls.zone.id)[0].name == 'Simulator')
     try:
         physical_networks = PhysicalNetwork.list(cls.api_client, zoneid=cls.zone.id)
         for pn in physical_networks:
@@ -28,22 +29,24 @@ def setUpClass(cls, zone=None):
         cls.cms_id = cls.nuage_vsp_device.cmsid
     except Exception as e:
         cls.tearDownClass()
-        raise unittest.SkipTest(("Warning: Couldn't get configured Nuage VSP device details: %s" % e))
-    cls.isSimulator = (Hypervisor.list(cls.api_client, zoneid=cls.zone.id)[0].name == 'Simulator')
+        raise unittest.SkipTest(('Warning: Could not get configured Nuage VSP device details - %s' % e))
     try:
         vspk_module = (('vspk.' + cls.nuage_vsp_device.apiversion) if (int(cls.nuage_vsp_device.apiversion[1]) >= 4) else ('vspk.vsdk.' + cls.nuage_vsp_device.apiversion))
         cls.vsdk = importlib.import_module(vspk_module)
-        vspk_utils_module = ('vspk.utils' if (int(cls.nuage_vsp_device.apiversion[1]) >= 4) else (('vspk.vsdk.' + cls.nuage_vsp_device.apiversion) + '.utils'))
-        vsdk_utils = importlib.import_module(vspk_utils_module)
-        set_log_level = getattr(vsdk_utils, 'set_log_level')
-        from cms_vspk_wrapper.cms_vspk_wrapper import Cms_vspk_wrapper
-    except:
-        raise unittest.SkipTest('vspk (and/or) cms_vspk_wrapper import failure')
+        from libVSD import ApiClient, VSDHelpers
+    except Exception as e:
+        cls.tearDownClass()
+        raise unittest.SkipTest(('Warning: vspk (and/or) libVSD package import failure - %s' % e))
     cls._session = cls.vsdk.NUVSDSession(username=cls.nuage_vsp_device.username, password=cls.nuage_vsp_device.password, enterprise='csp', api_url=('https://%s:%d' % (cls.nuage_vsp_device.hostname, cls.nuage_vsp_device.port)))
     cls._session.start()
-    cls.log_handler = logging.getLogger('CSLog').handlers[0]
+    root = logging.getLogger()
+    log_handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_handler.setFormatter(formatter)
+    root.addHandler(log_handler)
     vsd_info = cls.nuage_vsp_device.__dict__
-    vsd_info['port'] = str(vsd_info['port'])
-    cls.vsd = Cms_vspk_wrapper(vsd_info, cls.log_handler)
-    set_log_level(logging.INFO)
+    cls.debug(('Nuage VSP device (VSD) details - %s' % vsd_info))
+    vsd_api_client = ApiClient(address=vsd_info['hostname'], user=vsd_info['username'], password=vsd_info['password'], version=((vsd_info['apiversion'][1] + '.') + vsd_info['apiversion'][3]))
+    vsd_api_client.new_session()
+    cls.vsd = VSDHelpers(vsd_api_client)
     cls.debug('setUpClass nuageTestCase [DONE]')
