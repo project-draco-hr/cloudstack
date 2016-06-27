@@ -1,8 +1,26 @@
 {
   byte[] currentSize=new byte[8];
+  byte[] cookie=new byte[8];
   byte[] creatorApp=new byte[4];
-  try (FileInputStream strm=new FileInputStream(file)){
-    long skipped=strm.skip(file.length() - vhdFooterSize + vhdFooterCreatorAppOffset);
+  BufferedInputStream fileStream=new BufferedInputStream(new FileInputStream(file));
+  InputStream strm=fileStream;
+  boolean isCompressed=checkCompressed(file.getAbsolutePath());
+  if (isCompressed) {
+    try {
+      strm=new CompressorStreamFactory().createCompressorInputStream(fileStream);
+    }
+ catch (    CompressorException e) {
+      s_logger.info("error opening compressed VHD file " + file.getName());
+      return file.length();
+    }
+  }
+  try {
+    strm.read(cookie);
+    if (!new String(cookie).equals(vhdIdentifierCookie)) {
+      strm.close();
+      return file.length();
+    }
+    long skipped=strm.skip(vhdFooterCreatorAppOffset - vhdCookieOffset);
     if (skipped == -1) {
       throw new IOException("Unexpected end-of-file");
     }
@@ -10,7 +28,7 @@
     if (read == -1) {
       throw new IOException("Unexpected end-of-file");
     }
-    skipped=strm.skip(vhdFooterCurrentSizeOffset - vhdFooterCreatorVerOffset);
+    skipped=strm.skip(vhdFooterCurrentSizeOffset - vhdFooterCreatorVerOffset - vhdCookieOffset);
     if (skipped == -1) {
       throw new IOException("Unexpected end-of-file");
     }
@@ -19,5 +37,14 @@
       throw new IOException("Unexpected end-of-file");
     }
   }
-   return NumbersUtil.bytesToLong(currentSize);
+ catch (  IOException e) {
+    s_logger.warn("Error reading virtual size from VHD file " + e.getMessage() + " VHD: "+ file.getName());
+    return file.length();
+  }
+ finally {
+    if (strm != null) {
+      strm.close();
+    }
+  }
+  return NumbersUtil.bytesToLong(currentSize);
 }
