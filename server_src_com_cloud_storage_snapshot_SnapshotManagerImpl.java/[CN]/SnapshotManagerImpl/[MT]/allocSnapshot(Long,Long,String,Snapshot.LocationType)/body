@@ -1,0 +1,46 @@
+{
+  Account caller=CallContext.current().getCallingAccount();
+  VolumeInfo volume=volFactory.getVolume(volumeId);
+  supportedByHypervisor(volume);
+  _accountMgr.checkAccess(caller,null,true,volume);
+  Type snapshotType=getSnapshotType(policyId);
+  Account owner=_accountMgr.getAccount(volume.getAccountId());
+  try {
+    _resourceLimitMgr.checkResourceLimit(owner,ResourceType.snapshot);
+    _resourceLimitMgr.checkResourceLimit(owner,ResourceType.secondary_storage,new Long(volume.getSize()).longValue());
+  }
+ catch (  ResourceAllocationException e) {
+    if (snapshotType != Type.MANUAL) {
+      String msg="Snapshot resource limit exceeded for account id : " + owner.getId() + ". Failed to create recurring snapshots";
+      s_logger.warn(msg);
+      _alertMgr.sendAlert(AlertManager.AlertType.ALERT_TYPE_UPDATE_RESOURCE_COUNT,0L,0L,msg,"Snapshot resource limit exceeded for account id : " + owner.getId() + ". Failed to create recurring snapshots; please use updateResourceLimit to increase the limit");
+    }
+    throw e;
+  }
+  String timeString=DateUtil.getDateDisplayString(DateUtil.GMT_TIMEZONE,new Date(),DateUtil.YYYYMMDD_FORMAT);
+  VMInstanceVO vmInstance=_vmDao.findById(volume.getInstanceId());
+  String vmDisplayName="detached";
+  if (vmInstance != null) {
+    vmDisplayName=vmInstance.getHostName();
+  }
+  if (snapshotName == null)   snapshotName=vmDisplayName + "_" + volume.getName()+ "_"+ timeString;
+  HypervisorType hypervisorType=HypervisorType.None;
+  StoragePoolVO storagePool=_storagePoolDao.findById(volume.getDataStore().getId());
+  if (storagePool.getScope() == ScopeType.ZONE) {
+    hypervisorType=storagePool.getHypervisor();
+    if (storagePool.isManaged() && HypervisorType.Any.equals(hypervisorType) && ImageFormat.VHD.equals(volume.getFormat())) {
+      hypervisorType=HypervisorType.XenServer;
+    }
+  }
+ else {
+    hypervisorType=volume.getHypervisorType();
+  }
+  SnapshotVO snapshotVO=new SnapshotVO(volume.getDataCenterId(),volume.getAccountId(),volume.getDomainId(),volume.getId(),volume.getDiskOfferingId(),snapshotName,(short)snapshotType.ordinal(),snapshotType.name(),volume.getSize(),volume.getMinIops(),volume.getMaxIops(),hypervisorType,locationType);
+  SnapshotVO snapshot=_snapshotDao.persist(snapshotVO);
+  if (snapshot == null) {
+    throw new CloudRuntimeException("Failed to create snapshot for volume: " + volume.getId());
+  }
+  _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.snapshot);
+  _resourceLimitMgr.incrementResourceCount(volume.getAccountId(),ResourceType.secondary_storage,new Long(volume.getSize()));
+  return snapshot;
+}

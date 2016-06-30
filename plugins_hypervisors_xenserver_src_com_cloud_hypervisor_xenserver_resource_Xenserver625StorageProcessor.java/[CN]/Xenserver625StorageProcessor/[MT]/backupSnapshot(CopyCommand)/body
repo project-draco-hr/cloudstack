@@ -21,22 +21,40 @@
   }
   final SnapshotObjectTO snapshotTO=(SnapshotObjectTO)srcData;
   final SnapshotObjectTO snapshotOnImage=(SnapshotObjectTO)destData;
-  final String snapshotUuid=snapshotTO.getPath();
+  String snapshotUuid=snapshotTO.getPath();
   final String prevBackupUuid=snapshotOnImage.getParentSnapshotPath();
   final String prevSnapshotUuid=snapshotTO.getParentSnapshotPath();
   final Map<String,String> options=cmd.getOptions();
   String details=null;
   String snapshotBackupUuid=null;
-  final boolean fullbackup=Boolean.parseBoolean(options.get("fullSnapshot"));
+  boolean fullbackup=Boolean.parseBoolean(options.get("fullSnapshot"));
   Long physicalSize=null;
   try {
-    final SR primaryStorageSR=hypervisorResource.getSRByNameLabelandHost(conn,primaryStorageNameLabel);
+    SR primaryStorageSR=null;
+    if (primaryStore.isManaged()) {
+      fullbackup=true;
+      final Map<String,String> srcDetails=cmd.getOptions();
+      final String iScsiName=srcDetails.get(DiskTO.IQN);
+      final String storageHost=srcDetails.get(DiskTO.STORAGE_HOST);
+      final String chapInitiatorUsername=srcDetails.get(DiskTO.CHAP_INITIATOR_USERNAME);
+      final String chapInitiatorSecret=srcDetails.get(DiskTO.CHAP_INITIATOR_SECRET);
+      final String srType=CitrixResourceBase.SRType.LVMOISCSI.toString();
+      primaryStorageSR=hypervisorResource.getIscsiSR(conn,iScsiName,storageHost,iScsiName,chapInitiatorUsername,chapInitiatorSecret,false,srType,true);
+      final VDI srcVdi=primaryStorageSR.getVDIs(conn).iterator().next();
+      if (srcVdi == null) {
+        throw new InternalErrorException("Could not Find a VDI on the SR: " + primaryStorageSR.getNameLabel(conn));
+      }
+      snapshotUuid=srcVdi.getUuid(conn);
+    }
+ else {
+      primaryStorageSR=hypervisorResource.getSRByNameLabelandHost(conn,primaryStorageNameLabel);
+    }
     if (primaryStorageSR == null) {
       throw new InternalErrorException("Could not backup snapshot because the primary Storage SR could not be created from the name label: " + primaryStorageNameLabel);
     }
     final Boolean isISCSI=IsISCSI(primaryStorageSR.getType(conn));
     final VDI snapshotVdi=getVDIbyUuid(conn,snapshotUuid);
-    final String snapshotPaUuid=null;
+    final String snapshotPaUuid=snapshotVdi.getUuid(conn);
     final URI uri=new URI(secondaryStorageUrl);
     final String secondaryStorageMountPath=uri.getHost() + ":" + uri.getPath();
     final DataStoreTO destStore=destData.getDataStore();
@@ -95,7 +113,7 @@
           }
         }
  else {
-          finalPath=folder + File.separator + snapshotBackupUuid;
+          finalPath=folder + File.separator + snapshotBackupUuid+ ".vhd";
         }
       }
   finally {
@@ -130,7 +148,7 @@
         final String[] tmp=result.split("#");
         snapshotBackupUuid=tmp[0];
         physicalSize=Long.parseLong(tmp[1]);
-        finalPath=folder + File.separator + snapshotBackupUuid;
+        finalPath=folder + File.separator + snapshotBackupUuid+ ".vhd";
       }
     }
     final String volumeUuid=snapshotTO.getVolume().getPath();
