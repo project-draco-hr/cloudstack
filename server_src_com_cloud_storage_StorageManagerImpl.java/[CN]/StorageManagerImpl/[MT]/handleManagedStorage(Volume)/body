@@ -1,0 +1,28 @@
+{
+  Long instanceId=volume.getInstanceId();
+  if (instanceId != null) {
+    StoragePoolVO storagePool=_storagePoolDao.findById(volume.getPoolId());
+    if (storagePool != null && storagePool.isManaged()) {
+      DataTO volTO=volFactory.getVolume(volume.getId()).getTO();
+      DiskTO disk=new DiskTO(volTO,volume.getDeviceId(),volume.getPath(),volume.getVolumeType());
+      DettachCommand cmd=new DettachCommand(disk,null);
+      cmd.setManaged(true);
+      cmd.setStorageHost(storagePool.getHostAddress());
+      cmd.setStoragePort(storagePool.getPort());
+      cmd.set_iScsiName(volume.get_iScsiName());
+      VMInstanceVO vmInstanceVO=_vmInstanceDao.findById(instanceId);
+      Long lastHostId=vmInstanceVO.getLastHostId();
+      if (lastHostId != null) {
+        Answer answer=_agentMgr.easySend(lastHostId,cmd);
+        if (answer != null && answer.getResult()) {
+          VolumeInfo volumeInfo=volFactory.getVolume(volume.getId());
+          HostVO host=_hostDao.findById(lastHostId);
+          volService.revokeAccess(volumeInfo,host,volumeInfo.getDataStore());
+        }
+ else {
+          s_logger.warn("Unable to remove host-side clustered file system for the following volume: " + volume.getUuid());
+        }
+      }
+    }
+  }
+}
