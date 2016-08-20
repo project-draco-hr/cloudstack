@@ -1,47 +1,52 @@
 {
   final List<VolumeVO> allVolumes=_volsDao.findUsableVolumesForInstance(profile.getId());
-  final Map<Volume,StoragePool> volumeToPoolObjectMap=new HashMap<Volume,StoragePool>();
+  final Map<Volume,StoragePool> volumeToPoolObjectMap=new HashMap<>();
   for (  final VolumeVO volume : allVolumes) {
     final Long poolId=volumeToPool.get(Long.valueOf(volume.getId()));
-    final StoragePoolVO pool=_storagePoolDao.findById(poolId);
+    final StoragePoolVO destPool=_storagePoolDao.findById(poolId);
     final StoragePoolVO currentPool=_storagePoolDao.findById(volume.getPoolId());
     final DiskOfferingVO diskOffering=_diskOfferingDao.findById(volume.getDiskOfferingId());
-    if (pool != null) {
-      if (_poolHostDao.findByPoolHost(pool.getId(),host.getId()) == null || pool.isLocal() != diskOffering.getUseLocalStorage()) {
-        throw new CloudRuntimeException("Cannot migrate volume " + volume + " to storage pool "+ pool+ " while migrating vm to host "+ host+ ". Either the pool is not accessible from the host or because of the offering with which the volume is created it cannot be placed on "+ "the given pool.");
+    if (destPool != null) {
+      if (_poolHostDao.findByPoolHost(destPool.getId(),host.getId()) == null || destPool.isLocal() != diskOffering.getUseLocalStorage()) {
+        throw new CloudRuntimeException("Cannot migrate volume " + volume + " to storage pool "+ destPool+ " while migrating vm to host "+ host+ ". Either the pool is not accessible from the host or because of the offering with which the volume is created it cannot be placed on "+ "the given pool.");
       }
- else       if (pool.getId() == currentPool.getId()) {
+ else       if (destPool.getId() == currentPool.getId()) {
       }
  else {
-        volumeToPoolObjectMap.put(volume,pool);
+        volumeToPoolObjectMap.put(volume,destPool);
       }
     }
  else {
-      final DiskProfile diskProfile=new DiskProfile(volume,diskOffering,profile.getHypervisorType());
-      final DataCenterDeployment plan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),host.getId(),null,null);
-      final ExcludeList avoid=new ExcludeList();
-      boolean currentPoolAvailable=false;
-      final List<StoragePool> poolList=new ArrayList<StoragePool>();
-      for (      final StoragePoolAllocator allocator : _storagePoolAllocators) {
-        final List<StoragePool> poolListFromAllocator=allocator.allocateToPool(diskProfile,profile,plan,avoid,StoragePoolAllocator.RETURN_UPTO_ALL);
-        if (poolListFromAllocator != null && !poolListFromAllocator.isEmpty()) {
-          poolList.addAll(poolListFromAllocator);
-        }
+      if (currentPool.isManaged()) {
+        volumeToPoolObjectMap.put(volume,currentPool);
       }
-      if (poolList != null && !poolList.isEmpty()) {
-        final Iterator<StoragePool> iter=poolList.iterator();
-        while (iter.hasNext()) {
-          if (currentPool.getId() == iter.next().getId()) {
-            currentPoolAvailable=true;
-            break;
+ else {
+        final DiskProfile diskProfile=new DiskProfile(volume,diskOffering,profile.getHypervisorType());
+        final DataCenterDeployment plan=new DataCenterDeployment(host.getDataCenterId(),host.getPodId(),host.getClusterId(),host.getId(),null,null);
+        final List<StoragePool> poolList=new ArrayList<>();
+        final ExcludeList avoid=new ExcludeList();
+        for (        final StoragePoolAllocator allocator : _storagePoolAllocators) {
+          final List<StoragePool> poolListFromAllocator=allocator.allocateToPool(diskProfile,profile,plan,avoid,StoragePoolAllocator.RETURN_UPTO_ALL);
+          if (poolListFromAllocator != null && !poolListFromAllocator.isEmpty()) {
+            poolList.addAll(poolListFromAllocator);
           }
         }
-        if (!currentPoolAvailable) {
-          volumeToPoolObjectMap.put(volume,_storagePoolDao.findByUuid(poolList.get(0).getUuid()));
+        boolean currentPoolAvailable=false;
+        if (poolList != null && !poolList.isEmpty()) {
+          final Iterator<StoragePool> iter=poolList.iterator();
+          while (iter.hasNext()) {
+            if (currentPool.getId() == iter.next().getId()) {
+              currentPoolAvailable=true;
+              break;
+            }
+          }
+          if (!currentPoolAvailable) {
+            volumeToPoolObjectMap.put(volume,_storagePoolDao.findByUuid(poolList.get(0).getUuid()));
+          }
         }
-      }
-      if (!currentPoolAvailable && !volumeToPoolObjectMap.containsKey(volume)) {
-        throw new CloudRuntimeException("Cannot find a storage pool which is available for volume " + volume + " while migrating virtual machine "+ profile.getVirtualMachine()+ " to host "+ host);
+        if (!currentPoolAvailable && !volumeToPoolObjectMap.containsKey(volume)) {
+          throw new CloudRuntimeException("Cannot find a storage pool which is available for volume " + volume + " while migrating virtual machine "+ profile.getVirtualMachine()+ " to host "+ host);
+        }
       }
     }
   }
