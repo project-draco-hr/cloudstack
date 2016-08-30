@@ -1,0 +1,23 @@
+@attr(tags=['advanced', 'advancedns', 'ssh'], required_hardware='true')
+def test_router_dns_guestipquery(self):
+    'Checks that guest VM can query VR DNS'
+    self.logger.debug('Starting test_router_dns_guestipquery...')
+    public_ip = self.test_router_common()[0]
+    self.logger.debug(('Creating Firewall rule for VM ID: %s' % self.vm.id))
+    FireWallRule.create(self.apiclient, ipaddressid=public_ip.id, protocol=self.services['natrule1']['protocol'], cidrlist=['0.0.0.0/0'], startport=self.services['natrule1']['publicport'], endport=self.services['natrule1']['publicport'])
+    self.logger.debug(('Creating NAT rule for VM ID: %s' % self.vm.id))
+    nat_rule1 = NATRule.create(self.apiclient, self.vm, self.services['natrule1'], public_ip.id)
+    nat_rules = list_nat_rules(self.apiclient, id=nat_rule1.id)
+    self.assertEqual(isinstance(nat_rules, list), True, 'Check for list NAT rules response return valid data')
+    self.assertTrue((len(nat_rules) >= 1), 'Check for list NAT rules to have at least one rule')
+    self.assertEqual(nat_rules[0].state, 'Active', 'Check list port forwarding rules')
+    result = None
+    try:
+        self.logger.debug(('SSH into guest VM with IP: %s' % nat_rule1.ipaddress))
+        ssh = self.vm.get_ssh_client(ipaddress=nat_rule1.ipaddress, port=self.services['natrule1']['publicport'], retries=8)
+        result = str(ssh.execute('nslookup google.com'))
+    except Exception as e:
+        self.fail(('Failed to SSH into VM - %s due to exception: %s' % (nat_rule1.ipaddress, e)))
+    if (not result):
+        self.fail('Did not to receive any response from the guest VM, failing.')
+    self.assertTrue((('google.com' in result) and ('#53' in result)), 'VR DNS should serve requests from guest network, unable to get valid nslookup result from guest VM.')
