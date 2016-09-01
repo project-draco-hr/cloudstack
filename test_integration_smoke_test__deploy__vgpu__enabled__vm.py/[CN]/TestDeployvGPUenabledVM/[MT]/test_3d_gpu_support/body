@@ -1,0 +1,24 @@
+@attr(tags=['advanced'])
+def test_3d_gpu_support(self):
+    '\n\n        # 1. Register a template for VMware with nicAdapter vmxnet3 and 3D GPU details\n        # 2. Deploy a VM using this template\n        # 3. Create an isolated network\n        # 4. Add network to VM\n        # 5. Verify vm details for 3D GPU details\n        '
+    if (self.hypervisor.lower() not in ['vmware']):
+        self.skipTest('This test case is written specifically                    for Vmware hypervisor')
+    template = Template.register(self.userapiclient, self.testdata['configurableData']['vmxnet3template'], zoneid=self.zone.id, account=self.account.name, domainid=self.account.domainid, details=[{'mks.enable3d': 'true', 'mks.use3dRenderer': 'automatic', 'svga.autodetect': 'false', 'svga.vramSize': '131072', }])
+    self.cleanup.append(template)
+    template.download(self.apiclient)
+    templates = Template.list(self.userapiclient, listall=True, id=template.id, templatefilter='self')
+    self.assertEqual(validateList(templates)[0], PASS, 'Templates list validation failed')
+    self.testdata['virtual_machine']['zoneid'] = self.zone.id
+    self.testdata['virtual_machine']['template'] = template.id
+    virtual_machine = VirtualMachine.create(self.apiclient, self.testdata['virtual_machine'], accountid=self.account.name, domainid=self.account.domainid, templateid=template.id, serviceofferingid=self.service_offering.id)
+    isolated_network = Network.create(self.apiclient, self.testdata['isolated_network'], self.account.name, self.account.domainid, networkofferingid=self.isolated_network_offering.id)
+    virtual_machine.add_nic(self.apiclient, isolated_network.id)
+    qresultset = self.dbclient.execute(("select id from vm_instance where uuid = '%s';" % virtual_machine.id))
+    vm_id = qresultset[0]
+    qresultset = self.dbclient.execute(("select name, value from user_vm_details where vm_id = '%d';" % vm_id))
+    detailKeys = [x[0] for x in qresultset]
+    self.assertTrue((('mks.enable3d' in detailKeys) and ('mks.use3dRenderer' in detailKeys) and ('svga.autodetect' in detailKeys) and ('svga.vramSize' in detailKeys)), 'VM details do not contain 3D GPU details')
+    self.assertEquals('true', qresultset[detailKeys.index('mks.enable3d')][1], "Expected detail 'mks.enable3d'='true'")
+    self.assertEquals('automatic', qresultset[detailKeys.index('mks.use3dRenderer')][1], "Expected detail 'mks.use3dRenderer'='automatic'")
+    self.assertEquals('false', qresultset[detailKeys.index('svga.autodetect')][1], "Expected detail 'svga.autodetect'='false'")
+    self.assertEquals('131072', qresultset[detailKeys.index('svga.vramSize')][1], "Expected detail 'svga.vramSize'='131072'")
