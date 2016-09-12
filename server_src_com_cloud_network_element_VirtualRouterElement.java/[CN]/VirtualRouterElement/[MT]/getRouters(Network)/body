@@ -1,0 +1,39 @@
+{
+  List<DomainRouterVO> routers=_routerDao.listByNetworkAndRole(network.getId(),Role.VIRTUAL_ROUTER);
+  if (routers != null && routers.isEmpty()) {
+    return null;
+  }
+  NetworkDetailVO updateInSequence=_networkDetailsDao.findDetail(network.getId(),Network.updatingInSequence);
+  if (network.isRedundant() && updateInSequence != null && "true".equalsIgnoreCase(updateInSequence.getValue())) {
+    List<DomainRouterVO> masterRouters=new ArrayList<DomainRouterVO>();
+    int noOfrouters=routers.size();
+    while (noOfrouters > 0) {
+      DomainRouterVO router=routers.get(0);
+      if (router.getUpdateState() == VirtualRouter.UpdateState.UPDATE_IN_PROGRESS) {
+        ArrayList<DomainRouterVO> routerList=new ArrayList<DomainRouterVO>();
+        routerList.add(router);
+        return routerList;
+      }
+      if (router.getUpdateState() == VirtualRouter.UpdateState.UPDATE_COMPLETE) {
+        routers.remove(router);
+        noOfrouters--;
+        continue;
+      }
+      if (router.getRedundantState() != VirtualRouter.RedundantState.BACKUP) {
+        masterRouters.add(router);
+        routers.remove(router);
+      }
+      noOfrouters--;
+    }
+    if (routers.size() == 0 && masterRouters.size() == 0) {
+      return null;
+    }
+    if (routers.size() == 0 && masterRouters.size() != 0) {
+      routers=masterRouters;
+    }
+    routers=routers.subList(0,1);
+    routers.get(0).setUpdateState(VirtualRouter.UpdateState.UPDATE_IN_PROGRESS);
+    _routerDao.persist(routers.get(0));
+  }
+  return routers;
+}

@@ -3,5 +3,25 @@
   if (routers == null || routers.size() == 0) {
     throw new ResourceUnavailableException("Can't find at least one router!",DataCenter.class,network.getDataCenterId());
   }
-  return _routerMgr.completeAggregatedExecution(network,routers);
+  NetworkDetailVO networkDetail=_networkDetailsDao.findDetail(network.getId(),Network.updatingInSequence);
+  boolean updateInSequence="true".equalsIgnoreCase((networkDetail != null ? networkDetail.getValue() : null));
+  if (updateInSequence) {
+    DomainRouterVO router=routers.get(0);
+    router.setUpdateState(VirtualRouter.UpdateState.UPDATE_COMPLETE);
+    _routerDao.persist(router);
+  }
+  boolean result=false;
+  try {
+    result=_routerMgr.completeAggregatedExecution(network,routers);
+  }
+  finally {
+    if (!result && updateInSequence) {
+      List<DomainRouterVO> routerList=_routerDao.listByNetworkAndRole(network.getId(),VirtualRouter.Role.VIRTUAL_ROUTER);
+      for (      DomainRouterVO router : routerList) {
+        router.setUpdateState(VirtualRouter.UpdateState.UPDATE_FAILED);
+        _routerDao.persist(router);
+      }
+    }
+  }
+  return result;
 }
