@@ -1,13 +1,19 @@
 {
   try {
-    List<Pair<VolumeTO,StorageFilerTO>> volumeToFilerto=new ArrayList<Pair<VolumeTO,StorageFilerTO>>();
+    List<Pair<VolumeTO,String>> volumeToStorageUuid=new ArrayList<>();
     for (    Map.Entry<VolumeInfo,DataStore> entry : volumeToPool.entrySet()) {
-      VolumeInfo volume=entry.getKey();
-      VolumeTO volumeTo=new VolumeTO(volume,storagePoolDao.findById(volume.getPoolId()));
-      StorageFilerTO filerTo=new StorageFilerTO((StoragePool)entry.getValue());
-      volumeToFilerto.add(new Pair<VolumeTO,StorageFilerTO>(volumeTo,filerTo));
+      VolumeInfo volumeInfo=entry.getKey();
+      StoragePool storagePool=storagePoolDao.findById(volumeInfo.getPoolId());
+      VolumeTO volumeTo=new VolumeTO(volumeInfo,storagePool);
+      if (storagePool.isManaged()) {
+        String iqn=handleManagedVolumePreMigration(volumeInfo,storagePool,destHost);
+        volumeToStorageUuid.add(new Pair<>(volumeTo,iqn));
+      }
+ else {
+        volumeToStorageUuid.add(new Pair<>(volumeTo,((StoragePool)entry.getValue()).getPath()));
+      }
     }
-    MigrateWithStorageReceiveCommand receiveCmd=new MigrateWithStorageReceiveCommand(to,volumeToFilerto);
+    MigrateWithStorageReceiveCommand receiveCmd=new MigrateWithStorageReceiveCommand(to,volumeToStorageUuid);
     MigrateWithStorageReceiveAnswer receiveAnswer=(MigrateWithStorageReceiveAnswer)agentMgr.send(destHost.getId(),receiveCmd);
     if (receiveAnswer == null) {
       s_logger.error("Migration with storage of vm " + vm + " to host "+ destHost+ " failed.");
@@ -20,10 +26,12 @@
     MigrateWithStorageSendCommand sendCmd=new MigrateWithStorageSendCommand(to,receiveAnswer.getVolumeToSr(),receiveAnswer.getNicToNetwork(),receiveAnswer.getToken());
     MigrateWithStorageSendAnswer sendAnswer=(MigrateWithStorageSendAnswer)agentMgr.send(srcHost.getId(),sendCmd);
     if (sendAnswer == null) {
+      handleManagedVolumesAfterFailedMigration(volumeToPool,destHost);
       s_logger.error("Migration with storage of vm " + vm + " to host "+ destHost+ " failed.");
       throw new CloudRuntimeException("Error while migrating the vm " + vm + " to host "+ destHost);
     }
  else     if (!sendAnswer.getResult()) {
+      handleManagedVolumesAfterFailedMigration(volumeToPool,destHost);
       s_logger.error("Migration with storage of vm " + vm + " failed. Details: "+ sendAnswer.getDetails());
       throw new CloudRuntimeException("Error while migrating the vm " + vm + " to host "+ destHost);
     }
@@ -38,7 +46,7 @@
       throw new CloudRuntimeException("Error while migrating the vm " + vm + " to host "+ destHost);
     }
  else {
-      updateVolumePathsAfterMigration(volumeToPool,answer.getVolumeTos());
+      updateVolumePathsAfterMigration(volumeToPool,answer.getVolumeTos(),srcHost);
     }
     return answer;
   }
