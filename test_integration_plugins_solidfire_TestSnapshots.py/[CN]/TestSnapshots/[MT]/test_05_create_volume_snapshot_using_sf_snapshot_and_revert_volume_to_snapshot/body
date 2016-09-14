@@ -1,0 +1,29 @@
+@attr(hypervisor='KVM')
+def test_05_create_volume_snapshot_using_sf_snapshot_and_revert_volume_to_snapshot(self):
+    if (TestData.hypervisor_type != TestData.kvm):
+        return
+    virtual_machine = VirtualMachine.create(self.apiClient, self.testdata[TestData.virtualMachine], accountid=self.account.name, zoneid=self.zone.id, serviceofferingid=self.compute_offering.id, templateid=self.template.id, domainid=self.domain.id, startvm=True)
+    list_volumes_response = list_volumes(self.apiClient, virtualmachineid=virtual_machine.id, listall=True)
+    sf_util.check_list(list_volumes_response, 1, self, TestSnapshots._should_only_be_one_volume_in_list_err_msg)
+    vm_1_root_volume = list_volumes_response[0]
+    vm_1_root_volume_name = vm_1_root_volume.name
+    sf_account_id = sf_util.get_sf_account_id(self.cs_api, self.account.id, self.primary_storage.id, self, TestSnapshots._sf_account_id_should_be_non_zero_int_err_msg)
+    sf_volumes = sf_util.get_active_sf_volumes(self.sfe, sf_account_id)
+    sf_util.check_list(sf_volumes, 1, self, TestSnapshots._should_only_be_one_volume_in_list_err_msg)
+    sf_volume = self._get_sf_volume_by_name(sf_volumes, vm_1_root_volume_name)
+    sf_snapshots = self.sfe.list_snapshots(volume_id=sf_volume.volume_id).snapshots
+    sf_util.check_list(sf_snapshots, 0, self, TestSnapshots._should_be_zero_snapshots_in_list_err_msg)
+    primary_storage_db_id = self._get_cs_storage_pool_db_id(self.primary_storage)
+    vol_snap_1 = self._create_and_test_snapshot(vm_1_root_volume.id, sf_volume, primary_storage_db_id, 1, TestSnapshots._should_only_be_one_snapshot_in_list_err_msg)
+    vol_snap_2 = self._create_and_test_snapshot(vm_1_root_volume.id, sf_volume, primary_storage_db_id, 2, TestSnapshots._should_be_two_snapshots_in_list_err_msg)
+    virtual_machine.stop(self.apiClient, False)
+    Volume.revertToSnapshot(self.apiClient, vol_snap_1.id)
+    virtual_machine.start(self.apiClient)
+    try:
+        Volume.revertToSnapshot(self.apiClient, vol_snap_1.id)
+        self.assertTrue(False, 'An exception should have been thrown when trying to revert a volume to a snapshot and the volume is attached to a running VM.')
+    except:
+        pass
+    self._delete_and_test_snapshot(vol_snap_2)
+    self._delete_and_test_snapshot(vol_snap_1)
+    virtual_machine.delete(self.apiClient, True)
