@@ -1,0 +1,35 @@
+@classmethod
+def setUpClass(cls):
+    testclient = super(TestManagedSystemVMs, cls).getClsTestClient()
+    cls.apiClient = testclient.getApiClient()
+    cls.configData = testclient.getParsedTestDataConfig()
+    cls.dbConnection = testclient.getDbConnection()
+    cls.testdata = TestData().testdata
+    host_ip = ('https://' + list_hosts(cls.apiClient, clusterid=cls.testdata[TestData.clusterId], name='XenServer-6.5-1')[0].ipaddress)
+    cls.xen_session = XenAPI.Session(host_ip)
+    xenserver = cls.testdata[TestData.xenServer]
+    cls.xen_session.xenapi.login_with_password(xenserver[TestData.username], xenserver[TestData.password])
+    solidfire = cls.testdata[TestData.solidFire]
+    cls.sfe = ElementFactory.create(solidfire[TestData.mvip], solidfire[TestData.username], solidfire[TestData.password])
+    cls.zone = Zone(get_zone(cls.apiClient, zone_id=cls.testdata[TestData.zoneId]).__dict__)
+    cls.cluster = list_clusters(cls.apiClient)[0]
+    cls.template = get_template(cls.apiClient, cls.zone.id, cls.configData['ostype'])
+    cls.domain = get_domain(cls.apiClient, cls.testdata[TestData.domainId])
+    cls.account = Account.create(cls.apiClient, cls.testdata['account'], admin=1)
+    cls.user = User.create(cls.apiClient, cls.testdata['user'], account=cls.account.name, domainid=cls.domain.id)
+    url = cls.testdata[TestData.url]
+    api_url = (('http://' + url) + ':8080/client/api')
+    userkeys = User.registerUserKeys(cls.apiClient, cls.user.id)
+    cls.cs_api = SignedAPICall.CloudStack(api_url, userkeys.apikey, userkeys.secretkey)
+    cls.compute_offering = ServiceOffering.create(cls.apiClient, cls.testdata[TestData.computeOffering])
+    systemoffering = cls.testdata[TestData.systemOffering]
+    systemoffering[TestData.name] = 'Managed SSVM'
+    systemoffering['systemvmtype'] = 'secondarystoragevm'
+    cls.secondary_storage_offering = ServiceOffering.create(cls.apiClient, systemoffering)
+    systemoffering[TestData.name] = 'Managed CPVM'
+    systemoffering['systemvmtype'] = 'consoleproxy'
+    cls.console_proxy_offering = ServiceOffering.create(cls.apiClient, systemoffering)
+    systemoffering[TestData.name] = 'Managed VR'
+    systemoffering['systemvmtype'] = 'domainrouter'
+    cls.virtual_router_offering = ServiceOffering.create(cls.apiClient, systemoffering)
+    cls._cleanup = [cls.secondary_storage_offering, cls.console_proxy_offering, cls.virtual_router_offering, cls.compute_offering, cls.user, cls.account]
