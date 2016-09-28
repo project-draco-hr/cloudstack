@@ -1,0 +1,33 @@
+@attr(hypervisor='XenServer')
+def test_01_create_system_vms_on_managed_storage(self):
+    self._disable_zone_and_delete_system_vms(None, False)
+    primary_storage = self.testdata[TestData.primaryStorage]
+    primary_storage_1 = StoragePool.create(self.apiClient, primary_storage)
+    self._prepare_to_use_managed_storage_for_system_vms()
+    enabled = 'Enabled'
+    self.zone.update(self.apiClient, id=self.zone.id, allocationstate=enabled)
+    system_vms = self._wait_for_and_get_running_system_vms(2)
+    virtual_machine = VirtualMachine.create(self.apiClient, self.testdata[TestData.virtualMachine], accountid=self.account.name, zoneid=self.zone.id, serviceofferingid=self.compute_offering.id, templateid=self.template.id, domainid=self.domain.id, startvm=True)
+    virtual_machine.delete(self.apiClient, True)
+    virtual_router = list_routers(self.apiClient, listall=True, state='Running')[0]
+    system_vms.append(virtual_router)
+    self._check_system_vms(system_vms, primary_storage_1.id)
+    primary_storage[TestData.name] = TestData.get_name_for_solidfire_storage()
+    primary_storage_2 = StoragePool.create(self.apiClient, primary_storage)
+    StoragePool.enableMaintenance(self.apiClient, primary_storage_1.id)
+    self._wait_for_storage_cleanup_thread(system_vms)
+    sf_util.purge_solidfire_volumes(self.sfe)
+    system_vms = self._wait_for_and_get_running_system_vms(2)
+    virtual_router = list_routers(self.apiClient, listall=True, state='Running')[0]
+    system_vms.append(virtual_router)
+    self._check_system_vms(system_vms, primary_storage_2.id)
+    StoragePool.cancelMaintenance(self.apiClient, primary_storage_1.id)
+    primary_storage_1.delete(self.apiClient)
+    self._disable_zone_and_delete_system_vms(virtual_router)
+    self._wait_for_storage_cleanup_thread(system_vms)
+    sf_util.purge_solidfire_volumes(self.sfe)
+    primary_storage_2.delete(self.apiClient)
+    self._verify_no_active_solidfire_volumes()
+    self._prepare_to_stop_using_managed_storage_for_system_vms()
+    self.zone.update(self.apiClient, id=self.zone.id, allocationstate=enabled)
+    self._wait_for_and_get_running_system_vms(2)
