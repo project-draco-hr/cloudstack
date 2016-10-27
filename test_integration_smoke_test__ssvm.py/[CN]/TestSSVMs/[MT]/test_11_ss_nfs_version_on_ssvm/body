@@ -1,0 +1,59 @@
+@attr(tags=['advanced', 'advancedns', 'smoke', 'basic', 'sg'], required_hardware='true')
+def test_11_ss_nfs_version_on_ssvm(self):
+    'Test NFS Version on Secondary Storage mounted properly on SSVM\n        '
+    nfs_version = self.config.nfsVersion
+    if (nfs_version == None):
+        self.skipTest('No NFS version provided in test data')
+    list_ssvm_response = list_ssvms(self.apiclient, systemvmtype='secondarystoragevm', state='Running', zoneid=self.zone.id)
+    self.assertNotEqual(list_ssvm_response, None)
+    self.assertEqual(isinstance(list_ssvm_response, list), True, 'Check list response returns a valid list')
+    self.assertEqual(len(list_ssvm_response), 1, 'Check list System VMs response')
+    ssvm = list_ssvm_response[0]
+    image_stores_response = ImageStore.list(self.apiclient, zoneid=self.zone.id)
+    if (self.hypervisor.lower() in ('vmware', 'hyperv')):
+        result = get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, ssvm.privateip, "mount | grep 'type nfs'", hypervisor=self.hypervisor)
+    for res in result:
+        split_res = res.split('on')
+        mounted_img_store_url = split_res[0].strip()
+        for img_store in image_stores_response:
+            img_store_url = str(img_store.url)
+            if img_store_url.startswith('nfs://'):
+                img_store_url = img_store_url[6:]
+                first_slash = img_store_url.find('/')
+                img_store_url = ((img_store_url[0:first_slash] + ':') + img_store_url[first_slash:])
+                if (img_store_url == mounted_img_store_url):
+                    img_store_id = img_store.id
+                    break
+    self.assertNotEqual(img_store_id, None, 'Check image store id mounted on SSVM')
+    updateConfigurationCmd = updateConfiguration.updateConfigurationCmd()
+    updateConfigurationCmd.name = 'secstorage.nfs.version'
+    updateConfigurationCmd.value = nfs_version
+    updateConfigurationCmd.imagestoreuuid = img_store_id
+    updateConfigurationResponse = self.apiclient.updateConfiguration(updateConfigurationCmd)
+    self.logger.debug(('updated the parameter %s with value %s' % (updateConfigurationResponse.name, updateConfigurationResponse.value)))
+    self.debug(('Stopping SSVM: %s' % ssvm.id))
+    cmd = stopSystemVm.stopSystemVmCmd()
+    cmd.id = ssvm.id
+    self.apiclient.stopSystemVm(cmd)
+
+    def checkForRunningSSVM():
+        new_list_ssvm_response = list_ssvms(self.apiclient, id=ssvm.id)
+        if isinstance(new_list_ssvm_response, list):
+            return ((new_list_ssvm_response[0].state == 'Running'), None)
+    (res, _) = wait_until(self.services['sleep'], self.services['timeout'], checkForRunningSSVM)
+    if (not res):
+        self.fail('List SSVM call failed!')
+    new_list_ssvm_response = list_ssvms(self.apiclient, id=ssvm.id)
+    self.assertNotEqual(new_list_ssvm_response, None)
+    self.assertEqual(isinstance(new_list_ssvm_response, list), True, 'Check list response returns a valid list')
+    ssvm = new_list_ssvm_response[0]
+    self.debug(('SSVM state after debug: %s' % ssvm.state))
+    self.assertEqual(ssvm.state, 'Running', 'Check whether SSVM is running or not')
+    self.waitForSystemVMAgent(ssvm.name)
+    result = get_process_status(self.apiclient.connection.mgtSvr, 22, self.apiclient.connection.user, self.apiclient.connection.passwd, ssvm.privateip, ("mount | grep '%s'" % mounted_img_store_url), hypervisor=self.hypervisor)
+    self.assertNotEqual(result, None)
+    self.assertEqual(len(result), 1, 'Check result length')
+    res = result[0]
+    mounted_nfs_version = res.split('vers=')[1][0:1]
+    self.assertEqual(int(mounted_nfs_version), int(nfs_version), 'Check mounted NFS version to be the same as provided')
+    return
