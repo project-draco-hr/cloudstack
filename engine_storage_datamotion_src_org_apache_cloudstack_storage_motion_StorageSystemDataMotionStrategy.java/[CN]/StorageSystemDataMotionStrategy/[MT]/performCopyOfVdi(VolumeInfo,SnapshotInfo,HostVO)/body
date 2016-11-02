@@ -1,8 +1,15 @@
 {
   String value=_configDao.getValue(Config.PrimaryStorageDownloadWait.toString());
   int primaryStorageDownloadWait=NumbersUtil.parseInt(value,Integer.parseInt(Config.PrimaryStorageDownloadWait.getDefaultValue()));
-  CopyCommand copyCommand=new CopyCommand(snapshotInfo.getTO(),volumeInfo.getTO(),primaryStorageDownloadWait,VirtualMachineManager.ExecuteInSequence.value());
+  DataObject srcData=snapshotInfo;
   CopyCmdAnswer copyCmdAnswer=null;
+  DataObject cacheData=null;
+  boolean needCacheStorage=needCacheStorage(snapshotInfo,volumeInfo);
+  if (needCacheStorage) {
+    cacheData=cacheSnapshotChain(snapshotInfo,new ZoneScope(volumeInfo.getDataCenterId()));
+    srcData=cacheData;
+  }
+  CopyCommand copyCommand=new CopyCommand(srcData.getTO(),volumeInfo.getTO(),primaryStorageDownloadWait,VirtualMachineManager.ExecuteInSequence.value());
   try {
     _volumeService.grantAccess(snapshotInfo,hostVO,snapshotInfo.getDataStore());
     _volumeService.grantAccess(volumeInfo,hostVO,volumeInfo.getDataStore());
@@ -20,6 +27,9 @@
  finally {
     _volumeService.revokeAccess(snapshotInfo,hostVO,snapshotInfo.getDataStore());
     _volumeService.revokeAccess(volumeInfo,hostVO,volumeInfo.getDataStore());
+    if (needCacheStorage && copyCmdAnswer != null && copyCmdAnswer.getResult()) {
+      performCleanupCacheStorage(cacheData);
+    }
   }
   return copyCmdAnswer;
 }

@@ -1,0 +1,41 @@
+{
+  DiskOfferingVO diskOffering=_diskOfferingDao.findByIdIncludingRemoved(volumeInfo.getDiskOfferingId());
+  SnapshotVO snapshot=_snapshotDao.findById(snapshotInfo.getId());
+  DataStore destDataStore=volumeInfo.getDataStore();
+  _volumeService.updateHypervisorSnapshotReserveForVolume(diskOffering,volumeInfo.getId(),snapshot.getHypervisorType());
+  CopyCmdAnswer copyCmdAnswer=null;
+  String errMsg=null;
+  HostVO hostVO=null;
+  try {
+    AsyncCallFuture<VolumeApiResult> future=_volumeService.createVolumeAsync(volumeInfo,volumeInfo.getDataStore());
+    VolumeApiResult result=future.get();
+    if (result.isFailed()) {
+      LOGGER.error("Failed to create a volume: " + result.getResult());
+      throw new CloudRuntimeException(result.getResult());
+    }
+    volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+    volumeInfo.processEvent(Event.MigrationRequested);
+    volumeInfo=_volumeDataFactory.getVolume(volumeInfo.getId(),volumeInfo.getDataStore());
+    hostVO=getHost(snapshotInfo.getDataCenterId(),false);
+    copyCmdAnswer=performCopyOfVdi(volumeInfo,snapshotInfo,hostVO);
+    if (copyCmdAnswer == null || !copyCmdAnswer.getResult()) {
+      if (copyCmdAnswer != null && !StringUtils.isEmpty(copyCmdAnswer.getDetails())) {
+        errMsg=copyCmdAnswer.getDetails();
+      }
+ else {
+        errMsg="Unable to create volume from snapshot";
+      }
+    }
+  }
+ catch (  Exception ex) {
+    errMsg=ex.getMessage() != null ? ex.getMessage() : "Copy operation failed in 'StorageSystemDataMotionStrategy.handleCreateVolumeFromSnapshotBothOnStorageSystem'";
+  }
+ finally {
+    DiskTO disk=new DiskTO(volumeInfo.getTO(),volumeInfo.getDeviceId(),volumeInfo.getPath(),volumeInfo.getVolumeType());
+    long storagePoolId=volumeInfo.getPoolId();
+    detachManagedStoreVolume(volumeInfo,hostVO,volumeInfo.get_iScsiName(),storagePoolId,disk);
+  }
+  CopyCommandResult result=new CopyCommandResult(null,copyCmdAnswer);
+  result.setResult(errMsg);
+  callback.complete(result);
+}

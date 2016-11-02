@@ -1,0 +1,59 @@
+{
+synchronized (srNameLabel.intern()) {
+    final Map<String,String> deviceConfig=new HashMap<String,String>();
+    try {
+      if (path.endsWith("/")) {
+        path=path.substring(0,path.length() - 1);
+      }
+      final String tmp[]=path.split("/");
+      if (tmp.length != 3) {
+        final String msg="Wrong iscsi path " + path + " it should be /targetIQN/LUN";
+        s_logger.warn(msg);
+        throw new CloudRuntimeException(msg);
+      }
+      final String targetiqn=tmp[1].trim();
+      final String lunid=tmp[2].trim();
+      String scsiid="";
+      checkIfIscsiSrExisits(conn,srNameLabel,target,targetiqn,lunid);
+      deviceConfig.put("target",target);
+      deviceConfig.put("targetIQN",targetiqn);
+      if (StringUtils.isNotBlank(chapInitiatorUsername) && StringUtils.isNotBlank(chapInitiatorPassword)) {
+        deviceConfig.put("chapuser",chapInitiatorUsername);
+        deviceConfig.put("chappassword",chapInitiatorPassword);
+      }
+      final Host host=Host.getByUuid(conn,_host.getUuid());
+      final Map<String,String> smConfig=new HashMap<String,String>();
+      SR sr=null;
+      String pooluuid=null;
+      if (SRType.LVMOISCSI.equals(srType)) {
+        scsiid=probeScisiId(conn,host,deviceConfig,srType,srNameLabel,lunid,smConfig);
+        deviceConfig.put("SCSIid",scsiid);
+        String result=SR.probe(conn,host,deviceConfig,srType,smConfig);
+        if (result.indexOf("<UUID>") != -1) {
+          pooluuid=result.substring(result.indexOf("<UUID>") + 6,result.indexOf("</UUID>")).trim();
+        }
+      }
+      if (pooluuid == null || pooluuid.length() != 36) {
+        sr=SR.create(conn,host,deviceConfig,new Long(0),srNameLabel,srNameLabel,srType,"user",true,smConfig);
+      }
+ else {
+        if (resignature) {
+          pooluuid=resignatureIscsiSr(conn,host,deviceConfig,srNameLabel,smConfig);
+        }
+        sr=introduceAndPlugIscsiSr(conn,pooluuid,srNameLabel,srType,smConfig,deviceConfig,ignoreIntroduceException);
+      }
+      sr.scan(conn);
+      return sr;
+    }
+ catch (    final XenAPIException e) {
+      final String msg="Unable to create Iscsi SR  " + deviceConfig + " due to  "+ e.toString();
+      s_logger.warn(msg,e);
+      throw new CloudRuntimeException(msg,e);
+    }
+catch (    final Exception e) {
+      final String msg="Unable to create Iscsi SR  " + deviceConfig + " due to  "+ e.getMessage();
+      s_logger.warn(msg,e);
+      throw new CloudRuntimeException(msg,e);
+    }
+  }
+}
